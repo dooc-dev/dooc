@@ -180,10 +180,10 @@ describe("parseDoc", () => {
         expect(doc.errors).toEqual(['L7: :::graph edge node "nope" is not declared']);
     });
 
-    it("code fences allow only known languages", () => {
-        expect(parseDoc(fm("```mermaid\nx\n```")).errors.some((e) => e.includes("mermaid"))).toBe(
-            true,
-        );
+    it("code fences accept standard and custom language labels", () => {
+        for (const language of ["python", "javascript", "rust", "custom-dsl", "mermaid"]) {
+            expect(parseDoc(fm(`\`\`\`${language}\nx\n\`\`\``)).errors).toEqual([]);
+        }
         expect(parseDoc(fm("```toml\nx=1\n```")).errors).toEqual([]);
         expect(parseDoc(fm("```sql\nSELECT * FROM users;\n```")).errors).toEqual([]);
     });

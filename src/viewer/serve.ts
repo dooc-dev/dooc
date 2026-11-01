@@ -11,11 +11,13 @@
 //             manifest.yaml.
 //             The client (src/viewer/edit-client.ts) is bundled in memory with esbuild on
 //             first request (cached) and served.
+
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { LanguageRegistration } from "shiki/core";
 import {
     type Compiled,
     compileDraft,
@@ -41,7 +43,7 @@ import { figureFrameHtml, mountFigureFrames } from "../core/figure-frame.js";
 import { docHtml, escapeHtml, figureIndexRoute, type RenderCtx } from "../core/html.js";
 import { isLangTag, type LanguageAdapter, resolveLanguage } from "../core/language.js";
 import { ancestorsOf, childrenOf, docPath, resolveDocPath } from "../core/routing.js";
-import { docDisplayName, type Frontmatter } from "../core/taxonomy.js";
+import { CODE_LANGS, docDisplayName, type Frontmatter } from "../core/taxonomy.js";
 import { createHmrHub, HMR_PATH, hmrClientScript, watchProject } from "./hmr.js";
 import { DEFAULT_SITE_LANGUAGES, loadSiteLanguages } from "./languages.js";
 
@@ -91,6 +93,8 @@ export interface Entry {
 }
 
 export interface Site {
+    codeLanguages?: string[];
+    codeGrammars?: LanguageRegistration[];
     contentLanguage?: string;
     availableLanguages?: string[];
     /** Display order (pre-order traversal of the manifest). */
@@ -163,6 +167,8 @@ const loadSite = (locale = contentLanguageCode(siteLanguages.defaultLang)): Site
     const site = siteFrom(selected.compile(), siteLanguages.languages);
     return {
         ...site,
+        codeLanguages: siteLanguages.codeLanguages,
+        codeGrammars: siteLanguages.codeGrammars,
         contentLanguage: locale,
         availableLanguages: [
             ...new Set([
@@ -599,18 +605,18 @@ pre code { background: none; padding: 0; font-size: 13.5px; }
    Clicking the header band collapses it (viewer-only feature). */
 .codeblk { margin: 10px 0; border: 1px solid var(--doc-border); border-radius: 8px; overflow: hidden; }
 .codeblk > pre { margin: 0; }
-.codeblk-head { display: flex; align-items: center; gap: 10px; cursor: pointer;
+.codeblk-head { display: flex; align-items: center; gap: 4px; cursor: pointer;
   padding: 5px 8px 5px 14px; border-bottom: 1px solid var(--doc-border); }
 .codeblk-lang { font-family: var(--doc-mono); font-size: 10px; letter-spacing: 1.4px;
   text-transform: uppercase; color: var(--doc-fg-3); margin-right: auto; }
-.codeblk-head::after { content: "⌄"; font-size: 12px; line-height: 1; color: var(--doc-fg-3);
-  transition: transform .15s; }
-.codeblk.collapsed .codeblk-head::after { transform: rotate(-90deg); }
+.codefold svg { transition: transform 150ms ease; }
+.codeblk.collapsed .codefold svg { transform: rotate(-90deg); }
+@media (prefers-reduced-motion: reduce) { .codefold svg { transition: none; } }
 .codeblk.collapsed > pre { display: none; }
-.codeblk .codecopy { display: flex; align-items: center; justify-content: center;
-  width: 24px; height: 24px; padding: 0; border: none; border-radius: 6px; background: none;
+.codeblk :is(.codecopy, .codefold) { display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0; border: none; border-radius: 6px; background: none;
   color: var(--doc-fg-3); cursor: pointer; }
-.codeblk .codecopy:hover, .codeblk .codecopy:focus-visible { color: var(--doc-accent);
+.codeblk :is(.codecopy, .codefold):hover, .codeblk :is(.codecopy, .codefold):focus-visible { color: var(--doc-accent);
   background: color-mix(in srgb, currentColor 8%, transparent); }
 .codeblk .codecopy .ic-ok { display: none; }
 .codeblk .codecopy.ok .ic-copy { display: none; }
@@ -879,7 +885,7 @@ interface PageOpts {
      * When writing out a single static HTML file (publishHtml). Replaces every server-served
      * script with an inline one.
      */
-    publish?: { graphJs: string; pages: string; first: string };
+    publish?: { graphJs: string; codeJs: string; pages: string; first: string };
 }
 
 // Contents of #nav-groups (the doc tree). Used by both page()'s initial render and
@@ -1149,6 +1155,8 @@ const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
 <style>${CSS}${mode === "edit" ? EDIT_CSS : ""}</style></head>
 <body${mode === "edit" ? ' class="edit"' : ""}><nav id="sidebar"><div id="sidebar-head"><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button><div class="breadcrumb" aria-label="Breadcrumb"><span id="crumb-aud">${escapeHtml(crumbPath)}</span><span id="crumb-doc">${escapeHtml(opts.title)}</span></div></div><div id="sidebar-content"><input id="nav-search" type="search" placeholder="Search docs…" data-i18n-placeholder="Search docs…" aria-label="Search docs by title" data-i18n-aria-label="Search docs by title"><div id="nav-groups">${nav}</div>${createMenu}<div id="nav-status" role="status" aria-live="polite"></div></div>${dropzone}<div id="sidebar-foot"><button id="theme" class="nav-link" type="button"></button></div></nav>${main}${opts.aside ?? ""}
 ${bootScripts}${graphScript}
+<script id="code-grammars" type="application/json">${JSON.stringify(site.codeGrammars ?? []).replace(/</g, "\\u003c")}</script>
+${opts.publish ? `<script>${inlineScript(opts.publish.codeJs)}</script>` : '<script src="/assets/code.js" defer></script>'}
 <script>
 // Functions toString'd under tsx (esbuild keepNames) contain __name(...) calls; define a no-op.
 var __name = (f) => f;
@@ -1458,7 +1466,18 @@ document.addEventListener("click", (ev) => {
   const head = ev.target instanceof Element ? ev.target.closest(".codeblk-head") : null;
   if (!head || (ev.target instanceof Element && ev.target.closest("button.codecopy"))) return;
   const wrap = head.closest(".codeblk");
-  if (wrap) wrap.classList.toggle("collapsed");
+  if (!wrap) return;
+  const collapsed = wrap.classList.toggle("collapsed");
+  const button = head.querySelector(".codefold");
+  if (button) {
+    const label = collapsed ? "Expand code" : "Collapse code";
+    button.setAttribute("aria-expanded", String(!collapsed));
+    button.dataset.i18nTitle = label;
+    button.dataset.i18nAriaLabel = label;
+    const text = window.__docsTranslate ? window.__docsTranslate(label) : label;
+    button.title = text;
+    button.setAttribute("aria-label", text);
+  }
 });
 </script>
 ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publish.first)}</script>` : `<script>${hmrClientScript(mode)}</script>`}</body></html>`;
@@ -1512,7 +1531,7 @@ const toHashLinks = (html: string, route: string): string =>
  * down to figures / dictionary / schema graph JS). Each doc is held in a
  * <template> and switched via hash routes.
  */
-export const publishHtml = (site: Site, graphJs: string, title = "docs"): string => {
+export const publishHtml = (site: Site, graphJs: string, title = "docs", codeJs = ""): string => {
     const pages = site.entries.map((e) => ({
         route: docPath(site.entries, e.id).slice(1),
         title: docDisplayName(e.frontmatter, e.id),
@@ -1529,7 +1548,7 @@ export const publishHtml = (site: Site, graphJs: string, title = "docs"): string
         page("preview", site, {
             title,
             main: "",
-            publish: { graphJs, pages: templates, first },
+            publish: { graphJs, codeJs, pages: templates, first },
         }),
         first,
     );
@@ -1570,6 +1589,7 @@ export interface EditorBoot {
     path: string;
     body: string;
     figures: string[];
+    codeLanguages: readonly string[];
     docs: { ref: string; title: string }[];
     terms: string[];
     blockLines: number[];
@@ -1615,6 +1635,7 @@ export const editorBoot = (entry: Entry, site: Site): EditorBoot => {
         path: docPath(site.entries, entry.id),
         body: entry.body,
         figures,
+        codeLanguages: site.codeLanguages ?? CODE_LANGS,
         docs,
         terms: site.ctx.dictionary.map((d) => d.term),
         blockLines: entry.blockLines,
@@ -1959,6 +1980,7 @@ const PREBUILT: Record<string, string> = {
     "core/schema-graph-global.tsx": "flow.global.js",
     "viewer/edit-client.ts": "edit.global.js",
     "viewer/ui-client.ts": "ui.global.js",
+    "viewer/code-highlight.ts": "code.global.js",
 };
 const fromDist = import.meta.url.endsWith(".js");
 
@@ -2035,13 +2057,15 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
         // Client bundles — graph.js (the schema graph interaction layer) is shared by
         // preview / edit, edit.js is for the editing UI only.
         const clientEntry =
-            path === "/assets/graph.js"
-                ? "core/schema-graph-global.tsx"
-                : mode === "edit" && path === "/assets/edit.js"
-                  ? "viewer/edit-client.ts"
-                  : mode === "edit" && path === "/assets/ui.js"
-                    ? "viewer/ui-client.ts"
-                    : undefined;
+            path === "/assets/code.js"
+                ? "viewer/code-highlight.ts"
+                : path === "/assets/graph.js"
+                  ? "core/schema-graph-global.tsx"
+                  : mode === "edit" && path === "/assets/edit.js"
+                    ? "viewer/edit-client.ts"
+                    : mode === "edit" && path === "/assets/ui.js"
+                      ? "viewer/ui-client.ts"
+                      : undefined;
         if (req.method === "GET" && clientEntry != null) {
             const { js, etag } = await bundleCache.get(clientEntry, () =>
                 bundleClient(clientEntry),

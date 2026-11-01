@@ -3,6 +3,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { MANIFEST_FILE } from "../core/content-metadata.js";
+import { CODE_LANGUAGES_DIR } from "./code-languages.js";
 import { CONFIG_FILE } from "./config.js";
 import type { ZipEntry } from "./zip.js";
 
@@ -12,6 +13,20 @@ export const exportEntries = (root: string): ZipEntry[] => [
     ...[CONFIG_FILE, MANIFEST_FILE]
         .filter((name) => existsSync(join(root, name)))
         .map((name) => ({ name, data: readFileSync(join(root, name)) })),
+    ...(existsSync(join(root, CODE_LANGUAGES_DIR))
+        ? readdirSync(join(root, CODE_LANGUAGES_DIR))
+              .filter(
+                  (file) =>
+                      !file.startsWith(".") &&
+                      file.endsWith(".json") &&
+                      statSync(join(root, CODE_LANGUAGES_DIR, file)).isFile(),
+              )
+              .sort()
+              .map((file) => ({
+                  name: `${CODE_LANGUAGES_DIR}/${file}`,
+                  data: readFileSync(join(root, CODE_LANGUAGES_DIR, file)),
+              }))
+        : []),
     ...LAYOUT_DIRS.filter((dir) => existsSync(join(root, dir))).flatMap((dir) =>
         readdirSync(join(root, dir), { recursive: true, encoding: "utf8" })
             .map((rel) => `${dir}/${rel.replaceAll("\\", "/")}`)

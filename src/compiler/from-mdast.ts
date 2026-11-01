@@ -12,7 +12,7 @@ import {
 } from "../core/blocks.js";
 import { parseGraphSource } from "../core/graph.js";
 import { parseSchemaSource } from "../core/schema-graph.js";
-import { type CodeLang, directiveRawBody } from "../core/taxonomy.js";
+import { directiveRawBody } from "../core/taxonomy.js";
 import { parseDictionarySource } from "./dictionary.js";
 import { figureName } from "./figures.js";
 
@@ -124,7 +124,7 @@ export const toBlocks = (
                 add({
                     type: "code",
                     lines: n.value.split("\n"),
-                    ...(n.lang != null ? { lang: n.lang as CodeLang } : {}),
+                    ...(n.lang != null ? { lang: n.lang } : {}),
                 });
                 break;
             case "table":

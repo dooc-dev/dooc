@@ -42,6 +42,7 @@ export const classifyChange = (rel: string): HmrKind | undefined => {
         p === "src/viewer/edit-schema-completion.ts" ||
         p === "src/viewer/i18n.ts" ||
         p === "src/viewer/ui-client.ts" ||
+        p === "src/viewer/code-highlight.ts" ||
         (p.startsWith("src/viewer/locales/") && p.endsWith(".json")) ||
         (p.startsWith("src/core/") && p.endsWith(".tsx"))
     ) {

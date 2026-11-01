@@ -22,6 +22,7 @@ const USAGE = `usage: document-system <command>
   export json [root] [out] [--lang <iso6393>]  docs.json bundle (default <root>/dist/artifact/)
   export zip  [root] [out]           zip of the content (default <root>/dist/<root name>.zip)
   export html [root] [out] [--lang <iso6393>]  self-contained html, all assets embedded (default <root>/dist/index.html)
+  code-language add <language|grammar.json> [--root <dir>]  register syntax highlighting
   mcp [root]                         stdio MCP server (all read / write operations)
 
   doc ls
@@ -119,13 +120,38 @@ switch (command) {
             });
             const { bundleClient, publishHtml, siteFrom } = await import("./viewer/serve.js");
             const html = publishHtml(
-                siteFrom(compiled, site.languages),
+                {
+                    ...siteFrom(compiled, site.languages),
+                    codeLanguages: site.codeLanguages,
+                    codeGrammars: site.codeGrammars,
+                },
                 await bundleClient("core/schema-graph-global.tsx", true),
+                "docs",
+                await bundleClient("viewer/code-highlight.ts", true),
             );
             writeOut(out("index.html"), html);
             console.log(`${out("index.html")} — ${compiled.artifact.docs.length} docs`);
         } else {
             fail(`export format must be json | zip | html\n\n${USAGE}`);
+        }
+        break;
+    }
+    case "code-language": {
+        const { values, positionals } = parseArgs({
+            args,
+            allowPositionals: true,
+            options: { root: { type: "string" } },
+        });
+        const [action, rawInput, extra] = positionals;
+        const input =
+            rawInput || fail("code-language add requires a language name or grammar JSON file");
+        if (action !== "add" || extra)
+            fail(`usage: document-system code-language add <language|grammar.json> [--root <dir>]`);
+        const { addCodeLanguage } = await import("./compiler/code-languages.js");
+        try {
+            console.log(`added ${await addCodeLanguage(docsRoot(values.root), input)}`);
+        } catch (error) {
+            fail(error instanceof Error ? error.message : String(error));
         }
         break;
     }

@@ -11,6 +11,9 @@ importers:
       '@dagrejs/dagre':
         specifier: ^3.0.0
         version: 3.1.3
+      '@shikijs/langs':
+        specifier: 4.5.0
+        version: 4.5.0
       '@textlint/kernel':
         specifier: ^15.8.0
         version: 15.8.0
@@ -75,9 +78,6 @@ importers:
       '@lezer/highlight':
         specifier: ^1.2.5
         version: 1.2.5
-      '@shikijs/langs':
-        specifier: ^4.5.0
-        version: 4.5.0
       '@shikijs/themes':
         specifier: ^4.5.0
         version: 4.5.0

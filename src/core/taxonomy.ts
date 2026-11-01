@@ -1,10 +1,39 @@
 // Vocabulary SoT for the content dialect (directive catalog / front-matter schema / code langs).
 // Both compiler validation and viewer insert-completion read this.
 
-// Code fence languages (1:1 with the languages the edit preview loads via Shiki fine-grained).
-// When adding a language, also add it to the langs import in edit-client.ts.
-export const CODE_LANGS = ["toml", "ts", "bash", "json", "yaml", "sql"] as const;
-export type CodeLang = (typeof CODE_LANGS)[number];
+// Default syntax-highlighting languages; additional grammars live in .document-system/code-languages/.
+export const CODE_LANGS = [
+    "javascript",
+    "typescript",
+    "jsx",
+    "tsx",
+    "python",
+    "java",
+    "c",
+    "cpp",
+    "csharp",
+    "go",
+    "rust",
+    "ruby",
+    "php",
+    "swift",
+    "kotlin",
+    "bash",
+    "powershell",
+    "html",
+    "css",
+    "json",
+    "yaml",
+    "toml",
+    "sql",
+    "markdown",
+    "dockerfile",
+    "diff",
+    "graphql",
+    "terraform",
+] as const;
+// Unknown fence labels remain valid and render as plain text until a grammar is registered.
+export type CodeLang = string;
 
 // ── directive vocabulary (SoT for the dialect's custom syntax) ─────────────────────
 // Name / caption support / sample are held in one place, and both validation (dialect.ts) and

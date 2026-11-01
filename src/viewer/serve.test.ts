@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { compileSite } from "../compiler/compile.js";
 import { parseDoc } from "../compiler/dialect.js";
 import { docPath } from "../core/routing.js";
+import { CODE_LANGS } from "../core/taxonomy.js";
 import { BUILTIN_LANGUAGES } from "./languages.js";
 import {
     assembleDoc,
@@ -335,6 +336,7 @@ describe("fmFieldsHtml / editorBoot / pageDataResponse (backing `GET /api/page`)
             path: "/a",
             body: "Body\n",
             figures: ["fig-x.svg"],
+            codeLanguages: CODE_LANGS,
             docs: [{ ref: "a", title: "A" }],
             terms: ["Term"],
             blockLines: [0],

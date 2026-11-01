@@ -44,7 +44,7 @@
         "build": "pnpm run build:css && tsc -p tsconfig.build.json && pnpm run build:flow && pnpm run build:edit",
         "build:css": "node --import tsx src/core/build-flow-css.ts",
         "build:flow": "esbuild src/core/schema-graph-global.tsx --bundle --format=iife --target=es2022 --minify --outfile=dist/flow.global.js",
-        "build:edit": "esbuild src/viewer/edit-client.ts --bundle --format=iife --target=es2022 --minify --outfile=dist/edit.global.js && esbuild src/viewer/ui-client.ts --bundle --format=iife --target=es2022 --minify --outfile=dist/ui.global.js",
+        "build:edit": "esbuild src/viewer/edit-client.ts --bundle --format=iife --target=es2022 --minify --outfile=dist/edit.global.js && esbuild src/viewer/ui-client.ts --bundle --format=iife --target=es2022 --minify --outfile=dist/ui.global.js && esbuild src/viewer/code-highlight.ts --bundle --format=iife --target=es2022 --minify --outfile=dist/code.global.js",
         "test": "vitest run",
         "check": "biome check . && tsc --noEmit && pnpm run build && vitest run",
         "fix": "biome check --write ."
@@ -59,7 +59,6 @@
         "@codemirror/view": "^6.43.15",
         "@lezer/common": "^1.5.4",
         "@lezer/highlight": "^1.2.5",
-        "@shikijs/langs": "^4.5.0",
         "@shikijs/themes": "^4.5.0",
         "@types/mdast": "^4.0.4",
         "@types/node": "^22.10.0",
@@ -79,6 +78,7 @@
     },
     "dependencies": {
         "@dagrejs/dagre": "^3.0.0",
+        "@shikijs/langs": "4.5.0",
         "@textlint/kernel": "^15.8.0",
         "@textlint/module-interop": "^15.8.0",
         "@textlint/textlint-plugin-markdown": "^15.8.0",

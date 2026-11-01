@@ -27,10 +27,8 @@ import { Decoration, type DecorationSet, EditorView, keymap } from "@codemirror/
 import type { SyntaxNode } from "@lezer/common";
 import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
-import { createHighlighterCore, type HighlighterCore, type ThemedToken } from "shiki/core";
-import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import type { TocEntry } from "../core/blocks.js";
-import { CODE_LANGS, type CodeLang, DIRECTIVES, type Directive } from "../core/taxonomy.js";
+import { CODE_LANGS, DIRECTIVES, type Directive } from "../core/taxonomy.js";
 import { schemaCompletion } from "./edit-schema-completion.js";
 import type { HmrBridge } from "./hmr.js";
 import { applyUiLanguage, mountUiLanguage, t } from "./i18n.js";
@@ -44,6 +42,7 @@ interface Boot {
     path: string;
     body: string;
     figures: string[];
+    codeLanguages?: string[];
     docs: { ref: string; title: string }[];
     terms: string[];
     /**
@@ -399,92 +398,6 @@ const codeBlockField = StateField.define<DecorationSet>({
     provide: (f) => EditorView.decorations.from(f),
 });
 
-// ── Code block syntax highlighting in the preview (main content) ───────────
-// Uses shiki core (fine-grained imports, JS regex engine, github-light/dark themes).
-// html.ts emits only plain-text `<pre><code>` (baking shiki in on the server would make docHtml
-// async and affect other consumers, so that was avoided), so coloring happens client-side by
-// repainting `.codeblk` each time (initial display / innerHTML swap after render or save /
-// theme switch).
-let highlighterPromise: Promise<HighlighterCore> | null = null;
-const getHighlighter = (): Promise<HighlighterCore> => {
-    highlighterPromise ??= createHighlighterCore({
-        themes: [import("@shikijs/themes/github-light"), import("@shikijs/themes/github-dark")],
-        langs: [
-            import("@shikijs/langs/toml"),
-            import("@shikijs/langs/typescript"),
-            import("@shikijs/langs/bash"),
-            import("@shikijs/langs/json"),
-            import("@shikijs/langs/yaml"),
-            import("@shikijs/langs/sql"),
-        ],
-        engine: createJavaScriptRegexEngine(),
-    });
-    return highlighterPromise;
-};
-
-const isDarkTheme = (): boolean => {
-    const t = document.documentElement.dataset.theme;
-    if (t === "dark") {
-        return true;
-    }
-    if (t === "light") {
-        return false;
-    }
-    return window.matchMedia("(prefers-color-scheme: dark)").matches;
-};
-
-const isCodeLang = (v: string): v is CodeLang => (CODE_LANGS as readonly string[]).includes(v);
-const highlightedTheme = new WeakMap<Element, string>();
-
-// Paint every `.codeblk` in the main <article>. A lang outside CODE_LANGS (= unspecified "text")
-// stays plain, as in CodeBlock.tsx (not highlighted).
-const highlightCodeBlocks = (): void => {
-    const theme = isDarkTheme() ? "github-dark" : "github-light";
-    for (const blk of mainEl.querySelectorAll(".codeblk")) {
-        const codeEl = blk.querySelector("pre code");
-        const lang = blk.querySelector(".codeblk-lang")?.textContent ?? "";
-        if (!codeEl || !isCodeLang(lang)) {
-            continue;
-        }
-        if (highlightedTheme.get(codeEl) === theme) continue;
-        highlightedTheme.set(codeEl, theme);
-        const code = codeEl.textContent ?? "";
-        void getHighlighter().then((hl) => {
-            if (!codeEl.isConnected || highlightedTheme.get(codeEl) !== theme) return;
-            // Even for a lang listed in CODE_LANGS, shiki throws if the grammar isn't imported
-            // (client bundle version skew); in that case leave it plain (degrade, don't break).
-            let tokens: ThemedToken[][];
-            try {
-                tokens = hl.codeToTokens(code, { lang, theme }).tokens;
-            } catch {
-                return;
-            }
-            const nodes: Node[] = [];
-            tokens.forEach((line, li) => {
-                if (li > 0) {
-                    nodes.push(document.createTextNode("\n"));
-                }
-                for (const t of line) {
-                    const span = document.createElement("span");
-                    if (t.color) {
-                        span.style.color = t.color;
-                    }
-                    span.textContent = t.content;
-                    nodes.push(span);
-                }
-            });
-            codeEl.replaceChildren(...nodes);
-        });
-    }
-};
-// Repaint both when the explicit theme (data-theme, set on <html> outside the gear menu) changes
-// and when the OS theme changes in "auto" mode (baked-in colors don't follow automatically, unlike
-// CSS vars).
-new MutationObserver(highlightCodeBlocks).observe(document.documentElement, {
-    attributeFilter: ["data-theme"],
-});
-window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", highlightCodeBlocks);
-
 const runLint = async (): Promise<void> => {
     const doc = view.state.doc;
     const currentBoot = boot;
@@ -566,7 +479,7 @@ const buildSlash = (): Completion[] => {
             }),
         );
     }
-    for (const l of CODE_LANGS) {
+    for (const l of boot.codeLanguages ?? CODE_LANGS) {
         o.push(
             snippetCompletion(`\n\`\`\`${l}\n\${code}\n\`\`\`\n`, {
                 label: `/code-${l}`,
@@ -908,7 +821,6 @@ const apply = (r: RenderSnapshot): void => {
     updatePreview(r.html);
     tagCorrespondence(r.blockLines ?? []);
     highlightPreviewForCursor();
-    highlightCodeBlocks();
     updateNavLocation();
     applyUiLanguage();
 };
@@ -1822,7 +1734,6 @@ const restorePane = (pane: PreviewPane): void => {
     setStatus(dirty ? "Unsaved changes" : "");
     tagCorrespondence(draft.blockLines);
     syncPane();
-    highlightCodeBlocks();
     void runLint();
 };
 const activatePane = async (pane: PreviewPane): Promise<void> => {
@@ -2112,5 +2023,3 @@ if (location.hash) requestAnimationFrame(() => scrollToAnchor(location.hash));
 // Initial tagging (set data-ln even when corr is off, so turning it ON later works immediately).
 tagCorrespondence(boot.blockLines ?? []);
 void runLint();
-// Initial display (server-rendered and not via apply(), so paint once explicitly).
-highlightCodeBlocks();

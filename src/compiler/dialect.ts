@@ -2,7 +2,7 @@
 // only a closed subset of generic directives (remark-directive syntax). 1:1 with the README.md
 // spec. Rejects here, before publish, everything that would break consumers (unrenderable /
 // degraded text for MCP).
-import type { Code, Heading, Link, Node, Parent, Root } from "mdast";
+import type { Heading, Link, Node, Parent, Root } from "mdast";
 import type { ContainerDirective, LeafDirective } from "mdast-util-directive";
 import remarkDirective from "remark-directive";
 import remarkFrontmatter from "remark-frontmatter";
@@ -16,7 +16,6 @@ import { parseGraphSource } from "../core/graph.js";
 import { isLangTag } from "../core/language.js";
 import { parseSchemaSource } from "../core/schema-graph.js";
 import {
-    CODE_LANGS,
     CONTAINER_DIRECTIVES,
     type DirectiveKind,
     directiveRawBody,
@@ -108,14 +107,6 @@ const checkFrontmatter = (raw: unknown, errors: string[]): Frontmatter | undefin
 const checkHeading = (n: Heading, errors: string[]): void => {
     if (n.depth < 1 || n.depth > 3) {
         errors.push(`${line(n)}: only # / ## / ### headings are allowed (not h${n.depth})`);
-    }
-};
-
-const checkCode = (n: Code, errors: string[]): void => {
-    if (n.lang != null && !(CODE_LANGS as readonly string[]).includes(n.lang)) {
-        errors.push(
-            `${line(n)}: code fence language "${n.lang}" is not supported (${CODE_LANGS.join("|")} or none)`,
-        );
     }
 };
 
@@ -306,9 +297,6 @@ export const parseDoc = (input: string): ParsedDoc => {
         switch (node.type) {
             case "heading":
                 checkHeading(node as Heading, errors);
-                break;
-            case "code":
-                checkCode(node as Code, errors);
                 break;
             case "listItem":
                 checkListItem(node as Parent, errors);

@@ -40,7 +40,10 @@ const checkAdapter = (value: unknown, i: number): LanguageAdapter => {
 export const loadDocsConfig = async (root: string): Promise<ResolvedConfig> => {
     const file = join(root, CONFIG_FILE);
     if (!existsSync(file)) {
-        return { defaultLang: DEFAULT_LANG, languages: [] };
+        return {
+            defaultLang: DEFAULT_LANG,
+            languages: [],
+        };
     }
     const mod = (await import(pathToFileURL(file).href)) as { default?: unknown };
     const config = mod.default;

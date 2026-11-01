@@ -14,7 +14,10 @@ const rootWith = (config?: string): string => {
 
 describe("loadDocsConfig (docs.config.mjs)", () => {
     it("defaults to en and no extra adapters when the file is absent", async () => {
-        expect(await loadDocsConfig(rootWith())).toEqual({ defaultLang: "en", languages: [] });
+        expect(await loadDocsConfig(rootWith())).toEqual({
+            defaultLang: "en",
+            languages: [],
+        });
     });
 
     it("reads defaultLang and adapters (functions included)", async () => {
