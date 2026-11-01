@@ -17,6 +17,7 @@
 import { existsSync, watch } from "node:fs";
 import type { ServerResponse } from "node:http";
 import { join } from "node:path";
+import { MANIFEST_FILE } from "../core/content-metadata.js";
 import type { ServeMode } from "./serve.js";
 
 /** SSE endpoint. SoT for the server route and the client script's connection target. */
@@ -47,7 +48,7 @@ export const classifyChange = (rel: string): HmrKind | undefined => {
         return "client";
     }
     // content = body text (.md) and manifest.yaml (= SoT for hierarchy and ordering).
-    if (p.startsWith("content/") && (p.endsWith(".md") || p.endsWith(".yaml"))) {
+    if (p === MANIFEST_FILE || (p.startsWith("content/") && p.endsWith(".md"))) {
         return "content";
     }
     if (p.startsWith("locales/") && p.endsWith(".json")) return "content";
@@ -170,6 +171,12 @@ export const watchProject = (
                 }
             }),
         );
+    // Watch the directory so atomic replacements of the manifest are detected too.
+    watchers.push(
+        watch(docsRoot, (_event, name) => {
+            if (name && String(name) === MANIFEST_FILE) note(MANIFEST_FILE);
+        }),
+    );
     return () => {
         if (timer) {
             clearTimeout(timer);

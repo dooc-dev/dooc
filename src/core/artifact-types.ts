@@ -35,7 +35,7 @@ export type FigureIndexEntry = Omit<FigureEntry, "markup">;
 // The display name is resolved via docDisplayName (taxonomy.ts).
 export type ArtifactDoc = Frontmatter & {
     id: string;
-    /** Parent doc id (SoT: content/manifest.yaml). Omitted = top level. docs[] is in pre-order. */
+    /** Parent doc id (SoT: manifest.yaml). Omitted = top level. docs[] is in pre-order. */
     parent?: string;
     /** `content/<id>.md`. */
     file: string;

@@ -211,21 +211,21 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
         if (!existsSync(contentDir)) {
             siteErrors.push(`${contentDir}: content/ is missing`);
         } else {
-            const manifestPath = join(contentDir, MANIFEST_FILE);
+            const manifestPath = join(root, MANIFEST_FILE);
             const { tree, errors: manifestErrors } = existsSync(manifestPath)
                 ? manifestCache.get(manifestPath, parseManifestText)
                 : { tree: [], errors: [`${MANIFEST_FILE} is required`] };
-            siteErrors.push(...manifestErrors.map((e) => `content/${e}`));
-            // Directly under content/: flat <id>.md files + manifest.yaml only (no folders).
+            siteErrors.push(...manifestErrors);
+            // Directly under content/: flat <id>.md files only (no folders).
             const onDisk = new Set<string>();
             for (const entry of readdirSync(contentDir, { withFileTypes: true })) {
-                if (entry.name.startsWith(".") || entry.name === MANIFEST_FILE) {
+                if (entry.name.startsWith(".")) {
                     continue;
                 }
                 const id = entry.isFile() ? docIdOfFile(entry.name) : undefined;
                 if (id == null) {
                     siteErrors.push(
-                        `content/${entry.name}: only <id>.md (lowercase alphanumerics and hyphens) and ${MANIFEST_FILE} are allowed directly under content/`,
+                        `content/${entry.name}: only <id>.md (lowercase alphanumerics and hyphens) are allowed directly under content/`,
                     );
                     continue;
                 }

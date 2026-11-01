@@ -1,4 +1,4 @@
-// Reads/writes content/manifest.yaml (node-dependent). Tree validation and manipulation live in
+// Reads/writes manifest.yaml (node-dependent). Tree validation and manipulation live in
 // core/content-metadata.ts.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -24,13 +24,13 @@ export const parseManifestText = (raw: string): { tree: DocNode[]; errors: strin
 };
 
 /** Empty tree if missing (a new docs root with zero docs). */
-export const readManifest = (contentDir: string): { tree: DocNode[]; errors: string[] } => {
-    const path = join(contentDir, MANIFEST_FILE);
+export const readManifest = (root: string): { tree: DocNode[]; errors: string[] } => {
+    const path = join(root, MANIFEST_FILE);
     return existsSync(path)
         ? parseManifestText(readFileSync(path, "utf8"))
         : { tree: [], errors: [] };
 };
 
-export const writeManifest = (contentDir: string, tree: readonly DocNode[]): void => {
-    writeFileSync(join(contentDir, MANIFEST_FILE), serializeManifest(tree));
+export const writeManifest = (root: string, tree: readonly DocNode[]): void => {
+    writeFileSync(join(root, MANIFEST_FILE), serializeManifest(tree));
 };

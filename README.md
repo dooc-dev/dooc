@@ -75,8 +75,8 @@ teams:
 ```
 <root>/
   docs.config.mjs    # optional: default language + language adapters (see Languages)
+  manifest.yaml     # doc hierarchy and order
   content/
-    manifest.yaml    # doc hierarchy and order (see below)
     <id>.md          # body. file name = doc id (URL /<id>, link doc:<id>)
   figures/
     <name>.svg | <name>.drawio.svg | <name>.png | <name>.webp | <name>.jpg | <name>.html

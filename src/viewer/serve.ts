@@ -8,7 +8,7 @@
 //   edit    = left = live render of the body / right = front-matter form + insert palette +
 //             CodeMirror (`document-system edit`). The save API rewrites content/<id>.md directly,
 //             and hierarchy changes (create / move / rename / delete) rewrite
-//             content/manifest.yaml.
+//             manifest.yaml.
 //             The client (src/viewer/edit-client.ts) is bundled in memory with esbuild on
 //             first request (cached) and served.
 import { createHash } from "node:crypto";

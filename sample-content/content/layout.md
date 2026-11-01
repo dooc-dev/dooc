@@ -8,8 +8,8 @@ description: "ファイルの配置と3階層の目次の作り方。"
 
 ```
 sample-content/
+  manifest.yaml
   content/
-    manifest.yaml
     guide.md
     getting-started.md
     layout.md
@@ -22,7 +22,7 @@ sample-content/
 | 場所 | 役割 |
 | --- | --- |
 | `content/<id>.md` | 本文。ファイル名が文書IDになる |
-| `content/manifest.yaml` | サイドバーの階層と表示順 |
+| `manifest.yaml` | サイドバーの階層と表示順 |
 | `figures/` | SVG・画像・HTML断片 |
 
 ## 3階層の目次

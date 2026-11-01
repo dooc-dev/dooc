@@ -15,12 +15,12 @@ const writeDoc = (path: string, title: string): void => {
     writeFileSync(path, `---\ntitle: "${title}"\n---\n\nBody.\n`);
 };
 
-// content/ = flat <id>.md files + manifest.yaml.
+// content/ = flat <id>.md files; manifest.yaml sits at the docs root.
 const makeRoot = (manifest: string, docs: Record<string, string> = {}): string => {
     const root = mkdtempSync(join(tmpdir(), "docs-build-"));
     const content = join(root, "content");
     mkdirSync(content, { recursive: true });
-    writeFileSync(join(content, "manifest.yaml"), manifest);
+    writeFileSync(join(root, "manifest.yaml"), manifest);
     for (const [id, title] of Object.entries(docs)) {
         writeDoc(join(content, `${id}.md`), title);
     }
@@ -58,8 +58,8 @@ describe("compileSite manifest", () => {
 
     it("errors on a missing / broken manifest.yaml / duplicate ids", () => {
         const none = makeRoot("", { a: "A" });
-        rmSync(join(none, "content", "manifest.yaml"));
-        expect(compileSite(none).errors).toContain("content/manifest.yaml is required");
+        rmSync(join(none, "manifest.yaml"));
+        expect(compileSite(none).errors).toContain("manifest.yaml is required");
         const broken = makeRoot("- a:\n  - [", { a: "A" });
         expect(compileSite(broken).errors.some((e) => e.includes("invalid YAML"))).toBe(true);
         const dup = makeRoot("- a\n- b:\n    - a\n", { a: "A", b: "B" });

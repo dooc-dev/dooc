@@ -67,7 +67,7 @@ export const createDocOps = (root: string) => {
     // Read before rewriting manifest.yaml. If it's broken, don't write (= don't clobber
     // hand-written content).
     const loadTree = (): OpResult<{ tree: DocNode[] }> => {
-        const { tree, errors } = readManifest(contentDir);
+        const { tree, errors } = readManifest(root);
         return errors.length > 0 ? { error: errors.join(" / "), status: 409 } : { tree };
     };
 
@@ -108,7 +108,7 @@ export const createDocOps = (root: string) => {
         }
         mkdirSync(contentDir, { recursive: true });
         writeFileSync(docPath(id), assembleDoc({ title }, ""));
-        writeManifest(contentDir, tree);
+        writeManifest(root, tree);
         return { id };
     };
 
@@ -131,7 +131,7 @@ export const createDocOps = (root: string) => {
                 status: 409,
             };
         }
-        writeManifest(contentDir, tree);
+        writeManifest(root, tree);
         return { id };
     };
 
@@ -173,7 +173,7 @@ export const createDocOps = (root: string) => {
         if (existsSync(iconPath(oldId))) {
             renameSync(iconPath(oldId), iconPath(newId));
         }
-        writeManifest(contentDir, tree);
+        writeManifest(root, tree);
         let updatedRefs = 0;
         for (const f of readdirSync(contentDir).filter((n) => docIdOfFile(n) != null)) {
             const p = join(contentDir, f);
@@ -245,7 +245,7 @@ export const createDocOps = (root: string) => {
             };
         }
         const parent = flattenTree(loaded.tree).find((n) => n.id === id)?.parent;
-        writeManifest(contentDir, tree);
+        writeManifest(root, tree);
         unlinkSync(docPath(id));
         if (existsSync(iconPath(id))) {
             unlinkSync(iconPath(id));

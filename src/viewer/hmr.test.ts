@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -7,7 +7,7 @@ import { classifyChange, createHmrHub, hmrClientScript, sseFrame, watchProject }
 describe("classifyChange", () => {
     it("content bodies / manifest and figures count as content", () => {
         expect(classifyChange("content/setup.md")).toBe("content");
-        expect(classifyChange("content/manifest.yaml")).toBe("content");
+        expect(classifyChange("manifest.yaml")).toBe("content");
         expect(classifyChange("figures/shot.png")).toBe("content");
         expect(classifyChange("figures/system-overview.svg")).toBe("content");
         expect(classifyChange("figures/anim.html")).toBe("content");
@@ -122,9 +122,13 @@ describe("watchProject", () => {
             writeFileSync(join(root, "content/dev/10-a.md"), '---\ntitle: "a"\n---\n');
             writeFileSync(join(root, "figures/x.svg"), "<svg/>");
             writeFileSync(join(root, "src/serve.ts"), "// ignored");
+            writeFileSync(join(root, "manifest.tmp"), "- a\n");
+            renameSync(join(root, "manifest.tmp"), join(root, "manifest.yaml"));
             await new Promise((r) => setTimeout(r, 400));
             const content = seen.filter((e) => e.kind === "content").flatMap((e) => e.files);
-            expect(new Set(content)).toEqual(new Set(["content/dev/10-a.md", "figures/x.svg"]));
+            expect(new Set(content)).toEqual(
+                new Set(["content/dev/10-a.md", "figures/x.svg", "manifest.yaml"]),
+            );
             expect(seen.some((e) => e.files.some((f) => f.endsWith("serve.ts")))).toBe(false);
         } finally {
             stop();

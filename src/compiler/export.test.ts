@@ -31,11 +31,18 @@ describe("export / zip", () => {
         );
     });
 
-    it("includes docs.config.mjs (default language / adapters) when present", () => {
+    it("includes the root manifest and docs.config.mjs when present", () => {
         const root = mkdtempSync(join(tmpdir(), "docs-export-config-"));
         mkdirSync(join(root, "content"));
         writeFileSync(join(root, "content", "a.md"), "Body\n");
         writeFileSync(join(root, "docs.config.mjs"), 'export default { defaultLang: "ja" };\n');
-        expect(exportEntries(root).map((e) => e.name)).toEqual(["docs.config.mjs", "content/a.md"]);
+        writeFileSync(join(root, "manifest.yaml"), "- a\n");
+        const entries = exportEntries(root);
+        expect(entries.map((e) => e.name)).toEqual([
+            "docs.config.mjs",
+            "manifest.yaml",
+            "content/a.md",
+        ]);
+        expect(entries.find((e) => e.name === "manifest.yaml")?.data.toString()).toBe("- a\n");
     });
 });

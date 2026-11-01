@@ -1,4 +1,4 @@
-// The content/ contract. Doc bodies sit flat in content/<id>.md, and only content/manifest.yaml
+// The content/ contract. Doc bodies sit flat in content/<id>.md, and only manifest.yaml
 // holds the hierarchy and order (docs themselves have no root / child distinction; any doc can
 // have children). id = the file name stem is the resolution key for URLs / doc: links and is
 // unique site-wide. YAML reading/writing lives in compiler/manifest.ts; this file only does

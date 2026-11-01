@@ -11,7 +11,7 @@ import { createDocOps } from "./ops.js";
 const fixture = (): string => {
     const root = mkdtempSync(join(tmpdir(), "docs-locales-"));
     mkdirSync(join(root, "content"));
-    writeFileSync(join(root, "content/manifest.yaml"), "- guide:\n    - child\n");
+    writeFileSync(join(root, "manifest.yaml"), "- guide:\n    - child\n");
     writeFileSync(join(root, "content/guide.md"), '---\ntitle: "ガイド"\n---\n\n原文\n');
     writeFileSync(join(root, "content/child.md"), '---\ntitle: "詳細"\n---\n\n詳細の原文\n');
     return root;
