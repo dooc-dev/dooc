@@ -6,7 +6,7 @@ import { iso6393To1 } from "iso-639-3";
 //
 // The doc language is a BCP 47 tag: front-matter `lang`, else the site default
 // (docs.config.mjs `defaultLang`, else DEFAULT_LANG).
-import type { DictEntry } from "./artifact-types.js";
+import type { TermEntry } from "./artifact-types.js";
 
 export const DEFAULT_LANG = "en";
 
@@ -27,13 +27,8 @@ export interface LanguageAdapter {
      * (`ja-JP` → `ja`).
      */
     readonly code: string;
-    /**
-     * Whether a dictionary-term occurrence at text[start, end) stands as a whole term (word
-     * boundaries). Default: unicodeTermBoundary.
-     */
-    isTermBoundary?: (text: string, start: number, end: number) => boolean;
-    /** Order of the dictionary listing (A → Z). Default: Intl.Collator for `code`, by term. */
-    compareTerms?: (a: DictEntry, b: DictEntry) => number;
+    /** Order of term listings. Default: Intl.Collator for code, by name. */
+    compareTerms?: (a: TermEntry, b: TermEntry) => number;
     /** Language of the editor's browser spellcheck. Default: the doc's tag. */
     spellcheckLang?: string;
     /**
@@ -50,16 +45,6 @@ export interface DocsConfig {
     /** Extra adapters. They take precedence over the built-in ones with the same code. */
     languages?: LanguageAdapter[];
 }
-
-// Generic rule for space-delimited scripts: a term must not continue a word on either side
-// (letters / digits / marks / `_`, and `-word` hyphenation such as `api-v2`).
-const WORD_BEFORE = /[\p{L}\p{N}\p{M}_-]$/u;
-const WORD_AFTER = /^(?:[\p{L}\p{N}\p{M}_]|-[\p{L}\p{N}\p{M}_])/u;
-
-export const unicodeTermBoundary = (text: string, start: number, end: number): boolean =>
-    // Slices are 2–3 code units wide so a surrogate pair next to the match is read whole.
-    !WORD_BEFORE.test(text.slice(Math.max(0, start - 2), start)) &&
-    !WORD_AFTER.test(text.slice(end, end + 3));
 
 /**
  * Adapter for a doc tag: exact code match, then the primary subtag, else a generic adapter
@@ -79,11 +64,6 @@ export const resolveLanguage = (
     );
 };
 
-export const termBoundary = (
-    language: LanguageAdapter | undefined,
-): NonNullable<LanguageAdapter["isTermBoundary"]> =>
-    language?.isTermBoundary ?? unicodeTermBoundary;
-
 const collator = (code: string): Intl.Collator => {
     try {
         return new Intl.Collator(code, { sensitivity: "base" });
@@ -100,5 +80,5 @@ export const termComparator = (
         return language.compareTerms;
     }
     const c = collator(language?.code ?? DEFAULT_LANG);
-    return (a, b) => c.compare(a.term, b.term);
+    return (a, b) => c.compare(a.name, b.name);
 };

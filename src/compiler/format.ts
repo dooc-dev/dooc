@@ -32,6 +32,8 @@ export function formatMarkdown(body: string): string {
             listItemIndent: "one",
             fences: true,
             handlers: {
+                text: (node, _parent, state, info) =>
+                    state.safe(node.value, info).replace(/::\\:term\(([^()\n]*)\)/g, ":::term($1)"),
                 containerDirective: preserve,
                 leafDirective: preserve,
                 code: (node, parent) => {

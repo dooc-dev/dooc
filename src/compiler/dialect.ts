@@ -11,8 +11,9 @@ import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { SKIP, visit } from "unist-util-visit";
 import { parse as parseYaml } from "yaml";
-import type { DictEntry } from "../core/artifact-types.js";
+import type { TermEntry } from "../core/artifact-types.js";
 import { parseGraphSource } from "../core/graph.js";
+import { inlineSegmenter, TERM_ID_RE } from "../core/inline.js";
 import { isLangTag } from "../core/language.js";
 import { parseSchemaSource } from "../core/schema-graph.js";
 import {
@@ -26,7 +27,7 @@ import {
     LEAF_DIRECTIVES,
     normalizeLeafDirectives,
 } from "../core/taxonomy.js";
-import { parseDictionarySource } from "./dictionary.js";
+import { parseTermSource } from "./terms.js";
 
 const processor = unified()
     .use(remarkParse)
@@ -37,7 +38,7 @@ const processor = unified()
 export const parseMdast = (raw: string): Root => processor.parse(raw);
 
 export interface ParsedDoc {
-    dictionary: DictEntry[];
+    terms: TermEntry[];
     frontmatter: Frontmatter | undefined;
     /** Body text without the front-matter (becomes the manifest's body). */
     body: string;
@@ -157,6 +158,11 @@ const checkDirectiveAttrs = (
                 `${line(n)}: :::${n.name}(${src}) has an unsupported extension (only ${spec.exts?.join(" / ")})`,
             );
         }
+    } else if (n.name === "term") {
+        if (keys.length !== 1 || !TERM_ID_RE.test(n.attributes?.id ?? ""))
+            errors.push(
+                `${line(n)}: use :::term(id) with a lowercase alphanumeric ID (hyphens and underscores allowed)`,
+            );
     } else if (keys.length > 0) {
         errors.push(
             `${line(n)}: :::${n.name}{...} attributes are not allowed (${spec.caption ? `for a caption, use :::${n.name}[caption]` : "it takes no attributes"})`,
@@ -198,7 +204,6 @@ const RAW_PARSERS: Record<
     string,
     { parse: (source: string) => { errors: { line: number; message: string }[] }; hint: string }
 > = {
-    dictionary: { parse: parseDictionarySource, hint: "write the terms as a YAML array" },
     schema: { parse: parseSchemaSource, hint: "write the table DSL directly" },
     graph: { parse: parseGraphSource, hint: "write node / edge lines directly" },
 };
@@ -208,7 +213,13 @@ const RAW_PARSERS: Record<
 // doesn't walk descendants).
 const checkRawDirective = (n: ContainerDirective, raw: string, errors: string[]): void => {
     checkDirectiveAttrs(n, "container", errors);
-    const parser = RAW_PARSERS[n.name];
+    const parser =
+        n.name === "term"
+            ? {
+                  parse: (source: string) => parseTermSource(n.attributes?.id ?? "", source),
+                  hint: "write name and definition as YAML",
+              }
+            : RAW_PARSERS[n.name];
     if (parser == null) {
         return;
     }
@@ -218,7 +229,10 @@ const checkRawDirective = (n: ContainerDirective, raw: string, errors: string[])
         errors.push(`${line(n)}: cannot determine the extent of :::${n.name}`);
         return;
     }
-    const body = directiveRawBody(raw.slice(start, end));
+    const slice = raw.slice(start, end);
+    if (n.name === "term" && !/\n[ \t]*:::[ \t]*$/.test(slice.trimEnd()))
+        errors.push(`${line(n)}: :::term definition must close with :::`);
+    const body = directiveRawBody(slice);
     if (body.trim() === "") {
         errors.push(`${line(n)}: :::${n.name} is empty (${parser.hint})`);
         return;
@@ -246,7 +260,7 @@ export const parseDoc = (input: string): ParsedDoc => {
         );
     }
     const root = parseMdast(raw);
-    const dictionary: DictEntry[] = [];
+    const terms: TermEntry[] = [];
 
     const yamlNode = root.children[0];
     let frontmatter: Frontmatter | undefined;
@@ -272,12 +286,15 @@ export const parseDoc = (input: string): ParsedDoc => {
         ) {
             checkRawDirective(node as ContainerDirective, raw, errors);
             const d = node as ContainerDirective;
-            if (d.name === "dictionary") {
+            if (d.name === "term") {
                 const start = d.position?.start.offset;
                 const end = d.position?.end.offset;
                 if (start != null && end != null)
-                    dictionary.push(
-                        ...parseDictionarySource(directiveRawBody(raw.slice(start, end))).entries,
+                    terms.push(
+                        ...parseTermSource(
+                            d.attributes?.id ?? "",
+                            directiveRawBody(raw.slice(start, end)),
+                        ).entries,
                     );
             }
             return SKIP;
@@ -315,25 +332,31 @@ export const parseDoc = (input: string): ParsedDoc => {
         }
     });
 
-    return { frontmatter, body, source: raw, root, errors, dictionary };
+    return { frontmatter, body, source: raw, root, errors, terms };
 };
 
 /**
  * Collect the figures a doc references (:::figure / :::html files, relative to figures/), for
  * cross-checking against figures/.
  */
-export const collectRefs = (root: Root): { figures: string[] } => {
+export const collectRefs = (root: Root): { figures: string[]; terms: string[] } => {
     const figures: string[] = [];
+    const terms: string[] = [];
+    const segments = inlineSegmenter();
     visit(root, (node) => {
         if (
             node.type === "containerDirective" &&
             findDirective("container", (node as ContainerDirective).name)?.raw
         )
             return SKIP;
+        if (node.type === "link" || node.type === "code" || node.type === "inlineCode") return SKIP;
+        if (node.type === "text")
+            for (const segment of segments(node.value))
+                if (segment.kind === "term") terms.push(segment.id);
         if (node.type === "leafDirective") {
             const src = (node as LeafDirective).attributes?.src;
             if (src) figures.push(src);
         }
     });
-    return { figures };
+    return { figures, terms: [...new Set(terms)] };
 };

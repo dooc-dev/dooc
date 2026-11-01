@@ -35,18 +35,19 @@ import {
 } from "../compiler/language-codes.js";
 import { catalogLanguages, readCatalog, writeCatalog } from "../compiler/locales.js";
 import { assembleDoc, createDocOps, isOpError, type OpResult } from "../compiler/ops.js";
-import type { ArtifactDoc } from "../core/artifact-types.js";
+import type { ArtifactDoc, TermEntry } from "../core/artifact-types.js";
 import type { Block, TocEntry } from "../core/blocks.js";
 import { docIdOfFile } from "../core/content-metadata.js";
-import { mountDictionaries } from "../core/dictionary-ui.js";
 import { figureFrameHtml, mountFigureFrames } from "../core/figure-frame.js";
-import { docHtml, escapeHtml, figureIndexRoute, type RenderCtx } from "../core/html.js";
+import { docHtml, escapeHtml, figureIndexRoute, type RenderCtx, termsHtml } from "../core/html.js";
 import { isLangTag, type LanguageAdapter, resolveLanguage } from "../core/language.js";
 import { ancestorsOf, childrenOf, docPath, resolveDocPath } from "../core/routing.js";
 import { CODE_LANGS, docDisplayName, type Frontmatter } from "../core/taxonomy.js";
+import { mountTerms } from "../core/terms-ui.js";
 import { isLocalToolRequest, runCodeTool, validateCodeTools } from "./editor-tools.js";
 import { fontCss, readFont } from "./fonts.js";
 import { createHmrHub, HMR_PATH, hmrClientScript, watchProject } from "./hmr.js";
+import { translate } from "./i18n.js";
 import { DEFAULT_SITE_LANGUAGES, loadSiteLanguages } from "./languages.js";
 
 export type ServeMode = "preview" | "edit";
@@ -92,9 +93,11 @@ export interface Entry {
     icon?: string;
     /** Names of the figures the body references (Resources' "used in"). */
     figureRefs?: string[];
+    termRefs?: string[];
 }
 
 export interface Site {
+    title?: string;
     codeLanguages?: string[];
     codeGrammars?: LanguageRegistration[];
     contentLanguage?: string;
@@ -126,6 +129,7 @@ const toEntry = (doc: ArtifactDoc, source: DocSource): Entry => ({
     errors: source.errors,
     ...(doc.icon == null ? {} : { icon: doc.icon }),
     figureRefs: doc.refs.figures,
+    termRefs: doc.refs.terms,
 });
 
 // Recompile on every request (= read the docs.json equivalent in real time). The compiler's cache
@@ -142,13 +146,23 @@ export const siteFrom = (
     languages: readonly LanguageAdapter[] = DEFAULT_SITE_LANGUAGES.languages,
 ): Site => {
     return {
+        ...(artifact.title === undefined ? {} : { title: artifact.title }),
         entries: artifact.docs.flatMap((doc) => {
             const source = sources.get(doc.file);
             return source ? [toEntry(doc, source)] : [];
         }),
         ctx: {
             figures: new Map(figures.map((f) => [f.name, f])),
-            dictionary: artifact.dictionary,
+            terms: artifact.terms,
+            termLinks: new Map(
+                artifact.docs.flatMap((doc) =>
+                    doc.blocks.flatMap((block) =>
+                        block.type === "term"
+                            ? [[block.entry.id, `/${doc.id}#term-${block.entry.id}`] as const]
+                            : [],
+                    ),
+                ),
+            ),
             figureIndex: figureIndexRoute(artifact.docs),
         },
         errors: siteErrors,
@@ -197,11 +211,15 @@ const draftContext = (site: Site): DraftContext => ({
         file: CONTENT_PREFIX + e.file,
     })),
     figures: site.ctx.figures,
+    termSources: site.entries.map((entry) => ({
+        file: CONTENT_PREFIX + entry.file,
+        entries: entry.blocks.flatMap((block) => (block.type === "term" ? [block.entry] : [])),
+    })),
     defaultLang: site.defaultLang,
 });
 
 // fallbackTitle stands in for the h1 when frontmatter is missing. Each doc renders with its own
-// language's adapter (term boundaries, dictionary order) and `<article lang>`.
+// language's adapter (term ordering) and `<article lang>`.
 const docLinks = (site: Site, html: string): string =>
     html.replace(/href="\/([a-z0-9][a-z0-9-]*)(?=["?#])/g, (whole, id: string) =>
         site.entries.some((entry) => entry.id === id)
@@ -218,7 +236,21 @@ const renderEntry = (site: Site, entry: Entry, fallbackTitle: string): string =>
             [...site.errors, ...entry.errors],
             {
                 ...site.ctx,
+                terms: [
+                    ...site.ctx.terms.filter(
+                        (term) =>
+                            !site.entries
+                                .find((saved) => saved.file === entry.file)
+                                ?.blocks.some(
+                                    (block) => block.type === "term" && block.entry.id === term.id,
+                                ),
+                    ),
+                    ...entry.blocks.flatMap((block) =>
+                        block.type === "term" ? [block.entry] : [],
+                    ),
+                ],
                 lang: webLanguage(entry.lang),
+                tocTitle: translate(entry.lang, "Contents"),
                 language: resolveLanguage(entry.lang, site.languages),
             },
             entry.toc,
@@ -248,16 +280,10 @@ const renderDraft = (
 
 // Render result cache — opening the same doc repeatedly (page GET / nav switch) doesn't re-render.
 // The compiler's cache returns the same blocks reference while disk is unchanged, so check that,
-// plus that the id list (affects doc: link resolution) / dictionary / figures / errors haven't
+// plus that the id list (affects doc: link resolution) / terms / figures / errors haven't
 // changed. Rebuild if any of them did.
 const renderSignature = (site: Site, entry: Entry): string =>
-    JSON.stringify([
-        site.ctx.dictionary,
-        site.errors,
-        entry.errors,
-        entry.frontmatter,
-        entry.lang,
-    ]) +
+    JSON.stringify([site.ctx.terms, site.errors, entry.errors, entry.frontmatter, entry.lang]) +
     site.entries
         .map((e) => docPath(site.entries, e.id))
         .sort()
@@ -490,20 +516,15 @@ button { font-family: inherit; font-size: inherit; font-weight: var(--fw-body); 
   display: flex; flex-direction: column; background: var(--c-bg1);
   border-right: 1px solid var(--c-line); overflow: hidden; }
 body.sidebar-closed #sidebar { width: 52px; }
-body.sidebar-closed #sidebar-content, body.sidebar-closed .breadcrumb,
+body.sidebar-closed #sidebar-content, body.sidebar-closed .site-title,
 body.sidebar-closed #sidebar-foot .nav-label { display: none; }
 #sidebar-head { flex: none; display: flex; align-items: center; min-width: 0;
   border-bottom: 1px solid var(--c-line); }
 #sidebar-toggle { flex: none; display: flex; align-items: center; padding: 14px 16px;
   background: transparent; border: none; color: var(--c-fg-muted); cursor: pointer; }
 #sidebar-toggle:hover { color: var(--c-fg); }
-.breadcrumb { flex: 1; display: flex; align-items: center; min-width: 0; overflow: hidden;
-  padding-right: 12px; color: var(--c-fg-faint); white-space: nowrap; }
-.breadcrumb span { overflow: hidden; text-overflow: ellipsis; color: var(--c-fg-muted); }
-.breadcrumb span:last-child { flex-shrink: 0; max-width: 100%; color: var(--c-fg); }
-.breadcrumb span:empty { display: none; }
-.breadcrumb span + span::before { content: "›"; margin: 0 6px; color: var(--c-fg-faint); }
-.breadcrumb span:empty + span::before { content: none; }
+.site-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  padding-right: 12px; color: var(--c-fg); white-space: nowrap; }
 #sidebar-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
   scrollbar-gutter: stable;
   padding: 10px 0 8px; }
@@ -609,7 +630,7 @@ pre code { background: none; padding: 0; font-size: 13.5px; }
 .codeblk { margin: 10px 0; border: 1px solid var(--doc-border); border-radius: 8px; overflow: hidden; }
 .codeblk > pre { margin: 0; }
 .codeblk-head { display: flex; align-items: center; gap: 4px; cursor: pointer;
-  padding: 5px 8px 5px 14px; border-bottom: 1px solid var(--doc-border); }
+  padding: 2px 8px 2px 14px; border-bottom: 1px solid var(--doc-border); }
 .codeblk-lang { font-family: var(--doc-mono); font-size: 10px; letter-spacing: 1.4px;
   text-transform: uppercase; color: var(--doc-fg-3); margin-right: auto; }
 .codefold svg { transition: transform 150ms ease; }
@@ -648,7 +669,7 @@ ul.idx { list-style: none; padding: 0; }
 ul.idx li { margin: 10px 0; }
 .idx-desc { opacity: .6; font-size: 13px; margin-left: 8px; }
 details summary { cursor: pointer; opacity: .8; }
-/* Figure refs (Fig. <name>) / dictionary terms in the body: link-like, rendering the figure /
+/* Figure refs (Fig. <name>) / term references in the body: link-like, rendering the figure /
    definition on hover */
 .figref, .dictref { color: var(--doc-accent-2); text-decoration: none;
   border-bottom: 1px dotted currentColor; position: relative; cursor: pointer; }
@@ -662,22 +683,33 @@ details summary { cursor: pointer; opacity: .8; }
 .figpop svg { max-width: 100%; height: auto; display: block; }
 .figpop .fig-frame { width: 100% !important; }
 .dictref .dictpop { width: min(420px, 70vw); }
-.dictread { display: block; font-size: 11px; color: var(--doc-fg-3); }
-.dictionary { margin: 12px 0; }
-.dictionary .dict-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; color: var(--doc-fg-3); font-size: 12px; }
-.dictionary .dict-toolbar label { display: flex; align-items: center; gap: 8px; }
-.dictionary select { font: inherit; color: var(--doc-fg); background: var(--doc-panel); border: 1px solid var(--doc-border); border-radius: 4px; padding: 4px 8px; }
-.dictionary dl.dict { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; margin: 0; }
-.dictionary .dict-card { padding: 10px 12px; border: 1px solid var(--doc-border); border-radius: 4px; background: var(--doc-panel); min-width: 0; overflow-wrap: anywhere; }
-.dictionary dl.dict dt { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; margin: 0; font-size: 15px; line-height: 1.4; color: var(--doc-fg); scroll-margin-top: 16px; }
-.dictionary dl.dict dd { margin: 3px 0 0; padding: 0; border: 0; font-size: 13px; line-height: 1.6; }
-.dictionary .dict-card p { margin: 3px 0; }
-.dictionary :focus-visible { outline: 2px solid var(--doc-accent-2); outline-offset: 4px; }
-.dictionary .dict-card:has(:target) { border-color: var(--doc-accent-2); }
-dl.dict dt { margin-top: 18px; font-size: 15px; }
-dl.dict dt .dictread { display: inline; margin-left: 8px; }
-dl.dict dd { margin: 4px 0 0 0; padding-left: 14px; font-size: 13.5px;
-  border-left: 2px solid var(--doc-border); }
+.dictpop-description { display: block; margin-top: 8px; padding-top: 8px;
+  border-top: 1px solid var(--doc-border); color: var(--doc-fg-3); font-size: 12px; }
+.dictref:focus-visible .dictpop { display: block; }
+.terms { margin: 18px 0; }
+.terms .dict-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; color: var(--doc-fg-3); font-size: 12px; }
+.terms .dict-toolbar label { display: flex; align-items: center; gap: 8px; }
+.terms select { font: inherit; color: var(--doc-fg); background: var(--doc-panel); border: 1px solid var(--doc-border); border-radius: 4px; padding: 4px 8px; }
+.terms dl.dict { display: grid; gap: 8px; margin: 0; }
+.terms .dict-card { padding: 14px 16px; border: 1px solid var(--doc-border);
+  border-radius: 4px; min-width: 0; overflow-wrap: anywhere; }
+.terms dl.dict dt { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; font-weight: 600;
+  line-height: 1.5; color: var(--doc-fg); scroll-margin-top: 16px; }
+.terms dl.dict dd { margin: 6px 0 0; padding: 0; border: 0; font-size: 13.5px;
+  line-height: 1.8; white-space: pre-line; }
+.terms .dict-card:has(:target) { border-color: var(--doc-accent-2); }
+.terms .term-icon { flex: none; color: var(--doc-fg-3); }
+.terms .term-name { position: relative; min-width: 0; text-decoration: none; overflow-wrap: anywhere; }
+.terms .term-name:hover { text-decoration: underline; text-underline-offset: 3px; }
+.terms .term-description { display: none; position: absolute; left: 0; top: 100%; z-index: 6;
+  width: max-content; max-width: min(360px, calc(100vw - 96px)); box-sizing: border-box;
+  padding: 10px 14px; margin-top: 8px; border: 1px solid var(--doc-border); border-radius: 6px;
+  background: var(--doc-panel); color: var(--doc-fg); font-family: var(--font-sans);
+  font-size: 13px; font-weight: 400; line-height: 1.7; white-space: pre-line;
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--doc-fg) 12%, transparent); }
+.terms .term-description::before { content: ""; position: absolute; left: 0; right: 0; top: -9px; height: 9px; }
+.terms .term-name:hover .term-description,
+.terms .term-name:focus .term-description { display: block; }
 `;
 
 // edit mode only (right panel / new doc form). Uses the viewer's shared background / rules and
@@ -947,7 +979,7 @@ export const navGroupsHtml = (
 // ── Resources (shown in edit mode only; asset list of the docs root) ──────────────────────
 // Structure: Resources (list page of everything) › kind (list pages for figures / html / icons) › individual file.
 // Route is `/_resources[/<kind>[/<file>]]` (doc ids can't start with `_`, so no collision).
-const RESOURCE_KINDS = ["figures", "html", "icons"] as const;
+const RESOURCE_KINDS = ["figures", "html", "icons", "terms"] as const;
 type ResourceKind = (typeof RESOURCE_KINDS)[number];
 interface Resource {
     kind: ResourceKind;
@@ -957,6 +989,15 @@ interface Resource {
     path: string;
 }
 const siteResources = (site: Site): Resource[] => [
+    ...site.ctx.terms.map((term) => ({
+        kind: "terms" as const,
+        file: term.id,
+        path:
+            CONTENT_PREFIX +
+            (site.entries.find((entry) =>
+                entry.blocks.some((block) => block.type === "term" && block.entry.id === term.id),
+            )?.file ?? ""),
+    })),
     ...[...site.ctx.figures.values()].map((f) => ({
         kind: f.kind === "html" ? ("html" as const) : ("figures" as const),
         file: f.file.replace(/^figures\//, ""),
@@ -992,9 +1033,9 @@ const navResourcesHtml = (site: Site, currentRes?: string): string => {
         const cur = currentRes === kind ? " cur" : "";
         const toggle =
             files.length > 0
-                ? `<button class="nav-tree-toggle" type="button" aria-label="Toggle ${kind}">${CHEVRON_ICON}</button>`
+                ? `<button class="nav-tree-toggle" type="button" aria-label="Toggle ${translate("eng", kind)}">${CHEVRON_ICON}</button>`
                 : "";
-        return `<div class="nav-item${open}" data-node-id="_res:${kind}"><div class="nav-row"><a class="nav-tree-link${cur}" href="${resourceHref(kind)}"><span class="nav-label" data-i18n="${kind}">${kind}</span>${count(files.length)}</a>${toggle}</div><div class="nav-list nav-tree" style="--nav-depth:3">${items}</div></div>`;
+        return `<div class="nav-item${open}" data-node-id="_res:${kind}"><div class="nav-row"><a class="nav-tree-link${cur}" href="${resourceHref(kind)}"><span class="nav-label" data-i18n="${kind}">${translate("eng", kind)}</span>${count(files.length)}</a>${toggle}</div><div class="nav-list nav-tree" style="--nav-depth:3">${items}</div></div>`;
     }).join("");
     const open = currentRes != null ? " open" : "";
     const cur = currentRes === "" ? " cur" : "";
@@ -1019,6 +1060,7 @@ const sizeOf = (path: string): string => {
 // collisions), raster is already <img data:>, and html figures are shown
 // isolated in a sandboxed iframe.
 const resourcePreview = (site: Site, r: Resource): string => {
+    if (r.kind === "terms") return termsHtml(site.ctx.terms.filter((term) => term.id === r.file));
     if (r.kind === "figures" || r.kind === "html") {
         const f = site.ctx.figures.get(figureName(r.file));
         if (!f) {
@@ -1039,7 +1081,7 @@ const resourceUsage = (site: Site, r: Resource): Entry[] =>
         ? site.entries.filter((e) => e.figureRefs?.includes(figureName(r.file)))
         : r.kind === "icons"
           ? site.entries.filter((e) => `${e.id}.svg` === r.file)
-          : [];
+          : site.entries.filter((e) => e.termRefs?.includes(r.file));
 
 const resourceCards = (site: Site, list: Resource[]): string =>
     list.length === 0
@@ -1052,14 +1094,17 @@ const resourceCards = (site: Site, list: Resource[]): string =>
               .join("")}</div>`;
 
 /** Path after `/_resources` → main content (unknown → undefined = 404). */
-const resourcesMain = (site: Site, rest: string): { title: string; main: string } | undefined => {
+export const resourcesMain = (
+    site: Site,
+    rest: string,
+): { title: string; main: string } | undefined => {
     const all = siteResources(site);
     const [kind, ...tail] = rest === "" ? [] : rest.split("/");
     const file = tail.length > 0 ? decodeURIComponent(tail.join("/")) : undefined;
     if (kind == null) {
         const sections = RESOURCE_KINDS.map((k) => {
             const list = all.filter((r) => r.kind === k);
-            return `<section class="res-section"><h2><a href="${resourceHref(k)}" data-i18n="${k}">${k}</a> <span class="res-sub">${list.length}</span></h2>${resourceCards(site, list)}</section>`;
+            return `<section class="res-section"><h2><a href="${resourceHref(k)}" data-i18n="${k}">${k}</a> <span class="res-sub">${list.length}</span></h2>${k === "terms" ? termsHtml(site.ctx.terms) : resourceCards(site, list)}</section>`;
         }).join("");
         return {
             title: "Resources",
@@ -1074,10 +1119,18 @@ const resourcesMain = (site: Site, rest: string): { title: string; main: string 
     if (file == null) {
         return {
             title: `${k} — Resources`,
-            main: `<article class="res-page">${crumbs}<h1 data-i18n="${k}">${k}</h1>${resourceCards(
-                site,
-                all.filter((r) => r.kind === k),
-            )}</article>`,
+            main: `<article class="res-page">${k === "terms" ? "" : crumbs}<h1 data-i18n="${k}">${translate("eng", k)}</h1>${
+                k === "terms"
+                    ? termsHtml(
+                          site.ctx.terms,
+                          resolveLanguage(site.contentLanguage ?? site.defaultLang, site.languages),
+                          true,
+                      )
+                    : resourceCards(
+                          site,
+                          all.filter((r) => r.kind === k),
+                      )
+            }</article>`,
         };
     }
     const r = all.find((x) => x.kind === k && x.file === file);
@@ -1087,7 +1140,12 @@ const resourcesMain = (site: Site, rest: string): { title: string; main: string 
     const fig =
         k === "figures" || k === "html" ? site.ctx.figures.get(figureName(r.file)) : undefined;
     const used = resourceUsage(site, r);
-    const snippet = fig ? `:::${fig.kind === "html" ? "html" : "figure"}(${r.file})` : undefined;
+    const snippet =
+        k === "terms"
+            ? `:::term(${r.file})`
+            : fig
+              ? `:::${fig.kind === "html" ? "html" : "figure"}(${r.file})`
+              : undefined;
     const rows = [
         ["path", `<code>${escapeHtml(r.path)}</code>`],
         ["size", sizeOf(r.path)],
@@ -1114,7 +1172,8 @@ const resourcesMain = (site: Site, rest: string): { title: string; main: string 
 };
 
 // Browser tab title — shared by page() and `/api/page` (doc switching via client-side navigation).
-const pageTitle = (mode: ServeMode, title: string): string => `${title} — docs ${mode}`;
+const pageTitle = (mode: ServeMode, title: string, siteTitle?: string): string =>
+    title === siteTitle ? title : `${title} — ${siteTitle ?? `docs ${mode}`}`;
 
 // Navigation follows the manifest hierarchy via routing.docPath.
 const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
@@ -1129,13 +1188,7 @@ const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
         mode === "edit"
             ? `<button class="nav-link nav-create" type="button" data-parent="">${icon('<path d="M10 4.5v11M4.5 10h11"/>')}<span class="nav-label" data-i18n="Add doc">Add doc</span></button>`
             : "";
-    // Breadcrumb ("ancestors › current"). edit-client replaces it on doc switch.
-    const crumbPath =
-        opts.currentId == null
-            ? ""
-            : ancestorsOf(site.entries, opts.currentId)
-                  .map((e) => docDisplayName(e.frontmatter, e.id))
-                  .join(" › ");
+    const siteTitle = escapeHtml(site.title ?? "docs");
     const bootScripts =
         opts.boot != null
             ? `<script id="boot" type="application/json">${JSON.stringify(opts.boot).replace(/</g, "\\u003c")}</script>
@@ -1159,10 +1212,10 @@ const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
         : '<script src="/assets/graph.js" defer></script>';
     return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(pageTitle(mode, opts.title))}</title>
+<title>${escapeHtml(pageTitle(mode, opts.title, site.title))}</title>
 <script>try{const t=localStorage.getItem("docs-preview:theme");if(t)document.documentElement.dataset.theme=t}catch{}</script>
 <style>${fontCss(Boolean(opts.publish))}${CSS}${mode === "edit" ? EDIT_CSS : ""}</style></head>
-<body${mode === "edit" ? ' class="edit"' : ""}><nav id="sidebar"><div id="sidebar-head"><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button><div class="breadcrumb" aria-label="Breadcrumb"><span id="crumb-aud">${escapeHtml(crumbPath)}</span><span id="crumb-doc">${escapeHtml(opts.title)}</span></div></div><div id="sidebar-content"><input id="nav-search" type="search" placeholder="Search docs…" data-i18n-placeholder="Search docs…" aria-label="Search docs by title" data-i18n-aria-label="Search docs by title"><div id="nav-groups">${nav}</div>${createMenu}<div id="nav-status" role="status" aria-live="polite"></div></div>${dropzone}<div id="sidebar-foot"><button id="theme" class="nav-link" type="button"></button></div></nav>${main}${opts.aside ?? ""}
+<body${mode === "edit" ? ' class="edit"' : ""}><nav id="sidebar"><div id="sidebar-head"><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button><div id="site-title" class="site-title" title="${siteTitle}">${siteTitle}</div></div><div id="sidebar-content"><input id="nav-search" type="search" placeholder="Search docs…" data-i18n-placeholder="Search docs…" aria-label="Search docs by title" data-i18n-aria-label="Search docs by title"><div id="nav-groups">${nav}</div>${createMenu}<div id="nav-status" role="status" aria-live="polite"></div></div>${dropzone}<div id="sidebar-foot"><button id="theme" class="nav-link" type="button"></button></div></nav>${main}${opts.aside ?? ""}
 ${bootScripts}${graphScript}
 <script id="code-grammars" type="application/json">${JSON.stringify(site.codeGrammars ?? []).replace(/</g, "\\u003c")}</script>
 ${opts.publish ? `<script>${inlineScript(opts.publish.codeJs)}</script>` : '<script src="/assets/code.js" defer></script>'}
@@ -1171,7 +1224,7 @@ ${opts.publish ? `<script>${inlineScript(opts.publish.codeJs)}</script>` : '<scr
 var __name = (f) => f;
 const contentLanguage = () => JSON.parse(document.getElementById("boot")?.textContent || "null")?.contentLanguage || ${JSON.stringify(site.contentLanguage ?? site.defaultLang)};
 const localeFetch = (url, init = {}) => fetch(url, { ...init, headers: { ...init.headers, "x-docs-language": contentLanguage() } });
-(${mountDictionaries.toString()})(document);
+(${mountTerms.toString()})(document);
 (${mountFigureFrames.toString()})(document);
 (() => {
   const KEY = "docs-preview:theme";
@@ -1514,15 +1567,10 @@ const publishRouterScript = (first: string): string => `
     for (const a of document.querySelectorAll("#nav-groups a")) {
       a.classList.toggle("cur", a.getAttribute("href").split("?")[0] === "#/" + route);
     }
-    // Breadcrumb (same "ancestors › current" as the server-rendered page()).
-    const names = [];
     const cur = document.querySelector("#nav-groups a.cur");
     for (let it = cur && cur.closest(".nav-item").parentElement.closest(".nav-item"); it; it = it.parentElement.closest(".nav-item")) {
       it.classList.add("open");
-      names.unshift(it.querySelector(":scope > .nav-row > a").textContent);
     }
-    document.getElementById("crumb-aud").textContent = names.join(" › ");
-    document.getElementById("crumb-doc").textContent = page.dataset.title.replace(/ — [^—]*$/, "");
     const target = anchor && document.getElementById(anchor);
     if (target) target.scrollIntoView(); else window.scrollTo(0, 0);
   };
@@ -1537,28 +1585,41 @@ const toHashLinks = (html: string, route: string): string =>
 
 /**
  * Turns the whole Site into a single HTML file readable without a server (everything embedded,
- * down to figures / dictionary / schema graph JS). Each doc is held in a
+ * down to figures / terms / schema graph JS). Each doc is held in a
  * <template> and switched via hash routes.
  */
-export const publishHtml = (site: Site, graphJs: string, title = "docs", codeJs = ""): string => {
+export const publishHtml = (
+    site: Site,
+    graphJs: string,
+    title = site.title ?? "docs",
+    codeJs = "",
+): string => {
     const pages = site.entries.map((e) => ({
         route: docPath(site.entries, e.id).slice(1),
         title: docDisplayName(e.frontmatter, e.id),
         main: entryMain(site, e),
     }));
     const first = pages[0]?.route ?? "";
+    if (site.ctx.terms.length > 0) {
+        const terms = resourcesMain(site, "terms");
+        if (terms) pages.push({ route: "_resources/terms", ...terms });
+    }
     const templates = pages
         .map(
             (p) =>
-                `<template data-route="${escapeHtml(p.route)}" data-title="${escapeHtml(`${p.title} — ${title}`)}">${toHashLinks(p.main, p.route)}</template>`,
+                `<template data-route="${escapeHtml(p.route)}" data-title="${escapeHtml(pageTitle("preview", p.title, title))}">${toHashLinks(p.main, p.route)}</template>`,
         )
         .join("");
     return toHashLinks(
-        page("preview", site, {
-            title,
-            main: "",
-            publish: { graphJs, codeJs, pages: templates, first },
-        }),
+        page(
+            "preview",
+            { ...site, title },
+            {
+                title,
+                main: "",
+                publish: { graphJs, codeJs, pages: templates, first },
+            },
+        ),
         first,
     );
 };
@@ -1589,6 +1650,7 @@ const entryMain = (site: Site, e: Entry): string => {
  * display.
  */
 export interface EditorBoot {
+    siteTitle?: string;
     contentLanguage?: string;
     sourceLanguage?: string;
     /** `<id>.md` (the save API's key). */
@@ -1600,7 +1662,7 @@ export interface EditorBoot {
     figures: string[];
     codeLanguages: readonly string[];
     docs: { ref: string; title: string }[];
-    terms: string[];
+    terms: TermEntry[];
     blockLines: number[];
     /** Full source on disk (the base for external-change detection). */
     baseRaw: string;
@@ -1633,6 +1695,7 @@ export const editorBoot = (entry: Entry, site: Site): EditorBoot => {
         title: docDisplayName(e.frontmatter, e.id),
     }));
     return {
+        ...(site.title === undefined ? {} : { siteTitle: site.title }),
         ...(site.contentLanguage
             ? {
                   contentLanguage: site.contentLanguage,
@@ -1646,7 +1709,7 @@ export const editorBoot = (entry: Entry, site: Site): EditorBoot => {
         figures,
         codeLanguages: site.codeLanguages ?? CODE_LANGS,
         docs,
-        terms: site.ctx.dictionary.map((d) => d.term),
+        terms: [...site.ctx.terms],
         blockLines: entry.blockLines,
         baseRaw: entry.raw,
         icon: entry.icon ? svgDataUri(entry.icon) : null,
@@ -1709,7 +1772,7 @@ export const pageDataResponse = (site: Site, path: unknown): { status: number; b
     return {
         status: 200,
         body: {
-            title: pageTitle("edit", docDisplayName(doc.frontmatter, doc.id)),
+            title: pageTitle("edit", docDisplayName(doc.frontmatter, doc.id), site.title),
             file: doc.file,
             html,
             errors,
@@ -2195,6 +2258,7 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
         if (mode === "edit" && req.method === "GET" && path === "/api/nav") {
             const params = new URL(req.url ?? "/", "http://localhost").searchParams;
             sendJson(res, 200, {
+                siteTitle: site.title,
                 html: navGroupsHtml(
                     mode,
                     site,
@@ -2238,7 +2302,10 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
             return;
         }
 
-        if (mode === "edit" && (path === "/_resources" || path.startsWith("/_resources/"))) {
+        if (
+            (mode === "edit" && (path === "/_resources" || path.startsWith("/_resources/"))) ||
+            path === "/_resources/terms"
+        ) {
             const rest = path.slice("/_resources".length).replace(/^\/|\/$/g, "");
             const page = resourcesMain(site, rest);
             if (!page) {

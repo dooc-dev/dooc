@@ -3,7 +3,7 @@
 // (= docs.json). The viewer uses it incrementally via createCompiler; build uses it once via
 // compileSite + writeArtifact. Nothing is distributed if there is even one validation error.
 // Output:
-//   artifact/docs.json           = DocsArtifact (body Block AST + toc + dictionary +
+//   artifact/docs.json           = DocsArtifact (body Block AST + toc + terms +
 //                                  figure index, generation stamp)
 //   artifact/figures/<name>.json = FigureEntry (with markup, lazy-fetched by consumers)
 // routing.ts is the SoT for URL / id resolution, inline.ts for inline splitting.
@@ -18,7 +18,6 @@ import { DEFAULT_LANG } from "../core/language.js";
 import { DOC_LINK_SCHEME, type DocRef, parseDocLink } from "../core/routing.js";
 import type { Frontmatter } from "../core/taxonomy.js";
 import { collectRefs, type ParsedDoc, parseDoc } from "./dialect.js";
-import { collectDictionary } from "./dictionary.js";
 import { figureName, loadFigures } from "./figures.js";
 import { createFileCache, createSigCache, dirSig } from "./file-cache.js";
 import { toBlocks } from "./from-mdast.js";
@@ -27,6 +26,7 @@ import { contentLanguageCode, isContentLanguage } from "./language-codes.js";
 import { readCatalog } from "./locales.js";
 import { parseManifestText } from "./manifest.js";
 import { assembleDoc } from "./serialize.js";
+import { collectTerms, type TermSource } from "./terms.js";
 
 export type {
     ArtifactDoc,
@@ -77,7 +77,7 @@ export interface Compiled {
     artifact: DocsArtifact;
     figures: FigureEntry[];
     sources: Map<string, DocSource>;
-    /** Errors not tied to a doc (layout convention / manifest / figures / dictionary). */
+    /** Errors not tied to a doc (layout convention / manifest / figures / terms). */
     siteErrors: string[];
     /** All errors (siteErrors + each doc's errors with a file prefix). */
     errors: string[];
@@ -108,6 +108,7 @@ export interface DraftContext {
     figures: { get(name: string): { file: string } | undefined };
     /** Site default language for a draft without front-matter `lang`. Default: DEFAULT_LANG. */
     defaultLang?: string;
+    termSources?: readonly TermSource[];
 }
 
 interface ParsedFile {
@@ -132,14 +133,15 @@ const toBodyLines = (raw: string, body: string, lines: number[]): number[] => {
 const parseFile = (raw: string): ParsedFile => {
     const parsed = parseDoc(raw);
     const { blocks, toc, lines } = toBlocks(parsed.root, parsed.source);
-    const figureFiles = collectRefs(parsed.root).figures;
+    const refs = collectRefs(parsed.root);
+    const figureFiles = refs.figures;
     return {
         raw,
         parsed,
         blocks,
         toc,
         lines: toBodyLines(raw, parsed.body, lines),
-        refs: { figures: figureFiles.map(figureName) },
+        refs: { figures: figureFiles.map(figureName), terms: refs.terms },
         figureFiles,
     };
 };
@@ -165,8 +167,20 @@ const toDoc = (
 });
 
 // Validates a single doc: dialect errors, :::figure / :::html targets exist, doc: links resolve.
-const docErrors = (f: ParsedFile, { docs, figures }: DraftContext): string[] => {
+const docErrors = (
+    file: string,
+    f: ParsedFile,
+    { docs, figures, termSources = [] }: DraftContext,
+): string[] => {
     const errors = [...f.parsed.errors];
+    const terms = collectTerms([
+        ...termSources.filter((source) => source.file !== file),
+        { file, entries: f.parsed.terms },
+    ]);
+    errors.push(...terms.errors);
+    for (const id of f.refs.terms)
+        if (!terms.entries.some((term) => term.id === id))
+            errors.push(`:::term(${id}) is unresolved (check the term ID)`);
     for (const file of f.figureFiles) {
         if (figures.get(figureName(file))?.file !== `figures/${file}`) {
             errors.push(`"${file}" is not in figures/`);
@@ -208,14 +222,20 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                 siteErrors.push(String(error));
             }
         }
+        let title: string | undefined;
         const files: { doc: ArtifactDoc; parsed: ParsedFile }[] = [];
         if (!existsSync(contentDir)) {
             siteErrors.push(`${contentDir}: content/ is missing`);
         } else {
             const manifestPath = join(root, MANIFEST_FILE);
-            const { tree, errors: manifestErrors } = existsSync(manifestPath)
+            const {
+                tree,
+                title: manifestTitle,
+                errors: manifestErrors,
+            } = existsSync(manifestPath)
                 ? manifestCache.get(manifestPath, parseManifestText)
                 : { tree: [], errors: [`${MANIFEST_FILE} is required`] };
+            title = manifestTitle;
             siteErrors.push(...manifestErrors);
             // Directly under content/: flat <id>.md files only (no folders).
             const onDisk = new Set<string>();
@@ -272,15 +292,16 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
         if (docs.length === 0) {
             siteErrors.push(`${contentDir}: no docs`);
         }
-        const dictionary = collectDictionary(
-            files.map(({ doc, parsed }) => ({ file: doc.file, entries: parsed.parsed.dictionary })),
+        const terms = collectTerms(
+            files.map(({ doc, parsed }) => ({ file: doc.file, entries: parsed.parsed.terms })),
         );
-        siteErrors.push(...dictionary.errors);
+        siteErrors.push(...terms.errors);
 
         const artifact: DocsArtifact = {
             generation: GENERATION,
+            ...(title === undefined ? {} : { title }),
             docs,
-            dictionary: dictionary.entries,
+            terms: terms.entries,
             figures: figures.map(({ markup: _markup, ...index }) => index),
         };
         siteErrors.push(...validateDocsArtifact(artifact));
@@ -289,11 +310,15 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             docs,
             figures: new Map(figures.map((f) => [f.name, f])),
             defaultLang,
+            termSources: files.map(({ doc, parsed }) => ({
+                file: doc.file,
+                entries: parsed.parsed.terms,
+            })),
         };
         const sources = new Map<string, DocSource>();
         const errors = [...siteErrors];
         for (const { doc, parsed } of files) {
-            const errs = docErrors(parsed, ctx);
+            const errs = docErrors(doc.file, parsed, ctx);
             errors.push(...errs.map((e) => `${doc.file}: ${e}`));
             sources.set(doc.file, {
                 raw: parsed.raw,
@@ -333,7 +358,7 @@ export const compileDraft = (
             raw,
             frontmatter: parsed.parsed.frontmatter,
             lines: parsed.lines,
-            errors: docErrors(parsed, ctx),
+            errors: docErrors(file, parsed, ctx),
         },
     };
 };

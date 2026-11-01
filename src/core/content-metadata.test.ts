@@ -31,6 +31,34 @@ describe("manifest", () => {
         expect(parseManifestText(text)).toEqual({ tree, errors: [] });
     });
 
+    it("round-trips a site title with nested or empty docs", () => {
+        const title = '資料: "API" & <Guide>';
+        for (const docs of [tree, []]) {
+            expect(parseManifestText(serializeManifest(docs, title))).toEqual({
+                tree: docs,
+                title,
+                errors: [],
+            });
+        }
+        expect(parseManifest({ title: " Guide ", docs: ["a"] })).toEqual({
+            tree: [n("a")],
+            title: "Guide",
+            errors: [],
+        });
+        expect(parseManifest({ docs: ["a"] })).toEqual({ tree: [n("a")], errors: [] });
+    });
+
+    it.each([
+        { title: " ", docs: [] },
+        { title: 42, docs: [] },
+        { title: null, docs: [] },
+        { title: "Guide" },
+        { title: "Guide", docs: "a" },
+        { title: "Guide", docs: [], extra: true },
+    ])("rejects malformed site metadata: %j", (value) => {
+        expect(parseManifest(value).errors.length).toBeGreaterThan(0);
+    });
+
     it("flattenTree yields pre-order + parent + depth", () => {
         expect(flattenTree(tree)).toEqual([
             { id: "a", depth: 0 },

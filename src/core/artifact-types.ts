@@ -1,16 +1,16 @@
 // Type contract for the distributed data (artifact/) (browser-safe, no node dependencies). The
 // compiler generates it; consumers read what is served via runtime fetch.
-//   - artifact/docs.json = DocsArtifact (body AST, dictionary, figure index; generation-stamped)
+//   - artifact/docs.json = DocsArtifact (body AST, terms, figure index; generation-stamped)
 //   - artifact/figures/<name>.json = FigureEntry (one figure incl. markup, for lazy fetch)
 // Runtime contract: docs-json-schema/<generation>.json; validate via the ./docs-json-schema export.
 import type { Block, TocEntry } from "./blocks.js";
 import type { Frontmatter } from "./taxonomy.js";
 
-export interface DictEntry {
-    /** Headword (occurrences of this string in body text are detected and turned into links). */
-    term: string;
-    /** Reading / pronunciation (optional; shown small in the tooltip and the listing). */
-    reading?: string;
+export interface TermEntry {
+    /** Stable ID used by explicit :::term(id) references. */
+    id: string;
+    name: string;
+    description?: string;
     /** Definition text (plain text). */
     definition: string;
 }
@@ -50,10 +50,12 @@ export type ArtifactDoc = Frontmatter & {
     blocks: Block[];
     toc: TocEntry[];
     /** Names of referenced figures (the set to lazy-fetch). */
-    refs: { figures: string[] };
+    refs: { figures: string[]; terms: string[] };
 };
 
 export interface DocsArtifact {
+    /** Site title declared in manifest.yaml. */
+    title?: string;
     /**
      * Dialect / contract generation (generation.ts). Consumers check it directionally with
      * canRenderGeneration.
@@ -62,9 +64,8 @@ export interface DocsArtifact {
     /** Display order (manifest pre-order). The hierarchy is expressed by each doc's parent. */
     docs: ArtifactDoc[];
     /**
-     * Glossary (defined by :::dictionary in content). Used for body-text linking and the listing
-     * on the "dictionary" page.
+     * Terms defined by :::term(id) in content. Only explicit references become links.
      */
-    dictionary: DictEntry[];
+    terms: TermEntry[];
     figures: FigureIndexEntry[];
 }

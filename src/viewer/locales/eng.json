@@ -18,9 +18,9 @@
     "Delete doc": "Delete doc",
     "Add doc": "Add doc",
     "Resources": "Resources",
-    "figures": "figures",
+    "figures": "Figures",
     "html": "HTML",
-    "icons": "icons",
+    "icons": "Icons",
     "Search docs…": "Search docs…",
     "Search docs by title": "Search docs by title",
     "Close sidebar": "Close sidebar",
@@ -92,5 +92,6 @@
     "Saving": "Saving",
     "Save failed": "Save failed",
     "Expand section": "Expand section",
-    "Collapse section": "Collapse section"
+    "Collapse section": "Collapse section",
+    "terms": "Terms"
 }

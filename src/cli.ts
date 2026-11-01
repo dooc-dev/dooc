@@ -145,7 +145,7 @@ switch (command) {
                     codeGrammars: site.codeGrammars,
                 },
                 await bundleClient("core/schema-graph-global.tsx", true),
-                "docs",
+                undefined,
                 await bundleClient("viewer/code-highlight.ts", true),
             );
             writeOut(out("index.html"), html);

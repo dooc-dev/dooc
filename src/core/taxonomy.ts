@@ -38,7 +38,7 @@ export type CodeLang = string;
 // ── directive vocabulary (SoT for the dialect's custom syntax) ─────────────────────
 // Name / caption support / sample are held in one place, and both validation (dialect.ts) and
 // the editor's insert-completion (`:::` palette / `/` palette) derive from here (no duplicate
-// declarations). The actual figures and listings live in figures/ and dictionary data; content
+// declarations). The actual figures and listings live in figures/ and terms data; content
 // only references them by name.
 
 /**
@@ -121,12 +121,12 @@ export const DIRECTIVES: readonly Directive[] = [
         sample: ":::graph[<caption>]\n[<id>]: <label> @<region>\n[<ref_id>]: <label> @<region>\n\n[<id>] -> [<ref_id>]\n:::",
     },
     {
-        name: "dictionary",
+        name: "term",
         kind: "container",
         raw: true,
-        summary: "Global term definitions (YAML) and dictionary card list",
+        summary: "Define a term by ID; reference it in prose with :::term(id)",
         caption: false,
-        sample: ':::dictionary\n- term: "<term>"\n  definition: "<definition>"\n:::',
+        sample: ':::term(<id>)\nname: "<name>"\ndefinition: "<definition>"\n:::',
     },
 ];
 
@@ -157,13 +157,32 @@ const LEAF_FULL_RE = /^(\s*):::([\w-]+)\(([^()"\s]+)\)(\[[^\]\n]*\])?\s*$/;
 export const normalizeLeafDirectives = (raw: string): { source: string; badLines: number[] } => {
     const badLines: number[] = [];
     let fence: string | undefined;
-    const lines = raw.split("\n").map((l, i) => {
+    let rawBody = false;
+    const input = raw.split("\n");
+    const lines = input.map((l, i) => {
+        if (rawBody) {
+            if (/^\s*:::\s*$/.test(l)) rawBody = false;
+            return l;
+        }
         const f = /^\s*(`{3,}|~{3,})/.exec(l)?.[1];
         if (f != null && (fence == null || f.startsWith(fence))) {
             fence = fence == null ? f : undefined;
             return l;
         }
-        if (fence != null || !LEAF_LINE_RE.test(l)) {
+        if (fence != null) return l;
+        const term = /^(\s*):::term\(\s*([^()"\n]*?)\s*\)\s*$/.exec(l);
+        if (term) {
+            const rest = input.slice(i + 1);
+            const next = rest.find((line) => line.trim());
+            if (/^\s*[\w-]+\s*:(?:[ \t]|$)/.test(next ?? "")) {
+                rawBody = true;
+                return `${term[1]}:::term{id="${term[2]?.trim()}"}`;
+            }
+        }
+        const container = /^\s*:::([\w-]+)/.exec(l)?.[1];
+        if (container && container !== "term" && findDirective("container", container)?.raw)
+            rawBody = true;
+        if (!LEAF_LINE_RE.test(l)) {
             return l;
         }
         const m = LEAF_FULL_RE.exec(l);

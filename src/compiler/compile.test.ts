@@ -83,28 +83,26 @@ describe("rewriteDocLinks", () => {
     });
 });
 
-describe("dictionary directives", () => {
+describe("term directives", () => {
     it("collects registered document definitions and blocks conflicting global names", () => {
         const root = makeRoot("- a\n- b\n");
         const dir = join(root, "content");
         const declaration = (term: string) =>
-            `---\ntitle: terms\n---\n\n:::dictionary\n- term: ${term}\n  definition: Definition\n:::\n`;
+            `---\ntitle: terms\n---\n\n:::term(${term})\nname: ${term}\ndefinition: Definition\n:::\n`;
         writeFileSync(join(dir, "a.md"), declaration("alpha"));
         writeFileSync(join(dir, "b.md"), declaration("beta"));
         const built = compileSite(root);
         expect(built.errors).toEqual([]);
-        expect(built.artifact?.dictionary.map((e) => e.term)).toEqual(["alpha", "beta"]);
+        expect(built.artifact?.terms.map((e) => e.id)).toEqual(["alpha", "beta"]);
         expect(built.artifact?.docs[0]?.blocks).toEqual([
             {
-                type: "dictionary",
-                entries: [{ term: "alpha", definition: "Definition" }],
+                type: "term",
+                entry: { id: "alpha", name: "alpha", definition: "Definition" },
             },
         ]);
         writeFileSync(join(dir, "b.md"), declaration("alpha"));
         const conflict = compileSite(root);
-        expect(conflict.errors.some((e) => e.includes('duplicate dictionary term "alpha"'))).toBe(
-            true,
-        );
+        expect(conflict.errors.some((e) => e.includes('duplicate term ID "alpha"'))).toBe(true);
     });
 });
 
@@ -159,7 +157,7 @@ describe("createCompiler (incremental compile for the viewer)", () => {
             '---\ntitle: "A"\n---\n\n[ok](doc:b) [ng](doc:zzz)\n\n:::figure(nope.svg)\n\n:::figure(x.png)\n\n:::figure(x.svg)[ok]\n',
         );
         expect(doc.id).toBe("a");
-        expect(doc.refs).toEqual({ figures: ["nope", "x", "x"] });
+        expect(doc.refs).toEqual({ figures: ["nope", "x", "x"], terms: [] });
         // Same name but a different extension (x.png ≠ x.svg) is unresolved
         expect(source.errors).toEqual([
             '"nope.svg" is not in figures/',
@@ -198,5 +196,24 @@ describe("sample-content (bundled docs root)", () => {
     it("compiles without validation errors", () => {
         const root = new URL("../../sample-content", import.meta.url).pathname;
         expect(compileSite(root).errors).toEqual([]);
+    });
+
+    it.each(["jpn", "eng", "zho"])("keeps external embeds in the %s media article", (locale) => {
+        const root = new URL("../../sample-content", import.meta.url).pathname;
+        const result = compileSite(root, { defaultLang: "jpn", locale });
+        expect(result.errors).toEqual([]);
+        const media = result.artifact.docs.find((doc) => doc.id === "media");
+        expect(media?.lang).toBe(locale);
+        for (const [name, tag] of [
+            ["external-iframe", "iframe"],
+            ["external-video", "video"],
+            ["external-audio", "audio"],
+        ]) {
+            expect(media?.refs.figures).toContain(name);
+            const figure = result.figures.find((fig) => fig.name === name);
+            expect(figure?.kind).toBe("html");
+            expect(figure?.markup).toContain(`<${tag}`);
+            expect(figure?.markup).toContain('src="https://');
+        }
     });
 });

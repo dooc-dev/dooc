@@ -1,9 +1,9 @@
 /**
- * Sorts dictionary listings in place on `[data-dict-sort]` change. The A → Z rank is computed at
+ * Sorts terms listings in place on `[data-dict-sort]` change. The A → Z rank is computed at
  * render time by the doc language's rule (html.ts → data-sort-order), so no language logic runs
  * here. Delegation keeps sorting working after preview/editor content replacement.
  */
-export function mountDictionaries(root: ParentNode): () => void {
+export function mountTerms(root: ParentNode): () => void {
     const controller = new AbortController();
     root.addEventListener(
         "change",
@@ -11,7 +11,7 @@ export function mountDictionaries(root: ParentNode): () => void {
             const select = event.target;
             if (!(select instanceof HTMLSelectElement) || !select.matches("[data-dict-sort]"))
                 return;
-            const list = select.closest(".dictionary")?.querySelector(".dict");
+            const list = select.closest(".terms")?.querySelector(".dict");
             if (!list) return;
             const key = select.value === "source" ? "sourceOrder" : "sortOrder";
             const sign = select.value === "desc" ? -1 : 1;

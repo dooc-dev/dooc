@@ -3,7 +3,7 @@ import { parseDoc } from "../compiler/dialect.js";
 import { toBlocks } from "../compiler/from-mdast.js";
 import type { FigureEntry } from "./artifact-types.js";
 import type { Block } from "./blocks.js";
-import { blocksHtml, figureIndexRoute, type RenderCtx } from "./html.js";
+import { blocksHtml, docHtml, figureIndexRoute, type RenderCtx, termsHtml } from "./html.js";
 import type { SchemaGraphClientData } from "./schema-graph.js";
 
 const fm = (body: string): string => `---\ntitle: "t"\n---\n\n${body}\n`;
@@ -18,9 +18,9 @@ const MODEL_FIG: FigureEntry = {
 };
 const CTX: RenderCtx = {
     figures: new Map([[MODEL_FIG.name, MODEL_FIG]]),
-    dictionary: [
-        { term: "SLA", reading: "S L A", definition: "Service Level Agreement" },
-        { term: "api", definition: "External-facing interface" },
+    terms: [
+        { id: "sla", name: "SLA", definition: "Service Level Agreement" },
+        { id: "api", name: "api", definition: "External-facing interface" },
     ],
 };
 
@@ -29,6 +29,14 @@ const html = (body: string, ctx?: RenderCtx): string =>
     blocksHtml(toBlocks(parseDoc(fm(body)).root, parseDoc(fm(body)).source).blocks, ctx);
 
 describe("blocksHtml", () => {
+    it("escapes a localized table of contents title in text and its accessible label", () => {
+        const output = docHtml({ title: "Guide" }, [], [], { ...CTX, tocTitle: '<Contents "&">' }, [
+            { depth: 2, text: "Section", slug: "section" },
+        ]);
+        expect(output).toContain('aria-label="&lt;Contents &quot;&amp;&quot;&gt;"');
+        expect(output).toContain('class="in-toc-title">&lt;Contents &quot;&amp;&quot;&gt;</div>');
+    });
+
     it("renders headings (ASCII slug ids) / paragraphs / inline (code, link, unescaping)", () => {
         const out = html(
             "## Café au lait\n\nBody `code` and [link](https://example.com) and 1\\:1.",
@@ -294,41 +302,47 @@ describe("inline references (figures / dictionary)", () => {
         expect(figureIndexRoute([doc("a", [])])).toBeUndefined();
     });
 
-    it("dictionary terms get a hover definition tooltip; hyphenated identifiers are not false positives", () => {
-        const out = html("SLA is the umbrella term for agreed service levels.", CTX);
-        expect(out).toContain('<span class="dictref">SLA<span class="dictpop">');
+    it("links only explicit term IDs, including when the same name is plain text", () => {
+        const out = html("SLA and :::term(sla).", {
+            ...CTX,
+            termLinks: new Map([["sla", "/terms#term-sla"]]),
+        });
+        expect(out).toContain('SLA and <a class="dictref" href="/terms#term-sla">SLA');
         expect(out).toContain("Service Level Agreement");
-        // part of an identifier like api-v2 isn't linked
-        expect(html("See api-v2.", CTX)).not.toContain("dictref");
+        expect(html("SLA api api-v2", CTX)).not.toContain("dictref");
+        expect(html("`:::term(sla)`", CTX)).not.toContain("dictref");
     });
 
-    it("dictionary cards sort by canonical name and escape metadata", () => {
-        const out = blocksHtml([{ type: "dictionary" }], {
-            figures: new Map(),
-            dictionary: [
-                { term: "z", definition: "last" },
-                {
-                    term: "a",
-                    reading: "<script>",
-                    definition: "<b>first</b>",
-                },
+    it("term lists sort by name and escape optional descriptions and definitions", () => {
+        const out = termsHtml(
+            [
+                { id: "z", name: "z", definition: "last" },
+                { id: "a", name: "a", description: "<script>", definition: "<b>first</b>" },
             ],
-        });
+            undefined,
+            true,
+        );
         expect(out.indexOf('data-term="a"')).toBeLessThan(out.indexOf('data-term="z"'));
         expect(out).toContain("data-dict-sort");
-        expect(out).toContain('<option value="source">Source order</option>');
         expect(out).toContain('data-source-order="0" data-sort-order="1" data-term="z"');
-        expect(out).toContain('data-source-order="1" data-sort-order="0" data-term="a"');
-        expect(out).toContain('<span class="dictread">&lt;script&gt;</span>');
-        expect(out).not.toContain("category");
-        expect(out).not.toContain("dict-aliases");
-        expect(out).not.toContain("<b>first</b>");
+        expect(out).toContain("&lt;script&gt;");
+        expect(out).toContain("&lt;b&gt;first&lt;/b&gt;");
+        expect(out).toContain('aria-describedby="term-description-a"');
+        expect(out).toContain(
+            'class="term-description" role="tooltip" id="term-description-a">&lt;script&gt;</span>',
+        );
+        expect(out).toContain("<dd>&lt;b&gt;first&lt;/b&gt;</dd>");
+        expect(out).not.toContain("term-description-z");
+        expect(out).not.toContain("<code>");
     });
 
-    it("a dictionary block without entries renders the list from the ctx dictionary data", () => {
-        const out = blocksHtml([{ type: "dictionary" }], CTX);
-        expect(out).toContain('<dl class="dict">');
-        expect(out).toContain('<dt id="term-api">api');
-        expect(out).toContain("External-facing interface");
+    it("term definitions render stable anchors without list sorting controls", () => {
+        const entry = { id: "api", name: "API", definition: "Interface" };
+        const out = blocksHtml([{ type: "term", entry }], CTX);
+        expect(out).toContain('<dt id="term-api">');
+        expect(out).toContain('class="term-icon"');
+        expect(out).toContain('href="/_resources/terms#term-api">API</a>');
+        expect(out).toContain("Interface");
+        expect(out).not.toContain("data-dict-sort");
     });
 });

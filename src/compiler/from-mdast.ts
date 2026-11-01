@@ -13,8 +13,8 @@ import {
 import { parseGraphSource } from "../core/graph.js";
 import { parseSchemaSource } from "../core/schema-graph.js";
 import { directiveRawBody } from "../core/taxonomy.js";
-import { parseDictionarySource } from "./dictionary.js";
 import { figureName } from "./figures.js";
+import { parseTermSource } from "./terms.js";
 
 // Turn inline nodes (text / `code` / [text](url)) back into a mini-syntax string. Assumes the
 // dialect validator rejects anything but these 3 kinds (= the reverse conversion is faithful).
@@ -141,12 +141,13 @@ export const toBlocks = (
             }
             case "containerDirective": {
                 const d = n as ContainerDirective;
-                if (d.name === "dictionary") {
+                if (d.name === "term") {
                     const start = d.position?.start.offset;
                     const end = d.position?.end.offset;
                     const source =
                         start == null || end == null ? "" : directiveRawBody(raw.slice(start, end));
-                    add({ type: "dictionary", entries: parseDictionarySource(source).entries });
+                    for (const entry of parseTermSource(d.attributes?.id ?? "", source).entries)
+                        add({ type: "term", entry });
                 } else if (d.name === "callout") {
                     const body: CalloutItem[] = d.children
                         .filter((c) => !(c.data && "directiveLabel" in c.data))

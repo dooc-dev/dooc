@@ -66,9 +66,9 @@ export const createDocOps = (root: string) => {
 
     // Read before rewriting manifest.yaml. If it's broken, don't write (= don't clobber
     // hand-written content).
-    const loadTree = (): OpResult<{ tree: DocNode[] }> => {
-        const { tree, errors } = readManifest(root);
-        return errors.length > 0 ? { error: errors.join(" / "), status: 409 } : { tree };
+    const loadTree = (): OpResult<{ tree: DocNode[]; title?: string }> => {
+        const { tree, title, errors } = readManifest(root);
+        return errors.length > 0 ? { error: errors.join(" / "), status: 409 } : { tree, title };
     };
 
     const existingDoc = (id: unknown): OpResult<{ id: string }> =>
@@ -108,7 +108,7 @@ export const createDocOps = (root: string) => {
         }
         mkdirSync(contentDir, { recursive: true });
         writeFileSync(docPath(id), assembleDoc({ title }, ""));
-        writeManifest(root, tree);
+        writeManifest(root, tree, loaded.title);
         return { id };
     };
 
@@ -131,7 +131,7 @@ export const createDocOps = (root: string) => {
                 status: 409,
             };
         }
-        writeManifest(root, tree);
+        writeManifest(root, tree, loaded.title);
         return { id };
     };
 
@@ -173,7 +173,7 @@ export const createDocOps = (root: string) => {
         if (existsSync(iconPath(oldId))) {
             renameSync(iconPath(oldId), iconPath(newId));
         }
-        writeManifest(root, tree);
+        writeManifest(root, tree, loaded.title);
         let updatedRefs = 0;
         for (const f of readdirSync(contentDir).filter((n) => docIdOfFile(n) != null)) {
             const p = join(contentDir, f);
@@ -245,7 +245,7 @@ export const createDocOps = (root: string) => {
             };
         }
         const parent = flattenTree(loaded.tree).find((n) => n.id === id)?.parent;
-        writeManifest(root, tree);
+        writeManifest(root, tree, loaded.title);
         unlinkSync(docPath(id));
         if (existsSync(iconPath(id))) {
             unlinkSync(iconPath(id));

@@ -4,7 +4,6 @@
 export type * from "./core/artifact-types.js";
 export * from "./core/blocks.js";
 export * from "./core/content-metadata.js";
-export * from "./core/dictionary-ui.js";
 // Isolated figure rendering (sandboxed iframe) and its parent-side mount (theme following /
 // html figure height).
 export * from "./core/figure-frame.js";
@@ -31,3 +30,4 @@ export * from "./core/schema-graph.js";
 // this react-free entry but from the subpath export `./flow` (dist/core/schema-graph-mount.js)
 // and, for script tags, `./flow.global.js`.
 export * from "./core/taxonomy.js";
+export * from "./core/terms-ui.js";

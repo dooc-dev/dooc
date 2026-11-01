@@ -47,10 +47,11 @@ documents:
 - 参照先のファイルが存在することを確認します。
 :::
 
-:::dictionary
-- term: "docs root"
-  definition: "文書・図・HTMLの説明図をまとめたルートフォルダー。"
+:::term(docs-root)
+name: "docs root"
+definition: "文書・図・HTMLの説明図をまとめたルートフォルダー。"
+description: "資料の入力先。" # 省略可
 :::
 ```
 
-用語は[用語集](doc:dictionary)でまとめて定義し、各ページの本文で使います。
+用語は各記事の本文中の好きな場所で宣言し、本文では `:::term(docs-root)` のようにIDで参照します。同じ単語を書くだけではリンクになりません。宣言は自動収集され、一覧と並べ替えは Resources → Terms にあります。

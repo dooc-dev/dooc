@@ -1,4 +1,4 @@
-import type { DictEntry } from "./artifact-types.js";
+import type { TermEntry } from "./artifact-types.js";
 // Normalized Block AST = the contract for body-text structure baked into the distributed data
 // (artifact/docs.json) (browser-safe, no dependencies). It is converted from the dialect mdast at
 // build time (from-mdast.ts), so consumers (preview / MCP etc.) don't parse md and just map this
@@ -38,8 +38,7 @@ export type Block =
     // artifact/figures/<name>.json. caption = `:::figure(...)[caption]` in content (falling back
     // to the figure's own title).
     | { type: "figureRef"; name: string; caption?: string }
-    // Listing of all glossary entries (data = the artifact's dictionary).
-    | { type: "dictionary"; entries?: DictEntry[] }
+    | { type: "term"; entry: TermEntry }
     // Listing of all figure entries (data = the artifact's figures index).
     | { type: "figures" }
     // Schema graph (ER diagram) derived from the table DSL (`:::schema`). The data is baked into

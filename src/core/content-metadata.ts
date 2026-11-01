@@ -10,6 +10,12 @@ export interface DocNode {
     children: DocNode[];
 }
 
+export interface ParsedManifest {
+    tree: DocNode[];
+    title?: string;
+    errors: string[];
+}
+
 export const DOC_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 
 export const isDocId = (s: string): boolean => DOC_ID_RE.test(s);
@@ -25,8 +31,22 @@ export const docIdOfFile = (name: string): string | undefined => {
  * children) or `{ id: [children...] }` (a single-key map; a null value also means no children).
  * Validates id shape and duplicates.
  */
-export const parseManifest = (value: unknown): { tree: DocNode[]; errors: string[] } => {
+export const parseManifest = (value: unknown): ParsedManifest => {
     const errors: string[] = [];
+    let title: string | undefined;
+    if (value != null && typeof value === "object" && !Array.isArray(value)) {
+        const manifest = value as Record<string, unknown>;
+        for (const key of Object.keys(manifest))
+            if (key !== "title" && key !== "docs")
+                errors.push(`${MANIFEST_FILE}: unknown field "${key}"`);
+        if (manifest.title !== undefined) {
+            if (typeof manifest.title !== "string" || !manifest.title.trim())
+                errors.push(`${MANIFEST_FILE}: title must be a non-empty string`);
+            else title = manifest.title.trim();
+        }
+        if (!Array.isArray(manifest.docs)) errors.push(`${MANIFEST_FILE}: docs must be a list`);
+        value = manifest.docs;
+    }
     const seen = new Set<string>();
     const walk = (v: unknown, path: string): DocNode[] => {
         if (v == null) {
@@ -69,17 +89,21 @@ export const parseManifest = (value: unknown): { tree: DocNode[]; errors: string
         }
         return nodes;
     };
-    return { tree: walk(value, "root"), errors };
+    return { tree: walk(value, "root"), ...(title === undefined ? {} : { title }), errors };
 };
 
 /** Tree → manifest.yaml text (serialized in the hand-written shape, keeping git diffs clean). */
-export const serializeManifest = (tree: readonly DocNode[]): string => {
+export const serializeManifest = (tree: readonly DocNode[], title?: string): string => {
     const write = (nodes: readonly DocNode[], indent: string): string[] =>
         nodes.flatMap((n) =>
             n.children.length > 0
                 ? [`${indent}- ${n.id}:`, ...write(n.children, `${indent}    `)]
                 : [`${indent}- ${n.id}`],
         );
+    if (title !== undefined) {
+        const lines = write(tree, "  ");
+        return `title: ${JSON.stringify(title)}\ndocs:${lines.length ? `\n${lines.join("\n")}\n` : " []\n"}`;
+    }
     const lines = write(tree, "");
     return `# Doc hierarchy and order (each id = content/<id>.md)\n${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`;
 };

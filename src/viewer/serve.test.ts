@@ -17,6 +17,7 @@ import {
     publishHtml,
     renderDocFile,
     resolveContentFile,
+    resourcesMain,
     type Site,
     sanitizeFrontmatter,
     siteFrom,
@@ -24,7 +25,7 @@ import {
 
 const emptySite = (): Site => ({
     entries: [],
-    ctx: { figures: new Map(), dictionary: [] },
+    ctx: { figures: new Map(), terms: [] },
     errors: [],
     languages: BUILTIN_LANGUAGES,
     defaultLang: "en",
@@ -118,7 +119,7 @@ describe("navGroupsHtml", () => {
     // a ─ b ─ c / d (roots and children in the same flat list)
     const fixtureSite = (): Site => ({
         entries: [entry("a"), entry("b", "a"), entry("c", "b"), entry("d")],
-        ctx: { figures: new Map(), dictionary: [] },
+        ctx: { figures: new Map(), terms: [] },
         errors: [],
         languages: [],
         defaultLang: "en",
@@ -207,7 +208,7 @@ describe("navGroupsHtml", () => {
                         },
                     ],
                 ]),
-                dictionary: [],
+                terms: [],
             },
         };
         expect(navGroupsHtml("preview", site)).not.toContain("nav-resources");
@@ -310,7 +311,7 @@ describe("fmFieldsHtml / editorBoot / pageDataResponse (backing `GET /api/page`)
             figures: new Map([
                 ["fig-x", { name: "fig-x", file: "fig-x.svg", kind: "svg" as const, markup: "" }],
             ]),
-            dictionary: [{ term: "Term", reading: "term", definition: "Definition" }],
+            terms: [{ id: "term-id", name: "Term", definition: "Definition" }],
         },
         errors: [],
         languages: BUILTIN_LANGUAGES,
@@ -338,7 +339,7 @@ describe("fmFieldsHtml / editorBoot / pageDataResponse (backing `GET /api/page`)
             figures: ["fig-x.svg"],
             codeLanguages: CODE_LANGS,
             docs: [{ ref: "a", title: "A" }],
-            terms: ["Term"],
+            terms: [{ id: "term-id", name: "Term", definition: "Definition" }],
             blockLines: [0],
             baseRaw: '---\ntitle: "A"\n---\nBody\n',
             icon: null,
@@ -353,6 +354,21 @@ describe("fmFieldsHtml / editorBoot / pageDataResponse (backing `GET /api/page`)
         // ja: browsers don't spellcheck Japanese, so the adapter checks the English words.
         expect(editorBoot({ ...entry, lang: "ja-JP" }, site).spellcheckLang).toBe("en");
         expect(editorBoot({ ...entry, lang: "de" }, site).spellcheckLang).toBe("de");
+    });
+
+    it("carries the site title across navigation and escapes it in published HTML", () => {
+        const site = { ...docSite(), title: '資料 & "API" <guide>' };
+        expect(pageDataResponse(site, "/a")).toMatchObject({
+            status: 200,
+            body: { title: `A — ${site.title}`, boot: { siteTitle: site.title } },
+        });
+        const html = publishHtml(site, "");
+        expect(html).toContain(
+            '<div id="site-title" class="site-title" title="資料 &amp; &quot;API&quot; &lt;guide&gt;">資料 &amp; &quot;API&quot; &lt;guide&gt;</div>',
+        );
+        expect(html).toContain('data-title="A — 資料 &amp; &quot;API&quot; &lt;guide&gt;"');
+        expect(html).not.toContain("crumb-");
+        expect(publishHtml(docSite(), "")).toContain('class="site-title" title="docs">docs</div>');
     });
 
     it("pageDataResponse: 404 when not a doc route (the caller falls back to normal navigation)", () => {
@@ -412,6 +428,46 @@ describe("createBundleCache (client bundle + ETag)", () => {
 describe("publishHtml (a single HTML file with everything embedded)", () => {
     const site = siteFrom(compileSite(new URL("../../sample-content", import.meta.url).pathname));
     const html = publishHtml(site, "window.graph = '</script>';");
+
+    it("uses the compiled manifest title for the site header and browser tab", () => {
+        expect(site.title).toBe("Document System");
+        expect(html).toContain("<title>Document System</title>");
+        expect(html).toContain('class="site-title" title="Document System">Document System</div>');
+    });
+
+    it("lists terms under Resources, with sorting only on the list page", () => {
+        const nav = navGroupsHtml("edit", site, undefined);
+        expect(nav).toContain('href="/_resources/terms"');
+        expect(nav).toContain('href="/_resources/terms/docs-root"');
+        const list = resourcesMain(site, "terms")?.main ?? "";
+        for (const term of site.ctx.terms) expect(list).toContain(`id="term-${term.id}"`);
+        expect(list).toContain("data-dict-sort");
+        const detail = resourcesMain(site, "terms/docs-root")?.main ?? "";
+        expect(detail).toContain(":::term(docs-root)");
+        expect(detail).toContain("資料の入力フォルダー。");
+        expect(detail).not.toContain("data-dict-sort");
+        expect(html.match(/<select data-dict-sort/g)).toHaveLength(1);
+        expect(html).toContain('<template data-route="_resources/terms"');
+        expect(html).toContain('href="#/_resources/terms#term-docs-root"');
+        expect(list).toContain('href="/_resources/terms#term-docs-root"');
+        expect(resourcesMain(site, "terms/missing")).toBeUndefined();
+    });
+
+    it.each([
+        ["jpn", "目次"],
+        ["eng", "Contents"],
+        ["zho", "目录"],
+    ])("localizes Contents in %s articles, including exported HTML", (locale, title) => {
+        const root = new URL("../../sample-content", import.meta.url).pathname;
+        const localized = siteFrom(compileSite(root, { defaultLang: "jpn", locale }));
+        const entry = localized.entries.find((doc) => doc.id === "media");
+        if (!entry) throw new Error("Missing media article");
+        const rendered = renderDocFile(localized, entry.file, entry.raw);
+        for (const output of [rendered.html, publishHtml(localized, "")]) {
+            expect(output).toContain(`class="in-toc-title">${title}</div>`);
+            expect(output).toContain(`class="in-toc" aria-label="${title}"`);
+        }
+    });
 
     it("holds every doc as a template, with links as hash routes", () => {
         for (const e of site.entries) {

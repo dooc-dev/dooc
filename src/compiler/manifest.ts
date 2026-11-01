@@ -6,11 +6,12 @@ import { parse } from "yaml";
 import {
     type DocNode,
     MANIFEST_FILE,
+    type ParsedManifest,
     parseManifest,
     serializeManifest,
 } from "../core/content-metadata.js";
 
-export const parseManifestText = (raw: string): { tree: DocNode[]; errors: string[] } => {
+export const parseManifestText = (raw: string): ParsedManifest => {
     let value: unknown;
     try {
         value = parse(raw);
@@ -24,13 +25,13 @@ export const parseManifestText = (raw: string): { tree: DocNode[]; errors: strin
 };
 
 /** Empty tree if missing (a new docs root with zero docs). */
-export const readManifest = (root: string): { tree: DocNode[]; errors: string[] } => {
+export const readManifest = (root: string): ParsedManifest => {
     const path = join(root, MANIFEST_FILE);
     return existsSync(path)
         ? parseManifestText(readFileSync(path, "utf8"))
         : { tree: [], errors: [] };
 };
 
-export const writeManifest = (root: string, tree: readonly DocNode[]): void => {
-    writeFileSync(join(root, MANIFEST_FILE), serializeManifest(tree));
+export const writeManifest = (root: string, tree: readonly DocNode[], title?: string): void => {
+    writeFileSync(join(root, MANIFEST_FILE), serializeManifest(tree, title));
 };

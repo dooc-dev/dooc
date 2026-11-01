@@ -29,10 +29,6 @@ export const t = (key: string, values?: Record<string, string | number>): string
     translate(language, key, values);
 
 export const applyUiLanguage = (): void => {
-    for (const element of document.querySelectorAll(".in-toc-title"))
-        element.textContent = t("Contents");
-    for (const element of document.querySelectorAll(".in-toc"))
-        element.setAttribute("aria-label", t("Contents"));
     for (const element of document.querySelectorAll("button.codecopy")) {
         element.setAttribute("title", t("Copy code"));
         element.setAttribute("aria-label", t("Copy code"));

@@ -59,10 +59,13 @@ teams:
 ```
 
 ```md
-:::dictionary
-- term: "<term>"
-  definition: "<definition>"
+:::term(<id>)
+name: "<name>"
+definition: "<definition>"
+description: "<description>" # optional
 :::
+
+Inline reference: :::term(<id>)
 ```
 
 

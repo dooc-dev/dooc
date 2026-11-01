@@ -9,7 +9,7 @@ import {
     listDocsJsonSchemas,
     validateDocsArtifact,
 } from "./docs-json-schema.js";
-import { GENERATION } from "./generation.js";
+import { canRenderGeneration, GENERATION } from "./generation.js";
 import { parseGraphSource } from "./graph.js";
 import { parseSchemaSource } from "./schema-graph.js";
 
@@ -35,9 +35,9 @@ const blocks: Record<Block["type"], Block> = {
         ],
     },
     figureRef: { type: "figureRef", name: "figure-one", caption: "Figure" },
-    dictionary: {
-        type: "dictionary",
-        entries: [{ term: "Term", reading: "term", definition: "Definition" }],
+    term: {
+        type: "term",
+        entry: { id: "term-id", name: "Term", description: "Brief", definition: "Definition" },
     },
     figures: { type: "figures" },
     schemaGraph: {
@@ -67,13 +67,13 @@ const doc = (): ArtifactDoc => ({
     body: "Source",
     blocks: structuredClone(Object.values(blocks)),
     toc: [{ depth: 3, text: "Heading", slug: "heading" }],
-    refs: { figures: ["figure-one"] },
+    refs: { figures: ["figure-one"], terms: ["term-id"] },
 });
 
 const artifact = (docs: unknown[] = [doc()]): unknown => ({
     generation: GENERATION,
     docs,
-    dictionary: [{ term: "Term", reading: "term", definition: "Definition" }],
+    terms: [{ id: "term-id", name: "Term", definition: "Definition" }],
     figures: [
         {
             name: "figure-one",
@@ -86,6 +86,14 @@ const artifact = (docs: unknown[] = [doc()]): unknown => ({
 });
 
 describe("docs.json schema registry", () => {
+    it("keeps generation 10 validation available without claiming renderer compatibility", () => {
+        expect(
+            validateDocsArtifact({ generation: 10, docs: [], dictionary: [], figures: [] }),
+        ).toEqual([]);
+        expect(canRenderGeneration(11, 10)).toBe(false);
+        expect(canRenderGeneration(10, 11)).toBe(false);
+        expect(canRenderGeneration(11, 11)).toBe(true);
+    });
     it("registers every versioned file, pins latest to GENERATION and rejects unknown versions", () => {
         const versions = listDocsJsonSchemas();
         expect(versions).toEqual(
@@ -109,7 +117,7 @@ describe("docs.json schema registry", () => {
                 ajv.getSchema(schema.$id)?.({
                     generation: version,
                     docs: [],
-                    dictionary: [],
+                    ...(version === 10 ? { dictionary: [] } : { terms: [] }),
                     figures: [],
                 }),
             ).toBe(true);
@@ -134,7 +142,7 @@ describe("validateDocsArtifact", () => {
         const minimal: DocsArtifact = {
             generation: GENERATION,
             docs: [],
-            dictionary: [],
+            terms: [],
             figures: [],
         };
         expect(validateDocsArtifact(minimal)).toEqual([]);
@@ -174,7 +182,7 @@ describe("validateDocsArtifact", () => {
         { type: "table", headers: [], rows: [[1]] },
         { type: "callout", body: [{ type: "code", lines: [] }] },
         { type: "figureRef" },
-        { type: "dictionary", entries: [{ term: "Term" }] },
+        { type: "term", entry: { id: "term-id", name: "Term" } },
         {
             type: "schemaGraph",
             graph: { groups: [], tables: [{ name: "a", fields: [], notes: [1] }], edges: [] },
@@ -208,13 +216,13 @@ describe("validateDocsArtifact", () => {
             {
                 generation: GENERATION,
                 docs: [],
-                dictionary: [{ term: "Term", definition: 1 }],
+                terms: [{ term: "Term", definition: 1 }],
                 figures: [],
             },
             {
                 generation: GENERATION,
                 docs: [],
-                dictionary: [],
+                terms: [],
                 figures: [{ name: "a", file: "figures/a.svg", kind: "svg", markup: "<svg/>" }],
             },
         ])

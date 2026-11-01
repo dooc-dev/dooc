@@ -1,7 +1,7 @@
 ---
 title: "はじめに"
-lang: "jpn"
 description: "サンプルを起動し、文書を編集して表示を確認する。"
+lang: "jpn"
 ---
 
 ## サンプルを起動する
@@ -20,13 +20,13 @@ mise run dev
 mise run edit ../my-docs
 ```
 
-docs root の構造は[フォルダー構成](doc:layout)を参照してください。
+docs root の構造は[フォルダー構成](doc\:layout)を参照してください。
 
 ## 最初の編集
 
 1. `content/guide.md` の冒頭の文章を変更します。
 2. 保存し、プレビューで変更を確認します。
-3. 左のツリーから[執筆ガイド](doc:writing)を開きます。
+3. 左のツリーから[執筆ガイド](doc\:writing)を開きます。
 
 :::callout[編集を始める前に]
 - このサンプルへの変更はファイルに保存されます。

@@ -237,6 +237,12 @@ export const hmrClientScript = (mode: ServeMode): string => `
     if (!main || !nextMain) { reload(); return; }
     const y = window.scrollY;
     document.title = next.title;
+    const title = document.getElementById("site-title");
+    const nextTitle = next.getElementById("site-title");
+    if (title && nextTitle) {
+      title.textContent = nextTitle.textContent;
+      title.title = nextTitle.title;
+    }
     main.innerHTML = nextMain.innerHTML;
     const nav = document.getElementById("nav-groups");
     const nextNav = next.getElementById("nav-groups");

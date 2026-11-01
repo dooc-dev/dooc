@@ -2,8 +2,8 @@
 // "just map blocks + inline segments to output" pipeline as consumers (= prevents rendering
 // semantics from drifting). Headings and body text share the same weight (headings are also
 // font-weight 400).
-import type { DictEntry, FigureEntry } from "./artifact-types.js";
-import { type Block, type ListItem, slugify, type TocEntry } from "./blocks.js";
+import type { FigureEntry, TermEntry } from "./artifact-types.js";
+import type { Block, ListItem, TocEntry } from "./blocks.js";
 import { figureFrameHtml } from "./figure-frame.js";
 import {
     GRAPH_LAYOUT_MARGIN,
@@ -12,7 +12,7 @@ import {
     graphUid,
     layoutGraph,
 } from "./graph.js";
-import { dictMap, inlineSegmenter } from "./inline.js";
+import { inlineSegmenter, termMap } from "./inline.js";
 import { type LanguageAdapter, termComparator } from "./language.js";
 import { parseDocLink } from "./routing.js";
 import {
@@ -27,7 +27,8 @@ import { docDisplayName, type Frontmatter } from "./taxonomy.js";
 export interface RenderCtx {
     /** Figures including their markup (name → entry). */
     figures: ReadonlyMap<string, FigureEntry>;
-    dictionary: readonly DictEntry[];
+    terms: readonly TermEntry[];
+    termLinks?: ReadonlyMap<string, string>;
     /**
      * Link target for `Fig. <name>` references = the doc holding the `::figures` list
      * (figureIndexRoute). If absent, references aren't linked.
@@ -35,8 +36,10 @@ export interface RenderCtx {
     figureIndex?: string;
     /** The doc's language tag (BCP 47), emitted as `<article lang>`. */
     lang?: string;
+    /** Localized in-page table of contents title. Default: Contents. */
+    tocTitle?: string;
     /**
-     * Adapter for the doc's language (term boundaries, dictionary order). Default: generic
+     * Adapter for the doc's language (term ordering). Default: generic
      * Unicode rules (language.ts).
      */
     language?: LanguageAdapter;
@@ -47,7 +50,7 @@ export const figureIndexRoute = (
     docs: readonly { id: string; blocks: readonly Block[] }[],
 ): string | undefined => docs.find((d) => d.blocks.some((b) => b.type === "figures"))?.id;
 
-export const emptyCtx: RenderCtx = { figures: new Map(), dictionary: [] };
+export const emptyCtx: RenderCtx = { figures: new Map(), terms: [] };
 
 export const escapeHtml = (s: string): string =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -56,7 +59,7 @@ type Segmenter = (text: string) => ReturnType<ReturnType<typeof inlineSegmenter>
 
 // inline segment → html. Figure reference = link to the anchor on the figure page + the figure
 // itself on hover (popup only for svg; html fragments get just the link to avoid duplicate ids).
-// Dictionary term = definition tooltip on hover.
+// Term reference = definition tooltip on hover.
 const segmentsHtml = (text: string, ctx: RenderCtx, seg: Segmenter): string =>
     seg(text)
         .map((s) => {
@@ -84,14 +87,10 @@ const segmentsHtml = (text: string, ctx: RenderCtx, seg: Segmenter): string =>
                     return `<a class="figref" href="${href}">${escapeHtml(s.text)}${pop}</a>`;
                 }
                 case "term": {
-                    const entry = dictMap(ctx.dictionary).get(s.term);
-                    if (!entry) {
-                        return escapeHtml(s.text);
-                    }
-                    const reading = entry.reading
-                        ? `<span class="dictread">${escapeHtml(entry.reading)}</span>`
-                        : "";
-                    return `<span class="dictref">${escapeHtml(s.text)}<span class="dictpop">${reading}${escapeHtml(entry.definition)}</span></span>`;
+                    const entry = termMap(ctx.terms).get(s.id);
+                    if (!entry) return escapeHtml(s.text);
+                    const href = ctx.termLinks?.get(s.id) ?? `#term-${s.id}`;
+                    return `<a class="dictref" href="${escapeHtml(href)}">${escapeHtml(entry.name)}<span class="dictpop">${escapeHtml(entry.definition)}${entry.description ? `<span class="dictpop-description">${escapeHtml(entry.description)}</span>` : ""}</span></a>`;
                 }
                 default:
                     return "";
@@ -375,16 +374,24 @@ const graphHtml = (b: Extract<Block, { type: "graph" }>): string => {
     }</figure>`;
 };
 
-// `term-<slug>` ids for dictionary entries (ASCII like heading slugs; terms without one are
-// numbered by position), made unique within the listing.
-const termAnchors = (terms: readonly string[]): string[] => {
-    const seen = new Map<string, number>();
-    return terms.map((term, i) => {
-        const base = `term-${slugify(term) || i + 1}`;
-        const dup = seen.get(base) ?? 0;
-        seen.set(base, dup + 1);
-        return dup === 0 ? base : `${base}-${dup}`;
-    });
+const TERM_ICON =
+    '<svg class="term-icon" viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h11v14H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm-2 12a2 2 0 0 1 2-2h11M7 10l2-5 2 5M8 8h2"/></svg>';
+
+/** Shared dictionary entries for definitions and the Resources list. */
+export const termsHtml = (
+    terms: readonly TermEntry[],
+    language?: LanguageAdapter,
+    sortable = false,
+): string => {
+    const entries = terms
+        .map((entry, sourceOrder) => ({ ...entry, sourceOrder }))
+        .sort(termComparator(language));
+    return `<section class="terms" aria-label="Terms">${sortable ? `<div class="dict-toolbar"><span>${entries.length} terms</span><label>Sort <select data-dict-sort><option value="asc">Name A → Z</option><option value="desc">Name Z → A</option><option value="source">Source order</option></select></label></div>` : ""}<dl class="dict">${entries
+        .map(
+            (e, i) =>
+                `<div class="dict-card" data-source-order="${e.sourceOrder}" data-sort-order="${i}" data-term="${escapeHtml(e.id)}"><dt id="term-${escapeHtml(e.id)}">${TERM_ICON}<a class="term-name" href="/_resources/terms#term-${encodeURIComponent(e.id)}"${e.description ? ` aria-describedby="term-description-${escapeHtml(e.id)}"` : ""}>${escapeHtml(e.name)}${e.description ? `<span class="term-description" role="tooltip" id="term-description-${escapeHtml(e.id)}">${escapeHtml(e.description)}</span>` : ""}</a></dt><dd>${escapeHtml(e.definition)}</dd></div>`,
+        )
+        .join("")}</dl></section>`;
 };
 
 const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
@@ -422,20 +429,8 @@ const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
             }
             return `<div class="ph">${escapeHtml(`Fig. ${b.name}`)}<span> — not found in figures/</span></div>`;
         }
-        case "dictionary": {
-            // Rendered in the language's A → Z order; data-sort-order carries that rank so the
-            // client-side sort (dictionary-ui.ts) needs no language rules. Anchors are ASCII.
-            const entries = (b.entries ?? ctx.dictionary)
-                .map((entry, sourceOrder) => ({ ...entry, sourceOrder }))
-                .sort(termComparator(ctx.language));
-            const anchors = termAnchors(entries.map((e) => e.term));
-            return `<section class="dictionary" aria-label="Term dictionary"><div class="dict-toolbar"><span>${entries.length} terms</span><label>Sort <select data-dict-sort><option value="asc">Name A → Z</option><option value="desc">Name Z → A</option><option value="source">Source order</option></select></label></div><dl class="dict">${entries
-                .map(
-                    (e, i) =>
-                        `<div class="dict-card" data-source-order="${e.sourceOrder}" data-sort-order="${i}" data-term="${escapeHtml(e.term)}"><dt id="${anchors[i]}">${escapeHtml(e.term)}${e.reading ? ` <span class="dictread">${escapeHtml(e.reading)}</span>` : ""}</dt><dd><p>${escapeHtml(e.definition)}</p></dd></div>`,
-                )
-                .join("")}</dl></section>`;
-        }
+        case "term":
+            return termsHtml([b.entry], ctx.language);
         case "figures":
             // Figure list. The h2 doubles as the label, so captions omit it. h2 id = fig name
             // (anchor).
@@ -464,8 +459,7 @@ const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
 export const blocksHtml = (blocks: Block[], ctx: RenderCtx = emptyCtx): string => {
     const seg = inlineSegmenter({
         figureNames: [...ctx.figures.keys()],
-        dictionary: ctx.dictionary,
-        ...(ctx.language ? { language: ctx.language } : {}),
+        terms: ctx.terms,
     });
     return blocks
         .map((b) => blockHtml(b, ctx, seg))
@@ -476,7 +470,7 @@ export const blocksHtml = (blocks: Block[], ctx: RenderCtx = emptyCtx): string =
 // In-page table of contents at the top of the body text. Separate from the nav one (.nav-toc), it
 // gives an overview of the heading structure as soon as the page is opened (docs without
 // headings = render nothing).
-const inPageTocHtml = (toc: TocEntry[]): string => {
+const inPageTocHtml = (toc: TocEntry[], title = "Contents"): string => {
     if (toc.length === 0) {
         return "";
     }
@@ -486,7 +480,7 @@ const inPageTocHtml = (toc: TocEntry[]): string => {
                 `<li class="lvl${t.depth}"><a href="#${escapeHtml(t.slug)}">${escapeHtml(t.text)}</a></li>`,
         )
         .join("");
-    return `<nav class="in-toc" aria-label="Table of contents"><div class="in-toc-title">Contents</div><ul>${items}</ul></nav>`;
+    return `<nav class="in-toc" aria-label="${escapeHtml(title)}"><div class="in-toc-title">${escapeHtml(title)}</div><ul>${items}</ul></nav>`;
 };
 
 export const docHtml = (
@@ -502,5 +496,5 @@ export const docHtml = (
             : "";
     const lead = fm.description ? `<p class="lead">${escapeHtml(fm.description)}</p>` : "";
     const lang = ctx.lang ? ` lang="${escapeHtml(ctx.lang)}"` : "";
-    return `<article${lang}>${errBox}<h1>${escapeHtml(docDisplayName(fm, ""))}</h1>${lead}${inPageTocHtml(toc)}${blocksHtml(blocks, ctx)}</article>`;
+    return `<article${lang}>${errBox}<h1>${escapeHtml(docDisplayName(fm, ""))}</h1>${lead}${inPageTocHtml(toc, ctx.tocTitle)}${blocksHtml(blocks, ctx)}</article>`;
 };

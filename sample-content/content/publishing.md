@@ -6,6 +6,11 @@ description: "用途に応じてJSON・HTML・ZIPを作成する。"
 
 ## 形式を選ぶ
 
+:::term(artifact)
+name: "artifact"
+definition: "docs.json と、図ごとのJSONからなるコンパイラの出力。"
+:::
+
 | 形式 | 用途 | 出力先の既定値 |
 | --- | --- | --- |
 | JSON | 別のアプリケーションから利用する | `dist/artifact/` |

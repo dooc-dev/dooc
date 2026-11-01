@@ -26,8 +26,14 @@ import { EditorState, type Extension, StateEffect, StateField } from "@codemirro
 import { Decoration, type DecorationSet, EditorView, keymap } from "@codemirror/view";
 import type { SyntaxNode } from "@lezer/common";
 import { tags } from "@lezer/highlight";
+import type { TermEntry } from "../core/artifact-types.js";
 import type { TocEntry } from "../core/blocks.js";
-import { CODE_LANGS, DIRECTIVES, type Directive } from "../core/taxonomy.js";
+import {
+    CODE_LANGS,
+    DIRECTIVES,
+    type Directive,
+    normalizeLeafDirectives,
+} from "../core/taxonomy.js";
 import { inlineFoldButtons } from "./edit-fold.js";
 import { schemaCompletion } from "./edit-schema-completion.js";
 import { editorSetup } from "./edit-setup.js";
@@ -36,6 +42,7 @@ import type { HmrBridge } from "./hmr.js";
 import { applyUiLanguage, mountUiLanguage, t } from "./i18n.js";
 
 interface Boot {
+    siteTitle?: string;
     contentLanguage?: string;
     sourceLanguage?: string;
     file: string;
@@ -46,7 +53,7 @@ interface Boot {
     figures: string[];
     codeLanguages?: string[];
     docs: { ref: string; title: string }[];
-    terms: string[];
+    terms: TermEntry[];
     /**
      * Start line of each block relative to the body (for the correspondence view; same index as
      * the main-content elements).
@@ -126,6 +133,7 @@ interface DocResponse extends RenderSnapshot {
 /** Response of GET /api/nav?current=<docId> (inner html of `#nav-groups`). */
 interface NavResponse {
     html: string;
+    siteTitle?: string;
 }
 
 /**
@@ -174,6 +182,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) 
 // Boot data of the open doc. A doc switch (client-side navigation, end of this file) does not
 // rebuild the sidebar / panel DOM; it only replaces this, the CM contents and the main html.
 let boot = JSON.parse($("boot").textContent ?? "{}") as Boot;
+let siteTitle = boot.siteTitle;
 const localeUrl = (path: string): string => {
     const url = new URL(path, location.origin);
     url.searchParams.set("lang", boot.contentLanguage ?? boot.defaultLang);
@@ -243,7 +252,7 @@ const statusEl = $("status");
 const autosaveEl = $<HTMLInputElement>("opt-autosave");
 
 const autovalidateEl = $<HTMLInputElement>("opt-autovalidate");
-autovalidateEl.checked = localStorage.getItem("docs-edit:autovalidate") !== "0";
+autovalidateEl.checked = localStorage.getItem("docs-edit:autovalidate") === "1";
 
 const AUTOSAVE_KEY = "docs-edit:autosave";
 const CORR_KEY = "docs-edit:corr";
@@ -552,7 +561,14 @@ const buildSlash = (): Completion[] => {
         });
     }
     for (const term of boot.terms) {
-        o.push({ label: `/term:${term}`, type: "text", section: t("Terms"), apply: term });
+        o.push({
+            label: `/term:${term.id}`,
+            detail: term.name,
+            info: term.definition,
+            type: "text",
+            section: t("Terms"),
+            apply: `:::term(${term.id})`,
+        });
     }
     return o;
 };
@@ -598,10 +614,11 @@ const atLineStart = (state: EditorState, from: number): boolean =>
 const insideContainer = (state: EditorState, pos: number): boolean => {
     const current = state.doc.lineAt(pos).number;
     let open = false;
+    const lines = normalizeLeafDirectives(state.doc.toString()).source.split("\n");
     for (let i = 1; i < current; i++) {
-        const text = state.doc.line(i).text;
+        const text = lines[i - 1] ?? "";
         // `:::figure(...)` / `:::html(...)` are single lines with no close, so don't count them.
-        if (text.startsWith(":::") && !/^:::(figure|html)\(/.test(text)) {
+        if (text.startsWith(":::") && !/^:::(figure|html|term)\(/.test(text)) {
             open = text.slice(3).trim() !== "";
         }
     }
@@ -614,6 +631,18 @@ const docsComplete = (ctx: CompletionContext): CompletionResult | null => {
     if (inCodeContext(ctx)) {
         return null;
     }
+    const termM = ctx.matchBefore(/:::term\(\s*[a-z0-9_-]*/);
+    if (termM)
+        return {
+            from: termM.from + termM.text.indexOf("(") + 1,
+            options: boot.terms.map((term) => ({
+                label: term.id,
+                detail: term.name,
+                info: term.definition,
+                type: "text",
+            })),
+            validFor: /[a-z0-9_-]*/,
+        };
     // `:::figure(` takes a figure file, `:::html(` an .html file.
     const figM = ctx.matchBefore(/:::(figure|html)\([\w.-]*/);
     if (figM && atLineStart(ctx.state, figM.from)) {
@@ -672,6 +701,9 @@ const theme = EditorView.theme({
         // lines of bottom padding to let it scroll up to a comfortable position.
         paddingBottom: "20lh",
     },
+    ".cm-scroller": { fontFamily: MONO_FONT, lineHeight: "20px" },
+    ".cm-line": { minHeight: "20px" },
+    ".cm-gutterElement": { lineHeight: "20px", fontVariantNumeric: "tabular-nums" },
     ".cm-gutters": { backgroundColor: "transparent", color: "var(--doc-fg-4)", border: "none" },
     ".cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--doc-accent) 7%, transparent)" },
     ".cm-activeLineGutter": {
@@ -696,6 +728,17 @@ const theme = EditorView.theme({
     // indentation as-is. The selector is `.cm-tooltip.cm-completionInfo` to beat the default
     // white-space (autocomplete's baseTheme uses the same two classes with `pre-line`, which
     // collapses indentation).
+    ".cm-tooltip": {
+        backgroundColor: "var(--doc-panel)",
+        color: "var(--doc-fg)",
+        border: "1px solid var(--doc-border)",
+    },
+    ".cm-tooltip-autocomplete > ul > li[aria-selected]": {
+        backgroundColor: "var(--doc-accent)",
+        color: "var(--doc-accent-fg)",
+    },
+    ".cm-completionDetail, .cm-completionSection": { color: "var(--doc-fg-3)" },
+    ".cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionDetail": { color: "inherit" },
     ".cm-tooltip.cm-completionInfo": {
         whiteSpace: "pre-wrap",
         fontFamily: MONO_FONT,
@@ -964,6 +1007,11 @@ const post = async (url: string): Promise<DraftResponse> => {
 
 // Keep the active page, its live title and the ancestor breadcrumb in sync.
 const updateNavLocation = (): void => {
+    const header = $("site-title");
+    header.textContent = header.title = siteTitle ?? "docs";
+    const docTitle = $<HTMLInputElement>("fm-title").value.trim() || boot.docId;
+    document.title =
+        docTitle === siteTitle ? docTitle : `${docTitle} — ${siteTitle ?? "docs edit"}`;
     const item = document.querySelector<HTMLElement>(
         `#nav-groups .nav-item[data-doc-id="${CSS.escape(boot.docId)}"]`,
     );
@@ -984,20 +1032,13 @@ const updateNavLocation = (): void => {
         label.textContent = $<HTMLInputElement>("fm-title").value.trim() || boot.docId;
         cur.setAttribute("title", label.textContent);
     }
-    // Keep the breadcrumb ("ancestors › doc", same as page()'s server render) in sync too.
-    const names: string[] = [];
     for (
         let it = item.parentElement?.closest(".nav-item");
         it;
         it = it.parentElement?.closest(".nav-item")
     ) {
         it.classList.add("open");
-        names.unshift(it.querySelector(":scope > .nav-row > a")?.textContent ?? "");
     }
-    const crumbAud = document.getElementById("crumb-aud");
-    const crumbDoc = document.getElementById("crumb-doc");
-    if (crumbAud) crumbAud.textContent = names.join(" › ");
-    if (crumbDoc) crumbDoc.textContent = cur?.textContent ?? "";
 };
 
 const apply = (r: RenderSnapshot): void => {
@@ -1073,11 +1114,12 @@ const refreshNav = async (): Promise<void> => {
         if (!res.ok) {
             return;
         }
-        const { html } = (await res.json()) as NavResponse;
+        const data = (await res.json()) as NavResponse;
         if (boot !== requestedBoot) return;
+        siteTitle = data.siteTitle;
         const navGroups = document.getElementById("nav-groups");
         if (navGroups) {
-            navGroups.innerHTML = html;
+            navGroups.innerHTML = data.html;
             for (const pane of panes) {
                 const state = pane === activePane ? boot : pane.draft?.boot;
                 if (!state) continue;
@@ -1092,6 +1134,7 @@ const refreshNav = async (): Promise<void> => {
             }
         }
         (window as unknown as { __docsNavFilter?: () => void }).__docsNavFilter?.();
+        updateNavLocation();
         applyUiLanguage();
     } catch {
         // best-effort: picked up again on the next change
@@ -1133,7 +1176,7 @@ const handleContentChange = async (files: string[]): Promise<void> => {
         return;
     }
     // Other docs / figures / manifest.yaml: reflect changes to figures, doc: links and the
-    // dictionary in the main content using the current edits, and swap the nav (list, order).
+    // terms in the main content using the current edits, and swap the nav (list, order).
     await render();
     await refreshNav();
 };
@@ -1230,7 +1273,7 @@ const onChange = (): void => {
 // ── Correspondence view tagging / highlighting ───────────────────────────
 // Zip the direct children of the main <article> with blockLines in block order (excluding the
 // leading front-matter elements = errors / h1 / fullname / lead). Full-listing blocks for figures
-// or the dictionary occasionally expand 1:N and shift everything after, but highlighting is
+// or term definitions occasionally expand 1:N and shift everything after, but highlighting is
 // correct up to the min index (a "good enough" display for a dev tool).
 const clearPreviewHi = (): void => {
     for (const r of ranges) {
@@ -1881,7 +1924,6 @@ interface PaneDraft {
     dirty: boolean;
     conflictPending: boolean;
     blockLines: number[];
-    title: string;
 }
 interface PreviewPane {
     id: number;
@@ -1904,7 +1946,6 @@ const capturePane = (): void => {
         dirty,
         conflictPending,
         blockLines: lastBlockLines,
-        title: document.title,
     };
 };
 const syncPane = (): void => {
@@ -1931,7 +1972,7 @@ const restorePane = (pane: PreviewPane): void => {
     view.setState(draft.state);
     fmBox.innerHTML = draft.fmHtml;
     applyFm(draft.fm);
-    document.title = draft.title;
+    updateNavLocation();
     const fileLabel = $("pfile").querySelector("span");
     if (fileLabel) fileLabel.textContent = boot.file;
     $("pfile").title = boot.file;
@@ -2070,6 +2111,7 @@ const docStates = new Map<string, EditorState>();
 const swapDoc = (data: PageResponse, remember = true): void => {
     const prevKey = stateKey(boot);
     boot = data.boot;
+    siteTitle = boot.siteTitle;
     baseRaw = boot.baseRaw;
     applySpellcheckLang();
     rebuildCompletions();
