@@ -47,3 +47,12 @@ arg "[root]" default=""
 arg "[out]" default=""
 '''
 run = '{{vars.resolve_root}} && pnpm exec tsx src/cli.ts export "$usage_format" "$r" ${usage_out:+"$(cd "$MISE_ORIGINAL_CWD" && realpath -m "$usage_out")"}'
+
+[tasks.release]
+description = "Dispatch a private package release on GitHub"
+usage = '''
+arg "<bump>" {
+  choices "patch" "minor" "major"
+}
+'''
+run = 'gh workflow run release.yml --repo sasaki-s-sci/document-system --ref main -f "bump=$usage_bump"'
