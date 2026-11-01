@@ -1,5 +1,5 @@
 {
-    "name": "@sasaki-s-sci/document-pkg",
+    "name": "@sasaki-s-sci/document-system",
     "version": "0.0.1",
     "description": "A docs toolkit that compiles an md / svg / html layout convention into docs.json and renders / edits it. The package export is core (docs.json types + routing / HTML rendering / interactive schema graph UI)",
     "type": "module",
@@ -7,7 +7,7 @@
         "dist"
     ],
     "bin": {
-        "document-pkg": "./dist/cli.js"
+        "document-system": "./dist/cli.js"
     },
     "exports": {
         ".": {

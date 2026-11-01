@@ -2,30 +2,30 @@
 
 # Usage
 
-The package name and the CLI name are both `document-pkg`. The examples below use a locally installed package.
+The package name is `@sasaki-s-sci/document-system` and the CLI name is `document-system`. The examples below use a locally installed package.
 
 ```sh
-pnpm exec document-pkg edit [root] [port]        # viewer
-pnpm exec document-pkg export json [root] [out]  # full docs.json set (<root>/dist/artifact/)
-pnpm exec document-pkg export zip  [root] [out]  # zip of the content (<root>/dist/<root name>.zip)
-pnpm exec document-pkg export html [root] [out]  # single HTML file with everything embedded (<root>/dist/index.html)
-pnpm exec document-pkg mcp [root]                # stdio MCP server (all read / write operations)
+pnpm exec document-system edit [root] [port]        # viewer
+pnpm exec document-system export json [root] [out]  # full docs.json set (<root>/dist/artifact/)
+pnpm exec document-system export zip  [root] [out]  # zip of the content (<root>/dist/<root name>.zip)
+pnpm exec document-system export html [root] [out]  # single HTML file with everything embedded (<root>/dist/index.html)
+pnpm exec document-system mcp [root]                # stdio MCP server (all read / write operations)
 
 # Layout operations (--root <dir> sets the docs root; defaults to cwd)
-pnpm exec document-pkg doc ls
-pnpm exec document-pkg doc add    <id> [--title <t>] [--parent <id>]
-pnpm exec document-pkg doc move   <id> [--parent <id>] [--index <n>]  # omit parent = top level
-pnpm exec document-pkg doc rename <id> <newId>                        # doc: links are updated too
-pnpm exec document-pkg doc delete <id> [--force]
-pnpm exec document-pkg figure ls
-pnpm exec document-pkg figure add    <file> [--name <name>]
-pnpm exec document-pkg figure delete <name> [--force]
+pnpm exec document-system doc ls
+pnpm exec document-system doc add    <id> [--title <t>] [--parent <id>]
+pnpm exec document-system doc move   <id> [--parent <id>] [--index <n>]  # omit parent = top level
+pnpm exec document-system doc rename <id> <newId>                        # doc: links are updated too
+pnpm exec document-system doc delete <id> [--force]
+pnpm exec document-system figure ls
+pnpm exec document-system figure add    <file> [--name <name>]
+pnpm exec document-system figure delete <name> [--force]
 ```
 
 Registering the MCP server (Claude Code):
 
 ```sh
-claude mcp add docs -- pnpm exec document-pkg mcp /path/to/root
+claude mcp add docs -- pnpm exec document-system mcp /path/to/root
 ```
 
 tool: `list_docs` `search_docs` `read_doc` `read_figure` `check` `add_doc` `write_doc` `move_doc` `rename_doc` `delete_doc` `add_figure` `delete_figure`

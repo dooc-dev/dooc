@@ -15,9 +15,10 @@ import { figureName } from "./compiler/figures.js";
 import { createDocOps, isOpError, type OpResult } from "./compiler/ops.js";
 import { zip } from "./compiler/zip.js";
 
-const USAGE = `usage: document-pkg <command>
+const USAGE = `usage: document-system <command>
 
-  edit [root] [port]                 viewer
+  preview [root] [port]              read-only viewer with document hot reload
+  edit [root] [port]                 editor
   export json [root] [out] [--lang <iso6393>]  docs.json bundle (default <root>/dist/artifact/)
   export zip  [root] [out]           zip of the content (default <root>/dist/<root name>.zip)
   export html [root] [out] [--lang <iso6393>]  self-contained html, all assets embedded (default <root>/dist/index.html)
@@ -74,14 +75,13 @@ const report = <T extends object>(r: OpResult<T>, ok: (v: T) => string): void =>
 const [command, ...args] = process.argv.slice(2);
 switch (command) {
     case "dev":
+    case "preview":
     case "edit": {
         process.env.DOCS_ROOT = docsRoot(args[0]);
-        if (command === "edit") {
-            process.env.DOCS_HMR = "0";
-        }
+        process.env.DOCS_HMR = command === "edit" ? "0" : "1";
         // serve.ts reads DOCS_ROOT at import time, so import it after the env is set.
         const { startServer } = await import("./viewer/serve.js");
-        await startServer("edit", Number(args[1] ?? 5179));
+        await startServer(command === "preview" ? "preview" : "edit", Number(args[1] ?? 5179));
         break;
     }
     case "export": {

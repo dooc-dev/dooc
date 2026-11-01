@@ -1,4 +1,4 @@
-// Browser client for document-pkg edit (bundled by serve.ts with esbuild, served at
+// Browser client for document-system edit (bundled by serve.ts with esbuild, served at
 // /assets/edit.js). Right panel: compact front matter + CodeMirror. Insertion is done via in-editor
 // autocomplete (the `/` palette and contextual completion). Toggles (autosave / correspondence
 // view / fm visibility / theme) live in the header's gear hover menu. Width is adjustable by drag
