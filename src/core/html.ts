@@ -386,12 +386,12 @@ export const termsHtml = (
     const entries = terms
         .map((entry, sourceOrder) => ({ ...entry, sourceOrder }))
         .sort(termComparator(language));
-    return `<section class="terms" aria-label="Terms">${sortable ? `<div class="dict-toolbar"><span>${entries.length} terms</span><label>Sort <select data-dict-sort><option value="asc">Name A → Z</option><option value="desc">Name Z → A</option><option value="source">Source order</option></select></label></div>` : ""}<dl class="dict">${entries
+    return `<section class="terms" aria-label="Terms">${sortable ? `<div class="dict-toolbar"><span>${entries.length} terms</span><label>Sort <select data-dict-sort><option value="asc">Name A → Z</option><option value="desc">Name Z → A</option><option value="source">Source order</option></select></label></div>` : ""}<div class="dict">${entries
         .map(
             (e, i) =>
-                `<div class="dict-card" data-source-order="${e.sourceOrder}" data-sort-order="${i}" data-term="${escapeHtml(e.id)}"><dt id="term-${escapeHtml(e.id)}">${TERM_ICON}<a class="term-name" href="/_resources/terms#term-${encodeURIComponent(e.id)}"${e.description ? ` aria-describedby="term-description-${escapeHtml(e.id)}"` : ""}>${escapeHtml(e.name)}${e.description ? `<span class="term-description" role="tooltip" id="term-description-${escapeHtml(e.id)}">${escapeHtml(e.description)}</span>` : ""}</a></dt><dd>${escapeHtml(e.definition)}</dd></div>`,
+                `<fieldset class="dict-card" data-source-order="${e.sourceOrder}" data-sort-order="${i}" data-term="${escapeHtml(e.id)}"><legend id="term-${escapeHtml(e.id)}">${TERM_ICON}<a class="term-name" href="/_resources/terms#term-${encodeURIComponent(e.id)}"${e.description ? ` aria-describedby="term-description-${escapeHtml(e.id)}"` : ""}>${escapeHtml(e.name)}${e.description ? `<span class="term-description" role="tooltip" id="term-description-${escapeHtml(e.id)}">${escapeHtml(e.description)}</span>` : ""}</a></legend><p class="term-definition">${escapeHtml(e.definition)}</p></fieldset>`,
         )
-        .join("")}</dl></section>`;
+        .join("")}</div></section>`;
 };
 
 const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {

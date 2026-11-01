@@ -690,13 +690,13 @@ details summary { cursor: pointer; opacity: .8; }
 .terms .dict-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; color: var(--doc-fg-3); font-size: 12px; }
 .terms .dict-toolbar label { display: flex; align-items: center; gap: 8px; }
 .terms select { font: inherit; color: var(--doc-fg); background: var(--doc-panel); border: 1px solid var(--doc-border); border-radius: 4px; padding: 4px 8px; }
-.terms dl.dict { display: grid; gap: 8px; margin: 0; }
-.terms .dict-card { padding: 14px 16px; border: 1px solid var(--doc-border);
+.terms .dict { display: grid; gap: 8px; margin: 0; }
+.terms .dict-card { margin: 0; padding: 0 12px 6px; border: 1px solid var(--doc-border);
   border-radius: 4px; min-width: 0; overflow-wrap: anywhere; }
-.terms dl.dict dt { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; font-weight: 600;
+.terms legend { display: flex; align-items: center; gap: 6px; max-width: 100%; padding: 0 4px; font-size: 15px; font-weight: 600;
   line-height: 1.5; color: var(--doc-fg); scroll-margin-top: 16px; }
-.terms dl.dict dd { margin: 6px 0 0; padding: 0; border: 0; font-size: 13.5px;
-  line-height: 1.8; white-space: pre-line; }
+.terms .term-definition { margin: 2px 0 0; font-size: 13.5px;
+  line-height: 1.6; white-space: pre-line; }
 .terms .dict-card:has(:target) { border-color: var(--doc-accent-2); }
 .terms .term-icon { flex: none; color: var(--doc-fg-3); }
 .terms .term-name { position: relative; min-width: 0; text-decoration: none; overflow-wrap: anywhere; }

@@ -331,7 +331,7 @@ describe("inline references (figures / dictionary)", () => {
         expect(out).toContain(
             'class="term-description" role="tooltip" id="term-description-a">&lt;script&gt;</span>',
         );
-        expect(out).toContain("<dd>&lt;b&gt;first&lt;/b&gt;</dd>");
+        expect(out).toContain('<p class="term-definition">&lt;b&gt;first&lt;/b&gt;</p>');
         expect(out).not.toContain("term-description-z");
         expect(out).not.toContain("<code>");
     });
@@ -339,7 +339,8 @@ describe("inline references (figures / dictionary)", () => {
     it("term definitions render stable anchors without list sorting controls", () => {
         const entry = { id: "api", name: "API", definition: "Interface" };
         const out = blocksHtml([{ type: "term", entry }], CTX);
-        expect(out).toContain('<dt id="term-api">');
+        expect(out).toContain('<fieldset class="dict-card"');
+        expect(out).toContain('<legend id="term-api">');
         expect(out).toContain('class="term-icon"');
         expect(out).toContain('href="/_resources/terms#term-api">API</a>');
         expect(out).toContain("Interface");
