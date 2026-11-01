@@ -41,13 +41,14 @@
         "node": ">=22"
     },
     "scripts": {
-        "build": "pnpm run build:css && tsc -p tsconfig.build.json && pnpm run build:flow && pnpm run build:edit",
+        "build": "pnpm run build:css && pnpm run build:fonts && tsc -p tsconfig.build.json && pnpm run build:flow && pnpm run build:edit",
         "build:css": "node --import tsx src/core/build-flow-css.ts",
         "build:flow": "esbuild src/core/schema-graph-global.tsx --bundle --format=iife --target=es2022 --minify --outfile=dist/flow.global.js",
         "build:edit": "esbuild src/viewer/edit-client.ts --bundle --format=iife --target=es2022 --minify --outfile=dist/edit.global.js && esbuild src/viewer/ui-client.ts --bundle --format=iife --target=es2022 --minify --outfile=dist/ui.global.js && esbuild src/viewer/code-highlight.ts --bundle --format=iife --target=es2022 --minify --outfile=dist/code.global.js",
         "test": "vitest run",
         "check": "biome check . && tsc --noEmit && pnpm run build && vitest run",
-        "fix": "biome check --write ."
+        "fix": "biome check --write .",
+        "build:fonts": "node -e \"require('node:fs').cpSync('src/viewer/fonts', 'dist/viewer/fonts', {recursive:true})\""
     },
     "devDependencies": {
         "@biomejs/biome": "2.4.15",
@@ -55,6 +56,8 @@
         "@codemirror/commands": "^6.11.1",
         "@codemirror/lang-markdown": "^6.5.2",
         "@codemirror/language": "^6.13.1",
+        "@codemirror/lint": "6.9.7",
+        "@codemirror/search": "6.7.2",
         "@codemirror/state": "^6.7.6",
         "@codemirror/view": "^6.43.15",
         "@lezer/common": "^1.5.4",
@@ -65,7 +68,6 @@
         "@types/react": "^19.2.17",
         "@types/react-dom": "^19.2.3",
         "@xyflow/react": "^12.11.2",
-        "codemirror": "^6.0.2",
         "esbuild": "^0.28.1",
         "mdast-util-directive": "^3.1.0",
         "react": "^19.2.8",
@@ -87,6 +89,8 @@
         "remark-frontmatter": "^5.0.0",
         "remark-gfm": "^4.0.1",
         "remark-parse": "^11.0.0",
+        "remark-stringify": "11.0.0",
+        "string-width": "4.2.3",
         "textlint-rule-preset-ja-technical-writing": "^12.0.2",
         "unified": "^11.0.5",
         "unist-util-visit": "^5.0.0",

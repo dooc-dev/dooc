@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { exportEntries } from "../compiler/export.js";
-import { codeBlockAt, isLocalToolRequest, runCodeTool } from "./editor-tools.js";
+import { codeBlockAt, isLocalToolRequest, runCodeTool, validateCodeTools } from "./editor-tools.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -40,7 +40,7 @@ describe("code tool virtual blocks", () => {
     it("does not treat fence-looking prose or open/nested code as replaceable", () => {
         expect(() => codeBlockAt(body, 2)).toThrow("cursor");
         expect(() => codeBlockAt("```js\nx()", 7)).toThrow("Close");
-        expect(() => codeBlockAt("> ```js\n> x()\n> ```", 10)).toThrow("top-level");
+        expect(codeBlockAt("> ```js\n> x()\n> ```", 10).code).toBe("x()");
         expect(() => codeBlockAt(body, NaN)).toThrow("position");
     });
     it("handles an empty fence and picks the second of multiple fences", () => {
@@ -138,5 +138,81 @@ describe("local code-tool request boundary", () => {
         expect(isLocalToolRequest("localhost:5199", "http://localhost:5199", "text/plain")).toBe(
             false,
         );
+    });
+});
+
+describe("document validation", () => {
+    it("formats every configured block and maps diagnostics into the resulting document", async () => {
+        const root = await fixture(
+            "const s=require('node:fs').readFileSync(0,'utf8');require('node:fs').writeSync(1,s.replace('x=1','x = 1;'))",
+            "require('node:fs').writeSync(1,JSON.stringify([{message:'Check x',line:1,column:7}]))",
+        );
+        const original = `${body}\n${body}\n\`\`\`unknown\nuntouched\n\`\`\``;
+        const result = await validateCodeTools(root, original);
+        expect(result.changes).toHaveLength(1);
+        let updated = original;
+        for (const change of [...result.changes].reverse())
+            updated = updated.slice(0, change.from) + change.insert + updated.slice(change.to);
+        expect(updated).toContain("untouched");
+        expect(result.findings.map((finding) => updated.slice(...finding.range))).toEqual([
+            "x",
+            "x",
+        ]);
+        expect(result.findings[1]?.range[0]).toBe(updated.lastIndexOf("const x") + 6);
+        expect((await validateCodeTools(root, updated)).changes).toEqual([]);
+    });
+    it("leaves documents without configured languages alone", async () => {
+        const root = await fixture("");
+        expect(await validateCodeTools(root, "# Heading\n\nText\n")).toEqual({
+            changes: [],
+            findings: [],
+        });
+    });
+});
+
+describe("registered tools across page blocks", () => {
+    it("formats nested list/quote blocks and runs lint against the formatted positions", async () => {
+        const root = await fixture(
+            "const s=require('node:fs').readFileSync(0,'utf8');require('node:fs').writeSync(1,s.replace('x()','x();'))",
+            "require('node:fs').writeSync(1,JSON.stringify([{message:'check',line:1,column:1}]))",
+        );
+        const original =
+            ":::figure(a.svg)\n\n- Item\n\n  ```js\n  x()\n  ```\n\n> ```js\n> x()\n> ```\n";
+        const result = await validateCodeTools(root, original);
+        let updated = original;
+        for (const change of [...result.changes].reverse())
+            updated = updated.slice(0, change.from) + change.insert + updated.slice(change.to);
+        expect(updated).toContain("  x();");
+        expect(updated).toContain("> x();");
+        expect(result.findings.map((finding) => updated.slice(...finding.range))).toEqual([
+            "x",
+            "x",
+        ]);
+    });
+    it("supports formatter-only and linter-only language registrations", async () => {
+        const root = await fixture("");
+        const dir = join(root, ".document-system/editor-tools");
+        await writeFile(
+            join(dir, "fmt.json"),
+            JSON.stringify({
+                formatter: [process.execPath, "-e", "require('fs').writeSync(1,'changed\\n')"],
+            }),
+        );
+        await writeFile(
+            join(dir, "lint.json"),
+            JSON.stringify({
+                linter: [
+                    process.execPath,
+                    "-e",
+                    "require('fs').writeSync(1,JSON.stringify([{message:'issue',line:1,column:1}]))",
+                ],
+            }),
+        );
+        const result = await validateCodeTools(
+            root,
+            "```fmt\noriginal\n```\n\n```lint\noriginal\n```\n",
+        );
+        expect(result.changes[0]?.insert).toContain("changed");
+        expect(result.findings).toHaveLength(1);
     });
 });

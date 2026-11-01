@@ -44,7 +44,8 @@ import { docHtml, escapeHtml, figureIndexRoute, type RenderCtx } from "../core/h
 import { isLangTag, type LanguageAdapter, resolveLanguage } from "../core/language.js";
 import { ancestorsOf, childrenOf, docPath, resolveDocPath } from "../core/routing.js";
 import { CODE_LANGS, docDisplayName, type Frontmatter } from "../core/taxonomy.js";
-import { isLocalToolRequest, runCodeTool } from "./editor-tools.js";
+import { isLocalToolRequest, runCodeTool, validateCodeTools } from "./editor-tools.js";
+import { fontCss, readFont } from "./fonts.js";
 import { createHmrHub, HMR_PATH, hmrClientScript, watchProject } from "./hmr.js";
 import { DEFAULT_SITE_LANGUAGES, loadSiteLanguages } from "./languages.js";
 
@@ -415,7 +416,7 @@ const DOC_FROM_C = `
 
 // Monospace font stack for code blocks etc. (same value as the editor's MONO_FONT in
 // edit-client.ts).
-const MONO_FONT = `"JetBrains Mono", "SF Mono", Menlo, Consolas, monospace`;
+const MONO_FONT = `"UDEV Gothic", monospace`;
 const SANS_FONT = `"IBM Plex Sans JP", -apple-system, "Segoe UI", "Noto Sans JP", sans-serif`;
 
 // Viewer icons (20x20 stroke glyphs).
@@ -730,11 +731,6 @@ const EDIT_CSS = `
 #status { flex: 1; min-width: 0; padding: 0 8px; text-align: right; color: var(--c-fg-faint);
   font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #status.err { color: var(--c-danger); }
-#phead #save { flex: none; height: 28px; margin: 0 4px; padding: 0 14px; font-size: 12px; color: var(--c-accent);
-  background: color-mix(in srgb, var(--c-accent) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--c-accent) 70%, transparent); border-radius: 5px; cursor: pointer;
-  transition: background 120ms ease; }
-#phead #save:hover { background: color-mix(in srgb, var(--c-accent) 16%, transparent); }
 #gear { position: relative; flex: none; }
 #gearmenu { display: none; position: absolute; right: 0; top: calc(100% + 6px); z-index: 8;
   min-width: 220px; padding: 4px; flex-direction: column; gap: 1px; color: var(--c-fg);
@@ -781,12 +777,18 @@ main.editor-workspace { padding: 0; height: 100vh; display: flex; flex-direction
 .language-option:disabled { opacity: .5; cursor: wait; }
 #language-setting { flex: none; display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-bottom: 1px solid var(--c-line); }
 #language-setting select { font: inherit; color: var(--c-fg); background: var(--c-bg0); border: 1px solid var(--c-line); border-radius: 4px; padding: 4px 8px; }
-#code-tools { display:flex; align-items:center; gap:6px; padding:6px 12px; flex-wrap:wrap; }
-#code-tool-status { font-size:12px; color:var(--c-fg-muted); }
-#code-diagnostics { max-height:140px; overflow:auto; padding:0 12px; }
-#code-diagnostics button { display:block; text-align:left; width:100%; font-size:12px; }
 .cm-code-diagnostic { text-decoration:underline wavy var(--c-warn); text-underline-offset:3px; }
+#validate[data-state="error"] { color:var(--c-danger); }
+#validate[data-state="valid"] { color:var(--c-ok); }
+#validate[data-state="pending"] { color:var(--c-accent); }
+#save[data-state="error"] { color:var(--c-danger); }
+#save[data-state="saved"] { color:var(--c-ok); }
+#save[data-state="pending"] { color:var(--c-accent); }
 #cm { flex: 1; min-height: 200px; overflow: hidden; }
+#cm .cm-inline-fold { display:inline-flex; align-items:center; justify-content:center; vertical-align:middle; width:22px; height:20px; margin-left:6px; padding:0; border:0; border-radius:4px; background:transparent; color:var(--c-fg-faint); cursor:pointer; }
+#cm .cm-inline-fold:hover, #cm .cm-inline-fold:focus-visible { color:var(--c-fg); background:var(--c-raised); }
+#cm .cm-inline-fold:focus-visible { outline:1px solid var(--c-accent); outline-offset:1px; }
+#cm .cm-inline-fold[aria-expanded="false"] svg { transform:rotate(-90deg); }
 #cm .cm-editor { height: 100%; }
 #cm .cm-editor.cm-focused { outline: none; }
 #cm.dropping { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--c-accent) 70%, transparent);
@@ -1159,7 +1161,7 @@ const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(pageTitle(mode, opts.title))}</title>
 <script>try{const t=localStorage.getItem("docs-preview:theme");if(t)document.documentElement.dataset.theme=t}catch{}</script>
-<style>${CSS}${mode === "edit" ? EDIT_CSS : ""}</style></head>
+<style>${fontCss(Boolean(opts.publish))}${CSS}${mode === "edit" ? EDIT_CSS : ""}</style></head>
 <body${mode === "edit" ? ' class="edit"' : ""}><nav id="sidebar"><div id="sidebar-head"><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button><div class="breadcrumb" aria-label="Breadcrumb"><span id="crumb-aud">${escapeHtml(crumbPath)}</span><span id="crumb-doc">${escapeHtml(opts.title)}</span></div></div><div id="sidebar-content"><input id="nav-search" type="search" placeholder="Search docs…" data-i18n-placeholder="Search docs…" aria-label="Search docs by title" data-i18n-aria-label="Search docs by title"><div id="nav-groups">${nav}</div>${createMenu}<div id="nav-status" role="status" aria-live="polite"></div></div>${dropzone}<div id="sidebar-foot"><button id="theme" class="nav-link" type="button"></button></div></nav>${main}${opts.aside ?? ""}
 ${bootScripts}${graphScript}
 <script id="code-grammars" type="application/json">${JSON.stringify(site.codeGrammars ?? []).replace(/</g, "\\u003c")}</script>
@@ -1665,12 +1667,14 @@ const editorAside = (entry: Entry, site: Site): { aside: string; boot: EditorBoo
 <button id="rename" class="pbtn" type="button" title="rename" data-i18n-title="rename" aria-label="Change doc id" data-i18n-aria-label="Change doc id">${RENAME_ICON}</button>
 <button id="delete" class="pbtn" type="button" title="Delete doc" data-i18n-title="Delete doc" aria-label="Delete doc" data-i18n-aria-label="Delete doc">${DELETE_ICON}</button>
 <span id="status"></span>
-<button id="save" type="button" title="Save (Ctrl+S)" data-i18n-title="Save (Ctrl+S)" data-i18n="Save">Save</button>
+<button id="validate" class="pbtn" type="button" title="Validate and apply" data-i18n-title="Validate and apply" aria-label="Validate and apply" data-i18n-aria-label="Validate and apply">${icon('<path d="M5 5l-4 5 4 5M15 5l4 5-4 5M7 10l2 2 4-5"/>')}</button>
+<button id="save" class="pbtn" data-state="saved" type="button" title="Save (Ctrl+S)" data-i18n-title="Save (Ctrl+S)" aria-label="Save" data-i18n-aria-label="Save">${icon('<path d="M3 3h11l3 3v11H3z"/><path d="M6 3v5h7V3M6 17v-6h8v6"/>')}</button>
 <button id="split-preview" class="pbtn" type="button" aria-pressed="false" aria-label="Split view" data-i18n-aria-label="Split view" title="Split view" data-i18n-title="Split view">${icon('<rect x="3" y="3" width="14" height="14" rx="2"/><path d="M10 3v14"/>')}</button>
 <div id="gear"><button class="pbtn" type="button" aria-haspopup="true" aria-label="View settings" data-i18n-aria-label="View settings" title="View settings" data-i18n-title="View settings">${GEAR_ICON}</button><div id="gearmenu">
 <div id="language-setting"><select id="ui-language" aria-label="Editor language" data-i18n-aria-label="Language"><option value="eng">English</option><option value="jpn">日本語</option><option value="zho">中文</option></select></div>
+<label><input type="checkbox" id="opt-autovalidate"><span data-i18n="Auto validate">Auto validate</span></label>
 <label><input type="checkbox" id="opt-autosave"><span data-i18n="Auto save">Auto save</span></label>
-<label><input type="checkbox" id="opt-corr"><span data-i18n="Source mapping (element↔line)">Source mapping (element↔line)</span></label>
+<label><input type="checkbox" id="opt-corr"><span data-i18n="Source mapping">Source mapping</span></label>
 <label><input type="checkbox" id="opt-fm"><span data-i18n="Front-matter fields">Front-matter fields</span></label>
 </div></div>
 </div>
@@ -1678,8 +1682,6 @@ const editorAside = (entry: Entry, site: Site): { aside: string; boot: EditorBoo
 <div class="fm">
 ${fmFieldsHtml(entry.frontmatter, site.defaultLang)}
 </div>
-<div id="code-tools"><button id="code-format" type="button" data-i18n="Format code">Format code</button><button id="code-lint" type="button" data-i18n="Check code">Check code</button><span id="code-tool-status" role="status"></span></div>
-<div id="code-diagnostics" aria-live="polite"></div>
 <div id="cm"></div>
 </aside>`;
     return { aside, boot: editorBoot(entry, site) };
@@ -2053,6 +2055,19 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
         const locale = requestedLanguage;
         const path = decodeURIComponent(requestUrl.pathname);
 
+        if (req.method === "GET" && path.startsWith("/assets/fonts/")) {
+            const font = readFont(path.slice("/assets/fonts/".length));
+            if (!font) {
+                notFound(res, path);
+                return;
+            }
+            res.writeHead(200, {
+                "content-type": "font/woff2",
+                "cache-control": "public, max-age=86400",
+            });
+            res.end(font);
+            return;
+        }
         // No favicon (this only silences the 404 console error from the browser's auto-request).
         if (path === "/favicon.ico") {
             res.writeHead(204);
@@ -2116,8 +2131,10 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
                     !target ||
                     !existsSync(target.abs) ||
                     typeof input?.body !== "string" ||
-                    typeof input.position !== "number" ||
-                    (input.action !== "format" && input.action !== "lint")
+                    (input.action !== "validate" && typeof input.position !== "number") ||
+                    (input.action !== "format" &&
+                        input.action !== "lint" &&
+                        input.action !== "validate")
                 ) {
                     sendJson(res, 400, { error: "Invalid code tool request" });
                     return;
@@ -2126,7 +2143,14 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
                     sendJson(
                         res,
                         200,
-                        await runCodeTool(root, input.body, input.position, input.action),
+                        input.action === "validate"
+                            ? await validateCodeTools(root, input.body)
+                            : await runCodeTool(
+                                  root,
+                                  input.body,
+                                  Number(input.position),
+                                  input.action,
+                              ),
                     );
                 } catch (error) {
                     sendJson(res, 400, {

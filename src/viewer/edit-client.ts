@@ -19,17 +19,18 @@ import {
     snippetCompletion,
     startCompletion,
 } from "@codemirror/autocomplete";
-import { history as cmHistory, indentWithTab, isolateHistory } from "@codemirror/commands";
+import { indentWithTab, isolateHistory } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from "@codemirror/language";
 import { EditorState, type Extension, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, keymap } from "@codemirror/view";
 import type { SyntaxNode } from "@lezer/common";
 import { tags } from "@lezer/highlight";
-import { basicSetup } from "codemirror";
 import type { TocEntry } from "../core/blocks.js";
 import { CODE_LANGS, DIRECTIVES, type Directive } from "../core/taxonomy.js";
+import { inlineFoldButtons } from "./edit-fold.js";
 import { schemaCompletion } from "./edit-schema-completion.js";
+import { editorSetup } from "./edit-setup.js";
 import type { HmrBridge } from "./hmr.js";
 import { applyUiLanguage, mountUiLanguage, t } from "./i18n.js";
 
@@ -240,6 +241,9 @@ updateLanguageControls();
 const statusEl = $("status");
 const autosaveEl = $<HTMLInputElement>("opt-autosave");
 
+const autovalidateEl = $<HTMLInputElement>("opt-autovalidate");
+autovalidateEl.checked = localStorage.getItem("docs-edit:autovalidate") !== "0";
+
 const AUTOSAVE_KEY = "docs-edit:autosave";
 const CORR_KEY = "docs-edit:corr";
 const FM_KEY = "docs-edit:fm";
@@ -251,8 +255,23 @@ let dirty = false;
 // aren't mistaken for external changes. This bundle runs before the HMR script at the end of the
 // page, so the reference is looked up each time.
 const hmr = (): HmrBridge | undefined => (window as unknown as { __docsHmr?: HmrBridge }).__docsHmr;
+const setSaveState = (state: "pending" | "saving" | "saved" | "error"): void => {
+    const button = $("save");
+    button.dataset.state = state;
+    const label = {
+        pending: "Unsaved changes",
+        saving: "Saving",
+        saved: "Saved",
+        error: "Save failed",
+    }[state];
+    button.dataset.i18nTitle = label;
+    button.dataset.i18nAriaLabel = label;
+    button.title = t(label);
+    button.setAttribute("aria-label", t(label));
+};
 const setDirty = (v: boolean): void => {
     dirty = v;
+    setSaveState(v ? (autosaveEl.checked ? "saving" : "pending") : "saved");
     hmr()?.setDirty(v || panes.some((pane) => pane !== activePane && pane.draft?.dirty));
 };
 let corrOn = false;
@@ -424,27 +443,22 @@ const codeBlockField = StateField.define<DecorationSet>({
     provide: (f) => EditorView.decorations.from(f),
 });
 
-const runLint = async (): Promise<void> => {
+const runLint = async (): Promise<LintFinding[] | undefined> => {
     const doc = view.state.doc;
     const currentBoot = boot;
-    try {
-        const res = await localeFetch("/api/lint", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-                body: view.state.doc.toString(),
-                lang: $<HTMLInputElement>("fm-lang").value.trim() || boot.defaultLang,
-            }),
-        });
-        if (!res.ok) {
-            return;
-        }
-        const { findings } = (await res.json()) as { findings: LintFinding[] };
-        if (view.state.doc !== doc || boot !== currentBoot) return;
-        view.dispatch({ effects: setLintFindings.of(findings) });
-    } catch {
-        // best-effort: a lint failure doesn't block editing
-    }
+    const res = await localeFetch("/api/lint", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+            body: doc.toString(),
+            lang: $<HTMLInputElement>("fm-lang").value.trim() || boot.defaultLang,
+        }),
+    });
+    if (!res.ok) throw new Error(`Validation failed: ${res.status}`);
+    const { findings } = (await res.json()) as { findings: LintFinding[] };
+    if (view.state.doc !== doc || boot !== currentBoot) return;
+    view.dispatch({ effects: setLintFindings.of(findings) });
+    return findings;
 };
 
 // ── Insertion autocomplete ────────────────────────────────────────────────
@@ -639,7 +653,7 @@ const docsComplete = (ctx: CompletionContext): CompletionResult | null => {
 // CM colors follow the --doc-* palette (so the 3-state theme switch applies as-is). Headings keep
 // weight 400 and are distinguished by color.
 // Same value as --doc-mono in the main content (preview).
-const MONO_FONT = '"JetBrains Mono", "SF Mono", Menlo, Consolas, monospace';
+const MONO_FONT = "var(--doc-mono)";
 const theme = EditorView.theme({
     "&": {
         backgroundColor: "transparent",
@@ -649,6 +663,8 @@ const theme = EditorView.theme({
     },
     ".cm-content": {
         fontFamily: MONO_FONT,
+        fontVariantLigatures: "none",
+        fontKerning: "none",
         caretColor: "var(--doc-fg)",
         // The last line sticks to the bottom edge and is hard to read, so reserve 20 blank
         // lines of bottom padding to let it scroll up to a comfortable position.
@@ -717,12 +733,18 @@ const editorExtensions: Extension[] = [
                 return true;
             },
         },
+        {
+            key: "Shift-Alt-f",
+            preventDefault: true,
+            run: () => {
+                void validatePage();
+                return true;
+            },
+        },
         indentWithTab,
     ]),
-    basicSetup,
-    // Merged with basicSetup's history (minDepth 100) and the deeper one wins: undo as far back
-    // as possible.
-    cmHistory({ minDepth: 10_000 }),
+    editorSetup,
+    inlineFoldButtons,
     markdown({ base: markdownLanguage }),
     autocompletion({ override: [docsComplete] }),
     EditorView.lineWrapping,
@@ -741,8 +763,6 @@ const editorExtensions: Extension[] = [
     }),
     EditorView.updateListener.of((u) => {
         if (u.docChanged) {
-            $("code-diagnostics").replaceChildren();
-            $("code-tool-status").textContent = "";
             if (suppressChange) {
                 suppressChange = false;
                 return;
@@ -784,74 +804,114 @@ const view = new EditorView({
     parent: $("cm"),
 });
 
-const codeToolStatus = $("code-tool-status");
-const codeDiagnostics = $("code-diagnostics");
-for (const action of ["format", "lint"] as const) {
-    const button = $<HTMLButtonElement>(`code-${action}`);
-    button.addEventListener("click", async () => {
-        const doc = view.state.doc;
-        const currentBoot = boot;
-        for (const id of ["code-format", "code-lint"]) $<HTMLButtonElement>(id).disabled = true;
-        codeToolStatus.textContent = t("Running code tool…");
+const setValidationState = (state: "pending" | "checking" | "valid" | "error"): void => {
+    const button = $("validate");
+    button.dataset.state = state;
+    const label = {
+        pending: "Validation pending",
+        checking: "Validating",
+        valid: "Validation passed",
+        error: "Validation errors",
+    }[state];
+    button.dataset.i18nTitle = label;
+    button.dataset.i18nAriaLabel = label;
+    button.title = t(label);
+    button.setAttribute("aria-label", t(label));
+};
+const markValidationPending = (): void =>
+    setValidationState(autovalidateEl.checked ? "checking" : "pending");
+
+let codeToolBusy = false;
+let applyingValidation = false;
+const validatePage = async (automatic = false): Promise<void> => {
+    if (codeToolBusy) return;
+    codeToolBusy = true;
+    const button = $<HTMLButtonElement>("validate");
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    const doc = view.state.doc;
+    const currentBoot = boot;
+    let validatedDoc = doc;
+    const fm = JSON.stringify(readFm());
+    try {
+        const response = await localeFetch("/api/code-tool", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+                file: boot.file,
+                body: doc.toString(),
+                action: "validate",
+            }),
+        });
+        const result = (await response.json()) as {
+            error?: string;
+            changes?: { from: number; to: number; insert: string }[];
+            findings?: LintFinding[];
+        };
+        if (
+            view.state.doc !== doc ||
+            boot !== currentBoot ||
+            JSON.stringify(readFm()) !== fm ||
+            (automatic && !autovalidateEl.checked)
+        )
+            return;
+        if (!response.ok) throw new Error(result.error ?? response.statusText);
+        const changes = result.changes ?? [];
+        applyingValidation = true;
         try {
-            const response = await localeFetch("/api/code-tool", {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({
-                    file: boot.file,
-                    body: doc.toString(),
-                    position: view.state.selection.main.head,
-                    action,
-                }),
+            view.dispatch({
+                changes,
+                effects: setCodeFindings.of(result.findings ?? []),
+                userEvent: "input.format",
+                annotations: isolateHistory.of("full"),
             });
-            const result = (await response.json()) as {
-                error?: string;
-                change?: { from: number; to: number; insert: string };
-                findings?: LintFinding[];
-            };
-            if (view.state.doc !== doc || boot !== currentBoot) {
-                codeToolStatus.textContent = t("Document changed; result discarded");
-                return;
-            }
-            if (!response.ok) throw new Error(result.error ?? response.statusText);
-            if (result.change) {
-                view.dispatch({
-                    changes: result.change,
-                    userEvent: "input.format",
-                    annotations: isolateHistory.of("full"),
-                });
-                view.focus();
-            }
-            if (result.findings) {
-                view.dispatch({ effects: setCodeFindings.of(result.findings) });
-                codeDiagnostics.replaceChildren(
-                    ...result.findings.map((finding) => {
-                        const item = document.createElement("button");
-                        item.type = "button";
-                        item.textContent = `${finding.ruleId}: ${finding.message}`;
-                        item.addEventListener("click", () => {
-                            if (view.state.doc !== doc || boot !== currentBoot) return;
-                            view.dispatch({
-                                selection: { anchor: finding.range[0], head: finding.range[1] },
-                                scrollIntoView: true,
-                            });
-                            view.focus();
-                        });
-                        return item;
-                    }),
-                );
-            }
-            codeToolStatus.textContent = result.findings
-                ? t("Diagnostics: {count}", { count: result.findings.length })
-                : t("Code formatted");
-        } catch (error) {
-            codeToolStatus.textContent = error instanceof Error ? error.message : String(error);
         } finally {
-            for (const id of ["code-format", "code-lint"])
-                $<HTMLButtonElement>(id).disabled = false;
+            applyingValidation = false;
         }
-    });
-}
+        validatedDoc = view.state.doc;
+        const proseFindings = await runLint();
+        const snapshot = await render();
+        if (
+            boot !== currentBoot ||
+            view.state.doc !== validatedDoc ||
+            JSON.stringify(readFm()) !== fm ||
+            (automatic && !autovalidateEl.checked)
+        )
+            return;
+        setValidationState(
+            !snapshot ||
+                !proseFindings ||
+                snapshot.errors.length > 0 ||
+                proseFindings.length > 0 ||
+                (result.findings?.length ?? 0) > 0
+                ? "error"
+                : "valid",
+        );
+    } catch (error) {
+        if (
+            boot === currentBoot &&
+            view.state.doc === validatedDoc &&
+            JSON.stringify(readFm()) === fm
+        ) {
+            setValidationState("error");
+            setStatus(String(error), true);
+        }
+    } finally {
+        codeToolBusy = false;
+        button.disabled = false;
+        button.removeAttribute("aria-busy");
+        if (
+            autovalidateEl.checked &&
+            (boot !== currentBoot ||
+                view.state.doc !== validatedDoc ||
+                JSON.stringify(readFm()) !== fm)
+        ) {
+            markValidationPending();
+            validateSoon();
+        }
+    }
+};
+$("validate").addEventListener("click", () => void validatePage());
 
 // The doc language's spellcheck dictionary (boot.spellcheckLang), re-applied on doc switch.
 const applySpellcheckLang = (): void => {
@@ -956,7 +1016,7 @@ const handleConflict = (r: DraftResponse): void => {
     setStatus("Changed externally — keeping your changes (you'll be asked again on save)", true);
 };
 
-const render = async (): Promise<void> => {
+const render = async (): Promise<RenderSnapshot | undefined> => {
     const doc = view.state.doc;
     const currentBoot = boot;
     const fm = JSON.stringify(readFm());
@@ -965,6 +1025,7 @@ const render = async (): Promise<void> => {
         if (view.state.doc !== doc || boot !== currentBoot || JSON.stringify(readFm()) !== fm)
             return;
         apply(result);
+        return result;
     } catch (e) {
         setStatus(t("Failed to update preview: {error}", { error: String(e) }), true);
     }
@@ -1083,6 +1144,8 @@ const saveCurrent = async (): Promise<void> => {
     const savingBoot = boot;
     const savingDoc = view.state.doc;
     const savingFm = JSON.stringify(readFm());
+    setSaveState("saving");
+    $("save").setAttribute("aria-busy", "true");
     try {
         // Mark both before and after the write (the watcher's notification can arrive before
         // the response).
@@ -1092,10 +1155,15 @@ const saveCurrent = async (): Promise<void> => {
         if (boot !== savingBoot) return;
         if (r.conflict) {
             handleConflict(r);
+            if (dirty) setSaveState("error");
             return;
         }
         baseRaw = r.raw;
-        if (view.state.doc !== savingDoc || JSON.stringify(readFm()) !== savingFm) return;
+        if (view.state.doc !== savingDoc || JSON.stringify(readFm()) !== savingFm) {
+            setSaveState(autosaveEl.checked ? "saving" : "pending");
+            if (autosaveEl.checked) autosave();
+            return;
+        }
         apply(r);
         updateLanguageControls();
         setDirty(false);
@@ -1107,7 +1175,12 @@ const saveCurrent = async (): Promise<void> => {
             r.errors.length > 0,
         );
     } catch (e) {
-        setStatus(t("Failed to save: {error}", { error: String(e) }), true);
+        if (boot === savingBoot) {
+            setSaveState("error");
+            setStatus(t("Failed to save: {error}", { error: String(e) }), true);
+        }
+    } finally {
+        $("save").removeAttribute("aria-busy");
     }
 };
 
@@ -1117,13 +1190,16 @@ const autosave = debounce(1000, () => {
         void save();
     }
 });
-const lintSoon = debounce(600, () => void runLint());
+const validateSoon = debounce(600, () => {
+    if (autovalidateEl.checked) void validatePage(true);
+});
 const onChange = (): void => {
+    markValidationPending();
     setDirty(true);
     setStatus(autosaveEl.checked ? "Modified (waiting for auto-save)" : "Unsaved changes");
     refresh();
     autosave();
-    lintSoon();
+    if (!applyingValidation) validateSoon();
 };
 
 // ── Correspondence view tagging / highlighting ───────────────────────────
@@ -1554,12 +1630,21 @@ const deleteDoc = async (): Promise<void> => {
 $("delete").addEventListener("click", () => void deleteDoc());
 
 // ── Gear hover menu toggles (persisted in localStorage) ────────────────────
-autosaveEl.checked = localStorage.getItem(AUTOSAVE_KEY) === "1";
+autosaveEl.checked = localStorage.getItem(AUTOSAVE_KEY) !== "0";
+setSaveState(dirty ? (autosaveEl.checked ? "saving" : "pending") : "saved");
 autosaveEl.addEventListener("change", () => {
+    setSaveState(dirty ? (autosaveEl.checked ? "saving" : "pending") : "saved");
     localStorage.setItem(AUTOSAVE_KEY, autosaveEl.checked ? "1" : "0");
     if (autosaveEl.checked && dirty) {
         void save();
     }
+});
+autovalidateEl.addEventListener("change", () => {
+    localStorage.setItem("docs-edit:autovalidate", autovalidateEl.checked ? "1" : "0");
+    if (autovalidateEl.checked) {
+        markValidationPending();
+        validateSoon();
+    } else if ($("validate").dataset.state === "checking") setValidationState("pending");
 });
 const bindToggle = (id: string, key: string, dflt: boolean, on: (v: boolean) => void): void => {
     const el = $<HTMLInputElement>(id);
@@ -1818,8 +1903,6 @@ const restorePane = (pane: PreviewPane): void => {
     baseRaw = draft.baseRaw;
     conflictPending = draft.conflictPending;
     suppressChange = false;
-    codeDiagnostics.replaceChildren();
-    codeToolStatus.textContent = "";
     view.setState(draft.state);
     fmBox.innerHTML = draft.fmHtml;
     applyFm(draft.fm);
@@ -1834,7 +1917,8 @@ const restorePane = (pane: PreviewPane): void => {
     setStatus(dirty ? "Unsaved changes" : "");
     tagCorrespondence(draft.blockLines);
     syncPane();
-    void runLint();
+    markValidationPending();
+    validateSoon();
 };
 const activatePane = async (pane: PreviewPane): Promise<void> => {
     if (pane === activePane || paneBusy) return;
@@ -1972,8 +2056,6 @@ const swapDoc = (data: PageResponse, remember = true): void => {
     // as one step, so undo can go back to it too.
     if (remember) docStates.set(prevKey, view.state);
     const cached = docStates.get(stateKey(boot));
-    codeDiagnostics.replaceChildren();
-    codeToolStatus.textContent = "";
     view.setState(cached ?? EditorState.create({ doc: boot.body, extensions: editorExtensions }));
     if (cached && cached.doc.toString() !== boot.body) {
         suppressChange = true;
@@ -1994,7 +2076,8 @@ const swapDoc = (data: PageResponse, remember = true): void => {
     apply({ html: data.html, errors: data.errors, toc: data.toc, blockLines: boot.blockLines });
     activePane.element.scrollTop = 0;
     syncPane();
-    void runLint();
+    markValidationPending();
+    validateSoon();
 };
 
 // Returns true if the swap succeeded (URL updates differ between push and pop, so they're left
@@ -2124,4 +2207,5 @@ if (location.hash) requestAnimationFrame(() => scrollToAnchor(location.hash));
 
 // Initial tagging (set data-ln even when corr is off, so turning it ON later works immediately).
 tagCorrespondence(boot.blockLines ?? []);
-void runLint();
+markValidationPending();
+validateSoon();

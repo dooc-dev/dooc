@@ -1,8 +1,10 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { visit } from "unist-util-visit";
+import { SKIP, visit } from "unist-util-visit";
 import { parseMdast } from "../compiler/dialect.js";
+import { formatMarkdown } from "../compiler/format.js";
+import { findDirective, normalizeLeafDirectives } from "../core/taxonomy.js";
 
 export function isLocalToolRequest(
     host: string,
@@ -16,12 +18,20 @@ export function isLocalToolRequest(
     );
 }
 
-/** A closed, top-level fenced block. Offsets are UTF-16 offsets in the editor body. */
+const offsetAt = (body: string, line: number, column: number): number =>
+    body
+        .split("\n")
+        .slice(0, line - 1)
+        .reduce((offset, text) => offset + text.length + 1, 0) +
+    column -
+    1;
+
+/** A closed fenced block. Offsets are UTF-16 offsets in the editor body. */
 export function codeBlockAt(body: string, position: number) {
     if (!Number.isInteger(position) || position < 0 || position > body.length) {
         throw new Error("Invalid cursor position");
     }
-    const tree = parseMdast(body);
+    const tree = parseMdast(normalizeLeafDirectives(body).source);
     let block:
         | {
               from: number;
@@ -34,49 +44,46 @@ export function codeBlockAt(body: string, position: number) {
               offsets: number[];
           }
         | undefined;
-    visit(tree, "code", (node, _index, parent) => {
-        const start = node.position?.start.offset;
-        const end = node.position?.end.offset;
+    visit(tree, "code", (node) => {
+        const start = node.position
+            ? offsetAt(body, node.position.start.line, node.position.start.column)
+            : undefined;
+        const end = node.position
+            ? offsetAt(body, node.position.end.line, node.position.end.column)
+            : undefined;
         if (start == null || end == null || position < start || position > end) return;
-        // shortcut: nested fences need container-prefix reconstruction; reject until supported.
-        if (parent !== tree) throw new Error("Code tools currently support top-level fences only");
-        const lineStart = body.lastIndexOf("\n", start - 1) + 1;
-        const raw = body.slice(lineStart, end);
+        const raw = body.slice(start, end);
         const opening = /^( {0,3})(`{3,}|~{3,})[^\r\n]*\r?\n/.exec(raw);
         if (!opening?.[2]) throw new Error("Select a fenced code block");
-        const closing = /(?:^|\n)( {0,3})(`{3,}|~{3,})[ \t]*$/.exec(raw);
+        const closing = /(?:^|\n)([ \t>]*)(`{3,}|~{3,})[ \t]*$/.exec(raw);
         if (
             !closing?.[2] ||
             closing[2][0] !== opening[2][0] ||
             closing[2].length < opening[2].length
-        ) {
+        )
             throw new Error("Close the code fence before running a tool");
-        }
-        const from = lineStart + opening[0].length;
-        const to = lineStart + closing.index + (raw[closing.index] === "\n" ? 1 : 0);
+        const from = start + opening[0].length;
+        const to = start + closing.index + (raw[closing.index] === "\n" ? 1 : 0);
         if (to < from) throw new Error("Invalid code fence");
         const offsets: number[] = [];
         let offset = from;
         const lines = body.slice(from, to).split(/\r?\n/);
         lines.pop();
-        const code = lines
-            .map((line) => {
-                const removed = Math.min(
-                    (opening[1] ?? "").length,
-                    /^ */.exec(line)?.[0].length ?? 0,
-                );
-                offsets.push(offset + removed);
-                offset += line.length + (body[offset + line.length] === "\r" ? 2 : 1);
-                return line.slice(removed);
-            })
-            .join("\n");
+        const values = node.value.replaceAll("\r\n", "\n").split("\n");
+        for (const [index, line] of lines.entries()) {
+            const value = values[index] ?? "";
+            if (!line.endsWith(value)) throw new Error("Unsupported code indentation");
+            offsets.push(offset + line.length - value.length);
+            offset += line.length + (body[offset + line.length] === "\r" ? 2 : 1);
+        }
+        const code = node.value.replaceAll("\r\n", "\n");
         if (!offsets.length) offsets.push(from);
         block = {
             from,
             to,
             language: node.lang ?? "",
             code,
-            indent: opening[1] ?? "",
+            indent: closing[1] ?? "",
             eol: opening[0].endsWith("\r\n") ? "\r\n" : "\n",
             marker: opening[2],
             offsets,
@@ -159,7 +166,7 @@ export async function runCodeTool(
             throw new Error("Formatter returned empty output; code was kept unchanged");
         const lines = normalized ? normalized.split("\n") : [];
         const fence = new RegExp(`^ {0,3}${block.marker[0]}{${block.marker.length},}[ \\t]*$`);
-        if (lines.some((line) => fence.test(block.indent + line)))
+        if (lines.some((line) => fence.test(line)))
             throw new Error("Formatter output would close the code fence");
         return {
             change: {
@@ -206,4 +213,66 @@ export async function runCodeTool(
         };
     });
     return { findings };
+}
+
+export async function validateCodeTools(root: string, body: string) {
+    const original = body;
+    const configuredBlocks = async (text: string, tool: "formatter" | "linter") => {
+        const blocks: number[] = [];
+        const nodes: import("mdast").Code[] = [];
+        visit(parseMdast(normalizeLeafDirectives(text).source), (node) => {
+            if (node.type === "containerDirective" && findDirective("container", node.name)?.raw)
+                return SKIP;
+            if (node.type === "code") nodes.push(node);
+        });
+        for (const node of nodes) {
+            if (
+                node.type !== "code" ||
+                node.position?.start.offset == null ||
+                !node.lang ||
+                !/^[a-zA-Z0-9][a-zA-Z0-9_+-]*$/.test(node.lang)
+            )
+                continue;
+            let raw: string;
+            try {
+                raw = await readFile(
+                    join(root, ".document-system/editor-tools", `${node.lang}.json`),
+                    "utf8",
+                );
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+                throw error;
+            }
+            const config = JSON.parse(raw);
+            if (!config || typeof config !== "object")
+                throw new Error("Invalid editor tool configuration");
+            if (config[tool] != null)
+                blocks.push(offsetAt(text, node.position.start.line, node.position.start.column));
+        }
+        return blocks;
+    };
+    for (const position of (await configuredBlocks(body, "formatter")).reverse()) {
+        const { change } = await runCodeTool(root, body, position, "format");
+        if (change && body.slice(change.from, change.to) !== change.insert) {
+            body = body.slice(0, change.from) + change.insert + body.slice(change.to);
+        }
+    }
+    body = formatMarkdown(body);
+    const findings = [];
+    for (const position of await configuredBlocks(body, "linter")) {
+        const result = await runCodeTool(root, body, position, "lint");
+        findings.push(...(result.findings ?? []));
+    }
+    let from = 0;
+    while (from < original.length && from < body.length && original[from] === body[from]) from++;
+    let to = original.length;
+    let end = body.length;
+    while (to > from && end > from && original[to - 1] === body[end - 1]) {
+        to--;
+        end--;
+    }
+    return {
+        changes: from === to && from === end ? [] : [{ from, to, insert: body.slice(from, end) }],
+        findings,
+    };
 }
