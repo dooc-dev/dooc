@@ -1,8 +1,13 @@
 name: Release
+run-name: Release ${{ inputs.bump }} ${{ inputs.request_id }}
 
 on:
   workflow_dispatch:
     inputs:
+      request_id:
+        description: Correlation ID for the release command
+        required: false
+        type: string
       bump:
         description: Version increment
         required: true
@@ -66,7 +71,7 @@ jobs:
           git commit -m "Release $TAG"
           git tag "$TAG"
           git push --atomic origin "HEAD:refs/heads/$DEFAULT_BRANCH" "refs/tags/$TAG"
-      - name: Publish private npm package
+      - name: Publish private npm package ${{ steps.version.outputs.tag }}
         run: npm publish --access restricted
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
