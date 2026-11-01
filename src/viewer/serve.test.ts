@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { compileSite } from "../compiler/compile.js";
 import { parseDoc } from "../compiler/dialect.js";
+import { docPath } from "../core/routing.js";
 import { BUILTIN_LANGUAGES } from "./languages.js";
 import {
     assembleDoc,
@@ -149,7 +150,7 @@ describe("navGroupsHtml", () => {
             '<div class="nav-list nav-tree" data-parent="a" style="--nav-depth:2"><div class="nav-item open" data-doc-id="b">',
         );
         expect(html).toContain(
-            '<a class="nav-tree-link cur" href="/c" title="C"><span class="nav-label">C</span></a>',
+            '<a class="nav-tree-link cur" href="/a/b/c" title="C"><span class="nav-label">C</span></a>',
         );
         // Only docs with children get an open/close toggle; only the branch containing the
         // current doc is open by default
@@ -331,6 +332,7 @@ describe("fmFieldsHtml / editorBoot / pageDataResponse (backing `GET /api/page`)
         expect(editorBoot(entry, site)).toEqual({
             file: "a.md",
             docId: "a",
+            path: "/a",
             body: "Body\n",
             figures: ["fig-x.svg"],
             docs: [{ ref: "a", title: "A" }],
@@ -411,9 +413,11 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
 
     it("holds every doc as a template, with links as hash routes", () => {
         for (const e of site.entries) {
-            expect(html).toContain(`<template data-route="${e.id}"`);
+            expect(html).toContain(
+                `<template data-route="${docPath(site.entries, e.id).slice(1)}"`,
+            );
         }
-        expect(html).toContain('href="#/writing"');
+        expect(html).toContain('href="#/guide/writing"');
         expect(html).not.toMatch(/href="\/(?!\/)/);
     });
 
@@ -427,7 +431,9 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
         const output = publishHtml(emptyGuide, "");
         const guide =
             /<template data-route="guide"[^>]*>(.*?)<\/template>/s.exec(output)?.[1] ?? "";
-        expect(guide).toContain('<ul class="idx"><li><a href="#/getting-started">はじめに</a>');
+        expect(guide).toContain(
+            '<ul class="idx"><li><a href="#/guide/getting-started">はじめに</a>',
+        );
     });
 
     it("has no server-provided scripts (graph bundle is inlined, </script> is escaped)", () => {

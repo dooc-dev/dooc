@@ -41,6 +41,7 @@ interface Boot {
     file: string;
     /** Resolution key for URLs / doc: links (= file name stem; current value in the rename UI). */
     docId: string;
+    path: string;
     body: string;
     figures: string[];
     docs: { ref: string; title: string }[];
@@ -1774,7 +1775,7 @@ const capturePane = (): void => {
 };
 const syncPane = (): void => {
     activePane.element.dataset.language = boot.contentLanguage ?? boot.defaultLang;
-    currentPath = `/${boot.docId}`;
+    currentPath = boot.path;
     closeLanguageMenu();
     $("boot").textContent = JSON.stringify(boot);
     for (const pane of panes) {
@@ -1819,14 +1820,11 @@ const activatePane = async (pane: PreviewPane): Promise<void> => {
         if (!draft) return;
         let fresh: PageResponse | undefined;
         if (!draft.dirty) {
-            const response = await fetch(
-                `/api/page?route=${encodeURIComponent(`/${draft.boot.docId}`)}`,
-                {
-                    headers: {
-                        "x-docs-language": draft.boot.contentLanguage ?? draft.boot.defaultLang,
-                    },
+            const response = await fetch(`/api/page?route=${encodeURIComponent(draft.boot.path)}`, {
+                headers: {
+                    "x-docs-language": draft.boot.contentLanguage ?? draft.boot.defaultLang,
                 },
-            );
+            });
             if (response.ok) fresh = (await response.json()) as PageResponse;
         }
         await saveTask;
@@ -1996,29 +1994,44 @@ const openDoc = async (
         )
             return false;
         swapDoc(data);
-        currentPath = path;
         return true;
     } catch {
         return false;
     }
 };
 
-const navigateTo = async (path: string): Promise<void> => {
+const scrollToAnchor = (hash: string): void => {
+    if (!hash) {
+        activePane.element.scrollTop = 0;
+        return;
+    }
+    let id: string;
+    try {
+        id = decodeURIComponent(hash.slice(1));
+    } catch {
+        return;
+    }
+    mainEl.querySelector(`#${CSS.escape(id)}`)?.scrollIntoView({ block: "start" });
+};
+
+const navigateTo = async (path: string, hash = ""): Promise<void> => {
     if (paneBusy) return;
     await saveTask;
     if (!(await confirmLeave())) {
         return;
     }
     if (await openDoc(path)) {
-        history.pushState(null, "", localeUrl(path));
+        history.pushState(null, "", localeUrl(currentPath + hash));
+        scrollToAnchor(hash);
         return;
     }
-    window.location.href = localeUrl(path);
+    window.location.href = localeUrl(path + hash);
 };
 
-// Only intercept links to doc routes (`/<docId>`). External links / modified clicks are left
+// Only intercept document paths (hierarchy paths and single-id aliases). Modified clicks are left
 // alone.
-const isDocPath = (path: string): boolean => /^\/[a-z0-9][a-z0-9-]*\/?$/.test(path);
+const isDocPath = (path: string): boolean =>
+    /^\/(?:[a-z0-9][a-z0-9-]*\/)*[a-z0-9][a-z0-9-]*\/?$/.test(path);
 
 document.addEventListener("click", (ev) => {
     if (
@@ -2040,22 +2053,19 @@ document.addEventListener("click", (ev) => {
         return;
     }
     if (url.pathname === currentPath) {
-        // The currently open doc: let heading TOC links (hash) work as usual, and don't reload
-        // for hash-less links (the nav's current-location link).
         ev.preventDefault();
-        if (url.hash) {
-            const target = mainEl.querySelector(
-                `#${CSS.escape(decodeURIComponent(url.hash.slice(1)))}`,
-            );
-            target?.scrollIntoView({ block: "start" });
+        const targetUrl = localeUrl(currentPath + url.hash);
+        if (location.pathname + location.search + location.hash !== targetUrl) {
+            history.pushState(null, "", targetUrl);
         }
+        scrollToAnchor(url.hash);
         return;
     }
     if (!isDocPath(url.pathname)) {
         return;
     }
     ev.preventDefault();
-    void navigateTo(url.pathname);
+    void navigateTo(url.pathname, url.hash);
 });
 
 // Back / forward. Going back to a non-doc page or a fetch failure falls back to normal
@@ -2065,7 +2075,8 @@ window.addEventListener("popstate", () => {
     const target = location.pathname;
     const language =
         new URL(location.href).searchParams.get("lang") ?? boot.sourceLanguage ?? boot.defaultLang;
-    if (target === currentPath && language === boot.contentLanguage) {
+    if (target === currentPath && language === (boot.contentLanguage ?? boot.defaultLang)) {
+        scrollToAnchor(location.hash);
         return;
     }
     void (async () => {
@@ -2075,11 +2086,14 @@ window.addEventListener("popstate", () => {
         }
         if (!(await openDoc(target, language))) {
             window.location.reload();
+        } else {
+            scrollToAnchor(location.hash);
         }
     })();
 });
 
 syncPane();
+if (location.hash) requestAnimationFrame(() => scrollToAnchor(location.hash));
 
 // Initial tagging (set data-ln even when corr is off, so turning it ON later works immediately).
 tagCorrespondence(boot.blockLines ?? []);

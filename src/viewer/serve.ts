@@ -40,7 +40,7 @@ import { mountDictionaries } from "../core/dictionary-ui.js";
 import { figureFrameHtml, mountFigureFrames } from "../core/figure-frame.js";
 import { docHtml, escapeHtml, figureIndexRoute, type RenderCtx } from "../core/html.js";
 import { isLangTag, type LanguageAdapter, resolveLanguage } from "../core/language.js";
-import { ancestorsOf, childrenOf, parseRoutePath } from "../core/routing.js";
+import { ancestorsOf, childrenOf, docPath, resolveDocPath } from "../core/routing.js";
 import { docDisplayName, type Frontmatter } from "../core/taxonomy.js";
 import { createHmrHub, HMR_PATH, hmrClientScript, watchProject } from "./hmr.js";
 import { DEFAULT_SITE_LANGUAGES, loadSiteLanguages } from "./languages.js";
@@ -194,17 +194,27 @@ const draftContext = (site: Site): DraftContext => ({
 
 // fallbackTitle stands in for the h1 when frontmatter is missing. Each doc renders with its own
 // language's adapter (term boundaries, dictionary order) and `<article lang>`.
+const docLinks = (site: Site, html: string): string =>
+    html.replace(/href="\/([a-z0-9][a-z0-9-]*)(?=["?#])/g, (whole, id: string) =>
+        site.entries.some((entry) => entry.id === id)
+            ? `href="${docPath(site.entries, id)}`
+            : whole,
+    );
+
 const renderEntry = (site: Site, entry: Entry, fallbackTitle: string): string =>
-    docHtml(
-        entry.frontmatter ?? ({ title: fallbackTitle } as Frontmatter),
-        entry.blocks,
-        [...site.errors, ...entry.errors],
-        {
-            ...site.ctx,
-            lang: webLanguage(entry.lang),
-            language: resolveLanguage(entry.lang, site.languages),
-        },
-        entry.toc,
+    docLinks(
+        site,
+        docHtml(
+            entry.frontmatter ?? ({ title: fallbackTitle } as Frontmatter),
+            entry.blocks,
+            [...site.errors, ...entry.errors],
+            {
+                ...site.ctx,
+                lang: webLanguage(entry.lang),
+                language: resolveLanguage(entry.lang, site.languages),
+            },
+            entry.toc,
+        ),
     );
 
 /** Compiles one source (unsaved or on disk; file = `<id>.md`) in the site context into an Entry. */
@@ -241,7 +251,7 @@ const renderSignature = (site: Site, entry: Entry): string =>
         entry.lang,
     ]) +
     site.entries
-        .map((e) => e.id)
+        .map((e) => docPath(site.entries, e.id))
         .sort()
         .join("\n");
 
@@ -744,12 +754,13 @@ const EDIT_CSS = `
 
 main.editor-workspace { padding: 0; height: 100vh; display: flex; flex-direction: column; position: sticky; top: 0; }
 #split-preview[aria-pressed="true"] { color: var(--c-accent); background: var(--c-raised); }
-.pane-actions { position: sticky; top: 0; height: 0; display: flex; justify-content: flex-end; z-index: 4; }
+.pane-actions { position: relative; top: -12px; right: -16px; height: 0; display: flex; justify-content: flex-end; z-index: 4; }
 .pane-actions .pbtn { background: var(--c-bg0); border-radius: 50%; }
 .preview-content article > h1 { padding-right: 34px; }
 #preview-panes { display: flex; flex: 1; min-height: 0; }
 .preview-pane { flex: 1; min-width: 0; overflow: auto; padding: 20px 24px 50vh; border-top: 2px solid transparent; }
 #preview-panes.split .preview-pane { padding: 16px; }
+#preview-panes.split .pane-actions { top: -8px; right: -8px; }
 #preview-panes.split .preview-pane + .preview-pane { border-left: 1px solid var(--c-line); }
 #preview-panes.split .preview-pane.active { border-top-color: var(--c-accent); }
 .preview-pane:focus-visible { outline: 2px solid var(--c-accent); outline-offset: -2px; }
@@ -915,7 +926,7 @@ export const navGroupsHtml = (
             : `<div class="nav-list nav-tree" data-parent="${escapeHtml(parent ?? "")}" style="--nav-depth:${depth + 1}">${items}</div>`;
     };
     const html = list(undefined, 0) + (mode === "edit" ? navResourcesHtml(site, currentRes) : "");
-    return site.contentLanguage ? languageLinks(html, site.contentLanguage) : html;
+    return docLinks(site, site.contentLanguage ? languageLinks(html, site.contentLanguage) : html);
 };
 
 // ── Resources (shown in edit mode only; asset list of the docs root) ──────────────────────
@@ -1090,7 +1101,7 @@ const resourcesMain = (site: Site, rest: string): { title: string; main: string 
 // Browser tab title — shared by page() and `/api/page` (doc switching via client-side navigation).
 const pageTitle = (mode: ServeMode, title: string): string => `${title} — docs ${mode}`;
 
-// nav / URLs follow routing.ts's route form `/<docId>`.
+// Navigation follows the manifest hierarchy via routing.docPath.
 const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
     const nav = navGroupsHtml(mode, site, opts.currentId, opts.currentRes);
     // Upload target for body assets (figures/). edit only; pinned to the bottom of the sidebar
@@ -1457,21 +1468,23 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
 const inlineScript = (js: string): string => js.replace(/<\/(script)/gi, "<\\/$1");
 
 // Router for the published output — keeps each route's main content in <template data-route>
-// and swaps <main> based on location.hash (`#/<docId>[#<anchor>]`) (works without a server).
+// and swaps <main> based on location.hash (`#/<ancestor/.../docId>[#<anchor>]`) (works without a server).
 const publishRouterScript = (first: string): string => `
 (() => {
   const FIRST = ${JSON.stringify(first)};
   const main = document.querySelector("main");
   const pages = new Map([...document.querySelectorAll("template[data-route]")].map((t) => [t.dataset.route, t]));
   const show = () => {
-    const [path, anchor] = decodeURIComponent(location.hash.slice(1)).split("#");
-    const p = (path || "").replace(/^\\/+|\\/+$/g, "");
+    const [path, rawAnchor] = location.hash.slice(1).split("#");
+    let anchor = "";
+    try { anchor = decodeURIComponent(rawAnchor || ""); } catch {}
+    const p = (path || "").split("?")[0].replace(/^\\/+|\\/+$/g, "");
     const route = pages.has(p) ? p : FIRST;
     const page = pages.get(route);
     main.innerHTML = page.innerHTML;
     document.title = page.dataset.title;
     for (const a of document.querySelectorAll("#nav-groups a")) {
-      a.classList.toggle("cur", a.getAttribute("href") === "#/" + route);
+      a.classList.toggle("cur", a.getAttribute("href").split("?")[0] === "#/" + route);
     }
     // Breadcrumb (same "ancestors › current" as the server-rendered page()).
     const names = [];
@@ -1501,7 +1514,7 @@ const toHashLinks = (html: string, route: string): string =>
  */
 export const publishHtml = (site: Site, graphJs: string, title = "docs"): string => {
     const pages = site.entries.map((e) => ({
-        route: e.id,
+        route: docPath(site.entries, e.id).slice(1),
         title: docDisplayName(e.frontmatter, e.id),
         main: entryMain(site, e),
     }));
@@ -1535,7 +1548,7 @@ const entryMain = (site: Site, e: Entry): string => {
             const desc = k.frontmatter?.description
                 ? ` <span class="idx-desc">${escapeHtml(k.frontmatter.description)}</span>`
                 : "";
-            return `<li><a href="/${k.id}">${escapeHtml(docDisplayName(k.frontmatter, k.id))}</a>${desc}</li>`;
+            return `<li><a href="${docPath(site.entries, k.id)}">${escapeHtml(docDisplayName(k.frontmatter, k.id))}</a>${desc}</li>`;
         })
         .join("");
     return html.replace(/<\/article>\s*$/, `<ul class="idx">${items}</ul></article>`);
@@ -1554,6 +1567,7 @@ export interface EditorBoot {
     file: string;
     /** Resolution key for URLs / doc: links. */
     docId: string;
+    path: string;
     body: string;
     figures: string[];
     docs: { ref: string; title: string }[];
@@ -1598,6 +1612,7 @@ export const editorBoot = (entry: Entry, site: Site): EditorBoot => {
             : {}),
         file: entry.file,
         docId: entry.id,
+        path: docPath(site.entries, entry.id),
         body: entry.body,
         figures,
         docs,
@@ -1625,7 +1640,7 @@ const editorAside = (entry: Entry, site: Site): { aside: string; boot: EditorBoo
 <button id="save" type="button" title="Save (Ctrl+S)" data-i18n-title="Save (Ctrl+S)" data-i18n="Save">Save</button>
 <button id="split-preview" class="pbtn" type="button" aria-pressed="false" aria-label="Split view" data-i18n-aria-label="Split view" title="Split view" data-i18n-title="Split view">${icon('<rect x="3" y="3" width="14" height="14" rx="2"/><path d="M10 3v14"/>')}</button>
 <div id="gear"><button class="pbtn" type="button" aria-haspopup="true" aria-label="View settings" data-i18n-aria-label="View settings" title="View settings" data-i18n-title="View settings">${GEAR_ICON}</button><div id="gearmenu">
-<div id="language-setting"><label for="ui-language" data-i18n="Language">Language</label><select id="ui-language"><option value="eng">English</option><option value="jpn">日本語</option><option value="zho">中文</option></select></div>
+<div id="language-setting"><select id="ui-language" aria-label="Editor language" data-i18n-aria-label="Language"><option value="eng">English</option><option value="jpn">日本語</option><option value="zho">中文</option></select></div>
 <label><input type="checkbox" id="opt-autosave"><span data-i18n="Auto save">Auto save</span></label>
 <label><input type="checkbox" id="opt-corr"><span data-i18n="Source mapping (element↔line)">Source mapping (element↔line)</span></label>
 <label><input type="checkbox" id="opt-fm"><span data-i18n="Front-matter fields">Front-matter fields</span></label>
@@ -1641,7 +1656,7 @@ ${fmFieldsHtml(entry.frontmatter, site.defaultLang)}
 };
 
 /**
- * Response for `GET /api/page?route=/<docId>` (status + body). mode === "edit" only.
+ * Response for `GET /api/page?route=/<ancestor/.../docId>` (status + body). mode === "edit" only.
  * The diff for doing edit's doc switch via client-side navigation (= keep scroll position /
  * search term / open state without rebuilding the sidebar DOM); it returns only what the client
  * replaces: main html + the panel's variable parts (file name / front-matter fields) + the new
@@ -1652,7 +1667,7 @@ export const pageDataResponse = (site: Site, path: unknown): { status: number; b
     if (typeof path !== "string" || !path.startsWith("/")) {
         return { status: 400, body: { error: "route must be /<docId>" } };
     }
-    const id = parseRoutePath(path);
+    const id = resolveDocPath(site.entries, path);
     const doc = site.entries.find((e) => e.id === id);
     if (!doc) {
         return { status: 404, body: { error: `${path} is not a doc route` } };
@@ -1709,7 +1724,7 @@ const languageLinks = (html: string, locale: string): string =>
 
 const sendPage = (res: ServerResponse, mode: ServeMode, site: Site, opts: PageOpts): void => {
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    const html = page(mode, site, opts);
+    const html = docLinks(site, page(mode, site, opts));
     res.end(site.contentLanguage ? languageLinks(html, site.contentLanguage) : html);
 };
 
@@ -2089,12 +2104,14 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
             sendJson(res, status, body);
             return;
         }
-        // "/" redirects to the first doc (the canonical URL is always /<docId>). In edit with 0
+        // "/" redirects to the first doc (the canonical URL follows the manifest hierarchy). In edit with 0
         // docs, an empty page (the first doc is created via "add doc" at the end of the sidebar).
         if (path === "/") {
             const first = site.entries[0];
             if (first) {
-                res.writeHead(302, { location: `/${first.id}?lang=${encodeURIComponent(locale)}` });
+                res.writeHead(302, {
+                    location: `${docPath(site.entries, first.id)}?lang=${encodeURIComponent(locale)}`,
+                });
                 res.end();
                 return;
             }
@@ -2119,10 +2136,16 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
             sendPage(res, mode, site, { ...page, currentRes: rest });
             return;
         }
-        const id = parseRoutePath(path);
+        const id = resolveDocPath(site.entries, path);
         const doc = site.entries.find((e) => e.id === id);
         if (!doc) {
             notFound(res, path);
+            return;
+        }
+        const canonical = docPath(site.entries, doc.id);
+        if (path !== canonical) {
+            res.writeHead(302, { location: `${canonical}${requestUrl.search}` });
+            res.end();
             return;
         }
         const opts: PageOpts = {

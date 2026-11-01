@@ -2,9 +2,8 @@
 // through here and never build paths themselves — a consumer is a display-only wrapper, and this
 // package owns routing.
 //
-// Route form = `<docId>` (ids are unique site-wide; the hierarchy isn't exposed in the URL, so
-// moving a doc doesn't change its URL). Shared by preview URLs and body-text `doc:` links (the
-// consumer adds the prefix).
+// Page URLs follow the manifest hierarchy; heading fragments stay separate.
+// Body-text `doc:` links use stable, site-wide ids, and single-id URLs remain aliases.
 import type { ArtifactDoc } from "./artifact-types.js";
 import { isDocId } from "./content-metadata.js";
 
@@ -45,3 +44,15 @@ export const ancestorsOf = <D extends DocRef>(docs: readonly D[], id: string): D
 
 /** DOM anchor id for a heading — namespaced by doc id. */
 export const headingAnchor = (docId: string, slug: string): string => `${docId}__${slug}`;
+
+/** Canonical page URL: manifest ancestors form the path; headings use a separate fragment. */
+export const docPath = (docs: readonly DocRef[], id: string): string =>
+    `/${[...ancestorsOf(docs, id).map((doc) => doc.id), id].join("/")}`;
+
+/** Accept canonical hierarchy paths and the stable, single-id aliases. */
+export const resolveDocPath = (docs: readonly DocRef[], path: string): string | undefined => {
+    const parts = path.split("/").filter(Boolean);
+    const id = parts.at(-1);
+    if (!id || !parts.every(isDocId) || !docs.some((doc) => doc.id === id)) return undefined;
+    return parts.length === 1 || docPath(docs, id) === `/${parts.join("/")}` ? id : undefined;
+};

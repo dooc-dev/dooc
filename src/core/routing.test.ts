@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { ancestorsOf, childrenOf, headingAnchor, parseDocLink, parseRoutePath } from "./routing.js";
+import {
+    ancestorsOf,
+    childrenOf,
+    docPath,
+    headingAnchor,
+    parseDocLink,
+    parseRoutePath,
+    resolveDocPath,
+} from "./routing.js";
 
 const docs = [
     { id: "guide" },
@@ -34,4 +42,13 @@ describe("routing", () => {
     it("heading anchors are namespaced by doc id", () => {
         expect(headingAnchor("api-overview", "cicd")).toBe("api-overview__cicd");
     });
+});
+
+it("keeps hierarchy paths separate from heading fragments and resolves stable aliases", () => {
+    expect(docPath(docs, "deep")).toBe("/guide/setup/deep");
+    expect(resolveDocPath(docs, "/guide/setup/deep")).toBe("deep");
+    expect(resolveDocPath(docs, "/deep")).toBe("deep");
+    expect(resolveDocPath(docs, "/reference/deep")).toBeUndefined();
+    expect(resolveDocPath(docs, "/guide/setup/deep#heading")).toBeUndefined();
+    expect(resolveDocPath(docs, "/unknown")).toBeUndefined();
 });
