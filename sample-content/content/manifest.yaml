@@ -1,0 +1,14 @@
+# 文書 → 子ページ → 詳細の最大3階層
+- guide:
+    - getting-started:
+        - layout
+    - writing:
+        - media
+        - a
+- architecture:
+    - flow
+    - data-model
+- reference:
+    - syntax
+    - dictionary
+    - publishing

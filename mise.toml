@@ -1,0 +1,41 @@
+[settings]
+# `$` in [vars] is expanded by the shell that executes `run`, not by mise.
+env_shell_expand = false
+
+[tools]
+node = "22"
+pnpm = "10.28.2"
+
+# docs root = a folder following the layout convention (content/<id>.md + manifest.yaml,
+# figures/<name>.{svg,drawio.svg,png,webp,jpg,html}, presentations/<name>/index.html).
+# Defaults to the bundled sample-content/; a relative path is resolved against the cwd mise was
+# invoked from. Each task just runs src/cli.ts (same as the npx bin) via tsx.
+[vars]
+resolve_root = 'r="$(if [ -n "$usage_root" ]; then cd "$MISE_ORIGINAL_CWD" && realpath -e "$usage_root"; else realpath -e sample-content; fi)"'
+
+[tasks.dev]
+description = "For front-end development: start the viewer with hot reload (src / content). e.g. mise run dev ../my-docs 5179"
+usage = '''
+arg "[root]" default=""
+arg "[port]" default="5179"
+'''
+run = '{{vars.resolve_root}} && pnpm exec tsx watch --clear-screen=false src/cli.ts dev "$r" "$usage_port"'
+
+[tasks.edit]
+description = "For editing content: start the viewer without hot reload. e.g. mise run edit ../my-docs"
+usage = '''
+arg "[root]" default=""
+arg "[port]" default="5179"
+'''
+run = '{{vars.resolve_root}} && pnpm exec tsx src/cli.ts edit "$r" "$usage_port"'
+
+[tasks.export]
+description = "Export a docs root. json = full docs.json set (<root>/dist/artifact/) / zip = zip of the content (<root>/dist/<root name>.zip) / html = single HTML file with everything embedded (<root>/dist/index.html). json / html are not written if there are validation errors"
+usage = '''
+arg "<format>" {
+  choices "json" "zip" "html"
+}
+arg "[root]" default=""
+arg "[out]" default=""
+'''
+run = '{{vars.resolve_root}} && pnpm exec tsx src/cli.ts export "$usage_format" "$r" ${usage_out:+"$(cd "$MISE_ORIGINAL_CWD" && realpath -m "$usage_out")"}'

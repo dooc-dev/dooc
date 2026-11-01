@@ -1,0 +1,19 @@
+{
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "noEmit": false,
+        "declaration": true,
+        "outDir": "dist",
+        "rootDir": "src"
+    },
+    // index.ts = React-free logic entry; core/schema-graph-mount.tsx = interactive React Flow UI
+    // (subpath export `./flow`; react / react-dom / @xyflow/react are peers);
+    // cli.ts = bin (includes compiler / viewer).
+    "files": [
+        "src/index.ts",
+        "src/core/schema-graph-mount.tsx",
+        "src/cli.ts",
+        "src/viewer/textlint-rule-preset-ja-technical-writing.d.ts"
+    ],
+    "include": []
+}

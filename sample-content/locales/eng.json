@@ -1,0 +1,17 @@
+{
+  "guide": {
+    "title": "Documentation guide",
+    "description": "Read, write, and share documents with diagrams and HTML.",
+    "body": "This sample organizes a team's technical documentation into three levels. Expand the sidebar to browse guides, architecture, and reference material.\n\n## Start here\n\n| Goal | Page |\n| --- | --- |\n| Run the editor | [Getting started](doc:getting-started) |\n| Write an article | [Writing guide](doc:writing) |\n| Add a diagram | [Figures and HTML](doc:media) |\n| Understand the design | [Architecture](doc:architecture) |\n\n## Overview\n\n:::figure(overview.svg)[From source documents to the viewer]\n\nThe docs root contains documents, figures, and HTML fragments. The compiler validates these files and produces an artifact.\n\n## Explore resources\n\nOpen Resources in the sidebar to inspect figures, document icons, and the intro HTML resource.\n\n:::callout[Try a different language]\n- Use the globe icon at the top right of the preview to open another version of this article.\n- Untranslated articles display the source until you save a translation.\n- The editor language is a separate setting in the gear menu.\n:::\n"
+  },
+  "getting-started": {
+    "title": "Getting started",
+    "description": "Launch the sample and edit your first document.",
+    "body": "## Launch the sample\n\nRun this command from the repository root:\n\n```bash\nmise run dev\n```\n\nOpen the URL printed in the terminal. Select an article in the sidebar, edit its title or body, and save your changes.\n\n## Edit a translation\n\nChoose English from the globe icon at the top right of the preview. Changes are saved to the English JSON catalog, while the source Markdown stays unchanged.\n\nTo edit another collection:\n\n```bash\nmise run edit ../my-docs\n```\n\nSee [Folder layout](doc:layout) for the shared document hierarchy and resource locations.\n"
+  },
+  "architecture": {
+    "title": "Architecture",
+    "description": "How the viewer, compiler, and rendering core work together.",
+    "body": "## Responsibilities\n\n:::graph[Component dependencies]\n[viewer]: Viewer and editor @app\n[compiler]: Compiler @app\n[core]: Rendering and types @lib\n[viewer] -> [compiler]\n[viewer] -> [core]\n[compiler] -> [core]\n:::\n\nThe viewer reads documents and language catalogs. The compiler validates their structure and references. The core renders the result.\n\nSee [Processing flow](doc:flow) and [Data model](doc:data-model) for detailed examples.\n"
+  }
+}

@@ -1,0 +1,103 @@
+{
+    "name": "@sasaki-s-sci/document-pkg",
+    "version": "0.0.1",
+    "description": "A docs toolkit that compiles an md / svg / html layout convention into docs.json and renders / edits it. The package export is core (docs.json types + routing / HTML rendering / interactive schema graph UI)",
+    "type": "module",
+    "files": [
+        "dist"
+    ],
+    "bin": {
+        "document-pkg": "./dist/cli.js"
+    },
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        },
+        "./flow": {
+            "types": "./dist/core/schema-graph-mount.d.ts",
+            "default": "./dist/core/schema-graph-mount.js"
+        },
+        "./flow.global.js": "./dist/flow.global.js"
+    },
+    "peerDependencies": {
+        "@xyflow/react": ">=12",
+        "react": ">=19",
+        "react-dom": ">=19"
+    },
+    "peerDependenciesMeta": {
+        "@xyflow/react": {
+            "optional": true
+        },
+        "react": {
+            "optional": true
+        },
+        "react-dom": {
+            "optional": true
+        }
+    },
+    "packageManager": "pnpm@10.28.2",
+    "engines": {
+        "node": ">=22"
+    },
+    "scripts": {
+        "build": "pnpm run build:css && tsc -p tsconfig.build.json && pnpm run build:flow && pnpm run build:edit",
+        "build:css": "node --import tsx src/core/build-flow-css.ts",
+        "build:flow": "esbuild src/core/schema-graph-global.tsx --bundle --format=iife --target=es2022 --minify --outfile=dist/flow.global.js",
+        "build:edit": "esbuild src/viewer/edit-client.ts --bundle --format=iife --target=es2022 --minify --outfile=dist/edit.global.js && esbuild src/viewer/ui-client.ts --bundle --format=iife --target=es2022 --minify --outfile=dist/ui.global.js",
+        "test": "vitest run",
+        "check": "biome check . && tsc --noEmit && pnpm run build && vitest run",
+        "fix": "biome check --write ."
+    },
+    "devDependencies": {
+        "@biomejs/biome": "2.4.15",
+        "@codemirror/autocomplete": "^6.20.4",
+        "@codemirror/commands": "^6.11.1",
+        "@codemirror/lang-markdown": "^6.5.2",
+        "@codemirror/language": "^6.13.1",
+        "@codemirror/state": "^6.7.6",
+        "@codemirror/view": "^6.43.15",
+        "@lezer/common": "^1.5.4",
+        "@lezer/highlight": "^1.2.5",
+        "@shikijs/langs": "^4.5.0",
+        "@shikijs/themes": "^4.5.0",
+        "@types/mdast": "^4.0.4",
+        "@types/node": "^22.10.0",
+        "@types/react": "^19.2.17",
+        "@types/react-dom": "^19.2.3",
+        "@xyflow/react": "^12.11.2",
+        "codemirror": "^6.0.2",
+        "esbuild": "^0.28.1",
+        "mdast-util-directive": "^3.1.0",
+        "react": "^19.2.8",
+        "react-dom": "^19.2.8",
+        "shiki": "^4.5.0",
+        "textlint": "^15.8.0",
+        "tsx": "^4.19.2",
+        "typescript": "^5.8.3",
+        "vitest": "^2.1.9"
+    },
+    "dependencies": {
+        "@dagrejs/dagre": "^3.0.0",
+        "@textlint/kernel": "^15.8.0",
+        "@textlint/module-interop": "^15.8.0",
+        "@textlint/textlint-plugin-markdown": "^15.8.0",
+        "iso-639-3": "^3.0.1",
+        "remark-directive": "^4.0.0",
+        "remark-frontmatter": "^5.0.0",
+        "remark-gfm": "^4.0.1",
+        "remark-parse": "^11.0.0",
+        "textlint-rule-preset-ja-technical-writing": "^12.0.2",
+        "unified": "^11.0.5",
+        "unist-util-visit": "^5.0.0",
+        "yaml": "^2.7.0"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/sasaki-s-sci/document-system.git"
+    },
+    "publishConfig": {
+        "registry": "https://npm.pkg.github.com",
+        "access": "restricted"
+    }
+}
