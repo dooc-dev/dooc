@@ -2,6 +2,7 @@
 // compiler generates it; consumers read what is served via runtime fetch.
 //   - artifact/docs.json = DocsArtifact (body AST, dictionary, figure index; generation-stamped)
 //   - artifact/figures/<name>.json = FigureEntry (one figure incl. markup, for lazy fetch)
+// Runtime contract: docs-json-schema/<generation>.json; validate via the ./docs-json-schema export.
 import type { Block, TocEntry } from "./blocks.js";
 import type { Frontmatter } from "./taxonomy.js";
 

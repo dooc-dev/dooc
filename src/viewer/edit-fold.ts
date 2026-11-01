@@ -19,7 +19,7 @@ const createFoldButton = (folded: boolean): HTMLButtonElement => {
     button.dataset.i18nTitle = folded ? "Expand section" : "Collapse section";
     button.dataset.i18nAriaLabel = button.dataset.i18nTitle;
     button.innerHTML =
-        '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>';
+        '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>';
     button.addEventListener("mousedown", (event) => event.preventDefault());
     return button;
 };
@@ -80,7 +80,7 @@ export const inlineFoldMarkers = (
                     decorations.push(
                         Decoration.widget({
                             widget: new FoldButton(range.from, range.to),
-                            side: -1,
+                            side: 1,
                         }).range(line.to),
                     );
                 lastLine = line.from;

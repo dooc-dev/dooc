@@ -18,7 +18,12 @@
             "types": "./dist/core/schema-graph-mount.d.ts",
             "default": "./dist/core/schema-graph-mount.js"
         },
-        "./flow.global.js": "./dist/flow.global.js"
+        "./flow.global.js": "./dist/flow.global.js",
+        "./docs-json-schema": {
+            "types": "./dist/core/docs-json-schema.d.ts",
+            "default": "./dist/core/docs-json-schema.js"
+        },
+        "./docs-json-schema/*.json": "./dist/core/docs-json-schema/*.json"
     },
     "peerDependencies": {
         "@xyflow/react": ">=12",
@@ -84,6 +89,7 @@
         "@textlint/kernel": "^15.8.0",
         "@textlint/module-interop": "^15.8.0",
         "@textlint/textlint-plugin-markdown": "^15.8.0",
+        "ajv": "^8.20.0",
         "iso-639-3": "^3.0.1",
         "remark-directive": "^4.0.0",
         "remark-frontmatter": "^5.0.0",

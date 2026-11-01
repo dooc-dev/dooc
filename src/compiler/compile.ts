@@ -12,6 +12,7 @@ import { join } from "node:path";
 import type { ArtifactDoc, DocsArtifact, FigureEntry } from "../core/artifact-types.js";
 import type { Block, TocEntry } from "../core/blocks.js";
 import { docIdOfFile, flattenTree, MANIFEST_FILE } from "../core/content-metadata.js";
+import { validateDocsArtifact } from "../core/docs-json-schema.js";
 import { GENERATION } from "../core/generation.js";
 import { DEFAULT_LANG } from "../core/language.js";
 import { DOC_LINK_SCHEME, type DocRef, parseDocLink } from "../core/routing.js";
@@ -276,6 +277,14 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
         );
         siteErrors.push(...dictionary.errors);
 
+        const artifact: DocsArtifact = {
+            generation: GENERATION,
+            docs,
+            dictionary: dictionary.entries,
+            figures: figures.map(({ markup: _markup, ...index }) => index),
+        };
+        siteErrors.push(...validateDocsArtifact(artifact));
+
         const ctx: DraftContext = {
             docs,
             figures: new Map(figures.map((f) => [f.name, f])),
@@ -294,12 +303,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             });
         }
         return {
-            artifact: {
-                generation: GENERATION,
-                docs,
-                dictionary: dictionary.entries,
-                figures: figures.map(({ markup: _markup, ...index }) => index),
-            },
+            artifact,
             figures,
             sources,
             siteErrors,
@@ -340,7 +344,7 @@ export const compileSite = (root: string, options: CompileOptions = {}): Compile
 
 /** Writes artifact/ (docs.json + figures/*.json); skipped on errors. */
 export const writeArtifact = (compiled: Compiled, out: string): boolean => {
-    if (compiled.errors.length > 0) {
+    if (compiled.errors.length > 0 || validateDocsArtifact(compiled.artifact).length > 0) {
         return false;
     }
     rmSync(out, { recursive: true, force: true });

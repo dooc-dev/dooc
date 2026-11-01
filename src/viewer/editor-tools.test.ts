@@ -142,6 +142,44 @@ describe("local code-tool request boundary", () => {
 });
 
 describe("document validation", () => {
+    it("keeps incomplete code unchanged and reports original lint positions without running the formatter", async () => {
+        const root = await fixture(
+            "throw new Error('formatter must not run')",
+            "require('node:fs').writeSync(1,JSON.stringify([{message:'Incomplete syntax',line:1,column:11,severity:'error'}]));process.exitCode=1",
+        );
+        const original = "Title\n=====\n\n```js\nconst x = (\n```\n";
+        const result = await validateCodeTools(root, original);
+        expect(result.changes).toEqual([]);
+        expect(result.findings).toEqual([
+            {
+                ruleId: "error",
+                message: "Incomplete syntax",
+                range: [original.indexOf("("), original.indexOf("(") + 1],
+            },
+        ]);
+    });
+
+    it.each([
+        "```js",
+        "```unknown\nx()",
+        "```\nx()",
+        "> ```unknown\n> x()",
+        "- Item\n\n  ```unknown\n  x()",
+    ])("does not repair an open fence, even without a registered tool: %s", async (original) => {
+        const root = await fixture("");
+        await expect(validateCodeTools(root, original)).rejects.toThrow(
+            /fenced code block|Close the code fence/,
+        );
+    });
+
+    it("rejects formatter output that introduces a syntax error", async () => {
+        const root = await fixture(
+            "require('node:fs').writeSync(1,'broken(\\n')",
+            "const s=require('node:fs').readFileSync(0,'utf8');require('node:fs').writeSync(1,JSON.stringify(s.includes('broken')?[{message:'Incomplete syntax',line:1,column:1,severity:'error'}]:[]))",
+        );
+        await expect(validateCodeTools(root, body)).rejects.toThrow("code was kept unchanged");
+    });
+
     it("formats every configured block and maps diagnostics into the resulting document", async () => {
         const root = await fixture(
             "const s=require('node:fs').readFileSync(0,'utf8');require('node:fs').writeSync(1,s.replace('x=1','x = 1;'))",

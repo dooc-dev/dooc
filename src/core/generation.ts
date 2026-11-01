@@ -1,6 +1,7 @@
 // Generation of the data format recorded in artifact/docs.json; independent of the package
-// version. Bump it when making incompatible changes to directives / Block types. Within a
-// generation, changes are additive only.
+// version. Bump it for changes to the wire contract (including additions) or incompatible
+// directive changes. Add a docs-json-schema/<generation>.json and register it in
+// docs-json-schema.ts; keep released schemas unchanged.
 export const GENERATION = 10;
 
 /**

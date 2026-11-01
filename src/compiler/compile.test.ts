@@ -177,6 +177,21 @@ describe("createCompiler (incremental compile for the viewer)", () => {
         expect(json).not.toHaveProperty("presentations");
         expect(existsSync(join(out, "presentations"))).toBe(false);
     });
+
+    it("reports schema errors during compilation and preserves the previous export", () => {
+        const { root } = fixture();
+        const out = join(root, "artifact");
+        const valid = compileSite(root);
+        expect(writeArtifact(valid, out)).toBe(true);
+        const previous = readFileSync(join(out, "docs.json"), "utf8");
+        const invalid = compileSite(root, { defaultLang: "invalid language tag" });
+        expect(invalid.siteErrors.join()).toContain("docs.json/docs/0/lang");
+        expect(invalid.errors).toEqual(expect.arrayContaining(invalid.siteErrors));
+        expect(writeArtifact(invalid, out)).toBe(false);
+        valid.artifact.generation = 999;
+        expect(writeArtifact(valid, out)).toBe(false);
+        expect(readFileSync(join(out, "docs.json"), "utf8")).toBe(previous);
+    });
 });
 
 describe("sample-content (bundled docs root)", () => {

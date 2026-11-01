@@ -31,6 +31,7 @@ import { CODE_LANGS, DIRECTIVES, type Directive } from "../core/taxonomy.js";
 import { inlineFoldButtons } from "./edit-fold.js";
 import { schemaCompletion } from "./edit-schema-completion.js";
 import { editorSetup } from "./edit-setup.js";
+import { CODE_BLOCK_NODE_NAMES, isEditingCodeBlock } from "./edit-validation.js";
 import type { HmrBridge } from "./hmr.js";
 import { applyUiLanguage, mountUiLanguage, t } from "./i18n.js";
 
@@ -417,7 +418,6 @@ const codeLintField = StateField.define<DecorationSet>({
 // make lezer-markdown merge them into one CodeText node, and a mark decoration spanning it
 // desyncs CM's view layer (see the tags.monospace comment below). Line decorations only add a
 // class to the line's outer div without spanning content, so they avoid the same problem.
-const CODE_BLOCK_NODE_NAMES = new Set(["FencedCode", "CodeBlock"]);
 const codeLine = Decoration.line({ class: "cm-codeline" });
 const computeCodeLines = (state: EditorState): DecorationSet => {
     const marks: ReturnType<typeof codeLine.range>[] = [];
@@ -443,7 +443,8 @@ const codeBlockField = StateField.define<DecorationSet>({
     provide: (f) => EditorView.decorations.from(f),
 });
 
-const runLint = async (): Promise<LintFinding[] | undefined> => {
+const runLint = async (automatic = false): Promise<LintFinding[] | undefined> => {
+    if (automatic && !autoValidationReady()) return;
     const doc = view.state.doc;
     const currentBoot = boot;
     const res = await localeFetch("/api/lint", {
@@ -456,7 +457,8 @@ const runLint = async (): Promise<LintFinding[] | undefined> => {
     });
     if (!res.ok) throw new Error(`Validation failed: ${res.status}`);
     const { findings } = (await res.json()) as { findings: LintFinding[] };
-    if (view.state.doc !== doc || boot !== currentBoot) return;
+    if (view.state.doc !== doc || boot !== currentBoot || (automatic && !autoValidationReady()))
+        return;
     view.dispatch({ effects: setLintFindings.of(findings) });
     return findings;
 };
@@ -571,7 +573,7 @@ document.addEventListener("docs:ui-language", rebuildCompletions);
 // comments, etc.), so insertion completion never fires there (otherwise Enter/Up/Down get
 // captured by completion, and an accidental snippet completion makes the selection jump to a
 // field position or inserts unwanted characters).
-const CODE_NODE_NAMES = new Set(["FencedCode", "CodeBlock", "InlineCode"]);
+const CODE_NODE_NAMES = new Set([...CODE_BLOCK_NODE_NAMES, "InlineCode"]);
 const inCodeContext = (ctx: CompletionContext): boolean => {
     for (
         let node: SyntaxNode | null = syntaxTree(ctx.state).resolveInner(ctx.pos, -1);
@@ -796,6 +798,16 @@ const editorExtensions: Extension[] = [
         } else if (u.selectionSet) {
             highlightPreviewForCursor();
         }
+        if (
+            (u.selectionSet ||
+                u.focusChanged ||
+                syntaxTree(u.startState) !== syntaxTree(u.state)) &&
+            $("validate").dataset.state === "pending" &&
+            autoValidationReady()
+        ) {
+            markValidationPending();
+            validateSoon();
+        }
     }),
 ];
 
@@ -818,14 +830,20 @@ const setValidationState = (state: "pending" | "checking" | "valid" | "error"): 
     button.title = t(label);
     button.setAttribute("aria-label", t(label));
 };
+const autoValidationReady = (): boolean => autovalidateEl.checked && !isEditingCodeBlock(view);
 const markValidationPending = (): void =>
-    setValidationState(autovalidateEl.checked ? "checking" : "pending");
+    setValidationState(autoValidationReady() ? "checking" : "pending");
 
 let codeToolBusy = false;
 let applyingValidation = false;
 const validatePage = async (automatic = false): Promise<void> => {
+    if (automatic && !autoValidationReady()) {
+        markValidationPending();
+        return;
+    }
     if (codeToolBusy) return;
     codeToolBusy = true;
+    setValidationState("checking");
     const button = $<HTMLButtonElement>("validate");
     button.disabled = true;
     button.setAttribute("aria-busy", "true");
@@ -852,9 +870,11 @@ const validatePage = async (automatic = false): Promise<void> => {
             view.state.doc !== doc ||
             boot !== currentBoot ||
             JSON.stringify(readFm()) !== fm ||
-            (automatic && !autovalidateEl.checked)
-        )
+            (automatic && !autoValidationReady())
+        ) {
+            markValidationPending();
             return;
+        }
         if (!response.ok) throw new Error(result.error ?? response.statusText);
         const changes = result.changes ?? [];
         applyingValidation = true;
@@ -869,15 +889,17 @@ const validatePage = async (automatic = false): Promise<void> => {
             applyingValidation = false;
         }
         validatedDoc = view.state.doc;
-        const proseFindings = await runLint();
+        const proseFindings = await runLint(automatic);
         const snapshot = await render();
         if (
             boot !== currentBoot ||
             view.state.doc !== validatedDoc ||
             JSON.stringify(readFm()) !== fm ||
-            (automatic && !autovalidateEl.checked)
-        )
+            (automatic && !autoValidationReady())
+        ) {
+            markValidationPending();
             return;
+        }
         setValidationState(
             !snapshot ||
                 !proseFindings ||
@@ -888,7 +910,9 @@ const validatePage = async (automatic = false): Promise<void> => {
                 : "valid",
         );
     } catch (error) {
-        if (
+        if (automatic && !autoValidationReady()) {
+            markValidationPending();
+        } else if (
             boot === currentBoot &&
             view.state.doc === validatedDoc &&
             JSON.stringify(readFm()) === fm
@@ -901,10 +925,11 @@ const validatePage = async (automatic = false): Promise<void> => {
         button.disabled = false;
         button.removeAttribute("aria-busy");
         if (
-            autovalidateEl.checked &&
+            autoValidationReady() &&
             (boot !== currentBoot ||
                 view.state.doc !== validatedDoc ||
-                JSON.stringify(readFm()) !== fm)
+                JSON.stringify(readFm()) !== fm ||
+                button.dataset.state === "pending")
         ) {
             markValidationPending();
             validateSoon();

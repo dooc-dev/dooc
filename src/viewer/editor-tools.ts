@@ -226,6 +226,16 @@ export async function validateCodeTools(root: string, body: string) {
             if (node.type === "code") nodes.push(node);
         });
         for (const node of nodes) {
+            if (node.position) {
+                const position = offsetAt(
+                    text,
+                    node.position.start.line,
+                    node.position.start.column,
+                );
+                if (/^ {0,3}(`{3,}|~{3,})/.test(text.slice(position))) {
+                    codeBlockAt(text, position);
+                }
+            }
             if (
                 node.type !== "code" ||
                 node.position?.start.offset == null ||
@@ -251,6 +261,14 @@ export async function validateCodeTools(root: string, body: string) {
         }
         return blocks;
     };
+    const originalFindings = [];
+    for (const position of await configuredBlocks(body, "linter")) {
+        const result = await runCodeTool(root, body, position, "lint");
+        originalFindings.push(...(result.findings ?? []));
+    }
+    if (originalFindings.some((finding) => finding.ruleId === "error")) {
+        return { changes: [], findings: originalFindings };
+    }
     for (const position of (await configuredBlocks(body, "formatter")).reverse()) {
         const { change } = await runCodeTool(root, body, position, "format");
         if (change && body.slice(change.from, change.to) !== change.insert) {
@@ -258,10 +276,14 @@ export async function validateCodeTools(root: string, body: string) {
         }
     }
     body = formatMarkdown(body);
+    if (body === original) return { changes: [], findings: originalFindings };
     const findings = [];
     for (const position of await configuredBlocks(body, "linter")) {
         const result = await runCodeTool(root, body, position, "lint");
         findings.push(...(result.findings ?? []));
+    }
+    if (findings.some((finding) => finding.ruleId === "error")) {
+        throw new Error("Formatted code failed validation; code was kept unchanged");
     }
     let from = 0;
     while (from < original.length && from < body.length && original[from] === body[from]) from++;

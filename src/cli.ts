@@ -23,6 +23,8 @@ const USAGE = `usage: document-system <command>
   export zip  [root] [out]           zip of the content (default <root>/dist/<root name>.zip)
   export html [root] [out] [--lang <iso6393>]  self-contained html, all assets embedded (default <root>/dist/index.html)
   code-language add <language|grammar.json> [--root <dir>]  register syntax highlighting
+  json-schema ls                    list bundled docs.json schema versions
+  json-schema <latest|version>       print a docs.json JSON Schema to stdout
   mcp [root]                         stdio MCP server (all read / write operations)
 
   doc ls
@@ -75,6 +77,23 @@ const report = <T extends object>(r: OpResult<T>, ok: (v: T) => string): void =>
 
 const [command, ...args] = process.argv.slice(2);
 switch (command) {
+    case "json-schema": {
+        const [version, extra] = args;
+        if (!version || extra) fail("usage: document-system json-schema <ls|latest|version>");
+        const { getDocsJsonSchema, listDocsJsonSchemas } = await import(
+            "./core/docs-json-schema.js"
+        );
+        try {
+            console.log(
+                version === "ls"
+                    ? listDocsJsonSchemas().join("\n")
+                    : JSON.stringify(getDocsJsonSchema(version), null, 2),
+            );
+        } catch (error) {
+            fail(error instanceof Error ? error.message : String(error));
+        }
+        break;
+    }
     case "dev":
     case "preview":
     case "edit": {

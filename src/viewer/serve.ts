@@ -785,7 +785,7 @@ main.editor-workspace { padding: 0; height: 100vh; display: flex; flex-direction
 #save[data-state="saved"] { color:var(--c-ok); }
 #save[data-state="pending"] { color:var(--c-accent); }
 #cm { flex: 1; min-height: 200px; overflow: hidden; }
-#cm .cm-inline-fold { display:inline-flex; align-items:center; justify-content:center; vertical-align:middle; width:22px; height:20px; margin-left:6px; padding:0; border:0; border-radius:4px; background:transparent; color:var(--c-fg-faint); cursor:pointer; }
+#cm .cm-inline-fold { display:inline-flex; align-items:center; justify-content:center; vertical-align:middle; width:16px; height:16px; margin-left:2px; padding:0; border:0; border-radius:3px; background:transparent; color:var(--c-fg-faint); cursor:pointer; }
 #cm .cm-inline-fold:hover, #cm .cm-inline-fold:focus-visible { color:var(--c-fg); background:var(--c-raised); }
 #cm .cm-inline-fold:focus-visible { outline:1px solid var(--c-accent); outline-offset:1px; }
 #cm .cm-inline-fold[aria-expanded="false"] svg { transform:rotate(-90deg); }

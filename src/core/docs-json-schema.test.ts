@@ -1,0 +1,223 @@
+import { readdirSync } from "node:fs";
+import { Ajv } from "ajv";
+import { describe, expect, it } from "vitest";
+import { compileSite } from "../compiler/compile.js";
+import type { ArtifactDoc, DocsArtifact } from "./artifact-types.js";
+import type { Block } from "./blocks.js";
+import {
+    getDocsJsonSchema,
+    listDocsJsonSchemas,
+    validateDocsArtifact,
+} from "./docs-json-schema.js";
+import { GENERATION } from "./generation.js";
+import { parseGraphSource } from "./graph.js";
+import { parseSchemaSource } from "./schema-graph.js";
+
+const blocks: Record<Block["type"], Block> = {
+    p: { type: "p", text: "Text with `code` and [links](doc:guide)." },
+    h: { type: "h", level: 3, text: "Heading", slug: "heading" },
+    list: {
+        type: "list",
+        ordered: true,
+        items: [
+            "Leaf",
+            { text: "Parent", ordered: false, children: [{ text: "Nested", children: ["Leaf"] }] },
+        ],
+    },
+    code: { type: "code", lines: ["custom code"], lang: "custom-language" },
+    table: { type: "table", headers: ["A"], rows: [["B"]], caption: "Table", collapsible: true },
+    callout: {
+        type: "callout",
+        title: "Note",
+        body: [
+            { type: "p", text: "Text" },
+            { type: "list", items: ["Item"], ordered: true },
+        ],
+    },
+    figureRef: { type: "figureRef", name: "figure-one", caption: "Figure" },
+    dictionary: {
+        type: "dictionary",
+        entries: [{ term: "Term", reading: "term", definition: "Definition" }],
+    },
+    figures: { type: "figures" },
+    schemaGraph: {
+        type: "schemaGraph",
+        caption: "Schema",
+        source: "teams:\n  id: pk\nusers:\n  id: pk\n  team_id: fk(teams)\n  name: string\n  unique(name)\n",
+        graph: parseSchemaSource(
+            "teams:\n  id: pk\nusers:\n  id: pk\n  team_id: fk(teams)\n  name: string\n  unique(name)\n",
+        ).model,
+    },
+    graph: {
+        type: "graph",
+        caption: "Graph",
+        source: "[a]: A @region\n[b]: B\n[a] --> [b]: Label\n",
+        graph: parseGraphSource("[a]: A @region\n[b]: B\n[a] --> [b]: Label\n").model,
+    },
+};
+
+const doc = (): ArtifactDoc => ({
+    id: "guide",
+    file: "content/guide.md",
+    title: "Guide",
+    lang: "ja-JP",
+    tags: ["guide"],
+    description: "Description",
+    icon: "<svg></svg>",
+    body: "Source",
+    blocks: structuredClone(Object.values(blocks)),
+    toc: [{ depth: 3, text: "Heading", slug: "heading" }],
+    refs: { figures: ["figure-one"] },
+});
+
+const artifact = (docs: unknown[] = [doc()]): unknown => ({
+    generation: GENERATION,
+    docs,
+    dictionary: [{ term: "Term", reading: "term", definition: "Definition" }],
+    figures: [
+        {
+            name: "figure-one",
+            file: "figures/figure-one.svg",
+            kind: "svg",
+            title: "Figure",
+            desc: "Description",
+        },
+    ],
+});
+
+describe("docs.json schema registry", () => {
+    it("registers every versioned file, pins latest to GENERATION and rejects unknown versions", () => {
+        const versions = listDocsJsonSchemas();
+        expect(versions).toEqual(
+            readdirSync(new URL("./docs-json-schema/", import.meta.url))
+                .map((file) => Number(file.replace(/\.json$/, "")))
+                .sort((a, b) => a - b),
+        );
+        expect(versions.at(-1)).toBe(GENERATION);
+        expect(getDocsJsonSchema()).toEqual(getDocsJsonSchema(GENERATION));
+        for (const version of ["nope", "../10", "toString", "010", 999]) {
+            expect(() => getDocsJsonSchema(version)).toThrow("Unknown docs.json schema version");
+        }
+    });
+
+    it("is independently usable by a standard validator, including separate figure payloads", () => {
+        const ajv = new Ajv({ strict: true });
+        for (const version of listDocsJsonSchemas()) {
+            const schema = getDocsJsonSchema(version);
+            ajv.addSchema(schema);
+            expect(
+                ajv.getSchema(schema.$id)?.({
+                    generation: version,
+                    docs: [],
+                    dictionary: [],
+                    figures: [],
+                }),
+            ).toBe(true);
+            const figure = ajv.compile({ $ref: `${schema.$id}#/definitions/FigureEntry` });
+            expect(
+                figure({ name: "a", file: "figures/a.svg", kind: "svg", markup: "<svg/>" }),
+            ).toBe(true);
+            expect(figure({ name: "a", file: "figures/a.svg", kind: "svg" })).toBe(false);
+        }
+    });
+});
+
+describe("validateDocsArtifact", () => {
+    it("accepts all block variants and nested structures without changing data", () => {
+        const value = artifact([
+            doc(),
+            { ...doc(), id: "child", parent: "guide", file: "content/child.md" },
+        ]);
+        const before = structuredClone(value);
+        expect(validateDocsArtifact(value)).toEqual([]);
+        expect(value).toEqual(before);
+        const minimal: DocsArtifact = {
+            generation: GENERATION,
+            docs: [],
+            dictionary: [],
+            figures: [],
+        };
+        expect(validateDocsArtifact(minimal)).toEqual([]);
+    });
+
+    it("accepts serialized compiler output and every separate sample figure", () => {
+        const compiled = compileSite(new URL("../../sample-content", import.meta.url).pathname);
+        expect(compiled.errors).toEqual([]);
+        expect(validateDocsArtifact(JSON.parse(JSON.stringify(compiled.artifact)))).toEqual([]);
+        const schema = getDocsJsonSchema();
+        const figure = new Ajv()
+            .addSchema(schema)
+            .compile({ $ref: `${schema.$id}#/definitions/FigureEntry` });
+        for (const entry of compiled.figures) expect(figure(entry)).toBe(true);
+    });
+
+    it.each([
+        null,
+        [],
+        {},
+        { generation: "10" },
+        { generation: 10.5 },
+        { generation: 999 },
+        { generation: { toString: null } },
+    ])("rejects missing, malformed or unsupported generations: %j", (value) => {
+        expect(validateDocsArtifact(value).join()).toContain("docs.json/generation");
+    });
+
+    it.each([
+        { type: "unknown" },
+        { type: "p", text: 1 },
+        { type: "p", text: "Text", typo: true },
+        { type: "h", level: 4, text: "Text", slug: "heading" },
+        { type: "list", items: [{ text: "Parent", children: [1] }] },
+        { type: "list", items: [], ordered: "true" },
+        { type: "code", lines: [1] },
+        { type: "table", headers: [], rows: [[1]] },
+        { type: "callout", body: [{ type: "code", lines: [] }] },
+        { type: "figureRef" },
+        { type: "dictionary", entries: [{ term: "Term" }] },
+        {
+            type: "schemaGraph",
+            graph: { groups: [], tables: [{ name: "a", fields: [], notes: [1] }], edges: [] },
+        },
+        {
+            type: "schemaGraph",
+            graph: {
+                groups: [],
+                tables: [],
+                edges: [{ from: "a", fieldIndex: -1, field: "id", to: "b", list: false }],
+            },
+        },
+        {
+            type: "graph",
+            graph: { nodes: [], edges: [{ from: "a", to: "b", kind: "wrong" }], regions: [] },
+        },
+    ])("rejects invalid nested blocks: %j", (block) => {
+        expect(validateDocsArtifact(artifact([{ ...doc(), blocks: [block] }])).join()).toContain(
+            "docs.json/docs/0/blocks/0",
+        );
+    });
+
+    it("rejects missing fields, malformed metadata and figure markup in the index", () => {
+        const { title: _title, ...missingTitle } = doc();
+        for (const value of [
+            { generation: GENERATION },
+            artifact([missingTitle]),
+            artifact([{ ...doc(), lang: 1 }]),
+            artifact([{ ...doc(), toc: [{ depth: 4, text: "Text", slug: "heading" }] }]),
+            artifact([{ ...doc(), refs: { figures: [1] } }]),
+            {
+                generation: GENERATION,
+                docs: [],
+                dictionary: [{ term: "Term", definition: 1 }],
+                figures: [],
+            },
+            {
+                generation: GENERATION,
+                docs: [],
+                dictionary: [],
+                figures: [{ name: "a", file: "figures/a.svg", kind: "svg", markup: "<svg/>" }],
+            },
+        ])
+            expect(validateDocsArtifact(value).length).toBeGreaterThan(0);
+    });
+});
