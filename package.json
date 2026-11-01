@@ -1,6 +1,6 @@
 {
     "name": "@sasaki-s-sci/document-system",
-    "version": "0.0.8",
+    "version": "0.0.9",
     "description": "A docs toolkit that compiles an md / svg / html layout convention into docs.json and renders / edits it. The package export is core (docs.json types + routing / HTML rendering / interactive schema graph UI)",
     "type": "module",
     "files": [
