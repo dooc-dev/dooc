@@ -44,6 +44,7 @@ import { docHtml, escapeHtml, figureIndexRoute, type RenderCtx } from "../core/h
 import { isLangTag, type LanguageAdapter, resolveLanguage } from "../core/language.js";
 import { ancestorsOf, childrenOf, docPath, resolveDocPath } from "../core/routing.js";
 import { CODE_LANGS, docDisplayName, type Frontmatter } from "../core/taxonomy.js";
+import { isLocalToolRequest, runCodeTool } from "./editor-tools.js";
 import { createHmrHub, HMR_PATH, hmrClientScript, watchProject } from "./hmr.js";
 import { DEFAULT_SITE_LANGUAGES, loadSiteLanguages } from "./languages.js";
 
@@ -593,6 +594,7 @@ li > ul, li > ol { margin: 0; }
 .lead { opacity: .85; border-left: 3px solid var(--doc-accent); padding-left: 12px; margin: 8px 0; }
 code { background: color-mix(in srgb, currentColor 10%, transparent);
   padding: 1px 5px; border-radius: 4px; font-size: .9em; font-family: var(--doc-mono); }
+:not(pre) > code { white-space: break-spaces; }
 pre { background: color-mix(in srgb, currentColor 6%, transparent);
   padding: 10px 14px; overflow-x: auto; line-height: 1.5; font-family: var(--doc-mono); }
 pre code { background: none; padding: 0; font-size: 13.5px; }
@@ -779,6 +781,11 @@ main.editor-workspace { padding: 0; height: 100vh; display: flex; flex-direction
 .language-option:disabled { opacity: .5; cursor: wait; }
 #language-setting { flex: none; display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-bottom: 1px solid var(--c-line); }
 #language-setting select { font: inherit; color: var(--c-fg); background: var(--c-bg0); border: 1px solid var(--c-line); border-radius: 4px; padding: 4px 8px; }
+#code-tools { display:flex; align-items:center; gap:6px; padding:6px 12px; flex-wrap:wrap; }
+#code-tool-status { font-size:12px; color:var(--c-fg-muted); }
+#code-diagnostics { max-height:140px; overflow:auto; padding:0 12px; }
+#code-diagnostics button { display:block; text-align:left; width:100%; font-size:12px; }
+.cm-code-diagnostic { text-decoration:underline wavy var(--c-warn); text-underline-offset:3px; }
 #cm { flex: 1; min-height: 200px; overflow: hidden; }
 #cm .cm-editor { height: 100%; }
 #cm .cm-editor.cm-focused { outline: none; }
@@ -1671,6 +1678,8 @@ const editorAside = (entry: Entry, site: Site): { aside: string; boot: EditorBoo
 <div class="fm">
 ${fmFieldsHtml(entry.frontmatter, site.defaultLang)}
 </div>
+<div id="code-tools"><button id="code-format" type="button" data-i18n="Format code">Format code</button><button id="code-lint" type="button" data-i18n="Check code">Check code</button><span id="code-tool-status" role="status"></span></div>
+<div id="code-diagnostics" aria-live="polite"></div>
 <div id="cm"></div>
 </aside>`;
     return { aside, boot: editorBoot(entry, site) };
@@ -2086,6 +2095,44 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
         if (mode === "edit" && req.method === "POST") {
             if (path === "/api/render" || path === "/api/save") {
                 await handleDraft(req, res, path === "/api/save", locale);
+                return;
+            }
+            if (path === "/api/code-tool") {
+                if (
+                    !isLocalToolRequest(
+                        req.headers.host ?? "",
+                        req.headers.origin,
+                        req.headers["content-type"],
+                    )
+                ) {
+                    sendJson(res, 403, {
+                        error: "Code tools require a same-origin local editor request",
+                    });
+                    return;
+                }
+                const input = await readJson(req);
+                const target = resolveContentFile(input?.file);
+                if (
+                    !target ||
+                    !existsSync(target.abs) ||
+                    typeof input?.body !== "string" ||
+                    typeof input.position !== "number" ||
+                    (input.action !== "format" && input.action !== "lint")
+                ) {
+                    sendJson(res, 400, { error: "Invalid code tool request" });
+                    return;
+                }
+                try {
+                    sendJson(
+                        res,
+                        200,
+                        await runCodeTool(root, input.body, input.position, input.action),
+                    );
+                } catch (error) {
+                    sendJson(res, 400, {
+                        error: error instanceof Error ? error.message : String(error),
+                    });
+                }
                 return;
             }
             if (path === "/api/lint") {

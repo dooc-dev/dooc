@@ -19,7 +19,7 @@ import {
     snippetCompletion,
     startCompletion,
 } from "@codemirror/autocomplete";
-import { history as cmHistory, indentWithTab } from "@codemirror/commands";
+import { history as cmHistory, indentWithTab, isolateHistory } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from "@codemirror/language";
 import { EditorState, type Extension, StateEffect, StateField } from "@codemirror/state";
@@ -355,6 +355,32 @@ const lintField = StateField.define<DecorationSet>({
                 .map((t) =>
                     Decoration.mark({
                         class: "cm-lint",
+                        attributes: { title: `${t.message} (${t.ruleId})` },
+                    }).range(t.range[0], t.range[1]),
+                )
+                .sort((a, b) => a.from - b.from);
+            next = Decoration.set(marks);
+        }
+        return next;
+    },
+    provide: (f) => EditorView.decorations.from(f),
+});
+
+const setCodeFindings = StateEffect.define<LintFinding[]>();
+const codeLintField = StateField.define<DecorationSet>({
+    create: () => Decoration.none,
+    update(deco, tr) {
+        let next = tr.docChanged ? Decoration.none : deco;
+        for (const e of tr.effects) {
+            if (!e.is(setCodeFindings)) {
+                continue;
+            }
+            const { doc } = tr.state;
+            const marks = e.value
+                .filter((t) => t.range[0] < t.range[1] && t.range[1] <= doc.length)
+                .map((t) =>
+                    Decoration.mark({
+                        class: "cm-code-diagnostic",
                         attributes: { title: `${t.message} (${t.ruleId})` },
                     }).range(t.range[0], t.range[1]),
                 )
@@ -704,6 +730,7 @@ const editorExtensions: Extension[] = [
     syntaxHighlighting(mdHighlight),
     corrField,
     lintField,
+    codeLintField,
     codeBlockField,
     // Spellchecking is left to the browser; the content's lang (= its dictionary) is set per doc
     // from boot.spellcheckLang (applySpellcheckLang), not here.
@@ -714,6 +741,8 @@ const editorExtensions: Extension[] = [
     }),
     EditorView.updateListener.of((u) => {
         if (u.docChanged) {
+            $("code-diagnostics").replaceChildren();
+            $("code-tool-status").textContent = "";
             if (suppressChange) {
                 suppressChange = false;
                 return;
@@ -754,6 +783,75 @@ const view = new EditorView({
     state: EditorState.create({ doc: boot.body, extensions: editorExtensions }),
     parent: $("cm"),
 });
+
+const codeToolStatus = $("code-tool-status");
+const codeDiagnostics = $("code-diagnostics");
+for (const action of ["format", "lint"] as const) {
+    const button = $<HTMLButtonElement>(`code-${action}`);
+    button.addEventListener("click", async () => {
+        const doc = view.state.doc;
+        const currentBoot = boot;
+        for (const id of ["code-format", "code-lint"]) $<HTMLButtonElement>(id).disabled = true;
+        codeToolStatus.textContent = t("Running code tool…");
+        try {
+            const response = await localeFetch("/api/code-tool", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                    file: boot.file,
+                    body: doc.toString(),
+                    position: view.state.selection.main.head,
+                    action,
+                }),
+            });
+            const result = (await response.json()) as {
+                error?: string;
+                change?: { from: number; to: number; insert: string };
+                findings?: LintFinding[];
+            };
+            if (view.state.doc !== doc || boot !== currentBoot) {
+                codeToolStatus.textContent = t("Document changed; result discarded");
+                return;
+            }
+            if (!response.ok) throw new Error(result.error ?? response.statusText);
+            if (result.change) {
+                view.dispatch({
+                    changes: result.change,
+                    userEvent: "input.format",
+                    annotations: isolateHistory.of("full"),
+                });
+                view.focus();
+            }
+            if (result.findings) {
+                view.dispatch({ effects: setCodeFindings.of(result.findings) });
+                codeDiagnostics.replaceChildren(
+                    ...result.findings.map((finding) => {
+                        const item = document.createElement("button");
+                        item.type = "button";
+                        item.textContent = `${finding.ruleId}: ${finding.message}`;
+                        item.addEventListener("click", () => {
+                            if (view.state.doc !== doc || boot !== currentBoot) return;
+                            view.dispatch({
+                                selection: { anchor: finding.range[0], head: finding.range[1] },
+                                scrollIntoView: true,
+                            });
+                            view.focus();
+                        });
+                        return item;
+                    }),
+                );
+            }
+            codeToolStatus.textContent = result.findings
+                ? t("Diagnostics: {count}", { count: result.findings.length })
+                : t("Code formatted");
+        } catch (error) {
+            codeToolStatus.textContent = error instanceof Error ? error.message : String(error);
+        } finally {
+            for (const id of ["code-format", "code-lint"])
+                $<HTMLButtonElement>(id).disabled = false;
+        }
+    });
+}
 
 // The doc language's spellcheck dictionary (boot.spellcheckLang), re-applied on doc switch.
 const applySpellcheckLang = (): void => {
@@ -1720,6 +1818,8 @@ const restorePane = (pane: PreviewPane): void => {
     baseRaw = draft.baseRaw;
     conflictPending = draft.conflictPending;
     suppressChange = false;
+    codeDiagnostics.replaceChildren();
+    codeToolStatus.textContent = "";
     view.setState(draft.state);
     fmBox.innerHTML = draft.fmHtml;
     applyFm(draft.fm);
@@ -1872,6 +1972,8 @@ const swapDoc = (data: PageResponse, remember = true): void => {
     // as one step, so undo can go back to it too.
     if (remember) docStates.set(prevKey, view.state);
     const cached = docStates.get(stateKey(boot));
+    codeDiagnostics.replaceChildren();
+    codeToolStatus.textContent = "";
     view.setState(cached ?? EditorState.create({ doc: boot.body, extensions: editorExtensions }));
     if (cached && cached.doc.toString() !== boot.body) {
         suppressChange = true;

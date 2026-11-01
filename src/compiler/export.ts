@@ -7,7 +7,7 @@ import { CODE_LANGUAGES_DIR } from "./code-languages.js";
 import { CONFIG_FILE } from "./config.js";
 import type { ZipEntry } from "./zip.js";
 
-const LAYOUT_DIRS = ["content", "figures", "icons", "locales"];
+const LAYOUT_DIRS = ["content", "figures", "icons", "locales", ".document-system/editor-tools"];
 
 export const exportEntries = (root: string): ZipEntry[] => [
     ...[CONFIG_FILE, MANIFEST_FILE]
@@ -29,8 +29,14 @@ export const exportEntries = (root: string): ZipEntry[] => [
         : []),
     ...LAYOUT_DIRS.filter((dir) => existsSync(join(root, dir))).flatMap((dir) =>
         readdirSync(join(root, dir), { recursive: true, encoding: "utf8" })
+            .filter(
+                (rel) =>
+                    !rel
+                        .replaceAll("\\", "/")
+                        .split("/")
+                        .some((seg) => seg.startsWith(".")),
+            )
             .map((rel) => `${dir}/${rel.replaceAll("\\", "/")}`)
-            .filter((name) => !name.split("/").some((seg) => seg.startsWith(".")))
             .filter((name) => statSync(join(root, name)).isFile())
             .sort()
             .map((name) => ({ name, data: readFileSync(join(root, name)) })),

@@ -82,5 +82,11 @@
     "Active pane": "Active pane",
     "Activate pane": "Activate pane",
     "Failed to load pane": "Failed to load pane",
-    "Close pane and discard its unsaved changes?": "Close pane and discard its unsaved changes?"
+    "Close pane and discard its unsaved changes?": "Close pane and discard its unsaved changes?",
+    "Format code": "Format code",
+    "Check code": "Check code",
+    "Running code tool…": "Running code tool…",
+    "Document changed; result discarded": "Document changed; result discarded",
+    "Diagnostics: {count}": "Diagnostics: {count}",
+    "Code formatted": "Code formatted"
 }

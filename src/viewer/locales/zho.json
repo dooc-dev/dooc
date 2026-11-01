@@ -82,5 +82,11 @@
     "Active pane": "当前编辑窗格",
     "Activate pane": "编辑此窗格",
     "Failed to load pane": "无法加载窗格",
-    "Close pane and discard its unsaved changes?": "放弃另一窗格未保存的更改并关闭？"
+    "Close pane and discard its unsaved changes?": "放弃另一窗格未保存的更改并关闭？",
+    "Format code": "格式化代码",
+    "Check code": "检查代码",
+    "Running code tool…": "正在运行…",
+    "Document changed; result discarded": "文档已更改，已丢弃结果",
+    "Diagnostics: {count}": "诊断: {count}条",
+    "Code formatted": "代码已格式化"
 }

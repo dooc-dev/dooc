@@ -1,9 +1,6 @@
 # Documentation tools that extend Markdown
 
 # Usage
-
-The package name is `@sasaki-s-sci/document-system` and the CLI name is `document-system`. The examples below use a locally installed package.
-
 ```sh
 pnpm exec document-system edit [root] [port]        # viewer
 pnpm exec document-system export json [root] [out]  # full docs.json set (<root>/dist/artifact/)

@@ -82,5 +82,11 @@
     "Active pane": "編集中のペイン",
     "Activate pane": "このペインを編集",
     "Failed to load pane": "ペインを読み込めませんでした",
-    "Close pane and discard its unsaved changes?": "もう一方のペインの未保存の変更を破棄して閉じますか？"
+    "Close pane and discard its unsaved changes?": "もう一方のペインの未保存の変更を破棄して閉じますか？",
+    "Format code": "コード整形",
+    "Check code": "コード検査",
+    "Running code tool…": "実行中…",
+    "Document changed; result discarded": "本文が変更されたため結果を破棄しました",
+    "Diagnostics: {count}": "診断: {count}件",
+    "Code formatted": "整形しました"
 }
