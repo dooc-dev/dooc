@@ -1425,7 +1425,7 @@ ${
       err.textContent = "";
       try {
         const data = await post("/api/create", { parent: parent || undefined, id: idInput.value.trim(), title: title.value.trim() });
-        window.location.href = "/" + data.id + "?lang=" + encodeURIComponent(contentLanguage());
+        window.location.href = data.path + "?lang=" + encodeURIComponent(contentLanguage());
       } catch (error) {
         err.textContent = error.message;
       }
@@ -1828,7 +1828,11 @@ const handleCreate = async (req: IncomingMessage, res: ServerResponse): Promise<
     const id = typeof body?.id === "string" ? body.id.trim() : "";
     const title = typeof body?.title === "string" ? body.title.trim() : "";
     const parent = typeof body?.parent === "string" && body.parent !== "" ? body.parent : undefined;
-    sendOp(res, ops.add(id, title, parent));
+    const result = ops.add(id, title, parent);
+    sendOp(
+        res,
+        isOpError(result) ? result : { ...result, path: docPath(loadSite().entries, result.id) },
+    );
 };
 
 // Add a figure (sidebar file picker / drag-and-drop). Returns the written file name
@@ -1896,7 +1900,11 @@ const handleRename = async (req: IncomingMessage, res: ServerResponse): Promise<
         return;
     }
     const newId = typeof body?.newId === "string" ? body.newId.trim() : "";
-    sendOp(res, ops.rename(target.id, newId));
+    const result = ops.rename(target.id, newId);
+    sendOp(
+        res,
+        isOpError(result) ? result : { ...result, path: docPath(loadSite().entries, result.id) },
+    );
 };
 
 // Delete a doc. If it's referenced, refuse without force and return the referrers (the client
@@ -1908,7 +1916,16 @@ const handleDelete = async (req: IncomingMessage, res: ServerResponse): Promise<
         sendJson(res, 404, { error: "target doc not found" });
         return;
     }
-    sendOp(res, ops.remove(target.id, body?.force === true));
+    const result = ops.remove(target.id, body?.force === true);
+    sendOp(
+        res,
+        isOpError(result)
+            ? result
+            : {
+                  ...result,
+                  path: result.parent ? docPath(loadSite().entries, result.parent) : "/",
+              },
+    );
 };
 
 /** Cache of entry name → { js, etag }. clear() is called on HMR "client" notifications
@@ -2140,12 +2157,6 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
         const doc = site.entries.find((e) => e.id === id);
         if (!doc) {
             notFound(res, path);
-            return;
-        }
-        const canonical = docPath(site.entries, doc.id);
-        if (path !== canonical) {
-            res.writeHead(302, { location: `${canonical}${requestUrl.search}` });
-            res.end();
             return;
         }
         const opts: PageOpts = {

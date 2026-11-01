@@ -63,6 +63,7 @@ interface Boot {
 
 /** Response of /api/rename. */
 interface RenameResponse {
+    path: string;
     ok?: boolean;
     error?: string;
     id: string;
@@ -71,6 +72,7 @@ interface RenameResponse {
 
 /** Response of /api/delete. referencedBy is set only on 409 (without force). */
 interface DeleteResponse {
+    path: string;
     ok?: boolean;
     error?: string;
     referencedBy?: string[];
@@ -980,6 +982,18 @@ const refreshNav = async (): Promise<void> => {
         const navGroups = document.getElementById("nav-groups");
         if (navGroups) {
             navGroups.innerHTML = html;
+            for (const pane of panes) {
+                const state = pane === activePane ? boot : pane.draft?.boot;
+                if (!state) continue;
+                const link = navGroups.querySelector<HTMLAnchorElement>(
+                    `[data-doc-id="${CSS.escape(state.docId)}"] > .nav-row > a`,
+                );
+                if (link) state.path = new URL(link.href).pathname;
+            }
+            if (currentPath !== boot.path) {
+                currentPath = boot.path;
+                history.replaceState(null, "", localeUrl(currentPath + location.hash));
+            }
         }
         (window as unknown as { __docsNavFilter?: () => void }).__docsNavFilter?.();
         applyUiLanguage();
@@ -1305,7 +1319,7 @@ const startRename = (): void => {
                           })
                         : t("Renamed to {id}.md", { id: data.id }),
                 );
-                window.location.href = localeUrl(`/${data.id}`);
+                window.location.href = localeUrl(data.path);
             } catch (e) {
                 busy = false;
                 input.classList.add("invalid");
@@ -1519,7 +1533,7 @@ const deleteDoc = async (): Promise<void> => {
             window.alert(t("Failed to delete: {error}", { error: data.error ?? res.status }));
             return;
         }
-        window.location.href = localeUrl(`/${data.parent ?? ""}`);
+        window.location.href = localeUrl(data.path);
     };
     try {
         await attempt(false);
@@ -2028,7 +2042,7 @@ const navigateTo = async (path: string, hash = ""): Promise<void> => {
     window.location.href = localeUrl(path + hash);
 };
 
-// Only intercept document paths (hierarchy paths and single-id aliases). Modified clicks are left
+// Only intercept document paths (hierarchy paths). Modified clicks are left
 // alone.
 const isDocPath = (path: string): boolean =>
     /^\/(?:[a-z0-9][a-z0-9-]*\/)*[a-z0-9][a-z0-9-]*\/?$/.test(path);

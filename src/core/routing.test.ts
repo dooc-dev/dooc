@@ -44,10 +44,11 @@ describe("routing", () => {
     });
 });
 
-it("keeps hierarchy paths separate from heading fragments and resolves stable aliases", () => {
+it("keeps hierarchy paths separate from heading fragments and rejects old aliases", () => {
     expect(docPath(docs, "deep")).toBe("/guide/setup/deep");
     expect(resolveDocPath(docs, "/guide/setup/deep")).toBe("deep");
-    expect(resolveDocPath(docs, "/deep")).toBe("deep");
+    expect(resolveDocPath(docs, "/deep")).toBeUndefined();
+    expect(resolveDocPath(docs, "/guide")).toBe("guide");
     expect(resolveDocPath(docs, "/reference/deep")).toBeUndefined();
     expect(resolveDocPath(docs, "/guide/setup/deep#heading")).toBeUndefined();
     expect(resolveDocPath(docs, "/unknown")).toBeUndefined();

@@ -3,7 +3,7 @@
 // package owns routing.
 //
 // Page URLs follow the manifest hierarchy; heading fragments stay separate.
-// Body-text `doc:` links use stable, site-wide ids, and single-id URLs remain aliases.
+// Body-text `doc:` references use site-wide ids; page URLs use the full hierarchy.
 import type { ArtifactDoc } from "./artifact-types.js";
 import { isDocId } from "./content-metadata.js";
 
@@ -49,10 +49,10 @@ export const headingAnchor = (docId: string, slug: string): string => `${docId}_
 export const docPath = (docs: readonly DocRef[], id: string): string =>
     `/${[...ancestorsOf(docs, id).map((doc) => doc.id), id].join("/")}`;
 
-/** Accept canonical hierarchy paths and the stable, single-id aliases. */
+/** Resolve only the complete hierarchy path; no legacy single-id aliases. */
 export const resolveDocPath = (docs: readonly DocRef[], path: string): string | undefined => {
     const parts = path.split("/").filter(Boolean);
     const id = parts.at(-1);
     if (!id || !parts.every(isDocId) || !docs.some((doc) => doc.id === id)) return undefined;
-    return parts.length === 1 || docPath(docs, id) === `/${parts.join("/")}` ? id : undefined;
+    return docPath(docs, id) === path ? id : undefined;
 };
