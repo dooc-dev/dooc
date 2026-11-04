@@ -90,6 +90,14 @@ export const DIRECTIVES: readonly Directive[] = [
         sample: ":::html(<file>.html)",
     },
     {
+        name: "textfile",
+        kind: "leaf",
+        summary:
+            "Show a UTF-8 file relative to the docs root, with its filename and code highlighting",
+        caption: false,
+        sample: ":::textfile(<filepath>)",
+    },
+    {
         name: "callout",
         kind: "container",
         summary: "Boxed callout — body is paragraphs / bullet lists",
@@ -148,6 +156,8 @@ export const CONTAINER_DIRECTIVES: readonly string[] = directiveNames("container
 // (line numbers unchanged).
 const LEAF_LINE_RE = new RegExp(`^(\\s*):::(${LEAF_DIRECTIVES.join("|")})\\(`);
 const LEAF_FULL_RE = /^(\s*):::([\w-]+)\(([^()"\s]+)\)(\[[^\]\n]*\])?\s*$/;
+export const TEXTFILE_LINE_RE =
+    /^([ \t]*):::textfile\(([^()"\r\n]+)\)[ \t]*(\[[^\r\n]*\])?[ \t]*\r?$/;
 
 /**
  * Returns the source with the leaf one-line syntax rewritten to remark-directive's leaf form,
@@ -170,6 +180,16 @@ export const normalizeLeafDirectives = (raw: string): { source: string; badLines
             return l;
         }
         if (fence != null) return l;
+        if (/^\s*:::textfile\(/.test(l)) {
+            const file = TEXTFILE_LINE_RE.exec(l);
+            if (!file?.[2]?.trim()) {
+                badLines.push(i + 1);
+                return l;
+            }
+            const escapeAttribute = (value: string): string =>
+                value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("\\", "&#92;");
+            return `${file[1]}::textfile{src="${escapeAttribute(file[2].trim())}"${file[3] ? ` range="${escapeAttribute(file[3])}"` : ""}}`;
+        }
         const term = /^(\s*):::term\(\s*([^()"\n]*?)\s*\)\s*$/.exec(l);
         if (term) {
             const rest = input.slice(i + 1);

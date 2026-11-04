@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { exportEntries } from "../compiler/export.js";
-import { codeBlockAt, isLocalToolRequest, runCodeTool, validateCodeTools } from "./editor-tools.js";
+import {
+    codeBlockAt,
+    isLocalToolRequest,
+    runCodeTool,
+    validateCodeTools,
+    validateTextfileCode,
+} from "./editor-tools.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -27,6 +33,37 @@ async function fixture(formatter: string, linter = "require('node:fs').writeSync
 }
 const body = "# Title\n\n```js\nconst x=1\n```\n\nAfter\n";
 const position = body.indexOf("const");
+
+describe("complete text file tools", () => {
+    it("uses the registered formatter and preserves line endings and embedded fence text", async () => {
+        const root = await fixture(
+            "const fs=require('node:fs');fs.writeSync(1,fs.readFileSync(0,'utf8').replace('x=1','x = 1;'))",
+        );
+        for (const content of ["const x=1\n// ```\n", "const x=1\r\n// ```\r\n", "const x=1"]) {
+            expect(await validateTextfileCode(root, "js", content)).toEqual({
+                content: content.replace("x=1", "x = 1;"),
+                findings: [],
+            });
+        }
+        expect(await validateTextfileCode(root, "unconfigured", "a\n\n")).toEqual({
+            content: "a\n\n",
+            findings: [],
+        });
+    });
+    it("keeps invalid code untouched, maps diagnostics to the file, and rejects empty output", async () => {
+        const root = await fixture(
+            "throw Error('must not run')",
+            "process.stdout.write(JSON.stringify([{line:1,column:1,endLine:1,endColumn:4,message:'Invalid code',severity:'error'}]))",
+        );
+        expect(await validateTextfileCode(root, "js", "bad code")).toEqual({
+            content: "bad code",
+            findings: [{ message: "Invalid code", range: [0, 3], ruleId: "error" }],
+        });
+        const empty = await fixture("");
+        await expect(validateTextfileCode(empty, "js", "keep me")).rejects.toThrow("empty output");
+        await expect(validateTextfileCode(empty, "../outside", "x")).rejects.toThrow("Invalid");
+    });
+});
 
 describe("code tool virtual blocks", () => {
     it("selects the current block and maps CRLF/indentation without touching prose", () => {

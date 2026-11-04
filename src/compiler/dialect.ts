@@ -28,6 +28,7 @@ import {
     normalizeLeafDirectives,
 } from "../core/taxonomy.js";
 import { parseTermSource } from "./terms.js";
+import { parseTextfileRange } from "./textfile.js";
 
 const processor = unified()
     .use(remarkParse)
@@ -146,14 +147,24 @@ const checkDirectiveAttrs = (
     }
     const keys = Object.keys(n.attributes ?? {});
     if (kind === "leaf") {
-        // A normalized leaf has exactly one attribute, src. Anything else is malformed.
+        // Text files may also carry a display range; other file directives take only src.
         const src = n.attributes?.src;
-        if (keys.length !== 1 || src == null) {
+        const allowed = n.name === "textfile" ? ["src", "range"] : ["src"];
+        if (keys.some((key) => !allowed.includes(key)) || !src?.trim()) {
             errors.push(`${line(n)}: :::${n.name} must be written as ${spec.sample}`);
             return true;
         }
+        if (n.name === "textfile" && n.attributes?.range != null) {
+            try {
+                parseTextfileRange(n.attributes.range);
+            } catch (error) {
+                errors.push(
+                    `${line(n)}: :::textfile ${error instanceof Error ? error.message : error}`,
+                );
+            }
+        }
         const ext = /\.([a-z]+)$/.exec(src)?.[1] ?? "";
-        if (!spec.exts?.includes(ext)) {
+        if (spec.exts && !spec.exts.includes(ext)) {
             errors.push(
                 `${line(n)}: :::${n.name}(${src}) has an unsupported extension (only ${spec.exts?.join(" / ")})`,
             );
@@ -256,7 +267,7 @@ export const parseDoc = (input: string): ParsedDoc => {
     const { source: raw, badLines } = normalizeLeafDirectives(input);
     for (const l of badLines) {
         errors.push(
-            `L${l}: leaf directives must be written as :::name(<file>)[caption] (file without spaces / parentheses / ")`,
+            `L${l}: leaf directives must be written as :::name(<file>)[caption] (file without spaces / parentheses / "); textfile uses :::textfile(<filepath>) on one line`,
         );
     }
     const root = parseMdast(raw);
@@ -339,9 +350,12 @@ export const parseDoc = (input: string): ParsedDoc => {
  * Collect the figures a doc references (:::figure / :::html files, relative to figures/), for
  * cross-checking against figures/.
  */
-export const collectRefs = (root: Root): { figures: string[]; terms: string[] } => {
+export const collectRefs = (
+    root: Root,
+): { figures: string[]; terms: string[]; textfiles: string[] } => {
     const figures: string[] = [];
     const terms: string[] = [];
+    const textfiles: string[] = [];
     const segments = inlineSegmenter();
     visit(root, (node) => {
         if (
@@ -354,9 +368,10 @@ export const collectRefs = (root: Root): { figures: string[]; terms: string[] } 
             for (const segment of segments(node.value))
                 if (segment.kind === "term") terms.push(segment.id);
         if (node.type === "leafDirective") {
-            const src = (node as LeafDirective).attributes?.src;
-            if (src) figures.push(src);
+            const d = node as LeafDirective;
+            const src = d.attributes?.src;
+            if (src) (d.name === "textfile" ? textfiles : figures).push(src);
         }
     });
-    return { figures, terms: [...new Set(terms)] };
+    return { figures, terms: [...new Set(terms)], textfiles: [...new Set(textfiles)] };
 };

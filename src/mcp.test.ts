@@ -46,10 +46,12 @@ describe("mcp", () => {
         expect(call(tools, "add_doc", { id: "target", title: "Target" }).isError).toBe(false);
         const w = call(tools, "write_doc", {
             id: "new",
-            content: '---\ntitle: "New"\n---\n\nhello [target](doc:target)',
+            content: '---\ntitle: "New"\n---\n\nmcp-search-fixture [target](doc:target)',
         });
         expect(w.errors).toEqual([]);
-        expect(call(tools, "search_docs", { query: "hello" })).toMatchObject({ 0: { id: "new" } });
+        expect(call(tools, "search_docs", { query: "mcp-search-fixture" })).toMatchObject({
+            0: { id: "new" },
+        });
         expect(call(tools, "move_doc", { id: "new" }).isError).toBe(false);
         expect(call(tools, "list_docs", {}).docs.at(-1)).toMatchObject({ id: "new", depth: 0 });
         expect(call(tools, "rename_doc", { id: "target", new_id: "b" }).updatedRefs).toBe(1);

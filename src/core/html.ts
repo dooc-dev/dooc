@@ -23,6 +23,7 @@ import {
     schemaGraphUid,
 } from "./schema-graph.js";
 import { docDisplayName, type Frontmatter } from "./taxonomy.js";
+import { textfileName } from "./textfile.js";
 
 export interface RenderCtx {
     /** Figures including their markup (name → entry). */
@@ -403,12 +404,24 @@ const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
             return `<p>${segmentsHtml(b.text, ctx, seg)}</p>`;
         case "list":
             return listHtml(b.items, ctx, seg, b.ordered === true);
-        case "code":
-            // Two parts: a header band (lang label + copy button) + the body pre. Only the copy
-            // button's markup lives here; its behavior (clipboard) and look are implemented by the
-            // page shell's delegated listener + CSS (viewer/serve.ts etc.). Without JS (and without
-            // CSS) it just renders as a plain button, so nothing breaks.
-            return `<div class="codeblk"><div class="codeblk-head"><span class="codeblk-lang">${escapeHtml(b.lang ?? "text")}</span><button class="codecopy" type="button" title="copy" aria-label="copy code"><svg class="ic-copy" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg><svg class="ic-ok" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></button><button class="codefold" type="button" aria-expanded="true" aria-label="Collapse code" title="Collapse code" data-i18n-aria-label="Collapse code" data-i18n-title="Collapse code"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 7.5 5 5 5-5"/></svg></button></div><pre><code>${escapeHtml(b.lines.join("\n"))}</code></pre></div>`;
+        case "code": {
+            const filename = b.filename ? textfileName(b.filename) : "";
+            const lang = b.filename ? /^.+(\.[^.]+)$/.exec(filename)?.[1] : (b.lang ?? "text");
+            const langLabel = lang ? `<span class="codeblk-lang">${escapeHtml(lang)}</span>` : "";
+            const filenameLabel = filename
+                ? `<span class="codeblk-filename">${escapeHtml(filename)}</span>`
+                : "";
+            const title = b.filename
+                ? ` title="${escapeHtml(`:::textfile(${b.filename})${b.range ?? ""}`)}"`
+                : "";
+            if (b.filename && b.unavailable) {
+                const message =
+                    b.unavailable === "missing" ? "File not found" : "File could not be loaded";
+                return `<div class="codeblk textfile unavailable"${title}><span class="codeblk-head">${langLabel}${filenameLabel}</span><p class="textfile-unavailable" role="status" data-i18n="${message}">${message}</p></div>`;
+            }
+            // Copy/fold behavior and border-label styling are shared by the page shell.
+            return `<div class="codeblk${b.filename ? " textfile" : ""}" data-lang="${escapeHtml(b.lang ?? "text")}"${title}><span class="codeblk-head">${langLabel}${filenameLabel}<button class="codecopy" type="button" title="copy" aria-label="copy code"><svg class="ic-copy" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg><svg class="ic-ok" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></button><button class="codefold" type="button" aria-expanded="true" aria-label="Collapse code" title="Collapse code" data-i18n-aria-label="Collapse code" data-i18n-title="Collapse code"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 7.5 5 5 5-5"/></svg></button></span><pre><code>${escapeHtml(b.lines.join("\n"))}</code></pre></div>`;
+        }
         case "table":
             return tableHtml(b, ctx, seg);
         case "callout": {

@@ -52,6 +52,29 @@ describe("loadFigures", () => {
         expect(html?.markup).toContain("data-doc-figure-theme");
     });
 
+    it.each([
+        "",
+        "<!-- layout -->\n",
+    ])("keeps leading styles intact and themes the whole HTML fragment (%s)", (prefix) => {
+        const dir = mkdtempSync(join(tmpdir(), "docs-figs-style-"));
+        const fragment = `${prefix}<style>.intro{display:grid}</style><div class="intro">First</div><p>Second</p>`;
+        writeFileSync(join(dir, "intro.html"), `<!--fig\ntitle: Intro\n-->\n${fragment}`);
+        const { figures, errors } = loadFigures(dir);
+        expect(errors).toEqual([]);
+        expect(figures[0]?.markup).toMatch(
+            /^<div data-doc-figure=""><style data-doc-figure-theme>/,
+        );
+        expect(figures[0]?.markup).toContain(`</style>${fragment}</div>`);
+    });
+
+    it("still rejects plain text after HTML metadata", () => {
+        const dir = mkdtempSync(join(tmpdir(), "docs-figs-text-"));
+        writeFileSync(join(dir, "text.html"), "<!--fig\ntitle: Text\n-->\nplain text");
+        expect(loadFigures(dir).errors).toContain(
+            "figures/text.html: the meta comment must be followed by an HTML fragment",
+        );
+    });
+
     it("embeds png / webp / jpeg as data URI <img>, with the stem in the same name space as other formats", () => {
         const dir = mkdtempSync(join(tmpdir(), "docs-figs-img-"));
         writeFileSync(join(dir, "photo.jpg"), Buffer.from([0xff, 0xd8, 0xff]));

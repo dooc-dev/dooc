@@ -25,7 +25,14 @@ export type Block =
     | { type: "h"; level: 1 | 2 | 3; text: string; slug: string }
     // ordered omitted/false = bulleted list (`<ul>`), true = numbered (`<ol>`, md `1.` syntax).
     | { type: "list"; items: ListItem[]; ordered?: boolean }
-    | { type: "code"; lines: string[]; lang?: CodeLang }
+    | {
+          type: "code";
+          lines: string[];
+          lang?: CodeLang;
+          filename?: string;
+          range?: string;
+          unavailable?: "missing" | "unreachable";
+      }
     | {
           type: "table";
           headers: string[];

@@ -63,6 +63,22 @@ describe("blocksHtml", () => {
         expect(html("- Parent\n  - Child")).toBe("<ul><li>Parent<ul><li>Child</li></ul></li></ul>");
     });
 
+    it.each([
+        ["```ts\nconst x = '<tag>';\n```", "ts"],
+        ["```\nconst x = '<tag>';\n```", "text"],
+        ["    const x = '<tag>';", "text"],
+    ])("renders Markdown code with the shared border label (%s)", (source, lang) => {
+        const out = html(source);
+        expect(out).toContain(
+            `<div class="codeblk" data-lang="${lang}"><span class="codeblk-head">`,
+        );
+        expect(out).toContain(`<span class="codeblk-lang">${lang}</span>`);
+        expect(out).not.toContain("codeblk-filename");
+        expect(out).toContain('class="codecopy"');
+        expect(out).toContain('class="codefold" type="button" aria-expanded="true"');
+        expect(out).toContain("<pre><code>const x = '&lt;tag&gt;';</code></pre>");
+    });
+
     it("renders numbered lists (`1.` syntax) as <ol> (not <ul>)", () => {
         expect(html("1. One\n2. Two")).toBe("<ol><li>One</li><li>Two</li></ol>");
     });

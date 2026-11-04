@@ -98,7 +98,7 @@ switch (command) {
     case "preview":
     case "edit": {
         process.env.DOCS_ROOT = docsRoot(args[0]);
-        process.env.DOCS_HMR = command === "edit" ? "0" : "1";
+        process.env.DOCS_HMR = "1";
         // serve.ts reads DOCS_ROOT at import time, so import it after the env is set.
         const { startServer } = await import("./viewer/serve.js");
         await startServer(command === "preview" ? "preview" : "edit", Number(args[1] ?? 5179));

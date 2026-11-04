@@ -12,12 +12,13 @@
 //   server side (all other src/*.ts) = tsx watch restarts the whole process, so not watched.
 //           The client notices the swap from the bootId difference in `hello` on reconnect and
 //           reloads.
-// Own writes (edit's save / reorder) are ignored on the client side (suppressing them on the
-// server would make other tabs connected to the same server miss the update too).
-import { existsSync, watch } from "node:fs";
+// All content events reach the editor, which compares disk contents with its saved base.
+import { existsSync, unwatchFile, watch, watchFile } from "node:fs";
 import type { ServerResponse } from "node:http";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { textfilePath } from "../compiler/textfile.js";
 import { MANIFEST_FILE } from "../core/content-metadata.js";
+import { isRemoteTextfile } from "../core/textfile.js";
 import type { ServeMode } from "./serve.js";
 
 /** SSE endpoint. SoT for the server route and the client script's connection target. */
@@ -40,6 +41,10 @@ export const classifyChange = (rel: string): HmrKind | undefined => {
     if (
         p === "src/viewer/edit-client.ts" ||
         p === "src/viewer/edit-schema-completion.ts" ||
+        p === "src/viewer/edit-textfile.ts" ||
+        p === "src/viewer/edit-conflict.ts" ||
+        p === "src/viewer/edit-code-highlight.ts" ||
+        p === "src/viewer/code-tokens.ts" ||
         p === "src/viewer/i18n.ts" ||
         p === "src/viewer/ui-client.ts" ||
         p === "src/viewer/code-highlight.ts" ||
@@ -69,12 +74,11 @@ export const sseFrame = (event: string, data: unknown): string =>
 
 /**
  * Notification hooks the client script puts on `window.__docsHmr` (contract with edit-client.ts).
- * noteWrite = marks an own write (save / reorder), setDirty = shares the unsaved state,
+ * setDirty = shares the unsaved state,
  * onContent = hook for applying content changes in place (registered by edit-client.ts; falls
  * back to a reload if unregistered).
  */
 export interface HmrBridge {
-    noteWrite: () => void;
     setDirty: (v: boolean) => void;
     onContent?: (files: string[]) => void;
 }
@@ -125,15 +129,15 @@ const DOCS_DIRS = ["content", "figures", "icons", "locales"];
 
 /**
  * Notifies data-side changes batched by kind. An editor save fires multiple events
- * (rename + change), so debounce collapses them into one. The returned function closes the
- * watchers (for tests / explicit shutdown).
+ * (rename + change), so debounce collapses them into one. Referenced text files can be added
+ * as drafts are compiled; close() releases all watchers.
  */
 export const watchProject = (
     docsRoot: string,
     pkgRoot: string,
     onChange: (kind: HmrKind, files: string[]) => void,
     debounceMs = 60,
-): (() => void) => {
+): { close: () => void; watchTextfiles: (files: Iterable<string>) => void } => {
     const pending = new Map<string, HmrKind>();
     let timer: NodeJS.Timeout | undefined;
     const flush = (): void => {
@@ -147,8 +151,7 @@ export const watchProject = (
             onChange(kind, files);
         }
     };
-    const note = (rel: string): void => {
-        const kind = classifyChange(rel);
+    const note = (rel: string, kind = classifyChange(rel)): void => {
         if (!kind) {
             return;
         }
@@ -178,7 +181,25 @@ export const watchProject = (
             if (name && String(name) === MANIFEST_FILE) note(MANIFEST_FILE);
         }),
     );
-    return () => {
+    const textfiles = new Map<string, () => void>();
+    // shortcut: keep encountered file watches until shutdown; prune if sessions collect many removed references.
+    const watchTextfiles = (files: Iterable<string>): void => {
+        for (const file of files) {
+            if (isRemoteTextfile(file)) continue;
+            try {
+                textfilePath(docsRoot, file);
+            } catch {
+                continue;
+            }
+            const path = resolve(docsRoot, file);
+            if (textfiles.has(path)) continue;
+            const changed = () => note(file.replace(/^(\.\/)+/, ""), "content");
+            // Poll referenced paths so atomic saves, deletion and creation are all detected.
+            watchFile(path, { persistent: false, interval: 200 }, changed);
+            textfiles.set(path, changed);
+        }
+    };
+    const close = (): void => {
         if (timer) {
             clearTimeout(timer);
             timer = undefined;
@@ -186,7 +207,9 @@ export const watchProject = (
         for (const w of watchers) {
             w.close();
         }
+        for (const [path, listener] of textfiles) unwatchFile(path, listener);
     };
+    return { close, watchTextfiles };
 };
 
 /**
@@ -197,16 +220,12 @@ export const watchProject = (
  *             Changes to the client bundle (`src/viewer/edit-client.ts` / `src/core/*.tsx`) and
  *             a bootId difference in `hello` (= the server itself restarted) reload. While there
  *             are unsaved (dirty) changes, the reload is downgraded to a badge and waits.
- *             Own writes (save / reorder) are ignored.
  */
 export const hmrClientScript = (mode: ServeMode): string => `
 (() => {
-  // Ignore own writes (save / reorder), only until the watcher picks them up again.
-  const SELF_WRITE_MS = 2500;
   const MODE = ${JSON.stringify(mode)};
   let bootId = null;
   let isDirty = false;
-  let lastSelfWrite = 0;
   let pendingReload = false;
 
   let badge = null;
@@ -257,7 +276,6 @@ export const hmrClientScript = (mode: ServeMode): string => `
   // first (bootScripts sit near the top of body, this script at the end of body), so merge
   // instead of clobbering what's already there (an earlier onContent registration).
   window.__docsHmr = Object.assign(window.__docsHmr || {}, {
-    noteWrite: () => { lastSelfWrite = Date.now(); },
     setDirty: (v) => {
       isDirty = Boolean(v);
       if (!isDirty && pendingReload) location.reload();
@@ -275,7 +293,6 @@ export const hmrClientScript = (mode: ServeMode): string => `
     const { kind, files } = JSON.parse(ev.data);
     if (MODE === "preview") { if (kind === "content") void swap(); return; }
     if (kind === "content") {
-      if (Date.now() - lastSelfWrite < SELF_WRITE_MS) return;
       const onContent = window.__docsHmr && window.__docsHmr.onContent;
       // If registered, leave it to the in-place update and don't reload (the editor swaps
       // body/nav itself). Unregistered (pages without an editor, e.g. the empty 0-doc page)

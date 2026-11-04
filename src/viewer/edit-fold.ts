@@ -9,7 +9,7 @@ import {
 } from "@codemirror/view";
 import { t } from "./i18n.js";
 
-const createFoldButton = (folded: boolean): HTMLButtonElement => {
+export const createFoldButton = (folded: boolean): HTMLButtonElement => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "cm-inline-fold";

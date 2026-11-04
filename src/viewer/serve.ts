@@ -44,11 +44,18 @@ import { isLangTag, type LanguageAdapter, resolveLanguage } from "../core/langua
 import { ancestorsOf, childrenOf, docPath, resolveDocPath } from "../core/routing.js";
 import { CODE_LANGS, docDisplayName, type Frontmatter } from "../core/taxonomy.js";
 import { mountTerms } from "../core/terms-ui.js";
-import { isLocalToolRequest, runCodeTool, validateCodeTools } from "./editor-tools.js";
+import { isRemoteTextfile, textfileName } from "../core/textfile.js";
+import {
+    isLocalToolRequest,
+    runCodeTool,
+    validateCodeTools,
+    validateTextfileCode,
+} from "./editor-tools.js";
 import { fontCss, readFont } from "./fonts.js";
 import { createHmrHub, HMR_PATH, hmrClientScript, watchProject } from "./hmr.js";
 import { translate } from "./i18n.js";
 import { DEFAULT_SITE_LANGUAGES, loadSiteLanguages } from "./languages.js";
+import { previewTextfiles, textfileResponse } from "./textfile.js";
 
 export type ServeMode = "preview" | "edit";
 
@@ -172,6 +179,16 @@ export const siteFrom = (
 };
 
 const localeCompilers = new Map<string, ReturnType<typeof createCompiler>>();
+let watchTextfiles: ((files: Iterable<string>) => void) | undefined;
+const watchEntryTextfiles = (entries: readonly Entry[]): void => {
+    watchTextfiles?.(
+        entries.flatMap((entry) =>
+            entry.blocks.flatMap((block) =>
+                block.type === "code" && block.filename ? [block.filename] : [],
+            ),
+        ),
+    );
+};
 const loadSite = (locale = contentLanguageCode(siteLanguages.defaultLang)): Site => {
     let selected = compiler;
     if (locale !== contentLanguageCode(siteLanguages.defaultLang)) {
@@ -181,6 +198,7 @@ const loadSite = (locale = contentLanguageCode(siteLanguages.defaultLang)): Site
         localeCompilers.set(locale, selected);
     }
     const site = siteFrom(selected.compile(), siteLanguages.languages);
+    watchEntryTextfiles(site.entries);
     return {
         ...site,
         codeLanguages: siteLanguages.codeLanguages,
@@ -205,6 +223,7 @@ const loadSite = (locale = contentLanguageCode(siteLanguages.defaultLang)): Site
 };
 
 const draftContext = (site: Site): DraftContext => ({
+    root,
     docs: site.entries.map((e) => ({
         id: e.id,
         ...(e.parent == null ? {} : { parent: e.parent }),
@@ -258,9 +277,20 @@ const renderEntry = (site: Site, entry: Entry, fallbackTitle: string): string =>
     );
 
 /** Compiles one source (unsaved or on disk; file = `<id>.md`) in the site context into an Entry. */
-const draftEntry = (site: Site, file: string, raw: string): Entry => {
-    const { doc, source } = compileDraft(draftContext(site), CONTENT_PREFIX + file, raw);
-    return toEntry(doc, source);
+const draftEntry = (
+    site: Site,
+    file: string,
+    raw: string,
+    textfiles?: ReadonlyMap<string, string>,
+): Entry => {
+    const { doc, source } = compileDraft(
+        { ...draftContext(site), textfiles },
+        CONTENT_PREFIX + file,
+        raw,
+    );
+    const entry = toEntry(doc, source);
+    watchEntryTextfiles([entry]);
+    return entry;
 };
 
 // Render the raw being edited (unsaved draft) to body html — shared by the save / render APIs.
@@ -268,8 +298,9 @@ const renderDraft = (
     site: Site,
     file: string,
     raw: string,
+    textfiles?: ReadonlyMap<string, string>,
 ): { html: string; errors: string[]; toc: TocEntry[]; blockLines: number[] } => {
-    const entry = draftEntry(site, file, raw);
+    const entry = draftEntry(site, file, raw, textfiles);
     return {
         html: renderEntry(site, entry, ""),
         errors: [...site.errors, ...entry.errors],
@@ -625,25 +656,34 @@ pre code { background: none; padding: 0; font-size: 13.5px; }
    are left alone */
 .fig > svg, .fig > img { max-width: 100%; height: auto; display: block; }
 .fig-frame { display: block; max-width: 100%; border: 0; background: transparent; }
-/* code block: two tiers, a header band (lang label + copy button; markup in html.ts) + the pre.
-   Clicking the header band collapses it (viewer-only feature). */
-.codeblk { margin: 10px 0; border: 1px solid var(--doc-border); border-radius: 8px; overflow: hidden; }
-.codeblk > pre { margin: 0; }
-.codeblk-head { display: flex; align-items: center; gap: 4px; cursor: pointer;
-  padding: 2px 8px 2px 14px; border-bottom: 1px solid var(--doc-border); }
-.codeblk-lang { font-family: var(--doc-mono); font-size: 10px; letter-spacing: 1.4px;
-  text-transform: uppercase; color: var(--doc-fg-3); margin-right: auto; }
+/* Code and file blocks share a border label; clicking it collapses the content. */
+.codeblk { position: relative; margin: 12px 0; border: 2px solid var(--doc-border); border-top: 0; }
+.codeblk > pre { margin: 0; background: transparent; padding: 8px 12px 6px; }
+.codeblk-head { position: absolute; top: 0; left: -2px; right: -2px; transform: translateY(-50%);
+  display: flex; align-items: center; gap: 4px; cursor: pointer; }
+.codeblk-head::before, .codeblk-head::after, .codeblk-lang::before { content: ""; border-top: 2px solid var(--doc-border); }
+.codeblk-head::before { flex: 1; min-width: 12px; }
+.codeblk-head::after { order: 2; flex: 0 0 8px; }
+.codeblk-lang { order: -1; display: flex; align-items: center; gap: 4px;
+  font-family: var(--doc-mono); font-size: 11px; color: var(--doc-fg-2); }
+.codeblk-lang::before { flex: 0 0 8px; }
+.codeblk-filename { order: 1; margin: 0; min-width: 0; max-width: 70%;
+  font-family: var(--doc-mono); font-size: 11px; color: var(--doc-fg-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .codefold svg { transition: transform 150ms ease; }
 .codeblk.collapsed .codefold svg { transform: rotate(-90deg); }
 @media (prefers-reduced-motion: reduce) { .codefold svg { transition: none; } }
 .codeblk.collapsed > pre { display: none; }
+.codeblk.collapsed { min-height: 1px; border-bottom: 0; margin-bottom: 18px; }
 .codeblk :is(.codecopy, .codefold) { display: flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px; padding: 0; border: none; border-radius: 6px; background: none;
+  flex-shrink: 0; width: 16px; height: 16px; padding: 0; border: none; border-radius: 6px; background: none;
   color: var(--doc-fg-3); cursor: pointer; }
 .codeblk :is(.codecopy, .codefold):hover, .codeblk :is(.codecopy, .codefold):focus-visible { color: var(--doc-accent);
   background: color-mix(in srgb, currentColor 8%, transparent); }
 .codeblk .codecopy .ic-ok { display: none; }
 .codeblk .codecopy.ok .ic-copy { display: none; }
+.textfile-unavailable { margin: 0; padding: 12px; color: var(--doc-fg-2); font-size: 12px; }
+.textfile.unavailable .codeblk-head { cursor: default; }
 .codeblk .codecopy.ok .ic-ok { display: block; color: var(--doc-ok); }
 table { border-collapse: collapse; font-size: 14px; }
 th, td { border: 1px solid color-mix(in srgb, currentColor 25%, transparent); padding: 4px 10px; }
@@ -763,6 +803,24 @@ const EDIT_CSS = `
 #status { flex: 1; min-width: 0; padding: 0 8px; text-align: right; color: var(--c-fg-faint);
   font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #status.err { color: var(--c-danger); }
+#preview-status { display: inline-flex; flex-shrink: 0; color: var(--c-ok); }
+#preview-status svg { width: 18px; height: 18px; }
+#preview-status [data-preview-icon] { display: none; }
+#preview-status[data-state="valid"] [data-preview-icon="valid"],
+#preview-status[data-state="error"] [data-preview-icon="error"],
+#preview-status[data-state="loading"] [data-preview-icon="loading"] { display: block; }
+#preview-status[data-state="error"] { color: var(--c-danger); }
+#preview-status[data-state="loading"] { color: var(--c-accent); }
+#preview-status[data-state="loading"] svg { animation: preview-spin 1s linear infinite; }
+@keyframes preview-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #preview-status[data-state="loading"] svg { animation: none; } }
+.edit-conflict { width: min(800px, 90vw); max-height: 85vh; overflow: auto;
+  color: var(--c-fg); background: var(--c-bg0); border: 1px solid var(--c-line); border-radius: 8px; }
+.edit-conflict::backdrop { background: #0008; }
+.edit-conflict h2 { margin-top: 0; font-size: 16px; }
+.conflict-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
+.conflict-columns pre { max-height: 45vh; overflow: auto; font-size: 12px; }
+.edit-conflict button { padding: 6px 12px; color: inherit; background: var(--c-bg0); border: 1px solid var(--c-line); border-radius: 4px; cursor: pointer; }
 #gear { position: relative; flex: none; }
 #gearmenu { display: none; position: absolute; right: 0; top: calc(100% + 6px); z-index: 8;
   min-width: 220px; padding: 4px; flex-direction: column; gap: 1px; color: var(--c-fg);
@@ -810,12 +868,12 @@ main.editor-workspace { padding: 0; height: 100vh; display: flex; flex-direction
 #language-setting { flex: none; display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-bottom: 1px solid var(--c-line); }
 #language-setting select { font: inherit; color: var(--c-fg); background: var(--c-bg0); border: 1px solid var(--c-line); border-radius: 4px; padding: 4px 8px; }
 .cm-code-diagnostic { text-decoration:underline wavy var(--c-warn); text-underline-offset:3px; }
-#validate[data-state="error"] { color:var(--c-danger); }
-#validate[data-state="valid"] { color:var(--c-ok); }
-#validate[data-state="pending"] { color:var(--c-accent); }
-#save[data-state="error"] { color:var(--c-danger); }
-#save[data-state="saved"] { color:var(--c-ok); }
-#save[data-state="pending"] { color:var(--c-accent); }
+#validate[data-state="error"], .cm-textfile-validate[data-state="error"] { color:var(--c-danger); }
+#validate[data-state="valid"], .cm-textfile-validate[data-state="valid"] { color:var(--c-ok); }
+#validate[data-state="pending"], .cm-textfile-validate[data-state="pending"] { color:var(--c-accent); }
+#save[data-state="error"], .cm-textfile-save[data-state="error"] { color:var(--c-danger); }
+#save[data-state="saved"], .cm-textfile-save[data-state="saved"] { color:var(--c-ok); }
+#save[data-state="pending"], .cm-textfile-save[data-state="pending"] { color:var(--c-accent); }
 #cm { flex: 1; min-height: 200px; overflow: hidden; }
 #cm .cm-inline-fold { display:inline-flex; align-items:center; justify-content:center; vertical-align:middle; width:16px; height:16px; margin-left:2px; padding:0; border:0; border-radius:3px; background:transparent; color:var(--c-fg-faint); cursor:pointer; }
 #cm .cm-inline-fold:hover, #cm .cm-inline-fold:focus-visible { color:var(--c-fg); background:var(--c-raised); }
@@ -823,6 +881,20 @@ main.editor-workspace { padding: 0; height: 100vh; display: flex; flex-direction
 #cm .cm-inline-fold[aria-expanded="false"] svg { transform:rotate(-90deg); }
 #cm .cm-editor { height: 100%; }
 #cm .cm-editor.cm-focused { outline: none; }
+#cm .cm-textfile-controls { display: inline-flex; align-items: center; gap: 1px;
+  vertical-align: middle; margin-left: 4px; user-select: none; }
+#cm .cm-textfile-controls .pbtn { width: 20px; height: 20px; border-radius: 3px; }
+#cm .cm-textfile-controls .pbtn[hidden] { display: none; }
+#cm .cm-textfile-controls .pbtn svg { width: 14px; height: 14px; }
+#cm .cm-textfile-controls .pbtn:disabled { opacity: .45; cursor: default; }
+#cm .cm-textfile { margin: 2px 6px 8px; border: 1px solid var(--c-line);
+  border-radius: 4px; min-width: 0; overflow: hidden; }
+#cm .cm-textfile-status { padding: 4px 8px; color: var(--c-fg-muted); font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#cm .cm-textfile-status.error { color: var(--c-danger); }
+#cm .cm-textfile-editor > .cm-editor { height: auto; max-height: 360px; background: transparent; }
+#cm .cm-textfile-editor .cm-content { padding: 6px 0; }
+#cm .cm-textfile-editor .cm-gutters { background: transparent; border: 0; }
+#cm .cm-textfile-editor .cm-scroller { overflow: auto; }
 #cm.dropping { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--c-accent) 70%, transparent);
   background: color-mix(in srgb, var(--c-accent) 5%, transparent); }
 
@@ -1345,7 +1417,6 @@ ${
   };
   const post = async (path, body) => {
     // Tell HMR, so the watch notification for our own write (manifest.yaml etc.) doesn't reload.
-    if (window.__docsHmr) window.__docsHmr.noteWrite();
     const res = await localeFetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || String(res.status));
@@ -1523,7 +1594,7 @@ document.addEventListener("click", (ev) => {
   btn.classList.add("ok");
   setTimeout(() => btn.classList.remove("ok"), 1200);
 });
-// code block collapse — click the header band to toggle (copy button clicks pass through).
+// Code blocks toggle from their border label.
 document.addEventListener("click", (ev) => {
   const head = ev.target instanceof Element ? ev.target.closest(".codeblk-head") : null;
   if (!head || (ev.target instanceof Element && ev.target.closest("button.codecopy"))) return;
@@ -1730,6 +1801,7 @@ const editorAside = (entry: Entry, site: Site): { aside: string; boot: EditorBoo
 <button id="rename" class="pbtn" type="button" title="rename" data-i18n-title="rename" aria-label="Change doc id" data-i18n-aria-label="Change doc id">${RENAME_ICON}</button>
 <button id="delete" class="pbtn" type="button" title="Delete doc" data-i18n-title="Delete doc" aria-label="Delete doc" data-i18n-aria-label="Delete doc">${DELETE_ICON}</button>
 <span id="status"></span>
+<span id="preview-status" role="status" data-state="valid" aria-label="Preview is up to date" data-i18n-aria-label="Preview is up to date" title="Preview is up to date"><span data-preview-icon="valid">${icon('<path d="m4 10 4 4 8-8"/>')}</span><span data-preview-icon="error">${icon('<circle cx="10" cy="10" r="7"/><path d="M10 5v6m0 3h.01"/>')}</span><span data-preview-icon="loading">${icon('<path d="M17 10a7 7 0 1 1-7-7"/>')}</span></span>
 <button id="validate" class="pbtn" type="button" title="Validate and apply" data-i18n-title="Validate and apply" aria-label="Validate and apply" data-i18n-aria-label="Validate and apply">${icon('<path d="M5 5l-4 5 4 5M15 5l4 5-4 5M7 10l2 2 4-5"/>')}</button>
 <button id="save" class="pbtn" data-state="saved" type="button" title="Save (Ctrl+S)" data-i18n-title="Save (Ctrl+S)" aria-label="Save" data-i18n-aria-label="Save">${icon('<path d="M3 3h11l3 3v11H3z"/><path d="M6 3v5h7V3M6 17v-6h8v6"/>')}</button>
 <button id="split-preview" class="pbtn" type="button" aria-pressed="false" aria-label="Split view" data-i18n-aria-label="Split view" title="Split view" data-i18n-title="Split view">${icon('<rect x="3" y="3" width="14" height="14" rx="2"/><path d="M10 3v14"/>')}</button>
@@ -1853,12 +1925,20 @@ const handleDraft = async (
         sendJson(res, 400, { error: "invalid JSON body" });
         return;
     }
-    const { file, frontmatter, body, baseRaw } = (parsedBody ?? {}) as {
+    const { file, frontmatter, body, baseRaw, textfiles } = (parsedBody ?? {}) as {
         file?: unknown;
         frontmatter?: unknown;
         body?: unknown;
         baseRaw?: unknown;
+        textfiles?: unknown;
     };
+    let fileDrafts: ReadonlyMap<string, string>;
+    try {
+        fileDrafts = previewTextfiles(root, textfiles);
+    } catch (error) {
+        sendJson(res, 400, { error: String(error) });
+        return;
+    }
     const target = resolveContentFile(file);
     if (!target) {
         sendJson(res, 400, { error: "file must be <id>.md" });
@@ -1895,7 +1975,7 @@ const handleDraft = async (
             writeCatalog(root, locale, catalog);
         }
     }
-    const draft = renderDraft(loadSite(locale), target.name, raw);
+    const draft = renderDraft(loadSite(locale), target.name, raw, fileDrafts);
     sendJson(res, 200, { ...draft, saved: save, conflict: false, raw });
 };
 
@@ -2095,14 +2175,15 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
     const hub = createHmrHub(`${process.pid}-${Date.now()}`);
     // DOCS_HMR=0 = no hot reload (nothing is watched = changes need a manual reload).
     if (process.env.DOCS_HMR !== "0") {
-        const stopWatch = watchProject(root, pkgRoot, (kind, files) => {
+        const watcher = watchProject(root, pkgRoot, (kind, files) => {
             console.log(`hmr: ${kind} (${files.join(", ")})`);
             if (kind === "client") {
                 bundleCache.clear();
             }
             hub.broadcast(kind, files);
         });
-        process.once("exit", stopWatch);
+        watchTextfiles = watcher.watchTextfiles;
+        process.once("exit", watcher.close);
     }
 
     const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -2171,6 +2252,55 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
             return;
         }
         if (mode === "edit" && req.method === "POST") {
+            if (path === "/api/textfile") {
+                if (
+                    !isLocalToolRequest(
+                        req.headers.host ?? "",
+                        req.headers.origin,
+                        req.headers["content-type"],
+                    )
+                ) {
+                    sendJson(res, 403, {
+                        error: "Text files require a same-origin local editor request",
+                    });
+                    return;
+                }
+                const input = await readJson(req);
+                if (input?.action === "validate") {
+                    try {
+                        if (
+                            typeof input.file !== "string" ||
+                            typeof input.content !== "string" ||
+                            isRemoteTextfile(input.file)
+                        )
+                            throw new Error("Invalid text file tool request");
+                        const name = textfileName(input.file);
+                        const extension = (name.split(".").at(-1) || name).toLowerCase();
+                        const grammar = siteLanguages.codeGrammars?.find(
+                            (entry) =>
+                                entry.name === extension || entry.aliases?.includes(extension),
+                        );
+                        const language = existsSync(
+                            join(root, ".document-system/editor-tools", `${extension}.json`),
+                        )
+                            ? extension
+                            : (grammar?.name ?? extension);
+                        sendJson(
+                            res,
+                            200,
+                            await validateTextfileCode(root, language, input.content),
+                        );
+                    } catch (error) {
+                        sendJson(res, 400, {
+                            error: error instanceof Error ? error.message : String(error),
+                        });
+                    }
+                    return;
+                }
+                const result = textfileResponse(root, input);
+                sendJson(res, result.status, result.body);
+                return;
+            }
             if (path === "/api/render" || path === "/api/save") {
                 await handleDraft(req, res, path === "/api/save", locale);
                 return;

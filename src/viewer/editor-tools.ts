@@ -298,3 +298,34 @@ export async function validateCodeTools(root: string, body: string) {
         findings,
     };
 }
+
+/** Apply the same registered formatter/linter to a complete file without writing to disk. */
+export async function validateTextfileCode(root: string, language: string, content: string) {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_+-]*$/.test(language) || content.includes("\0"))
+        throw new Error("Invalid text file tool request");
+    const eol = content.includes("\r\n") ? "\r\n" : "\n";
+    const marker = "`".repeat(
+        [...content.matchAll(/`+/g)].reduce(
+            (length, match) => Math.max(length, match[0].length + 1),
+            3,
+        ),
+    );
+    const prefix = `${marker}${language}${eol}`;
+    const separator = content && !content.endsWith("\n") ? eol : "";
+    let body = `${prefix}${content}${separator}${marker}${eol}`;
+    const result = await validateCodeTools(root, body);
+    for (const change of [...result.changes].reverse())
+        body = body.slice(0, change.from) + change.insert + body.slice(change.to);
+    const block = codeBlockAt(body, 0);
+    let formatted = body.slice(block.from, block.to);
+    if (separator) formatted = formatted.replace(/\r?\n$/, "");
+    return {
+        content: formatted,
+        findings: result.findings.map((finding) => ({
+            ...finding,
+            range: finding.range.map((offset) =>
+                Math.max(0, Math.min(formatted.length, offset - block.from)),
+            ) as [number, number],
+        })),
+    };
+}

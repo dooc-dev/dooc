@@ -89,15 +89,11 @@ const withSvgTheme = (markup: string): string => {
 
 const withHtmlTheme = (markup: string): string => {
     const themed = normalizeHardcodedSurfaces(markup);
-    if (themed.includes("data-doc-figure")) {
+    if (themed.includes("data-doc-figure") || !themed.startsWith("<")) {
         return themed;
     }
-    const m = /^<([a-zA-Z][^\s>/]*)([^>]*)>/.exec(themed);
-    if (!m) {
-        return themed;
-    }
-    const [open, tag, attrs = ""] = m;
-    return `<${tag}${attrs} data-doc-figure="">${FIGURE_THEME_STYLE}${themed.slice(open.length)}`;
+    // A fragment can start with <style>; keep the theme outside authored elements.
+    return `<div data-doc-figure="">${FIGURE_THEME_STYLE}${themed}</div>`;
 };
 
 const parseSvg = (

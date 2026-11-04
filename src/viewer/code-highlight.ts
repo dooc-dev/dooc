@@ -1,35 +1,24 @@
-import { createHighlighterCore, type LanguageRegistration } from "shiki/core";
-import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
+import { codeTheme, codeTokens } from "./code-tokens.js";
 
-const grammars = JSON.parse(
-    document.getElementById("code-grammars")?.textContent ?? "[]",
-) as LanguageRegistration[];
-const known = new Set(grammars.flatMap((grammar) => [grammar.name, ...(grammar.aliases ?? [])]));
-let highlighter: ReturnType<typeof createHighlighterCore> | undefined;
 const painted = new WeakMap<Element, string>();
 const highlight = (): void => {
-    const choice = document.documentElement.dataset.theme;
-    const dark =
-        choice === "dark" || (!choice && matchMedia("(prefers-color-scheme: dark)").matches);
-    const theme = dark ? "github-dark" : "github-light";
+    const theme = codeTheme();
     for (const block of document.querySelectorAll(".codeblk")) {
         const code = block.querySelector("pre code");
-        const lang = block.querySelector(".codeblk-lang")?.textContent ?? "";
-        if (!code || !known.has(lang)) continue;
+        const lang =
+            block.getAttribute("data-lang") ??
+            block.querySelector(".codeblk-lang")?.textContent ??
+            "";
+        if (!code) continue;
         const source = code.textContent ?? "";
         const signature = `${theme}\0${lang}\0${source}`;
         if (painted.get(code) === signature) continue;
         painted.set(code, signature);
-        highlighter ??= createHighlighterCore({
-            langs: grammars,
-            themes: [import("@shikijs/themes/github-light"), import("@shikijs/themes/github-dark")],
-            engine: createJavaScriptRegexEngine(),
-        });
-        void highlighter
-            .then((hl) => {
-                if (!code.isConnected || painted.get(code) !== signature) return;
+        void codeTokens(source, lang)
+            .then((tokens) => {
+                if (!tokens.length || !code.isConnected || painted.get(code) !== signature) return;
                 const nodes: Node[] = [];
-                hl.codeToTokens(source, { lang, theme }).tokens.forEach((line, index) => {
+                tokens.forEach((line, index) => {
                     if (index) nodes.push(document.createTextNode("\n"));
                     for (const token of line) {
                         const span = document.createElement("span");

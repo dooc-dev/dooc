@@ -27,6 +27,8 @@ import { readCatalog } from "./locales.js";
 import { parseManifestText } from "./manifest.js";
 import { assembleDoc } from "./serialize.js";
 import { collectTerms, type TermSource } from "./terms.js";
+import { readTextfile, selectTextfileRange } from "./textfile.js";
+import { TextfileUnavailable } from "./textfile-remote.js";
 
 export type {
     ArtifactDoc,
@@ -102,6 +104,10 @@ export interface Compiler {
 
 /** Site context needed to check a draft's references (doc: link targets / figures). */
 export interface DraftContext {
+    /** Docs root used to resolve :::textfile paths. */
+    root?: string;
+    /** Unsaved local file contents, used only for draft previews. */
+    textfiles?: ReadonlyMap<string, string>;
     /** file = ArtifactDoc.file (`content/<id>.md`); used to look up a draft's id / parent. */
     docs: readonly (DocRef & { file: string })[];
     /** name → figure (file = `figures/<file>`). */
@@ -144,6 +150,43 @@ const parseFile = (raw: string): ParsedFile => {
         refs: { figures: figureFiles.map(figureName), terms: refs.terms },
         figureFiles,
     };
+};
+
+const resolveTextfiles = (
+    f: ParsedFile,
+    root?: string,
+    textfiles?: ReadonlyMap<string, string>,
+): ParsedFile => {
+    if (!f.blocks.some((b) => b.type === "code" && b.filename)) return f;
+    const errors = [...f.parsed.errors];
+    const blocks = f.blocks.map((b): Block => {
+        if (b.type !== "code" || !b.filename) return b;
+        try {
+            if (!root) throw new Error("docs root is required to read text files");
+            return {
+                ...b,
+                lines: selectTextfileRange(
+                    textfiles?.get(b.filename.replace(/^(\.\/)+/, "")) ??
+                        readTextfile(root, b.filename),
+                    b.range,
+                ).split("\n"),
+            };
+        } catch (error) {
+            if (
+                error instanceof TextfileUnavailable ||
+                (error as NodeJS.ErrnoException).code === "ENOENT"
+            )
+                return {
+                    ...b,
+                    unavailable: error instanceof TextfileUnavailable ? error.reason : "missing",
+                };
+            errors.push(
+                `:::textfile(${b.filename})${b.range ?? ""}: ${error instanceof Error ? error.message : error}`,
+            );
+            return b;
+        }
+    });
+    return { ...f, blocks, parsed: { ...f.parsed, errors } };
 };
 
 const toDoc = (
@@ -272,6 +315,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                         ),
                     );
                 }
+                parsed = resolveTextfiles(parsed, root);
                 files.push({ doc: toDoc(id, parent, rel, parsed, defaultLang), parsed });
             }
             for (const id of onDisk) {
@@ -351,7 +395,7 @@ export const compileDraft = (
     raw: string,
 ): { doc: ArtifactDoc; source: DocSource } => {
     const known = ctx.docs.find((d) => d.file === file);
-    const parsed = parseFile(raw);
+    const parsed = resolveTextfiles(parseFile(raw), ctx.root, ctx.textfiles);
     return {
         doc: toDoc(known?.id ?? "", known?.parent, file, parsed, ctx.defaultLang ?? DEFAULT_LANG),
         source: {

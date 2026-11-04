@@ -34,9 +34,12 @@ import {
     type Directive,
     normalizeLeafDirectives,
 } from "../core/taxonomy.js";
+import { editorCodeHighlight } from "./edit-code-highlight.js";
+import { chooseConflict } from "./edit-conflict.js";
 import { inlineFoldButtons } from "./edit-fold.js";
 import { schemaCompletion } from "./edit-schema-completion.js";
 import { editorSetup } from "./edit-setup.js";
+import { createTextfileEditors } from "./edit-textfile.js";
 import { CODE_BLOCK_NODE_NAMES, isEditingCodeBlock } from "./edit-validation.js";
 import type { HmrBridge } from "./hmr.js";
 import { applyUiLanguage, mountUiLanguage, t } from "./i18n.js";
@@ -201,14 +204,12 @@ const blockMarkup = new WeakMap<Element, string>();
 for (const block of mainEl.querySelector("article")?.children ?? []) {
     blockMarkup.set(block, block.outerHTML);
 }
-const updatePreview = (html: string): void => {
-    const template = document.createElement("template");
-    template.innerHTML = html;
-    const next = template.content.querySelector("article");
+const updatePreview = (fragment: DocumentFragment): void => {
+    const next = fragment.querySelector("article");
     const current = mainEl.querySelector("article");
     if (!current || !next) {
         for (const block of next?.children ?? []) blockMarkup.set(block, block.outerHTML);
-        mainEl.replaceChildren(template.content);
+        mainEl.replaceChildren(fragment);
         return;
     }
     const available = new Map<string, Element[]>();
@@ -249,6 +250,30 @@ const updateLanguageControls = (): void => {
 updateLanguageControls();
 
 const statusEl = $("status");
+const previewStatusEl = $("preview-status");
+type PreviewState = "loading" | "valid" | "error";
+let renderRevision = 0;
+const setPreviewState = (state: PreviewState, message = ""): void => {
+    mainEl.dataset.previewState = state;
+    mainEl.dataset.previewMessage = message;
+    previewStatusEl.dataset.state = state;
+    const label = {
+        loading: "Updating preview",
+        valid: "Preview is up to date",
+        error: "Preview could not be updated",
+    }[state];
+    previewStatusEl.dataset.i18nAriaLabel = label;
+    previewStatusEl.setAttribute("aria-label", t(label));
+    previewStatusEl.setAttribute("aria-busy", String(state === "loading"));
+    previewStatusEl.title = message ? `${t(label)}\n${message}` : t(label);
+};
+setPreviewState(mainEl.querySelector(".errors, .textfile.unavailable") ? "error" : "valid");
+document.addEventListener("docs:ui-language", () =>
+    setPreviewState(
+        (mainEl.dataset.previewState as PreviewState) ?? "valid",
+        mainEl.dataset.previewMessage,
+    ),
+);
 const autosaveEl = $<HTMLInputElement>("opt-autosave");
 
 const autovalidateEl = $<HTMLInputElement>("opt-autovalidate");
@@ -261,8 +286,7 @@ const RESIZE_KEY = "docs-edit:panelw";
 
 let dirty = false;
 // Notification hook for HMR (the hmr.ts client script). Passes dirty so unsaved edits are not
-// lost to a reload on external change, and marks our own writes (saves) with noteWrite() so they
-// aren't mistaken for external changes. This bundle runs before the HMR script at the end of the
+// lost to a reload on external change. This bundle runs before the HMR script at the end of the
 // page, so the reference is looked up each time.
 const hmr = (): HmrBridge | undefined => (window as unknown as { __docsHmr?: HmrBridge }).__docsHmr;
 const setSaveState = (state: "pending" | "saving" | "saved" | "error"): void => {
@@ -282,7 +306,11 @@ const setSaveState = (state: "pending" | "saving" | "saved" | "error"): void => 
 const setDirty = (v: boolean): void => {
     dirty = v;
     setSaveState(v ? (autosaveEl.checked ? "saving" : "pending") : "saved");
-    hmr()?.setDirty(v || panes.some((pane) => pane !== activePane && pane.draft?.dirty));
+    hmr()?.setDirty(
+        v ||
+            textfiles.hasUnsavedChanges() ||
+            panes.some((pane) => pane !== activePane && pane.draft?.dirty),
+    );
 };
 let corrOn = false;
 let ranges: Corr[] = [];
@@ -295,8 +323,7 @@ let baseRaw = boot.baseRaw;
 // docChanged handler (= onChange -> dirty/autosave/render). Otherwise a wasteful loop of
 // "autosave the content just reflected" would run right after reflecting.
 let suppressChange = false;
-// While a conflict awaits confirmation (confirm), autosave retries are paused (otherwise a
-// confirm() dialog pops up on every keystroke and editing becomes impossible). Manual saves
+// While a conflict awaits a choice, autosave retries are paused. Manual saves
 // (button / Mod-s) are always attempted (an explicit request to confirm again).
 let conflictPending = false;
 
@@ -768,6 +795,11 @@ const mdHighlight = HighlightStyle.define([
 // extensions are built once and shared. The state is swapped to keep undo history per doc (shared
 // history would let undo go back to the previous doc's content, and saving that would clobber
 // another doc).
+const textfiles = createTextfileEditors(
+    theme,
+    () => schedulePreview(),
+    () => setDirty(dirty),
+);
 const editorExtensions: Extension[] = [
     keymap.of([
         {
@@ -790,11 +822,13 @@ const editorExtensions: Extension[] = [
     ]),
     editorSetup,
     inlineFoldButtons,
+    textfiles.extension,
     markdown({ base: markdownLanguage }),
     autocompletion({ override: [docsComplete] }),
     EditorView.lineWrapping,
     theme,
     syntaxHighlighting(mdHighlight),
+    editorCodeHighlight(),
     corrField,
     lintField,
     codeLintField,
@@ -873,7 +907,10 @@ const setValidationState = (state: "pending" | "checking" | "valid" | "error"): 
     button.title = t(label);
     button.setAttribute("aria-label", t(label));
 };
-const autoValidationReady = (): boolean => autovalidateEl.checked && !isEditingCodeBlock(view);
+const autoValidationReady = (): boolean =>
+    autovalidateEl.checked &&
+    !document.activeElement?.closest(".cm-textfile, .cm-textfile-controls") &&
+    !isEditingCodeBlock(view);
 const markValidationPending = (): void =>
     setValidationState(autoValidationReady() ? "checking" : "pending");
 
@@ -997,6 +1034,7 @@ const post = async (url: string): Promise<DraftResponse> => {
             frontmatter: readFm(),
             body: view.state.doc.toString(),
             baseRaw,
+            textfiles: textfiles.previewFiles(),
         }),
     });
     if (!res.ok) {
@@ -1041,8 +1079,15 @@ const updateNavLocation = (): void => {
     }
 };
 
-const apply = (r: RenderSnapshot): void => {
-    updatePreview(r.html);
+const apply = (r: RenderSnapshot, keepLastValid = true): void => {
+    renderRevision++;
+    const template = document.createElement("template");
+    template.innerHTML = r.html;
+    const unavailable = template.content.querySelector(".textfile-unavailable")?.textContent;
+    const errors = [...r.errors, ...(unavailable ? [t(unavailable)] : [])];
+    setPreviewState(errors.length ? "error" : "valid", errors.join("\n"));
+    if (errors.length && keepLastValid) return;
+    updatePreview(template.content);
     tagCorrespondence(r.blockLines ?? []);
     highlightPreviewForCursor();
     updateNavLocation();
@@ -1063,36 +1108,55 @@ const reflectExternal = (r: ExternalSnapshot, message: string): void => {
     baseRaw = r.raw;
     apply(r);
     setDirty(false);
-    setStatus(message, true);
+    setStatus(message);
 };
 
-// Branch for when disk differed right before saving (= rewritten externally first). Neither
-// reflect nor discard silently; let the user choose via confirm(): reflect (= disk wins, our
-// unsaved edits are discarded) or keep (= skip this save and keep our edits as-is; baseRaw is not
-// updated, so later save attempts keep detecting the same conflict and never overwrite
-// unknowingly).
-const handleConflict = (r: DraftResponse): void => {
-    const applyExternal = window.confirm(t("External conflict"));
-    if (applyExternal) {
-        reflectExternal(r, "Applied external changes (your unsaved changes were discarded)");
-        conflictPending = false;
-        return;
-    }
+// Choosing local adopts this disk version as the base; a later external write still conflicts.
+const handleConflict = async (r: ExternalSnapshot): Promise<"local" | "external" | undefined> => {
+    const currentBoot = boot;
     conflictPending = true;
-    setStatus("Changed externally — keeping your changes (you'll be asked again on save)", true);
+    const choice = await chooseConflict(
+        boot.file,
+        `${JSON.stringify(readFm(), null, 2)}\n\n${view.state.doc}`,
+        r.raw,
+    );
+    if (boot !== currentBoot) return;
+    if (choice === "external") {
+        reflectExternal(r, "Applied external changes");
+        conflictPending = false;
+    } else if (choice === "local") {
+        baseRaw = r.raw;
+        conflictPending = false;
+    } else {
+        setStatus(
+            "Changed externally — keeping your changes (you'll be asked again on save)",
+            true,
+        );
+    }
+    return choice;
 };
 
 const render = async (): Promise<RenderSnapshot | undefined> => {
+    const revision = ++renderRevision;
     const doc = view.state.doc;
     const currentBoot = boot;
     const fm = JSON.stringify(readFm());
+    const files = JSON.stringify(textfiles.previewFiles());
+    const isCurrent = () =>
+        revision === renderRevision &&
+        view.state.doc === doc &&
+        boot === currentBoot &&
+        JSON.stringify(readFm()) === fm &&
+        JSON.stringify(textfiles.previewFiles()) === files;
+    setPreviewState("loading");
     try {
         const result = await post("/api/render");
-        if (view.state.doc !== doc || boot !== currentBoot || JSON.stringify(readFm()) !== fm)
-            return;
+        if (!isCurrent()) return;
         apply(result);
         return result;
     } catch (e) {
+        if (!isCurrent()) return;
+        setPreviewState("error", String(e));
         setStatus(t("Failed to update preview: {error}", { error: String(e) }), true);
     }
 };
@@ -1151,29 +1215,34 @@ const refreshNav = async (): Promise<void> => {
 const ownWatchPath = (): string => `content/${boot.file}`;
 
 const handleContentChange = async (files: string[]): Promise<void> => {
+    if (saveTask) await saveTask;
+    await textfiles.reloadChanged(files);
+    const currentBoot = boot;
     if (files.includes(ownWatchPath()) || files.includes(`locales/${boot.contentLanguage}.json`)) {
-        // Don't overwrite with disk while there are unsaved changes (left to conflict detection
-        // on save).
-        if (dirty) {
-            if (!conflictPending) {
-                setStatus("Updated externally (keeping unsaved changes)", true);
-            }
-            return;
-        }
         try {
             const res = await localeFetch(`/api/doc?file=${encodeURIComponent(boot.file)}`);
             if (!res.ok) {
+                setPreviewState("error", String(res.status));
                 setStatus(
                     t("Failed to apply external changes: {error}", { error: res.status }),
                     true,
                 );
                 return;
             }
-            reflectExternal((await res.json()) as DocResponse, "Applied external changes");
+            const result = (await res.json()) as DocResponse;
+            if (boot !== currentBoot) return;
+            if (result.raw !== baseRaw) {
+                if (dirty) {
+                    if (!conflictPending && (await handleConflict(result)) === "local")
+                        await save();
+                } else reflectExternal(result, "Applied external changes");
+            }
         } catch (e) {
+            if (boot !== currentBoot) return;
+            setPreviewState("error", String(e));
             setStatus(t("Failed to apply external changes: {error}", { error: String(e) }), true);
+            return;
         }
-        return;
     }
     // Other docs / figures / manifest.yaml: reflect changes to figures, doc: links and the
     // terms in the main content using the current edits, and swap the nav (list, order).
@@ -1191,11 +1260,13 @@ const flushContent = debounce(120, () => {
 });
 
 // This script runs before the hmr.ts client script (which appears in body after this bundle)
-// adds noteWrite/setDirty, so create the object here if missing and let that script merge into
+// adds setDirty, so create the object here if missing and let that script merge into
 // it later (hmr.ts also adds via Object.assign instead of overwriting, so order doesn't matter).
 (window as unknown as { __docsHmr?: HmrBridge }).__docsHmr = {
     ...(hmr() ?? ({} as HmrBridge)),
     onContent: (files: string[]) => {
+        renderRevision++;
+        setPreviewState("loading");
         pendingContentFiles.push(...files);
         flushContent();
     },
@@ -1212,17 +1283,14 @@ const saveCurrent = async (): Promise<void> => {
     const savingBoot = boot;
     const savingDoc = view.state.doc;
     const savingFm = JSON.stringify(readFm());
+    const savingFiles = JSON.stringify(textfiles.previewFiles());
     setSaveState("saving");
     $("save").setAttribute("aria-busy", "true");
     try {
-        // Mark both before and after the write (the watcher's notification can arrive before
-        // the response).
-        hmr()?.noteWrite();
         const r = await post("/api/save");
-        hmr()?.noteWrite();
         if (boot !== savingBoot) return;
         if (r.conflict) {
-            handleConflict(r);
+            if ((await handleConflict(r)) === "local") await saveCurrent();
             if (dirty) setSaveState("error");
             return;
         }
@@ -1232,7 +1300,8 @@ const saveCurrent = async (): Promise<void> => {
             if (autosaveEl.checked) autosave();
             return;
         }
-        apply(r);
+        if (JSON.stringify(textfiles.previewFiles()) === savingFiles) apply(r);
+        else await render();
         updateLanguageControls();
         setDirty(false);
         conflictPending = false;
@@ -1253,6 +1322,11 @@ const saveCurrent = async (): Promise<void> => {
 };
 
 const refresh = debounce(150, () => void render());
+const schedulePreview = (): void => {
+    renderRevision++;
+    setPreviewState("loading");
+    refresh();
+};
 const autosave = debounce(1000, () => {
     if (dirty && autosaveEl.checked && !conflictPending) {
         void save();
@@ -1265,7 +1339,7 @@ const onChange = (): void => {
     markValidationPending();
     setDirty(true);
     setStatus(autosaveEl.checked ? "Modified (waiting for auto-save)" : "Unsaved changes");
-    refresh();
+    schedulePreview();
     autosave();
     if (!applyingValidation) validateSoon();
 };
@@ -1454,7 +1528,6 @@ const startRename = (): void => {
                 if (dirty) {
                     await save();
                 }
-                hmr()?.noteWrite();
                 const res = await localeFetch("/api/rename", {
                     method: "POST",
                     headers: { "content-type": "application/json" },
@@ -1582,7 +1655,6 @@ const setIcon = async (file: File | null): Promise<void> => {
         return;
     }
     try {
-        hmr()?.noteWrite();
         const res = await localeFetch("/api/icon", {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -1669,7 +1741,6 @@ const deleteDoc = async (): Promise<void> => {
         return;
     }
     const attempt = async (force: boolean): Promise<void> => {
-        hmr()?.noteWrite();
         const res = await localeFetch("/api/delete", {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -1811,7 +1882,11 @@ window.addEventListener("keydown", (ev) => {
 });
 
 window.addEventListener("beforeunload", (ev) => {
-    if (dirty || panes.some((pane) => pane !== activePane && pane.draft?.dirty)) {
+    if (
+        dirty ||
+        textfiles.hasUnsavedChanges() ||
+        panes.some((pane) => pane !== activePane && pane.draft?.dirty)
+    ) {
         ev.preventDefault();
         // Chrome compatibility (some versions show no prompt with preventDefault alone).
         ev.returnValue = "";
@@ -1965,6 +2040,11 @@ const restorePane = (pane: PreviewPane): void => {
     clearPreviewHi();
     activePane = pane;
     mainEl = pane.element.querySelector(".preview-content") as HTMLElement;
+    renderRevision++;
+    setPreviewState(
+        (mainEl.dataset.previewState as PreviewState) ?? "valid",
+        mainEl.dataset.previewMessage,
+    );
     boot = draft.boot;
     baseRaw = draft.baseRaw;
     conflictPending = draft.conflictPending;
@@ -2140,7 +2220,11 @@ const swapDoc = (data: PageResponse, remember = true): void => {
     setDirty(false);
     conflictPending = false;
     setStatus("");
-    apply({ html: data.html, errors: data.errors, toc: data.toc, blockLines: boot.blockLines });
+    renderRevision++;
+    apply(
+        { html: data.html, errors: data.errors, toc: data.toc, blockLines: boot.blockLines },
+        false,
+    );
     activePane.element.scrollTop = 0;
     syncPane();
     markValidationPending();

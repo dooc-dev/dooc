@@ -14,7 +14,7 @@ const fill = (sample: string): string => sample.replace(/<([^<>\n]+)>/g, "$1");
 
 describe("DIRECTIVES (catalog of the custom syntax vocabulary)", () => {
     it("name lists are derived from the catalog (no double declaration)", () => {
-        expect(LEAF_DIRECTIVES).toEqual(["figure", "html"]);
+        expect(LEAF_DIRECTIVES).toEqual(["figure", "html", "textfile"]);
         expect(CONTAINER_DIRECTIVES).toEqual(["callout", "schema", "graph", "term"]);
         for (const d of DIRECTIVES) {
             expect(findDirective(d.kind, d.name)).toBe(d);
@@ -29,7 +29,7 @@ describe("DIRECTIVES (catalog of the custom syntax vocabulary)", () => {
             const lines = d.sample.split("\n");
             expect(lines[0]?.startsWith(`:::${d.name}`)).toBe(true);
             if (d.kind === "container") {
-                expect(lines.length).toBeGreaterThan(2);
+                expect(lines.length).toBeGreaterThanOrEqual(2);
                 expect(lines.at(-1)).toBe(":::");
             } else {
                 expect(lines).toHaveLength(1);

@@ -30,7 +30,7 @@ arg "[port]" default="5179"
 run = '{{vars.resolve_root}} && pnpm exec tsx src/cli.ts preview "$r" "$usage_port"'
 
 [tasks.edit]
-description = "For editing content: start the viewer without hot reload. e.g. mise run edit ../my-docs"
+description = "For editing content: start the viewer with live preview and external change detection. e.g. mise run edit ../my-docs"
 usage = '''
 arg "[root]" default=""
 arg "[port]" default="5179"

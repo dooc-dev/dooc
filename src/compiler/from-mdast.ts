@@ -1,6 +1,7 @@
 // Converter from dialect mdast → normalized Block AST (internal module for build / preview only,
 // outside the publish surface). The consumer contract (Block / TocEntry / slugify) lives in
 // blocks.ts; validation is handled by dialect.ts.
+import { basename, extname } from "node:path";
 import type { Heading, List as MdList, Table as MdTable, PhrasingContent, Root } from "mdast";
 import type { ContainerDirective, LeafDirective } from "mdast-util-directive";
 import {
@@ -13,6 +14,7 @@ import {
 import { parseGraphSource } from "../core/graph.js";
 import { parseSchemaSource } from "../core/schema-graph.js";
 import { directiveRawBody } from "../core/taxonomy.js";
+import { textfileName } from "../core/textfile.js";
 import { figureName } from "./figures.js";
 import { parseTermSource } from "./terms.js";
 
@@ -134,7 +136,17 @@ export const toBlocks = (
                 // :::figure / :::html (normalized into a src attribute).
                 const d = n as LeafDirective;
                 const src = d.attributes?.src;
-                if (src) {
+                if (src && d.name === "textfile") {
+                    add({
+                        type: "code",
+                        filename: src,
+                        ...(d.attributes?.range != null ? { range: d.attributes.range } : {}),
+                        lang: (
+                            extname(textfileName(src)).slice(1) || basename(textfileName(src))
+                        ).toLowerCase(),
+                        lines: [],
+                    });
+                } else if (src) {
                     add({ type: "figureRef", name: figureName(src), ...captionOf(d) });
                 }
                 break;

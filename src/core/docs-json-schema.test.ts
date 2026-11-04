@@ -24,7 +24,14 @@ const blocks: Record<Block["type"], Block> = {
             { text: "Parent", ordered: false, children: [{ text: "Nested", children: ["Leaf"] }] },
         ],
     },
-    code: { type: "code", lines: ["custom code"], lang: "custom-language" },
+    code: {
+        type: "code",
+        lines: ["custom code"],
+        lang: "custom-language",
+        filename: "examples/sample.tdl",
+        range: "[1,3]",
+        unavailable: "missing",
+    },
     table: { type: "table", headers: ["A"], rows: [["B"]], caption: "Table", collapsible: true },
     callout: {
         type: "callout",
@@ -179,6 +186,7 @@ describe("validateDocsArtifact", () => {
         { type: "list", items: [{ text: "Parent", children: [1] }] },
         { type: "list", items: [], ordered: "true" },
         { type: "code", lines: [1] },
+        { type: "code", lines: [], unavailable: true },
         { type: "table", headers: [], rows: [[1]] },
         { type: "callout", body: [{ type: "code", lines: [] }] },
         { type: "figureRef" },
