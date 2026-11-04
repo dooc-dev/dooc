@@ -78,20 +78,15 @@ export async function release(
                 ]),
             );
             for (const step of progress.jobs.flatMap((job) => job.steps)) {
-                const version = /^Publish private npm package (v\d+\.\d+\.\d+)$/.exec(
-                    step.name,
-                )?.[1];
+                const version = /^Publish GitHub release (v\d+\.\d+\.\d+)$/.exec(step.name)?.[1];
                 if (!version) continue;
-                if (
-                    step.status === "in_progress" ||
-                    (step.status === "completed" && step.conclusion === "success")
-                ) {
+                if (step.status === "completed" && step.conclusion === "success") {
                     return { version, url: run.url };
                 }
             }
             if (progress.status === "completed")
                 throw new Error(
-                    `Release did not start publishing (${progress.conclusion}): ${run.url}`,
+                    `Release did not finish publishing (${progress.conclusion}): ${run.url}`,
                 );
         }
         await pause();
@@ -104,9 +99,7 @@ export async function release(
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
     release(process.argv[2] ?? "").then(
         ({ version, url }) =>
-            console.log(
-                `status: success\nphase: publishing\nworkflow: ${url}\nversion: ${version}`,
-            ),
+            console.log(`status: success\nphase: published\nworkflow: ${url}\nversion: ${version}`),
         (error) => {
             console.error(
                 `status: error\nmessage: ${error instanceof Error ? error.message : String(error)}`,

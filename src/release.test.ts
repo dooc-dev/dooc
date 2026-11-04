@@ -23,17 +23,15 @@ function fixture(status: string, conclusion = "") {
         return JSON.stringify({
             status: status === "completed" ? "completed" : "in_progress",
             conclusion,
-            jobs: [
-                { steps: [{ name: "Publish private npm package v0.0.10", status, conclusion }] },
-            ],
+            jobs: [{ steps: [{ name: "Publish GitHub release v0.0.10", status, conclusion }] }],
         });
     });
     return command;
 }
 
 describe("release command", () => {
-    it("returns the version of this dispatch when publishing starts", async () => {
-        const command = fixture("in_progress");
+    it("returns the version of this dispatch after binary publishing succeeds", async () => {
+        const command = fixture("completed", "success");
         expect(await release("patch", command)).toEqual({
             version: "v0.0.10",
             url: "https://example.com/run/42",
@@ -41,15 +39,16 @@ describe("release command", () => {
         expect(command.mock.calls.filter(([args]) => args[0] === "workflow")).toHaveLength(1);
     });
     it("monitors only the dispatched run through discovery and queueing", async () => {
-        const command = fixture("in_progress");
+        const command = fixture("completed", "success");
         let lists = 0;
         let views = 0;
         const poll = (args: string[]) => {
             const output = command(args);
             if (args[1] === "list" && lists++ === 0) return "[]";
-            if (args[1] === "view" && views++ === 0) {
+            if (args[1] === "view" && views++ < 2) {
                 const progress = JSON.parse(output);
-                progress.jobs[0].steps[0].status = "queued";
+                progress.status = "in_progress";
+                progress.jobs[0].steps[0].status = views === 1 ? "queued" : "in_progress";
                 return JSON.stringify(progress);
             }
             return output;
@@ -59,18 +58,20 @@ describe("release command", () => {
             version: "v0.0.10",
             url: "https://example.com/run/42",
         });
-        expect(pause).toHaveBeenCalledTimes(2);
+        expect(pause).toHaveBeenCalledTimes(3);
     });
-    it("also detects a publish step that already succeeded", async () => {
-        expect(await release("patch", fixture("completed", "success"))).toEqual({
-            version: "v0.0.10",
-            url: "https://example.com/run/42",
-        });
+    it("does not report npm publishing alone as a completed binary release", async () => {
+        const command = fixture("completed", "success");
+        await expect(
+            release("patch", (args) =>
+                command(args).replace("Publish GitHub release", "Publish private npm package"),
+            ),
+        ).rejects.toThrow("did not finish publishing");
     });
     it("fails for skipped or failed publishing without claiming a version", async () => {
         for (const conclusion of ["failure", "skipped", "cancelled"]) {
             await expect(release("patch", fixture("completed", conclusion))).rejects.toThrow(
-                "did not start publishing",
+                "did not finish publishing",
             );
         }
     });

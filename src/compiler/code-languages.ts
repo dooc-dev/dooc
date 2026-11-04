@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join, relative, resolve } from "node:path";
 import { languageAliasNames, languageNames } from "@shikijs/langs";
 import type { LanguageRegistration } from "shiki/core";
+import { bundledLanguages } from "shiki/langs";
 import { CODE_LANGS } from "../core/taxonomy.js";
 
 export const CODE_LANGUAGES_DIR = ".dooc/code-languages";
@@ -46,8 +47,7 @@ export const loadCodeGrammars = async (
     const grammars = await Promise.all(
         names.map(async (name) => {
             if (!supported.has(name)) throw new Error(`Unsupported Shiki language: ${name}`);
-            return (await import(/* @vite-ignore */ `@shikijs/langs/${name}`))
-                .default as LanguageRegistration[];
+            return (await bundledLanguages[name as keyof typeof bundledLanguages]()).default;
         }),
     );
     return [...new Map(grammars.flat().map((grammar) => [grammar.name, grammar])).values()];

@@ -1,23 +1,18 @@
 // Japanese typo detection = the `ja` adapter's prose lint (language socket; attached in
 // languages.ts, served via /api/lint for dooc edit). textlint is not bundled into the
 // client (edit-client.ts) to avoid bloating the bundle; only offset-annotated findings are sent.
-import { createRequire } from "node:module";
 import {
     TextlintKernel,
     type TextlintKernelRule,
     type TextlintPluginCreator,
 } from "@textlint/kernel";
 import { moduleInterop } from "@textlint/module-interop";
+import markdownPluginModule from "@textlint/textlint-plugin-markdown";
 import presetJaTechnicalWriting from "textlint-rule-preset-ja-technical-writing";
 import type { LintFinding } from "../core/language.js";
 
-const require = createRequire(import.meta.url);
-// An ESM default import hits the double default wrap caused by esModuleInterop (module.exports
-// becomes { __esModule, default: { Processor } }), so load via require() directly and normalize.
-// textlint itself (the preset package) uses the same moduleInterop(require(...)) pattern.
-const markdownPlugin = moduleInterop(
-    require("@textlint/textlint-plugin-markdown"),
-) as TextlintPluginCreator;
+// moduleInterop unwraps CommonJS defaults at runtime but keeps the input type.
+const markdownPlugin = moduleInterop(markdownPluginModule) as unknown as TextlintPluginCreator;
 
 // Enable only the typo-oriented rules from textlint-rule-preset-ja-technical-writing.
 // Style rules (sentence length, number of commas, consecutive kanji length, desu/masu

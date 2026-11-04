@@ -51,6 +51,7 @@ import { ancestorsOf, childrenOf, docPath, resolveDocPath } from "../core/routin
 import { CODE_LANGS, docDisplayName, type Frontmatter } from "../core/taxonomy.js";
 import { mountTerms } from "../core/terms-ui.js";
 import { isRemoteTextfile, textfileName } from "../core/textfile.js";
+import { readViewerAsset, prebuilt as usePrebuiltAssets } from "./assets.js";
 import {
     isLocalToolRequest,
     runCodeTool,
@@ -2357,13 +2358,12 @@ const PREBUILT: Record<string, string> = {
     "viewer/ui-client.ts": "ui.global.js",
     "viewer/code-highlight.ts": "code.global.js",
 };
-const fromDist = import.meta.url.endsWith(".js");
 
 /** Client bundle (src/<entry> as an IIFE). Sourcemap for the server, minified for publish. */
 export const bundleClient = async (entry: string, publish = false): Promise<string> => {
     const prebuilt = PREBUILT[entry];
-    if (fromDist && prebuilt) {
-        return readFileSync(join(pkgRoot, "dist", prebuilt), "utf8");
+    if (usePrebuiltAssets && prebuilt) {
+        return readViewerAsset(prebuilt).toString("utf8");
     }
     const esbuild = await import("esbuild");
     const out = await esbuild.build({

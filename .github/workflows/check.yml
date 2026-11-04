@@ -9,6 +9,8 @@ permissions:
   contents: read
 
 jobs:
+  binaries:
+    uses: ./.github/workflows/binaries.yml
   check:
     runs-on: ubuntu-latest
     steps:

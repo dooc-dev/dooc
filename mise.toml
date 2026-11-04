@@ -5,6 +5,7 @@ env_shell_expand = false
 [tools]
 node = "22"
 pnpm = "10.28.2"
+bun = "1.4.4"
 
 # docs root = a folder following the layout convention (content/<id>.md + manifest.yaml,
 # figures/<name>.{svg,drawio.svg,png,webp,jpg,html}).
@@ -49,10 +50,14 @@ arg "[out]" default=""
 run = '{{vars.resolve_root}} && pnpm exec tsx src/cli.ts export "$usage_format" "$r" ${usage_out:+"$(cd "$MISE_ORIGINAL_CWD" && realpath -m "$usage_out")"}'
 
 [tasks.release]
-description = "Dispatch a release and print its version when npm publishing starts"
+description = "Dispatch a release and wait until its binary downloads are published"
 usage = '''
 arg "<bump>" {
   choices "patch" "minor" "major"
 }
 '''
 run = 'node --import tsx src/release.ts "$usage_bump"'
+
+[tasks."build:binary"]
+description = "Build and test a standalone executable for this machine"
+run = 'pnpm build && pnpm build:binary && pnpm test:binary'
