@@ -8,10 +8,11 @@ import { CODE_LANGUAGES_DIR } from "./code-languages.js";
 import { CONFIG_FILE } from "./config.js";
 import { collectRefs, parseDoc } from "./dialect.js";
 import { catalogLanguages, readCatalog } from "./locales.js";
+import { readManifest } from "./manifest.js";
 import { readTextfile } from "./textfile.js";
 import type { ZipEntry } from "./zip.js";
 
-const LAYOUT_DIRS = ["content", "figures", "icons", "locales", ".document-system/editor-tools"];
+const LAYOUT_DIRS = ["content", "figures", "icons", "locales", ".dooc/editor-tools"];
 
 export const exportEntries = (root: string): ZipEntry[] => {
     const entries: ZipEntry[] = [
@@ -56,6 +57,12 @@ export const exportEntries = (root: string): ZipEntry[] => {
         ),
     ];
     const included = new Set(entries.map((entry) => entry.name));
+    const icon = readManifest(root).icon;
+    if (icon && !included.has(posix.normalize(icon))) {
+        const name = posix.normalize(icon);
+        entries.push({ name, data: Buffer.from(readTextfile(root, icon), "utf8") });
+        included.add(name);
+    }
     for (const body of bodies) {
         for (const file of collectRefs(parseDoc(body).root).textfiles) {
             if (isRemoteTextfile(file)) continue;

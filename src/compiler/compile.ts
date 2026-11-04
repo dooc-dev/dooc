@@ -21,7 +21,7 @@ import { collectRefs, type ParsedDoc, parseDoc } from "./dialect.js";
 import { figureName, loadFigures } from "./figures.js";
 import { createFileCache, createSigCache, dirSig } from "./file-cache.js";
 import { toBlocks } from "./from-mdast.js";
-import { loadIcons } from "./icons.js";
+import { loadIcons, squareSvg } from "./icons.js";
 import { contentLanguageCode, isContentLanguage } from "./language-codes.js";
 import { readCatalog } from "./locales.js";
 import { parseManifestText } from "./manifest.js";
@@ -266,6 +266,8 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             }
         }
         let title: string | undefined;
+        let icon: string | undefined;
+        let iconFile: string | undefined;
         const files: { doc: ArtifactDoc; parsed: ParsedFile }[] = [];
         if (!existsSync(contentDir)) {
             siteErrors.push(`${contentDir}: content/ is missing`);
@@ -274,11 +276,24 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             const {
                 tree,
                 title: manifestTitle,
+                icon: manifestIcon,
                 errors: manifestErrors,
             } = existsSync(manifestPath)
                 ? manifestCache.get(manifestPath, parseManifestText)
                 : { tree: [], errors: [`${MANIFEST_FILE} is required`] };
             title = manifestTitle;
+            iconFile = manifestIcon;
+            if (iconFile) {
+                try {
+                    icon = squareSvg(readTextfile(root, iconFile));
+                    if (!icon)
+                        throw new Error("expected an SVG with a viewBox or width and height");
+                } catch (error) {
+                    siteErrors.push(
+                        `${MANIFEST_FILE}: icon ${iconFile}: ${error instanceof Error ? error.message : error}`,
+                    );
+                }
+            }
             siteErrors.push(...manifestErrors);
             // Directly under content/: flat <id>.md files only (no folders).
             const onDisk = new Set<string>();
@@ -324,7 +339,11 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
         }
 
         // Icons are small, so read them every time (no cache).
-        const { icons, errors: iconErrors } = loadIcons(root, new Set(files.map((f) => f.doc.id)));
+        const { icons, errors: iconErrors } = loadIcons(
+            root,
+            new Set(files.map((f) => f.doc.id)),
+            iconFile,
+        );
         siteErrors.push(...iconErrors);
         for (const { doc } of files) {
             const icon = icons.get(doc.id);
@@ -344,6 +363,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
         const artifact: DocsArtifact = {
             generation: GENERATION,
             ...(title === undefined ? {} : { title }),
+            ...(icon === undefined ? {} : { icon }),
             docs,
             terms: terms.entries,
             figures: figures.map(({ markup: _markup, ...index }) => index),

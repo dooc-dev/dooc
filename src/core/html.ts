@@ -39,6 +39,8 @@ export interface RenderCtx {
     lang?: string;
     /** Localized in-page table of contents title. Default: Contents. */
     tocTitle?: string;
+    /** Document URL for the viewer's section-copy buttons. */
+    sectionUrl?: string;
     /**
      * Adapter for the doc's language (term ordering). Default: generic
      * Unicode rules (language.ts).
@@ -399,7 +401,7 @@ const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
     switch (b.type) {
         case "h":
             // id = slug (a single-doc page, so no namespace is needed).
-            return `<h${b.level} id="${escapeHtml(b.slug)}">${segmentsHtml(b.text, ctx, seg)}</h${b.level}>`;
+            return `<h${b.level} id="${escapeHtml(b.slug)}">${segmentsHtml(b.text, ctx, seg)}${ctx.sectionUrl === undefined ? "" : `<button class="section-copy" type="button" data-section-url="${escapeHtml(ctx.sectionUrl)}#${encodeURIComponent(b.slug)}" title="Copy section URL" aria-label="Copy section URL" data-i18n-title="Copy section URL" data-i18n-aria-label="Copy section URL"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m8 12 4-4m-5 2-2 2a3 3 0 0 0 4 4l2-2m-2-8 2-2a3 3 0 0 1 4 4l-2 2"/></svg></button>`}</h${b.level}>`;
         case "p":
             return `<p>${segmentsHtml(b.text, ctx, seg)}</p>`;
         case "list":
@@ -507,7 +509,6 @@ export const docHtml = (
         errors.length > 0
             ? `<div class="errors">${errors.map((e) => `<div>${escapeHtml(e)}</div>`).join("")}</div>`
             : "";
-    const lead = fm.description ? `<p class="lead">${escapeHtml(fm.description)}</p>` : "";
     const lang = ctx.lang ? ` lang="${escapeHtml(ctx.lang)}"` : "";
-    return `<article${lang}>${errBox}<h1>${escapeHtml(docDisplayName(fm, ""))}</h1>${lead}${inPageTocHtml(toc, ctx.tocTitle)}${blocksHtml(blocks, ctx)}</article>`;
+    return `<article${lang}>${errBox}<h1>${escapeHtml(docDisplayName(fm, ""))}</h1>${inPageTocHtml(toc, ctx.tocTitle)}${blocksHtml(blocks, ctx)}</article>`;
 };

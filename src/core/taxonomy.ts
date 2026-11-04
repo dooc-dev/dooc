@@ -1,7 +1,7 @@
 // Vocabulary SoT for the content dialect (directive catalog / front-matter schema / code langs).
 // Both compiler validation and viewer insert-completion read this.
 
-// Default syntax-highlighting languages; additional grammars live in .document-system/code-languages/.
+// Default syntax-highlighting languages; additional grammars live in .dooc/code-languages/.
 export const CODE_LANGS = [
     "javascript",
     "typescript",
@@ -244,12 +244,10 @@ export const directiveRawBody = (slice: string): string => {
 // Front-matter schema (the hierarchy's SoT is manifest.yaml, so it is not written in
 // front-matter; writing it there is an unknown-key error).
 export const FM_REQUIRED = ["title"] as const;
-export const FM_OPTIONAL = ["tags", "description", "lang"] as const;
+export const FM_OPTIONAL = ["lang"] as const;
 
 export interface Frontmatter {
     title: string;
-    tags?: string[];
-    description?: string;
     /** BCP 47 tag of the doc's language (language.ts). Omitted = the site default. */
     lang?: string;
 }

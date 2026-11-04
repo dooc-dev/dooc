@@ -4,7 +4,7 @@ import { languageAliasNames, languageNames } from "@shikijs/langs";
 import type { LanguageRegistration } from "shiki/core";
 import { CODE_LANGS } from "../core/taxonomy.js";
 
-export const CODE_LANGUAGES_DIR = ".document-system/code-languages";
+export const CODE_LANGUAGES_DIR = ".dooc/code-languages";
 const supported = new Set<string>([...languageNames, ...languageAliasNames]);
 const safeName = /^[a-z0-9][a-z0-9_-]*$/;
 

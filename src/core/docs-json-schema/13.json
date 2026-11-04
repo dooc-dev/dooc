@@ -1,6 +1,6 @@
 {
     "$schema": "http://json-schema.org/draft-07/schema#",
-    "$id": "urn:document-system:docs-json-schema:13",
+    "$id": "urn:dooc:docs-json-schema:13",
     "title": "docs.json — generation 13",
     "description": "Distributed document bundle. Documents are ordered in manifest pre-order; parent holds the hierarchy. Figure markup is fetched separately from figures/<name>.json (see definitions/FigureEntry).",
     "type": "object",

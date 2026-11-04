@@ -1,5 +1,9 @@
 import { iso6393, iso6393To1 } from "iso-639-3";
 
+export const contentLanguages = iso6393
+    .map(({ iso6393: code, name }) => ({ code, name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
 const codes = new Map(iso6393.map((language) => [language.iso6393, language.name]));
 const from1 = new Map(Object.entries(iso6393To1).map(([three, two]) => [two, three]));
 

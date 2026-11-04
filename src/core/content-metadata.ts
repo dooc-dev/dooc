@@ -13,6 +13,7 @@ export interface DocNode {
 export interface ParsedManifest {
     tree: DocNode[];
     title?: string;
+    icon?: string;
     errors: string[];
 }
 
@@ -34,15 +35,27 @@ export const docIdOfFile = (name: string): string | undefined => {
 export const parseManifest = (value: unknown): ParsedManifest => {
     const errors: string[] = [];
     let title: string | undefined;
+    let icon: string | undefined;
     if (value != null && typeof value === "object" && !Array.isArray(value)) {
         const manifest = value as Record<string, unknown>;
         for (const key of Object.keys(manifest))
-            if (key !== "title" && key !== "docs")
+            if (key !== "title" && key !== "icon" && key !== "docs")
                 errors.push(`${MANIFEST_FILE}: unknown field "${key}"`);
         if (manifest.title !== undefined) {
             if (typeof manifest.title !== "string" || !manifest.title.trim())
                 errors.push(`${MANIFEST_FILE}: title must be a non-empty string`);
             else title = manifest.title.trim();
+        }
+        if (manifest.icon !== undefined) {
+            if (
+                typeof manifest.icon !== "string" ||
+                !/^(?!\/)(?![a-z][a-z\d+.-]*:)[^\\\0\r\n]+\.svg$/i.test(manifest.icon.trim()) ||
+                manifest.icon.split("/").includes("..")
+            )
+                errors.push(
+                    `${MANIFEST_FILE}: icon must be a relative .svg file path inside the docs root`,
+                );
+            else icon = manifest.icon.trim();
         }
         if (!Array.isArray(manifest.docs)) errors.push(`${MANIFEST_FILE}: docs must be a list`);
         value = manifest.docs;
@@ -89,20 +102,30 @@ export const parseManifest = (value: unknown): ParsedManifest => {
         }
         return nodes;
     };
-    return { tree: walk(value, "root"), ...(title === undefined ? {} : { title }), errors };
+    return {
+        tree: walk(value, "root"),
+        ...(title === undefined ? {} : { title }),
+        ...(icon === undefined ? {} : { icon }),
+        errors,
+    };
 };
 
 /** Tree → manifest.yaml text (serialized in the hand-written shape, keeping git diffs clean). */
-export const serializeManifest = (tree: readonly DocNode[], title?: string): string => {
+export const serializeManifest = (
+    tree: readonly DocNode[],
+    title?: string,
+    icon?: string,
+): string => {
     const write = (nodes: readonly DocNode[], indent: string): string[] =>
         nodes.flatMap((n) =>
             n.children.length > 0
                 ? [`${indent}- ${n.id}:`, ...write(n.children, `${indent}    `)]
                 : [`${indent}- ${n.id}`],
         );
-    if (title !== undefined) {
+    if (title !== undefined || icon !== undefined) {
         const lines = write(tree, "  ");
-        return `title: ${JSON.stringify(title)}\ndocs:${lines.length ? `\n${lines.join("\n")}\n` : " []\n"}`;
+        const metadata = `${title === undefined ? "" : `title: ${JSON.stringify(title)}\n`}${icon === undefined ? "" : `icon: ${JSON.stringify(icon)}\n`}`;
+        return `${metadata}docs:${lines.length ? `\n${lines.join("\n")}\n` : " []\n"}`;
     }
     const lines = write(tree, "");
     return `# Doc hierarchy and order (each id = content/<id>.md)\n${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`;

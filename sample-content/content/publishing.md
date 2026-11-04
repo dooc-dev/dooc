@@ -1,42 +1,22 @@
 ---
 title: "書き出し"
 lang: "jpn"
-description: "用途に応じてJSON・HTML・ZIPを作成する。"
 ---
 
-## 形式を選ぶ
+リポジトリのルートで、用途に合うコマンドを実行します。
 
-:::term(artifact)
-name: "artifact"
-definition: "docs.json と、図ごとのJSONからなるコンパイラの出力。"
-:::
-
-| 形式 | 用途 | 出力先の既定値 |
+| 用途 | コマンド | 出力先（sample-content/ 内） |
 | --- | --- | --- |
-| JSON | 別のアプリケーションから利用する | `dist/artifact/` |
-| HTML | 1ファイルで閲覧用に配布する | `dist/index.html` |
-| ZIP | 編集可能な元資料を渡す | `dist/<root name>.zip` |
+| 閲覧用に共有 | `mise run export html` | `dist/index.html` |
+| 他のアプリで利用 | `mise run export json` | `dist/artifact/` |
+| 編集用の元資料を共有 | `mise run export zip` | `dist/sample-content.zip` |
 
-## サンプルを書き出す
+HTMLは1ファイルで開けます。JSONとHTMLは、文書の検証エラーを解消してから書き出します。
 
-リポジトリのルートで実行します。
+## 共有前の確認
 
-```bash
-mise run export json
-mise run export html
-mise run export zip
-```
+- [ ] 文書と図が表示される。
+- [ ] ページ間のリンクが開く。
+- [ ] 共有するファイルに不要な情報が含まれていない。
 
-生成物は `sample-content/dist/` に保存されます。別の docs root を指定する場合は、形式の後にパスを渡します。
-
-```bash
-mise run export html ../my-docs
-```
-
-:::callout[配布前の確認]
-- 検証エラーがあると、JSONとHTMLは書き出されません。
-- 生成したHTMLを開き、本文と図の表示を確認します。HTMLの説明図は編集画面のリソース一覧から確認します。
-- 元資料を渡す場合は、ZIPの内容に不要な情報がないか確認します。
-:::
-
-確認項目の一覧は[公開前チェック](doc:a)にあります。
+別の資料を書き出す場合は、`mise run export html ../my-docs` のようにルートフォルダーを指定します。

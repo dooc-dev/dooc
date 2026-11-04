@@ -6,7 +6,7 @@
 // Dialect validation errors are shown at the top of the page.
 //   preview = read-only view
 //   edit    = left = live render of the body / right = front-matter form + insert palette +
-//             CodeMirror (`document-system edit`). The save API rewrites content/<id>.md directly,
+//             CodeMirror (`dooc edit`). The save API rewrites content/<id>.md directly,
 //             and hierarchy changes (create / move / rename / delete) rewrite
 //             manifest.yaml.
 //             The client (src/viewer/edit-client.ts) is bundled in memory with esbuild on
@@ -29,11 +29,17 @@ import { figureName } from "../compiler/figures.js";
 import { ICONS_DIR, squareSvg } from "../compiler/icons.js";
 import {
     contentLanguageCode,
+    contentLanguages,
     isContentLanguage,
-    languageName,
     webLanguage,
 } from "../compiler/language-codes.js";
-import { catalogLanguages, readCatalog, writeCatalog } from "../compiler/locales.js";
+import {
+    catalogLanguages,
+    readCatalog,
+    setDocTranslation,
+    writeCatalog,
+} from "../compiler/locales.js";
+import { readManifest } from "../compiler/manifest.js";
 import { assembleDoc, createDocOps, isOpError, type OpResult } from "../compiler/ops.js";
 import type { ArtifactDoc, TermEntry } from "../core/artifact-types.js";
 import type { Block, TocEntry } from "../core/blocks.js";
@@ -55,6 +61,9 @@ import { fontCss, readFont } from "./fonts.js";
 import { createHmrHub, HMR_PATH, hmrClientScript, watchProject } from "./hmr.js";
 import { translate } from "./i18n.js";
 import { DEFAULT_SITE_LANGUAGES, loadSiteLanguages } from "./languages.js";
+import { focusNavTree } from "./nav-focus.js";
+import { mountPanelResize } from "./resize.js";
+import { mountSearch, SEARCH_LABELS, searchIndex, searchSections } from "./search.js";
 import { previewTextfiles, textfileResponse } from "./textfile.js";
 
 export type ServeMode = "preview" | "edit";
@@ -74,6 +83,7 @@ const iconsDir = join(root, ICONS_DIR);
  */
 export interface Entry {
     id: string;
+    translatedLanguages?: string[];
     /** Parent doc id (omitted = top level). */
     parent?: string;
     file: string;
@@ -105,6 +115,7 @@ export interface Entry {
 
 export interface Site {
     title?: string;
+    icon?: string;
     codeLanguages?: string[];
     codeGrammars?: LanguageRegistration[];
     contentLanguage?: string;
@@ -154,6 +165,7 @@ export const siteFrom = (
 ): Site => {
     return {
         ...(artifact.title === undefined ? {} : { title: artifact.title }),
+        ...(artifact.icon === undefined ? {} : { icon: artifact.icon }),
         entries: artifact.docs.flatMap((doc) => {
             const source = sources.get(doc.file);
             return source ? [toEntry(doc, source)] : [];
@@ -198,7 +210,21 @@ const loadSite = (locale = contentLanguageCode(siteLanguages.defaultLang)): Site
         localeCompilers.set(locale, selected);
     }
     const site = siteFrom(selected.compile(), siteLanguages.languages);
+    const sourceLanguage = contentLanguageCode(site.defaultLang);
+    for (const entry of site.entries) entry.translatedLanguages = [sourceLanguage];
+    for (const language of catalogLanguages(root)) {
+        try {
+            const catalog = readCatalog(root, language);
+            for (const entry of site.entries) {
+                if (Object.hasOwn(catalog, entry.id)) entry.translatedLanguages?.push(language);
+            }
+        } catch (error) {
+            site.errors.push(String(error));
+        }
+    }
     watchEntryTextfiles(site.entries);
+    const siteIconFile = readManifest(root).icon;
+    if (siteIconFile) watchTextfiles?.([siteIconFile]);
     return {
         ...site,
         codeLanguages: siteLanguages.codeLanguages,
@@ -270,6 +296,7 @@ const renderEntry = (site: Site, entry: Entry, fallbackTitle: string): string =>
                 ],
                 lang: webLanguage(entry.lang),
                 tocTitle: translate(entry.lang, "Contents"),
+                sectionUrl: `${docPath(site.entries, entry.id)}?lang=${encodeURIComponent(site.contentLanguage ?? entry.lang)}`,
                 language: resolveLanguage(entry.lang, site.languages),
             },
             entry.toc,
@@ -405,20 +432,11 @@ export { assembleDoc };
 
 const asString = (v: unknown): string => (typeof v === "string" ? v : "");
 
-/** Client JSON → Frontmatter (drops optional keys that are empty strings / empty arrays). */
+/** Client JSON → Frontmatter (keeps supported fields and drops empty optional values). */
 export const sanitizeFrontmatter = (v: unknown): Frontmatter => {
     const o = (typeof v === "object" && v != null ? v : {}) as Record<string, unknown>;
-    const description = asString(o.description).trim();
-    const tags = Array.isArray(o.tags)
-        ? o.tags.map((t) => asString(t).trim()).filter((t) => t !== "")
-        : [];
     const lang = asString(o.lang).trim();
-    const extra = {
-        ...(tags.length > 0 ? { tags } : {}),
-        ...(description ? { description } : {}),
-        ...(lang ? { lang } : {}),
-    };
-    return { title: asString(o.title).trim(), ...extra };
+    return { title: asString(o.title).trim(), ...(lang ? { lang } : {}) };
 };
 
 /**
@@ -480,7 +498,6 @@ const SANS_FONT = `"IBM Plex Sans JP", -apple-system, "Segoe UI", "Noto Sans JP"
 const icon = (paths: string, size = 18): string =>
     `<svg class="nav-icon" viewBox="0 0 20 20" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
 const SIDEBAR_ICON = icon('<rect x="3" y="4" width="14" height="12" rx="1.5"/><path d="M8 4v12"/>');
-const PLUS_ICON = icon('<path d="M10 4.5v11M4.5 10h11"/>', 15);
 const DOCS_ICON = icon(
     '<path d="M10 5.2c-1.2-1-2.9-1.5-4.7-1.5-.7 0-1.3.6-1.3 1.3v9c0 .7.6 1.3 1.3 1.3 1.8 0 3.5.5 4.7 1.5"/><path d="M10 5.2c1.2-1 2.9-1.5 4.7-1.5.7 0 1.3.6 1.3 1.3v9c0 .7-.6 1.3-1.3 1.3-1.8 0-3.5.5-4.7 1.5Z"/><path d="M10 5.2v11.6"/>',
 );
@@ -498,17 +515,22 @@ const svgDataUri = (svg: string): string =>
  * Full svg → <img> (data URI; inline svgs would let the ids / styles of multiple icons collide,
  * so each is confined to an img).
  */
-const svgImg = (svg: string, cls: string): string =>
-    `<img class="${cls}" alt="" src="${svgDataUri(svg)}">`;
+const svgImg = (svg: string, cls: string): string => {
+    const uri = svgDataUri(svg);
+    const img = `<img class="${cls}" alt="" src="${uri}">`;
+    return cls.includes("doc-icon")
+        ? `<span class="doc-icon-frame" style="--doc-icon:url('${uri}')">${img}</span>`
+        : img;
+};
 const GEAR_ICON = icon(
     '<path d="M4 6h7M15 6h1M4 14h1M9 14h7"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/>',
     16,
 );
-const RENAME_ICON = icon('<path d="M12.5 4.5l3 3L8 15H5v-3l7.5-7.5Z"/>', 15);
 const DELETE_ICON = icon(
     '<path d="M4.5 6h11M8 6V4.5h4V6M6 6l.7 9.5h6.6L14 6M8.7 9v4M11.3 9v4"/>',
     15,
 );
+const PLUS_ICON = icon('<path d="M10 4.5v11M4.5 10h11"/>', 15);
 const THEME_ICONS = {
     "": icon(
         '<circle cx="10" cy="10" r="6.5"/><path d="M10 3.5a6.5 6.5 0 0 0 0 13Z" fill="currentColor" stroke="none"/>',
@@ -542,27 +564,76 @@ body { margin: 0; display: flex; min-height: 100vh; background: var(--c-bg0); co
 button { font-family: inherit; font-size: inherit; font-weight: var(--fw-body); }
 :focus-visible { outline: 1px solid var(--c-accent); outline-offset: 1px; }
 
+#doc-search { position: fixed; top: 12px; left: 0; right: 0; z-index: 20;
+  width: min(600px, calc(100vw - 24px)); min-height: 56px; max-height: min(420px, calc(100dvh - 24px)); margin: 0 auto;
+  padding: 0 10px 10px; color: var(--c-fg); background: color-mix(in srgb, var(--c-bg1) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c-fg-muted) 55%, transparent);
+  backdrop-filter: blur(16px); border-radius: 8px; box-shadow: 0 8px 24px #0003; overflow: hidden; }
+#doc-search[open] { display: flex; flex-direction: column; }
+#doc-search :focus-visible { outline-color: var(--c-fg-muted); }
+.search-head { display: flex; flex: none; align-items: center; gap: 10px; padding: 8px;
+  color: var(--c-fg-muted); }
+.search-head svg { flex: none; }
+#doc-search.search-filled .search-head svg { display: none; }
+#doc-search-input { width: 100%; min-width: 0; padding: 4px 0; font: inherit; font-size: 15px;
+  color: var(--c-fg); background: none; border: 0; outline: none; }
+#doc-search-input::-webkit-search-cancel-button { appearance: none; }
+.search-status { padding: 8px 16px; color: var(--c-fg-muted); font-size: 12px; }
+.search-status:empty { display: none; }
+.search-count { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap; }
+#doc-search-results { overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+#doc-search-results a { display: flex; flex: none; flex-direction: column; gap: 6px;
+  border: 1px solid var(--c-line); border-radius: 5px; color: var(--c-fg); text-decoration: none;
+  background: color-mix(in srgb, var(--c-bg0) 50%, transparent); overflow-wrap: anywhere; }
+#doc-search-results a:hover, #doc-search-results a[aria-selected="true"] { border-color: var(--c-fg-muted); }
+.search-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 5px 10px; border-bottom: 1px solid var(--c-line); color: var(--c-fg-muted); }
+.search-path { text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#doc-search-results strong { margin: 2px 10px 0; font-weight: 500; }
+#doc-search-results span { margin: 0 10px 10px; color: var(--c-fg-muted); }
+.search-grip { position: absolute; top: 8px; bottom: 18px; width: 10px; cursor: grab; touch-action: none; }
+.search-grip-left { left: 0; }
+.search-grip-right { right: 0; }
+.search-grip:active { cursor: grabbing; }
+.search-grip::after { content: ""; position: absolute; top: 35%; bottom: 35%; left: 4px;
+  width: 2px; border-radius: 2px; background: var(--c-line); }
+.search-grip:hover::after, .search-grip:focus-visible::after { background: var(--c-fg-muted); }
+.search-resize { position: absolute; bottom: 0; right: 0; width: 18px; height: 18px;
+  cursor: nwse-resize; touch-action: none; }
+.search-resize::after { content: ""; position: absolute; right: 4px; bottom: 4px; width: 7px; height: 7px;
+  border-right: 1px solid var(--c-fg-muted); border-bottom: 1px solid var(--c-fg-muted); }
+
 /* ── sidebar ── */
 #sidebar { width: var(--sidebar-width, 260px); height: 100vh; position: sticky; top: 0; flex: none;
   display: flex; flex-direction: column; background: var(--c-bg1);
   border-right: 1px solid var(--c-line); overflow: hidden; }
 body.sidebar-closed #sidebar { width: 52px; }
+body.sidebar-closed #sidebar-resize { display: none; }
+.panel-resize { position: absolute; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 6;
+  touch-action: none; transition: background 120ms ease; }
+#sidebar-resize { right: 0; }
+#resize { left: 0; }
+.panel-resize:hover, .panel-resize:focus-visible, .panel-resize.drag {
+  background: color-mix(in srgb, var(--c-accent) 60%, transparent); }
+body.resizing, body.resizing * { cursor: col-resize !important; user-select: none !important; }
 body.sidebar-closed #sidebar-content, body.sidebar-closed .site-title,
 body.sidebar-closed #sidebar-foot .nav-label { display: none; }
-#sidebar-head { flex: none; display: flex; align-items: center; min-width: 0;
+#sidebar-head { position: relative; flex: none; display: flex; align-items: center; min-width: 0; min-height: 47px;
   border-bottom: 1px solid var(--c-line); }
 #sidebar-toggle { flex: none; display: flex; align-items: center; padding: 14px 16px;
   background: transparent; border: none; color: var(--c-fg-muted); cursor: pointer; }
 #sidebar-toggle:hover { color: var(--c-fg); }
+#site-icon { flex: none; width: 24px; height: 24px; margin: 0 8px 0 16px; object-fit: contain; }
+body.sidebar-closed #site-icon { margin: 0 auto; }
+body.sidebar-closed #sidebar-toggle { position: absolute; inset: 0; width: 100%; justify-content: center; padding: 0; }
+body.sidebar-closed #sidebar-head:has(#site-icon:not([hidden])) #sidebar-toggle svg { visibility: hidden; }
+#site-icon[hidden] { display: block; visibility: hidden; }
 .site-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
   padding-right: 12px; color: var(--c-fg); white-space: nowrap; }
 #sidebar-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
   scrollbar-gutter: stable;
   padding: 10px 0 8px; }
-#nav-search { display: block; width: calc(100% - 24px); margin: 0 12px 8px; font: inherit;
-  color: var(--c-fg); background: var(--c-bg0); border: 1px solid var(--c-line); border-radius: 4px;
-  padding: 6px 10px; }
-#nav-search:focus-visible { outline: 1px solid var(--c-accent); outline-offset: -1px; }
 .nav-link { position: relative; display: flex; align-items: center; gap: 14px; padding: 10px 16px;
   color: var(--c-fg-muted); text-decoration: none; background: transparent; border: none;
   font: inherit; text-align: left; cursor: pointer; min-width: 0; }
@@ -585,7 +656,6 @@ body.sidebar-closed #sidebar-foot .nav-label { display: none; }
 .nav-row > .nav-link { flex: 1; min-width: 0; padding: 9px 16px; }
 .nav-row > .nav-link.cur { background: var(--c-raised); }
 .nav-item:not(.open) > .nav-list { display: none; }
-#nav-groups.searching .nav-item > .nav-list { display: block; }
 .nav-tree-toggle { flex: none; display: flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; margin-right: 6px; padding: 0; background: transparent; border: none;
   border-radius: 4px; color: var(--c-fg-faint); cursor: pointer; }
@@ -597,17 +667,34 @@ body.sidebar-closed #sidebar-foot .nav-label { display: none; }
 .nav-tree:empty { padding-bottom: 0; }
 .nav-tree > .nav-item { position: relative; }
 .nav-tree > .nav-item:not(:last-child)::before, .nav-tree > .nav-item > .nav-row::before,
-.nav-tree > .nav-item:last-child > .nav-row::after, .nav-tree > .nav-item:has(a.cur) > .nav-row::after {
+.nav-tree > .nav-item:last-child > .nav-row::after, .nav-tree > .nav-item:has(.cur) > .nav-row::after {
   content: ""; position: absolute; z-index: 1; pointer-events: none; left: var(--nav-line);
   background: var(--c-line); }
 /* vertical of ├ / └ */
 .nav-tree > .nav-item:not(:last-child)::before { top: 0; bottom: 0; width: 1px; z-index: 2; }
-.nav-tree > .nav-item:last-child > .nav-row::after, .nav-tree > .nav-item:has(a.cur) > .nav-row::after {
+.nav-tree > .nav-item:last-child > .nav-row::after, .nav-tree > .nav-item:has(.cur) > .nav-row::after {
   top: 0; height: calc(50% + 1px); width: 1px; z-index: 3; }
 /* ─ (up to 6px before the label) */
 .nav-tree > .nav-item > .nav-row::before { top: 50%; width: 17px; height: 1px; }
-.nav-tree > .nav-item:has(~ .nav-item a.cur)::before, .nav-tree > .nav-item:has(a.cur) > .nav-row::before,
-.nav-tree > .nav-item:has(a.cur) > .nav-row::after { background: var(--c-accent); }
+.nav-tree > .nav-item:has(~ .nav-item .cur)::before, .nav-tree > .nav-item:has(.cur) > .nav-row::before,
+.nav-tree > .nav-item:has(.cur) > .nav-row::after { background: var(--c-accent); }
+.nav-ancestor { --nav-pad: 12px; --nav-line: var(--nav-rail, 21px); }
+.nav-list:has(> .nav-ancestor) > .nav-item:not(.nav-ancestor) { display: none; }
+.nav-ancestor > .nav-tree > .nav-item::before,
+.nav-ancestor > .nav-tree > .nav-item > .nav-row::before,
+.nav-ancestor > .nav-tree > .nav-item > .nav-row::after { display: none; }
+/* One rail reaches the next ancestor, then stops at the selected row. */
+.nav-ancestor > .nav-tree > .nav-item:has(~ .nav-item .cur)::before {
+  display: block; left: var(--nav-rail, 21px); background: var(--c-accent); }
+.nav-root > .nav-ancestor.open > .nav-row::after,
+.nav-ancestor > .nav-tree > .nav-ancestor.open > .nav-row::after {
+  content: ""; display: block; position: absolute; left: var(--nav-rail, 21px); top: calc(50% + var(--nav-icon-half, 10px)); bottom: 0;
+  width: 1px; height: auto; background: var(--c-accent); pointer-events: none; }
+.nav-ancestor > .nav-tree > .nav-ancestor > .nav-row::before {
+  display: block; left: var(--nav-rail, 21px); top: 0; width: 1px; height: calc(50% - var(--nav-icon-half, 10px)); background: var(--c-accent); }
+.nav-ancestor > .nav-tree > .nav-item:has(> .nav-row > a.cur) { --nav-line: var(--nav-rail, 21px); }
+.nav-ancestor > .nav-tree > .nav-item:has(> .nav-row > a.cur) > .nav-row::before { display: block; width: calc(42px - var(--nav-rail, 21px)); }
+.nav-ancestor > .nav-tree > .nav-item:has(> .nav-row > a.cur) > .nav-row::after { display: block; }
 .nav-tree-link { position: relative; flex: 1; min-width: 0; display: flex; align-items: center;
   padding: 6px 8px 6px var(--nav-pad); color: var(--c-fg-muted); font-size: 13px; text-decoration: none; }
 .nav-tree-link:hover:not(.cur) { color: var(--c-fg); background: var(--c-raised); }
@@ -617,7 +704,13 @@ body.sidebar-closed #sidebar-foot .nav-label { display: none; }
 /* Doc-specific icon (icons/<id>.svg, 1:1). Top level: in place of the book icon; descendants:
    before the label */
 img.doc-icon { flex: none; width: 18px; height: 18px; object-fit: contain; }
-.nav-tree-link img.doc-icon { width: 15px; height: 15px; margin-right: 7px; }
+.doc-icon-frame { position: relative; display: inline-flex; flex: none; width: 18px; height: 18px; }
+.doc-icon-frame > img { width: 100%; height: 100%; }
+.nav-tree-link > .doc-icon-frame, .nav-tree-link > .nav-icon { width: 15px; height: 15px; margin-right: 7px; }
+.nav-row > a.cur :is(.nav-icon, .doc-icon-frame), .nav-doc-row:has(> a.cur) > .nav-doc-icon { color: var(--c-accent); }
+.nav-row > a.cur .doc-icon-frame > img, .nav-doc-row:has(> a.cur) > .nav-doc-icon .doc-icon-frame > img { visibility: hidden; }
+.nav-row > a.cur .doc-icon-frame::after, .nav-doc-row:has(> a.cur) > .nav-doc-icon .doc-icon-frame::after {
+  content: ""; position: absolute; inset: 0; background: currentColor; mask: var(--doc-icon) center / contain no-repeat; }
 .nav-count { margin-left: auto; padding-left: 8px; color: var(--c-fg-faint); font-size: 11px; }
 /* Resources (edit only). Dashed border to set it apart from the doc tree */
 .nav-resources { margin: 12px 12px 4px; border: 1px dashed var(--c-line); border-radius: 6px; overflow: hidden; }
@@ -635,6 +728,14 @@ article { max-width: 860px; margin: 0 auto; font-family: system-ui, sans-serif; 
 article, article * { font-weight: 400; }
 h1, h2, h3 { font-weight: 400; }
 article h1 { font-size: 26px; margin: 0 0 2px; }
+article :is(h1, h2, h3, h4, h5, h6):has(> .section-copy) { position: relative; padding-right: 32px; }
+.section-copy { position: absolute; right: 0; top: 0; display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0; border: 0; border-radius: 4px; background: transparent;
+  color: var(--c-fg-faint); cursor: pointer; }
+.section-copy:hover, .section-copy:focus-visible { background: var(--c-raised); color: var(--c-fg); }
+.section-copy.ok svg, .section-copy.error svg { display: none; }
+.section-copy.ok::after { content: "✓"; color: var(--c-ok); }
+.section-copy.error::after { content: "!"; color: var(--c-danger); }
 article h2 { font-size: 20px; margin-top: 24px; margin-bottom: 8px; border-bottom: 1px solid
   color-mix(in srgb, currentColor 20%, transparent); padding-bottom: 3px; }
 article h3 { font-size: 16px; margin-top: 16px; margin-bottom: 4px; }
@@ -644,7 +745,6 @@ ul, ol { margin: 4px 0; line-height: 1.3; }
 li { margin: 0; }
 li > ul, li > ol { margin: 0; }
 .fullname { opacity: .7; margin-bottom: 8px; }
-.lead { opacity: .85; border-left: 3px solid var(--doc-accent); padding-left: 12px; margin: 8px 0; }
 code { background: color-mix(in srgb, currentColor 10%, transparent);
   padding: 1px 5px; border-radius: 4px; font-size: .9em; font-family: var(--doc-mono); }
 :not(pre) > code { white-space: break-spaces; }
@@ -707,7 +807,6 @@ article a { color: var(--doc-accent); }
 .in-toc a:hover { color: var(--doc-accent); }
 ul.idx { list-style: none; padding: 0; }
 ul.idx li { margin: 10px 0; }
-.idx-desc { opacity: .6; font-size: 13px; margin-left: 8px; }
 details summary { cursor: pointer; opacity: .8; }
 /* Figure refs (Fig. <name>) / term references in the body: link-like, rendering the figure /
    definition on hover */
@@ -759,47 +858,45 @@ details summary { cursor: pointer; opacity: .8; }
 const EDIT_CSS = `
 /* Right panel = header / properties / editor stacked on one surface, separated by rules (no
    nested frames). */
-#panel { width: min(760px, 52vw); flex-shrink: 0; position: sticky; top: 0; height: 100vh;
+#panel { width: var(--panel-width, min(760px, 52vw)); flex-shrink: 0; position: sticky; top: 0; height: 100vh;
   display: flex; flex-direction: column; font-size: 12.5px; line-height: 1.6;
   border-left: 1px solid var(--c-line); background: var(--c-bg1); }
-#resize { position: absolute; left: -2px; top: 0; width: 5px; height: 100%; cursor: col-resize; z-index: 6;
-  transition: background 120ms ease; }
-#resize:hover, #resize.drag { background: color-mix(in srgb, var(--c-accent) 60%, transparent); }
 
 /* header band (same height and rule as sidebar-head) */
 #phead { flex: none; display: flex; align-items: center; gap: 2px; height: 47px; padding: 0 10px 0 14px;
   border-bottom: 1px solid var(--c-line); }
-#pfile { display: flex; align-items: center; gap: 7px; min-width: 0; margin-right: 4px;
-  color: var(--c-fg-muted); font-family: var(--doc-mono); font-size: 11.5px; }
-#pfile .nav-icon { color: var(--c-fg-faint); }
-#pfile span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#pfile { cursor: text; }
-/* Doc icon slot (1:1, dashed). Drop / click to set an svg; × on hover */
-#docicon { position: relative; flex: none; display: flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; margin-right: 8px; border: 1px dashed var(--c-fg-faint); border-radius: 5px;
-  cursor: pointer; transition: border-color 120ms ease, background 120ms ease; }
-#docicon:hover, #docicon.over { border-color: var(--c-accent);
-  background: color-mix(in srgb, var(--c-accent) 8%, transparent); }
-#docicon:not(.has)::after { content: "svg"; color: var(--c-fg-faint); font-size: 9px; line-height: 1; letter-spacing: .02em;
-  text-box: trim-both ex alphabetic; } /* center the x-height (a plain line box sits low) */
-#docicon.has { border-style: solid; border-color: transparent; }
-#docicon.has:hover { border-color: var(--c-line); }
-#docicon img { width: 20px; height: 20px; object-fit: contain; }
-#docicon-clear { display: none; position: absolute; top: -6px; right: -6px; width: 14px; height: 14px;
-  padding: 0; font-size: 10px; line-height: 12px; color: var(--c-fg); background: var(--c-surface);
-  border: 1px solid var(--c-line); border-radius: 50%; cursor: pointer; }
-#docicon.has:hover #docicon-clear { display: block; }
-#docicon-clear:hover { color: var(--c-danger); border-color: var(--c-danger); }
-#pfile-input { width: 18ch; font: inherit; color: var(--c-fg); background: var(--c-bg0);
-  border: 1px solid var(--c-accent); border-radius: 4px; padding: 2px 6px; outline: none; }
-#pfile-input.invalid { border-color: var(--c-danger); }
-#pfile em { font-style: normal; color: var(--c-fg-faint); margin-left: -4px; }
-#phead.renaming #rename, #phead.renaming #delete { display: none; }
+/* Document metadata is edited in the tree, without changing the row's size. */
+body.edit #nav-groups { --nav-rail: 22px; --nav-icon-half: 9px; }
+.nav-doc-row { padding-left: 12px; gap: 3px; min-height: 38px; }
+.nav-tree .nav-doc-row { padding-left: var(--nav-pad); }
+.nav-doc-row:has(> a.cur) { background: var(--c-raised); }
+.nav-row.nav-doc-row > a { padding: 4px 2px; background: transparent; }
+.nav-doc-row > a::before { display: none; }
+.nav-doc-name { display: flex; flex-direction: column; min-width: 0; line-height: 17px; }
+.nav-doc-id { color: var(--c-fg-faint); font: 10px/12px var(--doc-mono); overflow: hidden; text-overflow: ellipsis; }
+.nav-doc-icon { position: relative; flex: none; display: flex; align-items: center; justify-content: center;
+  width: 20px; height: 24px; cursor: pointer; border-radius: 3px; color: var(--c-fg-faint); }
+.nav-doc-icon:hover, .nav-doc-icon.over, .nav-doc-icon:focus-within { background: var(--c-line); color: var(--c-fg); }
+.nav-doc-icon input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.nav-doc-icon > :is(.nav-icon, .doc-icon-frame) { width: 18px; height: 18px; }
+.nav-icon-clear { position: absolute; right: -4px; top: -4px; width: 13px; height: 13px; padding: 0;
+  border: 1px solid var(--c-line); border-radius: 50%; font: 10px/11px sans-serif;
+  color: var(--c-fg); background: var(--c-surface); cursor: pointer; visibility: hidden; }
+.nav-doc-icon:hover .nav-icon-clear, .nav-doc-icon:focus-within .nav-icon-clear { visibility: visible; }
+.nav-icon-clear:hover { color: var(--c-danger); }
+.nav-rename-form { position: absolute; z-index: 4; display: flex; flex-direction: column; justify-content: center;
+  background: var(--c-bg0); }
+.nav-rename-form input { width: 100%; min-width: 0; box-sizing: border-box; color: var(--c-fg);
+  background: transparent; border: 0; border-radius: 2px; padding: 0 2px; font: inherit; line-height: 17px; }
+.nav-rename-form input[name="id"] { font: 10px/12px var(--doc-mono); color: var(--c-fg-faint); }
+.nav-rename-form input:focus { outline: 1px solid var(--c-accent); }
+.nav-rename-form input:invalid { outline-color: var(--c-danger); }
+.nav-doc-row.renaming > a { visibility: hidden; }
 .pbtn { flex: none; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px;
   padding: 0; color: var(--c-fg-faint); background: none; border: none; border-radius: 5px; cursor: pointer;
   transition: color 120ms ease, background 120ms ease; }
 .pbtn:hover, .pbtn:focus-visible, #gear.open > .pbtn { color: var(--c-fg); background: var(--c-raised); }
-#delete:hover, #delete:focus-visible { color: var(--c-danger); }
+.nav-delete:hover, .nav-delete:focus-visible { color: var(--c-danger); }
 #status { flex: 1; min-width: 0; padding: 0 8px; text-align: right; color: var(--c-fg-faint);
   font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #status.err { color: var(--c-danger); }
@@ -814,13 +911,22 @@ const EDIT_CSS = `
 #preview-status[data-state="loading"] svg { animation: preview-spin 1s linear infinite; }
 @keyframes preview-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { #preview-status[data-state="loading"] svg { animation: none; } }
-.edit-conflict { width: min(800px, 90vw); max-height: 85vh; overflow: auto;
-  color: var(--c-fg); background: var(--c-bg0); border: 1px solid var(--c-line); border-radius: 8px; }
-.edit-conflict::backdrop { background: #0008; }
-.edit-conflict h2 { margin-top: 0; font-size: 16px; }
+.app-dialog { width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 22px;
+  color: var(--c-fg); background: color-mix(in srgb, var(--c-bg1) 90%, transparent);
+  border: 1px solid var(--c-fg-faint); border-radius: 10px; box-shadow: 0 16px 48px #0004; backdrop-filter: blur(16px); }
+.app-dialog::backdrop { background: #0005; backdrop-filter: blur(2px); }
+.app-dialog h2 { margin: 0 0 14px; font-size: 16px; overflow-wrap: anywhere; }
+.app-dialog p { margin: 0 0 22px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--c-fg-muted); }
+.dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.app-dialog button { padding: 7px 14px; color: inherit; background: var(--c-bg0); border: 1px solid var(--c-line); border-radius: 5px; cursor: pointer; }
+.app-dialog button:hover { background: var(--c-raised); border-color: var(--c-fg-muted); }
+.app-dialog button:focus-visible { outline-color: var(--c-fg-muted); }
+.app-dialog button.danger { color: var(--c-danger); }
+.app-dialog:has(.conflict-columns) { width: min(1000px, calc(100vw - 32px)); }
 .conflict-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
-.conflict-columns pre { max-height: 45vh; overflow: auto; font-size: 12px; }
-.edit-conflict button { padding: 6px 12px; color: inherit; background: var(--c-bg0); border: 1px solid var(--c-line); border-radius: 4px; cursor: pointer; }
+.conflict-columns h3 { font-size: 13px; margin: 0; }
+.conflict-columns pre { max-height: 45vh; overflow: auto; font-size: 12px; padding: 10px; border: 1px solid var(--c-line); }
+@media (max-width: 600px) { .conflict-columns { grid-template-columns: 1fr; } .conflict-columns pre { max-height: 25vh; } }
 #gear { position: relative; flex: none; }
 #gearmenu { display: none; position: absolute; right: 0; top: calc(100% + 6px); z-index: 8;
   min-width: 220px; padding: 4px; flex-direction: column; gap: 1px; color: var(--c-fg);
@@ -832,19 +938,31 @@ const EDIT_CSS = `
 #gearmenu label:hover { background: var(--c-raised); }
 #gearmenu input { accent-color: var(--c-accent); margin: 0; }
 
-/* front-matter = properties table (label column + borderless values; surface on hover / focus) */
-#panel .fm { flex: none; display: grid; grid-template-columns: auto 1fr; align-items: center;
-  column-gap: 8px; row-gap: 1px; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--c-line); }
-#panel.hide-fm .fm { display: none; }
-#panel .fm label { display: contents; }
-#panel .fm label span { color: var(--c-fg-faint); font-size: 11.5px; }
-#panel .fm input { font: inherit; font-size: 12.5px; color: var(--c-fg); background: transparent;
-  border: 1px solid transparent; border-radius: 4px; padding: 3px 6px; min-width: 0;
-  transition: background 120ms ease, border-color 120ms ease; }
-#panel .fm input::placeholder { color: var(--c-fg-faint); }
-#panel .fm input:hover { background: var(--c-raised); }
-#panel .fm input:focus { outline: none; background: var(--c-bg0); border-color: var(--c-line); }
-#panel .fm #fm-title { font-size: 14px; color: var(--c-fg); }
+.fm-language { display: flex; align-items: center; flex: 0 1 220px; min-width: 0; gap: 4px; }
+.fm-language > .language-select { flex: 1; width: 0; min-width: 0; }
+.language-select, .language-picker { font: 13px/18px var(--font-sans); font-weight: var(--fw-body); }
+.language-select { position: relative; }
+.language-select-input { width: 100%; min-width: 0; height: 28px; padding: 4px 26px 4px 8px;
+  border: 1px solid var(--c-line); border-radius: 5px; color: var(--c-fg);
+  background: var(--c-surface); font: inherit; text-overflow: ellipsis; }
+.language-select::after { content: ""; position: absolute; right: 10px; top: 9px; width: 6px; height: 6px; pointer-events: none;
+  border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg); }
+.language-select-input:hover { background: var(--c-raised); }
+.language-select-input:focus-visible, .language-picker :focus-visible { outline: 1px solid var(--c-fg-muted); outline-offset: 1px; }
+.language-select-input[aria-disabled="true"] { opacity: .5; cursor: wait; }
+.language-picker { position: fixed; margin: 0; padding: 0; overflow: hidden; border: 1px solid var(--c-line);
+  border-radius: 5px; color: var(--c-fg); background: var(--c-surface); box-shadow: 0 8px 24px var(--c-shadow); }
+.language-picker:popover-open { display: flex; flex-direction: column; }
+.language-options { overflow-y: auto; min-height: 0; }
+.language-options button { display: block; width: 100%; padding: 6px 8px; border: 0;
+  color: inherit; background: transparent; font: inherit; text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.language-options button:hover, .language-options button[data-active="true"] { background: var(--c-raised); }
+.language-options button[aria-selected="true"] { color: var(--c-fg); }
+.language-toggle { display: inline-block; width: 24px; margin: -6px 0 -6px -8px; padding: 6px 0; text-align: center; }
+.language-toggle:hover { color: var(--c-accent); background: var(--c-line); }
+.language-options button:disabled { opacity: .5; cursor: wait; }
+.language-empty { padding: 8px; color: var(--c-fg-muted); }
 
 main.editor-workspace { padding: 0; height: 100vh; display: flex; flex-direction: column; position: sticky; top: 0; }
 #split-preview[aria-pressed="true"] { color: var(--c-accent); background: var(--c-raised); }
@@ -866,7 +984,7 @@ main.editor-workspace { padding: 0; height: 100vh; display: flex; flex-direction
 .language-option:hover, .language-option:focus-visible { background: var(--c-raised); outline: none; }
 .language-option:disabled { opacity: .5; cursor: wait; }
 #language-setting { flex: none; display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-bottom: 1px solid var(--c-line); }
-#language-setting select { font: inherit; color: var(--c-fg); background: var(--c-bg0); border: 1px solid var(--c-line); border-radius: 4px; padding: 4px 8px; }
+#language-setting .language-select { width: 160px; }
 .cm-code-diagnostic { text-decoration:underline wavy var(--c-warn); text-underline-offset:3px; }
 #validate[data-state="error"], .cm-textfile-validate[data-state="error"] { color:var(--c-danger); }
 #validate[data-state="valid"], .cm-textfile-validate[data-state="valid"] { color:var(--c-ok); }
@@ -947,14 +1065,26 @@ body.sidebar-closed #dropzone { display: none; }
 .res-dl dt { color: var(--c-fg-faint); }
 .res-dl dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 
-/* Adding docs (row + / end of nav), the in-sidebar create form, and drag moves */
-.nav-row .new { flex: none; width: 24px; height: 24px; margin-right: 8px; display: flex;
+/* Draft placeholders, the in-sidebar create form, and drag moves */
+.nav-row .new, .nav-row .nav-delete { flex: none; width: 20px; height: 24px; display: flex;
   align-items: center; justify-content: center; border: none; border-radius: 4px; padding: 0;
   background: transparent; color: var(--c-fg-muted); cursor: pointer; opacity: 0; }
-.nav-row:hover .new, .nav-row .new:focus-visible { opacity: 1; }
-.nav-row .new:hover { color: var(--c-fg); background: var(--c-line); }
-.nav-link.nav-create { width: 100%; color: var(--c-fg-faint); }
-.nav-link.nav-create:hover { color: var(--c-fg-muted); }
+.nav-row:hover :is(.new, .nav-delete), .nav-row:focus-within :is(.new, .nav-delete),
+.nav-row.renaming :is(.new, .nav-delete) { opacity: 1; }
+.nav-row :is(.new, .nav-delete):hover { background: var(--c-line); }
+.nav-doc-row .nav-tree-toggle, .nav-tree-spacer { width: 18px; margin-right: 3px; }
+.nav-tree-spacer { flex: none; height: 28px; }
+@media (hover: none) { .nav-row :is(.new, .nav-delete) { opacity: 1; } }
+.nav-row > .nav-create { display: flex; flex: 1; min-width: 0; align-items: center; gap: 5px; margin: 4px 12px; padding: 5px 10px;
+  min-height: 42px; border: 1px dashed var(--c-line); border-radius: 6px; background: none;
+  color: var(--c-fg-faint); font: inherit; text-align: left; cursor: pointer; }
+.nav-tree .nav-create { margin-left: calc(var(--nav-pad) - 12px); }
+.nav-create:hover { color: var(--c-fg-muted); background: var(--c-raised); }
+.nav-create > .nav-icon { color: var(--c-fg-muted); }
+.nav-create .nav-label { color: var(--c-fg-muted); }
+.nav-add-hover { display: none; }
+#sidebar:hover .nav-add-hover, #sidebar:focus-within .nav-add-hover { display: block; }
+#sidebar .nav-list:has(> .nav-new-item) > .nav-placeholder { display: none; }
 /* Create form = a draft row inserted into the tree (same guide lines / indent; the └ connects to
    it). Line 1 = title (underline-only input), line 2 = /id (mono) + ↵. */
 .nav-row.nav-new { flex-direction: column; align-items: stretch; gap: 1px; cursor: auto;
@@ -1025,24 +1155,33 @@ export const navGroupsHtml = (
                 // Top level = nav-link with an icon, descendants = nav-tree-link with guide lines.
                 // A doc-specific icon (icons/<id>.svg), if any, replaces the book icon at top
                 // level and goes before the label below that.
-                const link =
+                let link =
                     depth === 0
                         ? `<a class="nav-link${cur}" href="/${e.id}" title="${label}">${e.icon ? svgImg(e.icon, "nav-icon doc-icon") : DOCS_ICON}<span class="nav-label">${label}</span></a>`
-                        : `<a class="nav-tree-link${cur}" href="/${e.id}" title="${label}">${e.icon ? svgImg(e.icon, "doc-icon") : ""}<span class="nav-label">${label}</span></a>`;
-                const add =
-                    mode === "edit"
-                        ? `<button class="new" type="button" data-parent="${escapeHtml(e.id)}" title="Add doc under ${label}" aria-label="Add doc under ${label}">${PLUS_ICON}</button>`
-                        : "";
+                        : `<a class="nav-tree-link${cur}" href="/${e.id}" title="${label}">${e.icon ? svgImg(e.icon, "doc-icon") : DOCS_ICON}<span class="nav-label">${label}</span></a>`;
+                let actions = "";
+                let editableIcon = "";
+                if (mode === "edit") {
+                    link = `<a class="${depth === 0 ? "nav-link" : "nav-tree-link"}${cur}" href="/${e.id}" title="${label}" aria-keyshortcuts="F2"><span class="nav-doc-name"><span class="nav-label">${label}</span><span class="nav-doc-id">${escapeHtml(e.file)}</span></span></a>`;
+                    editableIcon = `<span class="nav-doc-icon" title="icon" data-i18n-title="icon">${e.icon ? svgImg(e.icon, "doc-icon") : DOCS_ICON}<input type="file" accept=".svg,image/svg+xml" aria-label="icon" data-i18n-aria-label="icon">${e.icon ? '<button class="nav-icon-clear" type="button" title="Remove icon" data-i18n-title="Remove icon" aria-label="Remove icon" data-i18n-aria-label="Remove icon">×</button>' : ""}</span>`;
+                    actions = `<button class="new" type="button" data-parent="${escapeHtml(e.id)}" title="Add doc" data-i18n-title="Add doc" aria-label="Add doc" data-i18n-aria-label="Add doc">${PLUS_ICON}</button><button class="nav-delete" type="button" data-doc-action="delete" title="Delete doc" data-i18n-title="Delete doc" aria-label="Delete doc" data-i18n-aria-label="Delete doc">${DELETE_ICON}</button>`;
+                }
                 const branch = childrenOf(site.entries, e.id).length > 0;
                 const toggle = branch
                     ? `<button class="nav-tree-toggle" type="button" aria-label="Toggle ${label}">${CHEVRON_ICON}</button>`
-                    : "";
-                return `<div class="nav-item${open.has(e.id) ? " open" : ""}" data-doc-id="${escapeHtml(e.id)}"><div class="nav-row"${mode === "edit" ? ' draggable="true"' : ""}>${link}${add}${toggle}</div>${list(e.id, depth + 1)}</div>`;
+                    : mode === "edit"
+                      ? '<span class="nav-tree-spacer" aria-hidden="true"></span>'
+                      : "";
+                return `<div class="nav-item${open.has(e.id) ? " open" : ""}" data-doc-id="${escapeHtml(e.id)}"><div class="nav-row${mode === "edit" ? " nav-doc-row" : ""}"${mode === "edit" ? ' draggable="true"' : ""}>${editableIcon}${link}${actions}${toggle}</div>${list(e.id, depth + 1)}</div>`;
             })
             .join("");
+        const placeholder =
+            mode === "edit" && depth === 0
+                ? `<div class="nav-item nav-placeholder${items ? " nav-add-hover" : ""}"><div class="nav-row"><button class="nav-create" type="button" data-parent="" aria-label="Add doc" data-i18n-aria-label="Add doc">${DOCS_ICON}<span class="nav-doc-name" aria-hidden="true"><span class="nav-label">...</span><span class="nav-doc-id">... .md</span></span></button></div></div>`
+                : "";
         return depth === 0
-            ? `<div class="nav-list nav-root" data-parent="">${items}</div>`
-            : `<div class="nav-list nav-tree" data-parent="${escapeHtml(parent ?? "")}" style="--nav-depth:${depth + 1}">${items}</div>`;
+            ? `<div class="nav-list nav-root" data-parent="">${items}${placeholder}</div>`
+            : `<div class="nav-list nav-tree" data-parent="${escapeHtml(parent ?? "")}" style="--nav-depth:${depth + 1}">${items}${placeholder}</div>`;
     };
     const html = list(undefined, 0) + (mode === "edit" ? navResourcesHtml(site, currentRes) : "");
     return docLinks(site, site.contentLanguage ? languageLinks(html, site.contentLanguage) : html);
@@ -1245,7 +1384,7 @@ export const resourcesMain = (
 
 // Browser tab title — shared by page() and `/api/page` (doc switching via client-side navigation).
 const pageTitle = (mode: ServeMode, title: string, siteTitle?: string): string =>
-    title === siteTitle ? title : `${title} — ${siteTitle ?? `docs ${mode}`}`;
+    title === siteTitle ? title : `${title} — ${siteTitle ?? `dooc ${mode}`}`;
 
 // Navigation follows the manifest hierarchy via routing.docPath.
 const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
@@ -1256,11 +1395,7 @@ const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
         mode === "edit"
             ? `<label id="dropzone" title="figures/"><input id="dropfile" type="file" multiple hidden accept=".svg,.png,.webp,.jpg,.jpeg,.html">${UPLOAD_ICON}<span data-i18n="figures">figures</span></label>`
             : "";
-    const createMenu =
-        mode === "edit"
-            ? `<button class="nav-link nav-create" type="button" data-parent="">${icon('<path d="M10 4.5v11M4.5 10h11"/>')}<span class="nav-label" data-i18n="Add doc">Add doc</span></button>`
-            : "";
-    const siteTitle = escapeHtml(site.title ?? "docs");
+    const siteTitle = escapeHtml(site.title ?? "dooc");
     const bootScripts =
         opts.boot != null
             ? `<script id="boot" type="application/json">${JSON.stringify(opts.boot).replace(/</g, "\\u003c")}</script>
@@ -1276,7 +1411,7 @@ const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
             ? `<main class="editor-workspace">
 
 
-<div id="preview-language-menu" role="menu" aria-label="Change language" data-i18n-aria-label="Change language" hidden>${(site.availableLanguages ?? [site.defaultLang]).map((lang) => `<button class="language-option" type="button" role="menuitemradio" aria-checked="${lang === (site.contentLanguage ?? site.defaultLang)}" data-language="${escapeHtml(lang)}">${escapeHtml(languageName(lang))}</button>`).join("")}</div>
+<div id="preview-language-menu" role="menu" aria-label="Change language" data-i18n-aria-label="Change language" hidden></div>
 <div id="preview-panes"><section class="preview-pane active" tabindex="0" aria-label="Active pane" data-i18n-aria-label="Active pane"><div class="pane-actions"><button class="pbtn pane-language" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="preview-language-menu" aria-label="Change language" data-i18n-aria-label="Change language" title="Change language" data-i18n-title="Change language">${icon('<circle cx="10" cy="10" r="7"/><ellipse cx="10" cy="10" rx="3" ry="7"/><path d="M3 10h14"/>')}</button></div><div class="preview-content">${opts.main}</div></section></div></main>`
             : `<main>${opts.main}</main>`;
     const graphScript = opts.publish
@@ -1287,7 +1422,7 @@ const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
 <title>${escapeHtml(pageTitle(mode, opts.title, site.title))}</title>
 <script>try{const t=localStorage.getItem("docs-preview:theme");if(t)document.documentElement.dataset.theme=t}catch{}</script>
 <style>${fontCss(Boolean(opts.publish))}${CSS}${mode === "edit" ? EDIT_CSS : ""}</style></head>
-<body${mode === "edit" ? ' class="edit"' : ""}><nav id="sidebar"><div id="sidebar-head"><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button><div id="site-title" class="site-title" title="${siteTitle}">${siteTitle}</div></div><div id="sidebar-content"><input id="nav-search" type="search" placeholder="Search docs…" data-i18n-placeholder="Search docs…" aria-label="Search docs by title" data-i18n-aria-label="Search docs by title"><div id="nav-groups">${nav}</div>${createMenu}<div id="nav-status" role="status" aria-live="polite"></div></div>${dropzone}<div id="sidebar-foot"><button id="theme" class="nav-link" type="button"></button></div></nav>${main}${opts.aside ?? ""}
+<body${mode === "edit" ? ' class="edit"' : ""}><nav id="sidebar"><div id="sidebar-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" data-i18n-aria-label="Resize sidebar" title="Resize sidebar" data-i18n-title="Resize sidebar"></div><div id="sidebar-head"><img id="site-icon" alt=""${site.icon ? ` src="${svgDataUri(site.icon)}"` : " hidden"}><div id="site-title" class="site-title" title="${siteTitle}">${siteTitle}</div><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button></div><div id="sidebar-content"><div id="nav-groups">${nav}</div><div id="nav-status" role="status" aria-live="polite"></div></div>${dropzone}<div id="sidebar-foot"><button id="theme" class="nav-link" type="button"></button></div></nav>${main}${opts.aside ?? ""}
 ${bootScripts}${graphScript}
 <script id="code-grammars" type="application/json">${JSON.stringify(site.codeGrammars ?? []).replace(/</g, "\\u003c")}</script>
 ${opts.publish ? `<script>${inlineScript(opts.publish.codeJs)}</script>` : '<script src="/assets/code.js" defer></script>'}
@@ -1340,9 +1475,8 @@ const localeFetch = (url, init = {}) => fetch(url, { ...init, headers: { ...init
     apply(open);
   });
 })();
+(${mountPanelResize.toString()})();
 (() => {
-  // nav search — filters by doc title (the row's display text) in place. Ancestors of matching
-  // docs are kept so the tree stays navigable. Clearing the field restores everything.
   // Open/close: by default "the branch containing the current doc is open" (the server adds
   // .open), overridden by explicit user actions (sessionStorage = per tab only).
   const OPEN_KEY = "docs:nav-open";
@@ -1353,6 +1487,7 @@ const localeFetch = (url, init = {}) => fetch(url, { ...init, headers: { ...init
       const key = it.dataset.docId || it.dataset.nodeId;
       if (key in o) it.classList.toggle("open", o[key]);
     }
+    (${focusNavTree.toString()})(document.getElementById("nav-groups"));
   };
   window.__docsNavOpen = (id, v) => {
     const o = readOpen();
@@ -1368,26 +1503,9 @@ const localeFetch = (url, init = {}) => fetch(url, { ...init, headers: { ...init
     window.__docsNavOpen(it.dataset.docId || it.dataset.nodeId, !it.classList.contains("open"));
   });
   applyOpen();
-  const input = document.getElementById("nav-search");
-  if (!input) return;
-  const apply = (q) => {
-    const needle = q.trim().toLowerCase();
-    const groups = document.getElementById("nav-groups");
-    if (groups) groups.classList.toggle("searching", needle !== "");
-    // Re-query items each time (not captured at load) so it still works after HMR swaps the nav.
-    const items = [...document.querySelectorAll("#nav-groups .nav-item")];
-    const hit = new Set(items.filter((it) => {
-      const a = it.querySelector(":scope > .nav-row > a");
-      return needle === "" || (a ? a.textContent.toLowerCase().includes(needle) : false);
-    }));
-    for (const it of items) {
-      const show = hit.has(it) || [...it.querySelectorAll(".nav-item")].some((d) => hit.has(d));
-      it.style.display = show ? "" : "none";
-    }
-  };
-  input.addEventListener("input", () => apply(input.value));
-  // Hook to re-apply the current search term after HMR swaps the nav (called by hmr.ts's client).
-  window.__docsNavFilter = () => { applyOpen(); apply(input.value); };
+  window.__docsNavRestore = applyOpen;
+  const nav = document.getElementById("nav-groups");
+  new ResizeObserver(() => (${focusNavTree.toString()})(nav)).observe(nav);
 })();
 ${
     mode === "edit"
@@ -1397,8 +1515,7 @@ ${
   //         (at the end). The DOM isn't moved, only a marker is shown; on drop, POST /api/move →
   //         re-fetch the nav regardless of the outcome (= the display is always a copy of
   //         manifest.yaml; no rollback logic).
-  //   +   : a row's + (child) / the trailing "add doc" button (top level) opens a create form in
-  //         place.
+  // The root placeholder and row buttons open the create form.
   const status = document.getElementById("nav-status");
   const setStatus = (message, error) => {
     if (!status) return;
@@ -1412,7 +1529,7 @@ ${
     const rp = location.pathname.startsWith("/_resources") ? location.pathname.slice(12).replace(/^\\/|\\/$/g, "") : null;
     const res = await localeFetch("/api/nav?current=" + encodeURIComponent(id) + (rp == null ? "" : "&res=" + encodeURIComponent(decodeURIComponent(rp))));
     if (res.ok) document.getElementById("nav-groups").innerHTML = (await res.json()).html;
-    if (window.__docsNavFilter) window.__docsNavFilter();
+    if (window.__docsNavRestore) window.__docsNavRestore();
     document.dispatchEvent(new Event("docs:ui-refresh"));
   };
   const post = async (path, body) => {
@@ -1422,6 +1539,79 @@ ${
     if (!res.ok) throw new Error(data.error || String(res.status));
     return data;
   };
+
+  const docAction = (item, action) => {
+    if (window.__docsDocAction) {
+      void window.__docsDocAction(item.dataset.docId, action);
+    } else {
+      const url = new URL(item.querySelector(":scope > .nav-row > a").href);
+      url.searchParams.set("doc-action", action);
+      location.href = url.href;
+    }
+  };
+  document.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-doc-action]") : null;
+    if (!button) return;
+    event.preventDefault();
+    docAction(button.closest(".nav-item"), button.dataset.docAction);
+  });
+  const editLabel = (event) => {
+    if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target || target.closest("button, input, form, .nav-doc-icon")) return;
+    const row = target.closest("#nav-groups [data-doc-id] > .nav-row");
+    if (!row) return;
+    event.preventDefault();
+    docAction(row.closest("[data-doc-id]"), "rename");
+  };
+  document.addEventListener("dblclick", editLabel);
+  document.addEventListener("keydown", (event) => { if (event.key === "F2") editLabel(event); });
+  const setIcon = async (slot, file) => {
+    if (file && !/\\.svg$/i.test(file.name) && file.type !== "image/svg+xml") {
+      setStatus("Icon must be svg", true);
+      return;
+    }
+    const id = slot.closest(".nav-item").dataset.docId;
+    try {
+      const data = file ? btoa(Array.from(new Uint8Array(await file.arrayBuffer()), (byte) => String.fromCharCode(byte)).join("")) : null;
+      await post("/api/icon", { file: id + ".md", data });
+      setStatus("", false);
+      await refresh();
+    } catch (error) {
+      setStatus(error.message, true);
+    }
+  };
+  document.addEventListener("change", (event) => {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement) || !input.closest(".nav-doc-icon")) return;
+    const file = input.files[0];
+    input.value = "";
+    if (file) void setIcon(input.closest(".nav-doc-icon"), file);
+  });
+  document.addEventListener("click", (event) => {
+    const clear = event.target instanceof Element ? event.target.closest(".nav-icon-clear") : null;
+    if (!clear) return;
+    event.preventDefault();
+    void setIcon(clear.closest(".nav-doc-icon"), null);
+  });
+  document.addEventListener("dragover", (event) => {
+    const slot = event.target instanceof Element ? event.target.closest(".nav-doc-icon") : null;
+    if (!slot || !event.dataTransfer?.types.includes("Files")) return;
+    event.preventDefault();
+    slot.classList.add("over");
+  });
+  document.addEventListener("dragleave", (event) => {
+    const slot = event.target instanceof Element ? event.target.closest(".nav-doc-icon") : null;
+    if (slot && !slot.contains(event.relatedTarget)) slot.classList.remove("over");
+  });
+  document.addEventListener("drop", (event) => {
+    const slot = event.target instanceof Element ? event.target.closest(".nav-doc-icon") : null;
+    const file = event.dataTransfer?.files[0];
+    if (!slot || !file) return;
+    event.preventDefault();
+    slot.classList.remove("over");
+    void setIcon(slot, file);
+  });
 
   let dragged = null;
   let drop = null; // { row, zone: "before" | "after" | "into" }
@@ -1433,6 +1623,10 @@ ${
   document.addEventListener("dragstart", (event) => {
     const row = event.target instanceof Element ? event.target.closest(".nav-row") : null;
     if (!row || !event.dataTransfer) return;
+    if (event.target.closest("input, button, .nav-doc-icon") || row.classList.contains("renaming")) {
+      event.preventDefault();
+      return;
+    }
     dragged = row.closest(".nav-item");
     dragged.classList.add("dragging");
     event.dataTransfer.effectAllowed = "move";
@@ -1468,12 +1662,12 @@ ${
     let index;
     if (drop.zone === "into") {
       parent = item.dataset.docId;
-      index = [...item.querySelector(":scope > .nav-list").children].filter((n) => n !== dragged).length;
+      index = [...item.querySelector(":scope > .nav-list").children].filter((n) => n.dataset.docId && n !== dragged).length;
       if (window.__docsNavOpen) window.__docsNavOpen(parent, true);
     } else {
       const list = item.parentElement;
       parent = list.dataset.parent || undefined;
-      const siblings = [...list.children].filter((n) => n.classList.contains("nav-item") && n !== dragged);
+      const siblings = [...list.children].filter((n) => n.dataset.docId && n !== dragged);
       index = siblings.indexOf(item) + (drop.zone === "after" ? 1 : 0);
     }
     clearMarker();
@@ -1533,7 +1727,9 @@ ${
       ? document.querySelector('#nav-groups .nav-item[data-doc-id="' + CSS.escape(parent) + '"] > .nav-list')
       : document.querySelector("#nav-groups > .nav-list");
     if (!host) return;
-    if (parent) host.closest(".nav-item").classList.add("open");
+    if (parent) {
+      host.closest(".nav-item").classList.add("open");
+    }
     const item = document.createElement("div");
     item.className = "nav-item nav-new-item";
     const form = document.createElement("form");
@@ -1566,7 +1762,8 @@ ${
       err.textContent = "";
       try {
         const data = await post("/api/create", { parent: parent || undefined, id: idInput.value.trim(), title: title.value.trim() });
-        window.location.href = data.path + "?lang=" + encodeURIComponent(contentLanguage());
+        if (window.__docsNavigate) await window.__docsNavigate(data.path);
+        else window.location.href = data.path + "?lang=" + encodeURIComponent(contentLanguage());
       } catch (error) {
         err.textContent = error.message;
       }
@@ -1584,6 +1781,26 @@ ${
         : ""
 }
 // code block copy — delegated to document so it keeps working after edit's innerHTML swaps.
+document.addEventListener("click", async (event) => {
+  const button = event.target instanceof Element ? event.target.closest("button.section-copy") : null;
+  if (!button) return;
+  const label = (key) => window.__docsTranslate ? window.__docsTranslate(key) : key;
+  button.classList.remove("ok", "error");
+  try {
+    await navigator.clipboard.writeText(new URL(button.dataset.sectionUrl, location.href).href);
+    button.classList.add("ok");
+    button.title = label("Copied");
+  } catch {
+    button.classList.add("error");
+    button.title = label("Could not copy URL");
+  }
+  button.setAttribute("aria-label", button.title);
+  setTimeout(() => {
+    button.classList.remove("ok", "error");
+    button.title = label("Copy section URL");
+    button.setAttribute("aria-label", button.title);
+  }, 1600);
+});
 document.addEventListener("click", (ev) => {
   const btn = ev.target instanceof Element ? ev.target.closest("button.codecopy") : null;
   if (!btn) return;
@@ -1613,6 +1830,7 @@ document.addEventListener("click", (ev) => {
   }
 });
 </script>
+<script>${inlineScript(`(${mountSearch.toString()})(${JSON.stringify(opts.publish ? searchIndex(site) : []).replace(/</g, "\\u003c")}, ${searchSections.toString()}, ${JSON.stringify(Object.fromEntries(SEARCH_LABELS.map((key) => [key, translate(site.defaultLang, key)]))).replace(/</g, "\\u003c")}, ${Boolean(opts.publish)});`)}</script>
 ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publish.first)}</script>` : `<script>${hmrClientScript(mode)}</script>`}</body></html>`;
 };
 
@@ -1642,6 +1860,7 @@ const publishRouterScript = (first: string): string => `
     for (let it = cur && cur.closest(".nav-item").parentElement.closest(".nav-item"); it; it = it.parentElement.closest(".nav-item")) {
       it.classList.add("open");
     }
+    (${focusNavTree.toString()})(document.getElementById("nav-groups"));
     const target = anchor && document.getElementById(anchor);
     if (target) target.scrollIntoView(); else window.scrollTo(0, 0);
   };
@@ -1652,7 +1871,9 @@ const publishRouterScript = (first: string): string => `
 // Maps the server's absolute-path links (`/<route>`) and in-body anchors (`#<id>`) to the
 // published output's hash routes.
 const toHashLinks = (html: string, route: string): string =>
-    html.replace(/href="\/(?!\/)/g, 'href="#/').replace(/href="#(?!\/)/g, `href="#/${route}#`);
+    html
+        .replace(/(href|data-section-url)="\/(?!\/)/g, '$1="#/')
+        .replace(/href="#(?!\/)/g, `href="#/${route}#`);
 
 /**
  * Turns the whole Site into a single HTML file readable without a server (everything embedded,
@@ -1662,7 +1883,7 @@ const toHashLinks = (html: string, route: string): string =>
 export const publishHtml = (
     site: Site,
     graphJs: string,
-    title = site.title ?? "docs",
+    title = site.title ?? "dooc",
     codeJs = "",
 ): string => {
     const pages = site.entries.map((e) => ({
@@ -1704,12 +1925,10 @@ const entryMain = (site: Site, e: Entry): string => {
         return html;
     }
     const items = kids
-        .map((k) => {
-            const desc = k.frontmatter?.description
-                ? ` <span class="idx-desc">${escapeHtml(k.frontmatter.description)}</span>`
-                : "";
-            return `<li><a href="${docPath(site.entries, k.id)}">${escapeHtml(docDisplayName(k.frontmatter, k.id))}</a>${desc}</li>`;
-        })
+        .map(
+            (k) =>
+                `<li><a href="${docPath(site.entries, k.id)}">${escapeHtml(docDisplayName(k.frontmatter, k.id))}</a></li>`,
+        )
         .join("");
     return html.replace(/<\/article>\s*$/, `<ul class="idx">${items}</ul></article>`);
 };
@@ -1722,12 +1941,16 @@ const entryMain = (site: Site, e: Entry): string => {
  */
 export interface EditorBoot {
     siteTitle?: string;
+    siteIcon?: string;
     contentLanguage?: string;
     sourceLanguage?: string;
+    docLanguage?: string;
+    translatedLanguages?: string[];
     /** `<id>.md` (the save API's key). */
     file: string;
     /** Resolution key for URLs / doc: links. */
     docId: string;
+    title: string;
     path: string;
     body: string;
     figures: string[];
@@ -1737,7 +1960,7 @@ export interface EditorBoot {
     blockLines: number[];
     /** Full source on disk (the base for external-change detection). */
     baseRaw: string;
-    /** Data URI of the sidebar icon (null if none). Shown in the header's icon slot. */
+    /** Data URI of the sidebar icon (null if none). */
     icon: string | null;
     /** Site default language (used for lint when the `lang` field is left empty). */
     defaultLang: string;
@@ -1745,15 +1968,20 @@ export interface EditorBoot {
     spellcheckLang: string;
 }
 
-// Contents of the front-matter fields (innerHTML of `<div class="fm">`). Client-side navigation
-// (edit's doc switch) reuses the panel frame and replaces only this — shared by the initial
-// render (editorAside) and `/api/page`.
-export const fmFieldsHtml = (fm: Frontmatter | undefined, defaultLang = ""): string => {
-    const nameFields = `<label><span data-i18n="title">title</span><input type="text" id="fm-title" value="${escapeHtml(fm?.title ?? "")}"></label>`;
-    return `${nameFields}
-<label><span data-i18n="tags">tags</span><input type="text" id="fm-tags" value="${escapeHtml((fm?.tags ?? []).join(", "))}"></label>
-<label><span data-i18n="desc">desc</span><input type="text" id="fm-description" value="${escapeHtml(fm?.description ?? "")}"></label>
-<label><span data-i18n="lang">lang</span><input type="text" id="fm-lang" value="${escapeHtml(fm?.lang ?? "")}" placeholder="${escapeHtml(defaultLang)}" spellcheck="false"></label>`;
+export const languageFieldHtml = (
+    defaultLang: string,
+    language = contentLanguageCode(defaultLang),
+    translatedLanguages: readonly string[] = [contentLanguageCode(defaultLang)],
+): string => {
+    const existing = new Set(translatedLanguages);
+    const options = [...contentLanguages]
+        .sort((a, b) => Number(existing.has(b.code)) - Number(existing.has(a.code)))
+        .map(
+            ({ code, name }) =>
+                `<option value="${code}" data-name="${escapeHtml(name)}" data-added="${existing.has(code)}"${code === language ? " selected" : ""}>${escapeHtml(name)} (${code})</option>`,
+        )
+        .join("");
+    return `<div class="fm-language"><select id="fm-lang" data-source="${contentLanguageCode(defaultLang)}" aria-label="Change language" data-i18n-aria-label="Change language">${options}</select></div>`;
 };
 
 // The same thing is passed for the initial render (editorAside) and doc switch (`/api/page`)
@@ -1767,6 +1995,9 @@ export const editorBoot = (entry: Entry, site: Site): EditorBoot => {
     }));
     return {
         ...(site.title === undefined ? {} : { siteTitle: site.title }),
+        ...(site.icon === undefined ? {} : { siteIcon: svgDataUri(site.icon) }),
+        ...(entry.frontmatter?.lang ? { docLanguage: entry.frontmatter.lang } : {}),
+        ...(entry.translatedLanguages ? { translatedLanguages: entry.translatedLanguages } : {}),
         ...(site.contentLanguage
             ? {
                   contentLanguage: site.contentLanguage,
@@ -1775,6 +2006,7 @@ export const editorBoot = (entry: Entry, site: Site): EditorBoot => {
             : {}),
         file: entry.file,
         docId: entry.id,
+        title: entry.frontmatter?.title ?? "",
         path: docPath(site.entries, entry.id),
         body: entry.body,
         figures,
@@ -1789,17 +2021,11 @@ export const editorBoot = (entry: Entry, site: Site): EditorBoot => {
     };
 };
 
-// Right panel (header + gear + compact front-matter + CodeMirror mount + width resize handle).
-// Toggles are gathered in the gear's hover menu. A doc switch (`/api/page`) replaces only the
-// file name and the front-matter fields (fmFieldsHtml); the client reuses the frame.
+// Language and editor actions stay in the header; document actions live in the tree.
 const editorAside = (entry: Entry, site: Site): { aside: string; boot: EditorBoot } => {
-    const file = escapeHtml(entry.file);
-    const aside = `<aside id="panel"><div id="resize"></div>
+    const aside = `<aside id="panel"><div id="resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="panel" aria-label="Resize editor" data-i18n-aria-label="Resize editor" title="Resize editor" data-i18n-title="Resize editor"></div>
 <div id="phead">
-<label id="docicon" class="${entry.icon ? "has" : ""}" title="icon" data-i18n-title="icon"><input id="iconfile" type="file" accept=".svg,image/svg+xml" hidden>${entry.icon ? svgImg(entry.icon, "") : ""}<button id="docicon-clear" type="button" title="Remove icon" data-i18n-title="Remove icon" aria-label="Remove icon" data-i18n-aria-label="Remove icon">×</button></label>
-<span id="pfile" title="${file}"><span>${file}</span></span>
-<button id="rename" class="pbtn" type="button" title="rename" data-i18n-title="rename" aria-label="Change doc id" data-i18n-aria-label="Change doc id">${RENAME_ICON}</button>
-<button id="delete" class="pbtn" type="button" title="Delete doc" data-i18n-title="Delete doc" aria-label="Delete doc" data-i18n-aria-label="Delete doc">${DELETE_ICON}</button>
+${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLanguages)}
 <span id="status"></span>
 <span id="preview-status" role="status" data-state="valid" aria-label="Preview is up to date" data-i18n-aria-label="Preview is up to date" title="Preview is up to date"><span data-preview-icon="valid">${icon('<path d="m4 10 4 4 8-8"/>')}</span><span data-preview-icon="error">${icon('<circle cx="10" cy="10" r="7"/><path d="M10 5v6m0 3h.01"/>')}</span><span data-preview-icon="loading">${icon('<path d="M17 10a7 7 0 1 1-7-7"/>')}</span></span>
 <button id="validate" class="pbtn" type="button" title="Validate and apply" data-i18n-title="Validate and apply" aria-label="Validate and apply" data-i18n-aria-label="Validate and apply">${icon('<path d="M5 5l-4 5 4 5M15 5l4 5-4 5M7 10l2 2 4-5"/>')}</button>
@@ -1810,13 +2036,9 @@ const editorAside = (entry: Entry, site: Site): { aside: string; boot: EditorBoo
 <label><input type="checkbox" id="opt-autovalidate"><span data-i18n="Auto validate">Auto validate</span></label>
 <label><input type="checkbox" id="opt-autosave"><span data-i18n="Auto save">Auto save</span></label>
 <label><input type="checkbox" id="opt-corr"><span data-i18n="Source mapping">Source mapping</span></label>
-<label><input type="checkbox" id="opt-fm"><span data-i18n="Front-matter fields">Front-matter fields</span></label>
 </div></div>
 </div>
 
-<div class="fm">
-${fmFieldsHtml(entry.frontmatter, site.defaultLang)}
-</div>
 <div id="cm"></div>
 </aside>`;
     return { aside, boot: editorBoot(entry, site) };
@@ -1849,7 +2071,6 @@ export const pageDataResponse = (site: Site, path: unknown): { status: number; b
             html,
             errors,
             toc: doc.toc,
-            fm: fmFieldsHtml(doc.frontmatter, site.defaultLang),
             boot: editorBoot(doc, site),
         },
     };
@@ -2281,7 +2502,7 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
                                 entry.name === extension || entry.aliases?.includes(extension),
                         );
                         const language = existsSync(
-                            join(root, ".document-system/editor-tools", `${extension}.json`),
+                            join(root, ".dooc/editor-tools", `${extension}.json`),
                         )
                             ? extension
                             : (grammar?.name ?? extension);
@@ -2303,6 +2524,47 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
             }
             if (path === "/api/render" || path === "/api/save") {
                 await handleDraft(req, res, path === "/api/save", locale);
+                return;
+            }
+            if (path === "/api/translation") {
+                if (
+                    !isLocalToolRequest(
+                        req.headers.host ?? "",
+                        req.headers.origin,
+                        req.headers["content-type"],
+                    )
+                ) {
+                    sendJson(res, 403, {
+                        error: "Translations require a same-origin local editor request",
+                    });
+                    return;
+                }
+                const input = await readJson(req);
+                const target = resolveContentFile(input?.file);
+                if (
+                    !target ||
+                    typeof input?.language !== "string" ||
+                    typeof input.added !== "boolean"
+                ) {
+                    sendJson(res, 400, { error: "file / language / added required" });
+                    return;
+                }
+                try {
+                    setDocTranslation(
+                        root,
+                        contentLanguageCode(siteLanguages.defaultLang),
+                        target.id,
+                        input.language,
+                        input.added,
+                    );
+                    sendJson(res, 200, {
+                        translatedLanguages: loadSite().entries.find(
+                            (entry) => entry.id === target.id,
+                        )?.translatedLanguages,
+                    });
+                } catch (error) {
+                    sendJson(res, 400, { error: String(error) });
+                }
                 return;
             }
             if (path === "/api/code-tool") {
@@ -2383,12 +2645,20 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
         }
 
         const site = loadSite(locale);
+        if (req.method === "GET" && path === "/api/search") {
+            sendJson(res, 200, searchIndex(site));
+            return;
+        }
         // edit-mode-only APIs (used by edit-client.ts). handle() strips the query from path, so
         // the query is read from req.url via URL/URLSearchParams.
         if (mode === "edit" && req.method === "GET" && path === "/api/nav") {
             const params = new URL(req.url ?? "/", "http://localhost").searchParams;
             sendJson(res, 200, {
                 siteTitle: site.title,
+                siteIcon: site.icon ? svgDataUri(site.icon) : undefined,
+                translatedLanguages: site.entries.find(
+                    (entry) => entry.id === requestUrl.searchParams.get("current"),
+                )?.translatedLanguages,
                 html: navGroupsHtml(
                     mode,
                     site,
@@ -2477,7 +2747,7 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
     server.once("listening", () => {
         const addr = server.address();
         const p = typeof addr === "object" && addr ? addr.port : port;
-        console.log(`docs ${mode} (${root}): http://localhost:${p}/`);
+        console.log(`dooc ${mode} (${root}): http://localhost:${p}/`);
     });
     const listen = (p: number, left: number): void => {
         server.once("error", (err: NodeJS.ErrnoException) => {

@@ -4,14 +4,14 @@
 
 `Shift+Alt+F` も検証アイコンと同じく、カーソル位置に関係なく現在のページ全体を整形・検査します。保存アイコンは常時表示し、保存済みは緑、エラーは赤、手動保存で未保存の変更がある場合はオレンジになります。
 
-設定はドキュメントルート（manifest.yamlと同じ階層）の `.document-system/editor-tools/<コードフェンスの言語名>.json` に置きます。`js` と `javascript` は別の設定名です。設定変更は次の実行から有効になります。
+設定はドキュメントルート（manifest.yamlと同じ階層）の `.dooc/editor-tools/<コードフェンスの言語名>.json` に置きます。`js` と `javascript` は別の設定名です。設定変更は次の実行から有効になります。
 
-例: `.document-system/editor-tools/typescript.json`
+例: `.dooc/editor-tools/typescript.json`
 
 ```json
 {
     "formatter": ["pnpm", "exec", "prettier", "--stdin-filepath", "example.ts"],
-    "linter": ["node", ".document-system/editor-tools/check-typescript.mjs"]
+    "linter": ["node", ".dooc/editor-tools/check-typescript.mjs"]
 }
 ```
 

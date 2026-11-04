@@ -27,6 +27,7 @@ describe("mcp", () => {
             result: { capabilities: object };
         };
         expect(init.result.capabilities).toEqual({ tools: {} });
+        expect(init.result).toMatchObject({ serverInfo: { name: "dooc" } });
         const list = handleRpc(tools, { jsonrpc: "2.0", id: 1, method: "tools/list" }) as {
             result: { tools: { name: string }[] };
         };

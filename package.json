@@ -1,5 +1,5 @@
 {
-    "name": "@sasaki-s-sci/document-system",
+    "name": "@sasaki-s-sci/dooc",
     "version": "0.0.15",
     "description": "A docs toolkit that compiles an md / svg / html layout convention into docs.json and renders / edits it. The package export is core (docs.json types + routing / HTML rendering / interactive schema graph UI)",
     "type": "module",
@@ -7,7 +7,7 @@
         "dist"
     ],
     "bin": {
-        "document-system": "./dist/cli.js"
+        "dooc": "./dist/cli.js"
     },
     "exports": {
         ".": {
@@ -104,7 +104,7 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/sasaki-s-sci/document-system.git"
+        "url": "git+https://github.com/sasaki-s-sci/dooc.git"
     },
     "publishConfig": {
         "registry": "https://npm.pkg.github.com",

@@ -1,4 +1,3 @@
 fn main() {
-    let language = "Rust";
-    println!("Hello, {language}!");
+    println!("Hello, world!");
 }

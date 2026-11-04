@@ -6,13 +6,25 @@ const fm = (body: string): string => `---\ntitle: "t"\n---\n\n${body}\n`;
 describe("parseDoc", () => {
     it("accepts an in-dialect doc and returns body / front-matter", () => {
         const doc = parseDoc(
-            `---\ntitle: "Sample"\ntags: [sample]\ndescription: "Description."\n---\n\n:::figure(sample_model.png)[Sample model]\n\n## Details\n\nBody \`code\` and [link](https://example.com).\n\n:::callout[Key points]\n- Item\n  - Child\n:::\n`,
+            `---\ntitle: "Sample"\n---\n\n:::figure(sample_model.png)[Sample model]\n\n## Details\n\nBody \`code\` and [link](https://example.com).\n\n:::callout[Key points]\n- Item\n  - Child\n:::\n`,
         );
         expect(doc.errors).toEqual([]);
         expect(doc.frontmatter?.title).toBe("Sample");
         // body is the original text (leaf rewriting only applies to the source used for parsing).
         expect(doc.body.startsWith(":::figure(sample_model.png)[Sample model]")).toBe(true);
         expect(collectRefs(doc.root).figures).toEqual(["sample_model.png"]);
+    });
+
+    it("rejects removed document tags", () => {
+        expect(parseDoc("---\ntitle: Example\ntags: [old]\n---\n").errors.join()).toContain(
+            'unknown key "tags"',
+        );
+    });
+
+    it.each(["description", "desc"])("rejects document %s metadata", (key) => {
+        expect(parseDoc(`---\ntitle: Example\n${key}: Removed\n---\n`).errors.join()).toContain(
+            `unknown key "${key}"`,
+        );
     });
 
     it("requires title", () => {

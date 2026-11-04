@@ -1,6 +1,11 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compileSite } from "../compiler/compile.js";
 import { parseDoc } from "../compiler/dialect.js";
+import { contentLanguages } from "../compiler/language-codes.js";
+import { writeCatalog } from "../compiler/locales.js";
 import { docPath } from "../core/routing.js";
 import { CODE_LANGS } from "../core/taxonomy.js";
 import { BUILTIN_LANGUAGES } from "./languages.js";
@@ -10,8 +15,8 @@ import {
     docQueryResponse,
     type Entry,
     editorBoot,
-    fmFieldsHtml,
     isExternallyModified,
+    languageFieldHtml,
     navGroupsHtml,
     pageDataResponse,
     publishHtml,
@@ -32,18 +37,15 @@ const emptySite = (): Site => ({
 });
 
 describe("assembleDoc", () => {
-    it("serializes front-matter in hand-written style (key order = title / tags / description / lang)", () => {
-        const raw = assembleDoc(
-            { lang: "ja", title: "Overview", tags: ["intro"], description: "Description" },
-            "Body.",
-        );
-        expect(raw).toBe(
-            '---\ntitle: "Overview"\ntags: ["intro"]\ndescription: "Description"\nlang: "ja"\n---\n\nBody.\n',
+    it("serializes only title / lang, dropping legacy description metadata", () => {
+        const legacy = { lang: "ja", title: "Overview", description: "Description" };
+        expect(assembleDoc(legacy, "Body.")).toBe(
+            '---\ntitle: "Overview"\nlang: "ja"\n---\n\nBody.\n',
         );
     });
 
     it("round-trip preserves frontmatter / body (parseDoc reads it back without errors)", () => {
-        const fm = { title: "x", tags: ["a", "b"] };
+        const fm = { title: "x" };
         const raw = assembleDoc(fm, "## Heading\n\nBody");
         const parsed = parseDoc(raw);
         expect(parsed.errors).toEqual([]);
@@ -63,7 +65,7 @@ describe("sanitizeFrontmatter", () => {
                 title: " t ",
                 extra: "ignored",
                 tags: [" ", ""],
-                description: "",
+                description: "Removed document description",
                 lang: "",
             }),
         ).toEqual({ title: "t" });
@@ -151,8 +153,8 @@ describe("navGroupsHtml", () => {
         expect(html).toContain(
             '<div class="nav-list nav-tree" data-parent="a" style="--nav-depth:2"><div class="nav-item open" data-doc-id="b">',
         );
-        expect(html).toContain(
-            '<a class="nav-tree-link cur" href="/a/b/c" title="C"><span class="nav-label">C</span></a>',
+        expect(html).toMatch(
+            /<a class="nav-tree-link cur" href="\/a\/b\/c" title="C"><svg[^>]*class="nav-icon"/,
         );
         // Only docs with children get an open/close toggle; only the branch containing the
         // current doc is open by default
@@ -160,15 +162,29 @@ describe("navGroupsHtml", () => {
         expect(html).toContain('<div class="nav-item" data-doc-id="d">');
     });
 
-    it("edit mode adds draggable rows and add-child buttons without drag handles", () => {
+    it("edit mode exposes editable title/ID labels, SVG, and create/delete actions", () => {
         const edit = navGroupsHtml("edit", fixtureSite(), undefined);
         expect(edit).toContain('draggable="true"');
         expect(edit).not.toContain("drag-handle");
+        expect(edit.match(/class="new"/g)).toHaveLength(4);
         expect(edit).toContain('class="new" type="button" data-parent="b"');
+        expect(edit.match(/class="nav-create"/g)).toHaveLength(1);
+        expect(edit).toContain('class="nav-item nav-placeholder nav-add-hover"');
+        expect(edit).toContain('class="nav-create" type="button" data-parent=""');
+        expect(edit.match(/class="nav-tree-toggle"/g)).toHaveLength(3);
+        expect(edit).not.toContain('class="nav-rename"');
+        expect(edit.match(/aria-keyshortcuts="F2"/g)).toHaveLength(4);
+        expect(edit.match(/data-doc-action="delete"/g)).toHaveLength(4);
+        expect(edit.match(/class="nav-doc-icon"/g)).toHaveLength(4);
+        expect(edit).toContain('<span class="nav-doc-id">b.md</span>');
         const preview = navGroupsHtml("preview", fixtureSite(), undefined);
         expect(preview).not.toContain("draggable");
         expect(preview).not.toContain("drag-handle");
         expect(preview).not.toContain('class="new"');
+        expect(preview).not.toContain("nav-placeholder");
+        expect(preview).not.toContain("data-doc-action");
+        expect(preview).not.toContain('type="file"');
+        expect(preview).not.toContain("nav-doc-id");
     });
 
     it("keeps child pages directly after their parent row in edit mode", () => {
@@ -178,10 +194,17 @@ describe("navGroupsHtml", () => {
         expect(html).not.toContain("Heading");
     });
 
-    it("with no docs, only an empty root list", () => {
+    it("with no docs, shows an empty root placeholder only in edit mode", () => {
         expect(navGroupsHtml("preview", emptySite(), undefined)).toBe(
             '<div class="nav-list nav-root" data-parent=""></div>',
         );
+        const edit = navGroupsHtml("edit", emptySite());
+        expect(edit.match(/class="nav-create"/g)).toHaveLength(1);
+        expect(edit).toContain('class="nav-create" type="button" data-parent=""');
+        expect(edit).toContain('<span class="nav-label">...</span>');
+        expect(edit).toContain('<span class="nav-doc-id">... .md</span>');
+        expect(edit).not.toContain("nav-add-hover");
+        expect(edit.indexOf('class="nav-create"')).toBeLessThan(edit.indexOf("nav-resources"));
     });
 
     it("the Resources section is edit-only (index › kind › individual file), with the current branch open", () => {
@@ -237,7 +260,8 @@ describe("navGroupsHtml", () => {
         expect(html).toContain(
             '<img class="nav-icon doc-icon" alt="" src="data:image/svg+xml;base64,',
         );
-        expect(html).toContain('title="B"><img class="doc-icon"');
+        expect(html).toContain('title="B"><span class="doc-icon-frame"');
+        expect(html).toContain("--doc-icon:url('data:image/svg+xml;base64,");
     });
 });
 
@@ -291,7 +315,7 @@ describe("renderDocFile / docQueryResponse (backing `GET /api/doc`)", () => {
 // only "the parts to replace" so the sidebar isn't rebuilt. The rendering itself
 // (renderEntryHtml) reads from disk, so here we check the pure pieces (front-matter fields /
 // boot) and the route resolution.
-describe("fmFieldsHtml / editorBoot / pageDataResponse (backing `GET /api/page`)", () => {
+describe("editorBoot / pageDataResponse (backing `GET /api/page`)", () => {
     const docSite = (): Site => ({
         entries: [
             {
@@ -318,22 +342,13 @@ describe("fmFieldsHtml / editorBoot / pageDataResponse (backing `GET /api/page`)
         defaultLang: "en",
     });
 
-    it("fmFieldsHtml: fills the title / tags / description / lang fields with the current values", () => {
-        const html = fmFieldsHtml({ title: "A", tags: ["t1", "t2"] }, "en");
-        expect(html).toContain('id="fm-title"');
-        expect(html).toContain('value="A"');
-        expect(html).toContain('value="t1, t2"');
-        // An empty lang field shows the site default as its placeholder.
-        expect(html).toContain('id="fm-lang" value="" placeholder="en"');
-        expect(fmFieldsHtml({ title: "A", lang: "ja" })).toContain('id="fm-lang" value="ja"');
-    });
-
     it("editorBoot: carries the save key / doc id and completion candidates (figures, docs, terms)", () => {
         const site = docSite();
         const entry = site.entries[0] as Entry;
         expect(editorBoot(entry, site)).toEqual({
             file: "a.md",
             docId: "a",
+            title: "A",
             path: "/a",
             body: "Body\n",
             figures: ["fig-x.svg"],
@@ -346,6 +361,20 @@ describe("fmFieldsHtml / editorBoot / pageDataResponse (backing `GET /api/page`)
             defaultLang: "en",
             spellcheckLang: "en",
         });
+    });
+
+    it("lists every ISO language and marks translations for this document", () => {
+        const html = languageFieldHtml("jpn", "deu", ["jpn", "eng"]);
+        expect(html.match(/<option /g)).toHaveLength(contentLanguages.length);
+        expect(html).toContain('value="eng" data-name="English" data-added="true">English (eng)');
+        expect(html).toContain(
+            'value="deu" data-name="German" data-added="false" selected>German (deu)',
+        );
+        expect(html).toContain('data-source="jpn"');
+        const existing = languageFieldHtml("jpn", "eng", ["jpn", "eng"]);
+        expect(existing).toContain(
+            'value="eng" data-name="English" data-added="true" selected>English (eng)',
+        );
     });
 
     it("editorBoot: spellcheck language comes from the doc language's adapter, else the tag", () => {
@@ -368,7 +397,7 @@ describe("fmFieldsHtml / editorBoot / pageDataResponse (backing `GET /api/page`)
         );
         expect(html).toContain('data-title="A — 資料 &amp; &quot;API&quot; &lt;guide&gt;"');
         expect(html).not.toContain("crumb-");
-        expect(publishHtml(docSite(), "")).toContain('class="site-title" title="docs">docs</div>');
+        expect(publishHtml(docSite(), "")).toContain('class="site-title" title="dooc">dooc</div>');
     });
 
     it("pageDataResponse: 404 when not a doc route (the caller falls back to normal navigation)", () => {
@@ -430,9 +459,9 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
     const html = publishHtml(site, "window.graph = '</script>';");
 
     it("uses the compiled manifest title for the site header and browser tab", () => {
-        expect(site.title).toBe("Document System");
-        expect(html).toContain("<title>Document System</title>");
-        expect(html).toContain('class="site-title" title="Document System">Document System</div>');
+        expect(site.title).toBe("dooc");
+        expect(html).toContain("<title>dooc</title>");
+        expect(html).toContain('class="site-title" title="dooc">dooc</div>');
     });
 
     it("lists terms under Resources, with sorting only on the list page", () => {
@@ -458,14 +487,35 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
         ["eng", "Contents"],
         ["zho", "目录"],
     ])("localizes Contents in %s articles, including exported HTML", (locale, title) => {
-        const root = new URL("../../sample-content", import.meta.url).pathname;
-        const localized = siteFrom(compileSite(root, { defaultLang: "jpn", locale }));
-        const entry = localized.entries.find((doc) => doc.id === "media");
-        if (!entry) throw new Error("Missing media article");
-        const rendered = renderDocFile(localized, entry.file, entry.raw);
-        for (const output of [rendered.html, publishHtml(localized, "")]) {
-            expect(output).toContain(`class="in-toc-title">${title}</div>`);
-            expect(output).toContain(`class="in-toc" aria-label="${title}"`);
+        const root = mkdtempSync(join(tmpdir(), "docs-contents-"));
+        try {
+            const body = "## First\n\nText.\n\n## Second\n\nText.\n";
+            mkdirSync(join(root, "content"));
+            writeFileSync(join(root, "manifest.yaml"), "- article\n");
+            writeFileSync(
+                join(root, "content/article.md"),
+                assembleDoc({ title: "Article" }, body),
+            );
+            if (locale !== "jpn") {
+                writeCatalog(root, locale, { article: { title: "Article", body } });
+            }
+            const compiled = compileSite(root, { defaultLang: "jpn", locale });
+            expect(compiled.errors).toEqual([]);
+            const localized = siteFrom(compiled);
+            const entry = localized.entries[0];
+            if (!entry) throw new Error("Missing article");
+            expect(entry.lang).toBe(locale);
+            const rendered = renderDocFile(localized, entry.file, entry.raw);
+            expect(rendered.html).toContain(`data-section-url="/article?lang=${locale}#first"`);
+            expect(publishHtml(localized, "")).toContain(
+                `data-section-url="#/article?lang=${locale}#second"`,
+            );
+            for (const output of [rendered.html, publishHtml(localized, "")]) {
+                expect(output).toContain(`class="in-toc-title">${title}</div>`);
+                expect(output).toContain(`class="in-toc" aria-label="${title}"`);
+            }
+        } finally {
+            rmSync(root, { recursive: true, force: true });
         }
     });
 
@@ -489,9 +539,7 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
         const output = publishHtml(emptyGuide, "");
         const guide =
             /<template data-route="guide"[^>]*>(.*?)<\/template>/s.exec(output)?.[1] ?? "";
-        expect(guide).toContain(
-            '<ul class="idx"><li><a href="#/guide/getting-started">はじめに</a>',
-        );
+        expect(guide).toContain('<ul class="idx"><li><a href="#/guide/writing">書き方</a>');
     });
 
     it("has no server-provided scripts (graph bundle is inlined, </script> is escaped)", () => {

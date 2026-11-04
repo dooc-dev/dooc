@@ -5,6 +5,7 @@ import { normalizeLeafDirectives, TEXTFILE_LINE_RE } from "../core/taxonomy.js";
 import { isRemoteTextfile, textfileName } from "../core/textfile.js";
 import { editorCodeHighlight } from "./edit-code-highlight.js";
 import { chooseConflict } from "./edit-conflict.js";
+import { confirmDialog } from "./edit-dialog.js";
 import { createFoldButton } from "./edit-fold.js";
 import { editorSetup } from "./edit-setup.js";
 import { t } from "./i18n.js";
@@ -257,8 +258,15 @@ export const createTextfileEditors = (
                 });
                 saveButton.addEventListener("click", () => void save(this.file, current));
                 format.addEventListener("click", () => void validate(this.file, current));
-                reload.addEventListener("click", () => {
-                    if (!dirty(current) || window.confirm(t("Discard file edits and reload?")))
+                reload.addEventListener("click", async () => {
+                    if (
+                        !dirty(current) ||
+                        (await confirmDialog(
+                            t("Discard file edits and reload?"),
+                            t("Reload file"),
+                            true,
+                        ))
+                    )
                         void load(this.file, current);
                 });
                 return subscribe(() => {

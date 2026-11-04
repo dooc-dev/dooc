@@ -49,6 +49,11 @@ describe("manifest", () => {
     });
 
     it.each([
+        { icon: "../logo.svg", docs: [] },
+        { icon: "/logo.svg", docs: [] },
+        { icon: "https://example.com/logo.svg", docs: [] },
+        { icon: "logo.png", docs: [] },
+        { icon: 42, docs: [] },
         { title: " ", docs: [] },
         { title: 42, docs: [] },
         { title: null, docs: [] },
@@ -57,6 +62,17 @@ describe("manifest", () => {
         { title: "Guide", docs: [], extra: true },
     ])("rejects malformed site metadata: %j", (value) => {
         expect(parseManifest(value).errors.length).toBeGreaterThan(0);
+    });
+
+    it("round-trips a file-based site icon with or without a title", () => {
+        for (const title of [undefined, "Guide"]) {
+            expect(parseManifestText(serializeManifest(tree, title, "assets/logo.svg"))).toEqual({
+                tree,
+                ...(title ? { title } : {}),
+                icon: "assets/logo.svg",
+                errors: [],
+            });
+        }
     });
 
     it("flattenTree yields pre-order + parent + depth", () => {

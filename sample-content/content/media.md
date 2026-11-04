@@ -1,69 +1,45 @@
 ---
-title: "図・HTML・動画・音声"
+title: "図とデータ"
 lang: "jpn"
-description: "図やHTMLに加えて、外部サイト・MP4動画・WAV音声を埋め込む。"
 ---
 
-## SVGの構成図
+流れは関係図、データの関連はスキーマで表します。SVGとHTMLは `figures/` に置きます。
 
-SVGは、拡大しても文字や線がぼやけない図に適しています。
+## 関係図
 
-:::figure(overview.svg)[入力から表示までの全体像]
+`:::graph` の中でノードを定義し、`->` でつなぎます。
 
-```
-:::figure(overview.svg)[入力から表示までの全体像]
-```
+:::graph[文書を共有する流れ]
+[write]: 書く
+[check]: 確認する
+[share]: 共有する
+[write] -> [check]
+[check] -> [share]
+:::
 
-## HTMLの処理フロー
+## スキーマ
 
-HTML断片では、CSSで配置や状態を表現できます。以下は保存から表示までの流れを説明する模式図です。実際の処理状態と連動するものではありません。
+架空の執筆者と文書のモデルです。`pk` は主キー、`fk(authors)` は執筆者への参照を表します。
 
-:::html(pipeline.html)
+:::schema[執筆者と文書]
+authors:
+  id: pk
+  name: string
 
-```
-:::html(pipeline.html)
-```
+documents:
+  id: pk
+  author_id: fk(authors)
+  title: string
+:::
 
-## 外部サイトを埋め込む
+## SVG
 
-HTML断片に iframe を書くと、外部URLのページを表示できます。この例は OpenStreetMap の地図です。
+`:::figure(overview.svg)[入力と出力]` で図と説明を表示します。
 
-:::html(external-iframe.html)
+:::figure(overview.svg)[入力と出力]
 
-```
-:::html(external-iframe.html)
-```
+## HTML
 
-埋め込み先のサイトが表示を許可している必要があります。HTML断片は sandbox 内で表示されるため、ログインやフォームなどの機能には制限があります。
+`:::html(note.html)` でHTML断片を表示します。下の補足はクリックやキーボードで開閉できます。
 
-## MP4動画を再生する
-
-HTML断片の video 要素で外部のMP4を参照します。再生ボタンを押すと、MDNの花のサンプル動画が再生されます。自動再生はしません。
-
-:::html(external-video.html)
-
-```
-:::html(external-video.html)
-```
-
-## WAV音声を再生する
-
-WAVは音声ファイルです。HTML断片の audio 要素で参照し、再生ボタンを押してMDNのサンプル音声を確認できます。
-
-:::html(external-audio.html)
-
-```
-:::html(external-audio.html)
-```
-
-これらの例にはインターネット接続が必要です。HTMLやJSONの出力には外部URLが残り、動画・音声ファイル自体は同梱されません。ローカルのMP4・WAVを figures/ に置くだけでは取り込まれません。
-
-## リソースを選ぶ
-
-| 形式 | 用途 |
-| --- | --- |
-| SVG / drawio.svg | 構成図、説明図 |
-| PNG / WebP / JPEG | スクリーンショット、写真 |
-| HTML断片 | 本文に埋め込む表示 |
-
-HTMLの説明図はリソース一覧の HTML → intro.html から確認できます。図の参照は Fig. overview のように本文にも書けます。
+:::html(note.html)

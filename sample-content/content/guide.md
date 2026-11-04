@@ -1,35 +1,40 @@
 ---
-title: "ドキュメントガイド"
-description: "読む・書く・共有する流れと、各種リソースの表示例。"
+title: "はじめに"
 lang: "jpn"
 ---
 
-このサンプルは、チームの技術資料をまとめるドキュメントサイトです。左のツリーを開くと、ガイド・設計資料・リファレンスを最大3階層でたどれます。
 
-## 目的から探す
+## 起動する
 
-| やりたいこと     | 最初に読むページ                 | 試せること           |
-| ---------------- | -------------------------------- | -------------------- |
-| サイトを起動する | [はじめに](doc\:getting-started) | 編集とプレビュー     |
-| 記事を書く       | [執筆ガイド](doc\:writing)       | 表・コード・注意書き |
-| 図を載せる       | [図とHTML](doc\:media)           | SVGとHTMLの埋め込み  |
-| 設計を伝える     | [設計資料](doc\:architecture)    | 関係図とデータモデル |
-| 資料を配る       | [書き出し](doc\:publishing)      | JSON・HTML・ZIP      |
+リポジトリのルートで実行します。
 
-## 図で見る全体像
+```bash
+mise run edit
+```
 
-:::figure(overview.svg)[文書・図・HTMLの説明図をまとめて配信する流れ]
+表示されたURLを開き、本文を編集して保存します。変更は `sample-content/` 内のファイルに反映されます。
 
-:::term(docs-root) に資料を集め、:::term(compiler) が :::term(artifact) に変換します。用語参照にカーソルを合わせると、各記事で宣言した説明を確認できます。
+## 構成を知る
 
-## HTMLの説明図で見る使い方
+```text
+sample-content/
+  docs.config.mjs       # 既定の言語
+  manifest.yaml         # 目次と表示順
+  content/              # 本文
+    guide.md
+    writing.md
+    media.md
+    publishing.md
+  figures/              # SVG・HTML
+  examples/             # 掲載するコード
+```
 
-資料を集め、構造を整え、共有する3ステップをHTMLで紹介します。
+本文は `content/<id>.md` に置きます。ページの親子関係は `manifest.yaml` で指定します。
 
-:::html(intro.html)
+:::textfile(manifest.yaml)
 
-:::callout[このサンプルの読み方]
-- まずはこのページで図とHTMLの説明図の表示を確認します。
-- 各ページのリンクを使い、本文とリソースを行き来します。
-- 記事を編集するときは、[公開前チェック](doc:a)を使います。
-:::
+## 次に読む
+
+- [書き方](doc:writing)：Markdown・ファイル参照・用語。
+- [図とデータ](doc:media)：関係図・スキーマ・SVG・HTML。
+- [書き出し](doc:publishing)：HTML・JSON・ZIPで共有。

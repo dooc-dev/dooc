@@ -1,4 +1,4 @@
-// stdio MCP server that reads and writes the docs root (`document-system mcp [root]`). MCP is
+// stdio MCP server that reads and writes the docs root (`dooc mcp [root]`). MCP is
 // newline-delimited JSON-RPC 2.0 and we only use initialize / tools/list / tools/call, so we
 // speak it directly without the SDK. stdout is for the protocol only; logs go to stderr.
 import { readFileSync } from "node:fs";
@@ -216,7 +216,7 @@ export const handleRpc = (tools: Record<string, Tool>, msg: Rpc): object | undef
             return reply({
                 protocolVersion: msg.params?.protocolVersion ?? "2025-06-18",
                 capabilities: { tools: {} },
-                serverInfo: { name: "document-system", version: "0" },
+                serverInfo: { name: "dooc", version: "0" },
             });
         case "ping":
             return reply({});
@@ -265,7 +265,7 @@ export const startMcp = async (root: string): Promise<void> => {
     // Only the default language matters here (docs are read / validated, not rendered).
     const { defaultLang } = await loadDocsConfig(root);
     const tools = createTools(root, { defaultLang });
-    console.error(`document-system mcp: ${root}`);
+    console.error(`dooc mcp: ${root}`);
     createInterface({ input: process.stdin }).on("line", (line) => {
         if (line.trim() === "") {
             return;

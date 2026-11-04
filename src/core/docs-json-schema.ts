@@ -4,9 +4,10 @@ import schema10 from "./docs-json-schema/10.json" with { type: "json" };
 import schema11 from "./docs-json-schema/11.json" with { type: "json" };
 import schema12 from "./docs-json-schema/12.json" with { type: "json" };
 import schema13 from "./docs-json-schema/13.json" with { type: "json" };
+import schema14 from "./docs-json-schema/14.json" with { type: "json" };
 import { GENERATION } from "./generation.js";
 
-const schemas = [schema10, schema11, schema12, schema13];
+const schemas = [schema10, schema11, schema12, schema13, schema14];
 const ajv = new Ajv({ allErrors: true }).addSchema(schemas);
 
 /** Bundled schema versions, in ascending order (independent of the package version). */

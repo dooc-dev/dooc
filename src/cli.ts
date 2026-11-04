@@ -15,7 +15,7 @@ import { figureName } from "./compiler/figures.js";
 import { createDocOps, isOpError, type OpResult } from "./compiler/ops.js";
 import { zip } from "./compiler/zip.js";
 
-const USAGE = `usage: document-system <command>
+const USAGE = `usage: dooc <command>
 
   preview [root] [port]              read-only viewer with document hot reload
   edit [root] [port]                 editor
@@ -79,7 +79,7 @@ const [command, ...args] = process.argv.slice(2);
 switch (command) {
     case "json-schema": {
         const [version, extra] = args;
-        if (!version || extra) fail("usage: document-system json-schema <ls|latest|version>");
+        if (!version || extra) fail("usage: dooc json-schema <ls|latest|version>");
         const { getDocsJsonSchema, listDocsJsonSchemas } = await import(
             "./core/docs-json-schema.js"
         );
@@ -165,7 +165,7 @@ switch (command) {
         const input =
             rawInput || fail("code-language add requires a language name or grammar JSON file");
         if (action !== "add" || extra)
-            fail(`usage: document-system code-language add <language|grammar.json> [--root <dir>]`);
+            fail(`usage: dooc code-language add <language|grammar.json> [--root <dir>]`);
         const { addCodeLanguage } = await import("./compiler/code-languages.js");
         try {
             console.log(`added ${await addCodeLanguage(docsRoot(values.root), input)}`);

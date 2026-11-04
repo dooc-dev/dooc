@@ -46,7 +46,9 @@ export const classifyChange = (rel: string): HmrKind | undefined => {
         p === "src/viewer/edit-code-highlight.ts" ||
         p === "src/viewer/code-tokens.ts" ||
         p === "src/viewer/i18n.ts" ||
+        p === "src/viewer/language-picker.ts" ||
         p === "src/viewer/ui-client.ts" ||
+        p === "src/viewer/nav-focus.ts" ||
         p === "src/viewer/code-highlight.ts" ||
         (p.startsWith("src/viewer/locales/") && p.endsWith(".json")) ||
         (p.startsWith("src/core/") && p.endsWith(".tsx"))
@@ -214,7 +216,7 @@ export const watchProject = (
 
 /**
  * Client script injected into page(). How changes are applied depends on mode:
- *   preview = swap the main <main> + nav (keeping scroll / sidebar state / search term).
+ *   preview = swap the main <main> + nav (keeping scroll / sidebar state).
  *   edit    = delegate content changes to `window.__docsHmr.onContent` (registered by
  *             edit-client.ts) without reloading (pages without it, e.g. the new page, reload).
  *             Changes to the client bundle (`src/viewer/edit-client.ts` / `src/core/*.tsx`) and
@@ -262,12 +264,15 @@ export const hmrClientScript = (mode: ServeMode): string => `
       title.textContent = nextTitle.textContent;
       title.title = nextTitle.title;
     }
+    const logo = document.getElementById("site-icon");
+    const nextLogo = next.getElementById("site-icon");
+    if (logo && nextLogo) logo.replaceWith(nextLogo);
     main.innerHTML = nextMain.innerHTML;
     const nav = document.getElementById("nav-groups");
     const nextNav = next.getElementById("nav-groups");
     if (nav && nextNav) {
       nav.innerHTML = nextNav.innerHTML;
-      if (window.__docsNavFilter) window.__docsNavFilter();
+      if (window.__docsNavRestore) window.__docsNavRestore();
     }
     window.scrollTo(0, y);
   };

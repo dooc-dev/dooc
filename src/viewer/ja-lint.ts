@@ -1,5 +1,5 @@
 // Japanese typo detection = the `ja` adapter's prose lint (language socket; attached in
-// languages.ts, served via /api/lint for document-system edit). textlint is not bundled into the
+// languages.ts, served via /api/lint for dooc edit). textlint is not bundled into the
 // client (edit-client.ts) to avoid bloating the bundle; only offset-annotated findings are sent.
 import { createRequire } from "node:module";
 import {

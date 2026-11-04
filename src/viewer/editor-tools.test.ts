@@ -18,7 +18,7 @@ afterEach(async () => {
 async function fixture(formatter: string, linter = "require('node:fs').writeSync(1,'[]')") {
     const root = await mkdtemp(join(tmpdir(), "editor-tools-"));
     roots.push(root);
-    const dir = join(root, ".document-system/editor-tools");
+    const dir = join(root, ".dooc/editor-tools");
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "format.cjs"), formatter);
     await writeFile(join(dir, "lint.cjs"), linter);
@@ -91,9 +91,9 @@ describe("external editor tools", () => {
     it("includes editor configuration and adapters in source exports", async () => {
         const root = await fixture("");
         expect(exportEntries(root).map((entry) => entry.name)).toEqual([
-            ".document-system/editor-tools/format.cjs",
-            ".document-system/editor-tools/js.json",
-            ".document-system/editor-tools/lint.cjs",
+            ".dooc/editor-tools/format.cjs",
+            ".dooc/editor-tools/js.json",
+            ".dooc/editor-tools/lint.cjs",
         ]);
     });
     it("refuses empty formatter output instead of deleting code", async () => {
@@ -266,7 +266,7 @@ describe("registered tools across page blocks", () => {
     });
     it("supports formatter-only and linter-only language registrations", async () => {
         const root = await fixture("");
-        const dir = join(root, ".document-system/editor-tools");
+        const dir = join(root, ".dooc/editor-tools");
         await writeFile(
             join(dir, "fmt.json"),
             JSON.stringify({

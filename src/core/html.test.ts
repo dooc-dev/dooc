@@ -29,6 +29,14 @@ const html = (body: string, ctx?: RenderCtx): string =>
     blocksHtml(toBlocks(parseDoc(fm(body)).root, parseDoc(fm(body)).source).blocks, ctx);
 
 describe("blocksHtml", () => {
+    it("ignores legacy document descriptions and keeps figure descriptions", () => {
+        const legacy = { title: "Guide", description: "Removed document description" };
+        const output = docHtml(legacy, [{ type: "figureRef", name: MODEL_FIG.name }], [], CTX);
+        expect(output).not.toContain(legacy.description);
+        expect(output).not.toContain('class="lead"');
+        expect(output).toContain(MODEL_FIG.desc);
+    });
+
     it("escapes a localized table of contents title in text and its accessible label", () => {
         const output = docHtml({ title: "Guide" }, [], [], { ...CTX, tocTitle: '<Contents "&">' }, [
             { depth: 2, text: "Section", slug: "section" },
@@ -53,6 +61,19 @@ describe("blocksHtml", () => {
         expect(out).toContain('<h2 id="overview">Overview</h2>');
         expect(out).toContain('<h2 id="section-2">背景</h2>');
         expect(out).toContain('<h2 id="section-1-1">Section 1</h2>');
+    });
+
+    it("adds copyable section URLs only when the viewer supplies the document URL", () => {
+        const body = "## First\n\nText.\n\n## First";
+        expect(html(body)).not.toContain("section-copy");
+        const output = html(body, { ...CTX, sectionUrl: '/guide/api?lang=jpn&value="quoted"' });
+        expect(output).toContain(
+            'data-section-url="/guide/api?lang=jpn&amp;value=&quot;quoted&quot;#first"',
+        );
+        expect(output).toContain(
+            'data-section-url="/guide/api?lang=jpn&amp;value=&quot;quoted&quot;#first-1"',
+        );
+        expect(output.match(/class="section-copy"/g)).toHaveLength(2);
     });
 
     it("resolves doc: links to the route path via routing", () => {

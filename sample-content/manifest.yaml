@@ -1,15 +1,13 @@
-title: "Document System"
+title: "dooc"
+icon: "logo.svg"
 docs:
   - guide:
-      - getting-started:
-          - layout
-      - writing:
-          - media
-          - a
-  - architecture:
-      - flow
-      - data-model
-  - reference:
-      - syntax
-      - terms
+      - writing
+      - media:
+          - aaa:
+              - bbbb:
+                  - xdddd
+              - ccccc
+          - bbb:
+              - a
       - publishing

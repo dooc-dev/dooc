@@ -1,5 +1,5 @@
-// Browser client for document-system edit (bundled by serve.ts with esbuild, served at
-// /assets/edit.js). Right panel: compact front matter + CodeMirror. Insertion is done via in-editor
+// Browser client for dooc edit (bundled by serve.ts with esbuild, served at
+// /assets/edit.js). Sidebar: document properties. Right panel: language + CodeMirror. Insertion is done via in-editor
 // autocomplete (the `/` palette and contextual completion). Toggles (autosave / correspondence
 // view / fm visibility / theme) live in the header's gear hover menu. Width is adjustable by drag
 // or keyboard. Input is debounced to /api/render and reflected live in the left pane (main
@@ -8,7 +8,7 @@
 // matching CM lines in both directions.
 // Switching docs is client-side navigation (end of file): the sidebar keeps the initial server
 // render and only the main content / panel / CM contents are swapped (so the nav scroll position
-// and search query survive a switch).
+// survives a switch).
 // This file is outside the publish surface (dev tool only).
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: `${...}` is a CodeMirror snippet field
 import {
@@ -36,6 +36,7 @@ import {
 } from "../core/taxonomy.js";
 import { editorCodeHighlight } from "./edit-code-highlight.js";
 import { chooseConflict } from "./edit-conflict.js";
+import { confirmDialog, showNotice } from "./edit-dialog.js";
 import { inlineFoldButtons } from "./edit-fold.js";
 import { schemaCompletion } from "./edit-schema-completion.js";
 import { editorSetup } from "./edit-setup.js";
@@ -43,14 +44,19 @@ import { createTextfileEditors } from "./edit-textfile.js";
 import { CODE_BLOCK_NODE_NAMES, isEditingCodeBlock } from "./edit-validation.js";
 import type { HmrBridge } from "./hmr.js";
 import { applyUiLanguage, mountUiLanguage, t } from "./i18n.js";
+import { focusNavTree } from "./nav-focus.js";
 
 interface Boot {
     siteTitle?: string;
+    siteIcon?: string;
     contentLanguage?: string;
     sourceLanguage?: string;
+    docLanguage?: string;
+    translatedLanguages?: string[];
     file: string;
     /** Resolution key for URLs / doc: links (= file name stem; current value in the rename UI). */
     docId: string;
+    title: string;
     path: string;
     body: string;
     figures: string[];
@@ -94,8 +100,6 @@ interface DeleteResponse {
 
 interface DraftFrontmatter {
     title?: string;
-    tags?: string[];
-    description?: string;
     lang?: string;
 }
 
@@ -135,8 +139,10 @@ interface DocResponse extends RenderSnapshot {
 
 /** Response of GET /api/nav?current=<docId> (inner html of `#nav-groups`). */
 interface NavResponse {
+    translatedLanguages?: string[];
     html: string;
     siteTitle?: string;
+    siteIcon?: string;
 }
 
 /**
@@ -147,8 +153,6 @@ interface PageResponse extends Omit<RenderSnapshot, "blockLines"> {
     /** Browser tab title (final form assembled by the server). */
     title: string;
     file: string;
-    /** Inner content of `<div class="fm">` (the front-matter fields vary with the doc's schema). */
-    fm: string;
     boot: Boot;
 }
 
@@ -186,6 +190,7 @@ const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) 
 // rebuild the sidebar / panel DOM; it only replaces this, the CM contents and the main html.
 let boot = JSON.parse($("boot").textContent ?? "{}") as Boot;
 let siteTitle = boot.siteTitle;
+let siteIcon = boot.siteIcon;
 const localeUrl = (path: string): string => {
     const url = new URL(path, location.origin);
     url.searchParams.set("lang", boot.contentLanguage ?? boot.defaultLang);
@@ -237,14 +242,30 @@ const updatePreview = (fragment: DocumentFragment): void => {
 mountUiLanguage();
 
 const updateLanguageControls = (): void => {
-    for (const button of document.querySelectorAll<HTMLButtonElement>(".language-option")) {
-        button.setAttribute(
-            "aria-checked",
-            String(button.dataset.language === (boot.contentLanguage ?? boot.defaultLang)),
-        );
+    const lang = $<HTMLSelectElement>("fm-lang");
+    const language = boot.contentLanguage ?? boot.defaultLang;
+    const existing = new Set(boot.translatedLanguages ?? [boot.sourceLanguage ?? boot.defaultLang]);
+    const options = [...lang.options].sort(
+        (a, b) =>
+            Number(existing.has(b.value)) - Number(existing.has(a.value)) ||
+            (a.dataset.name ?? "").localeCompare(b.dataset.name ?? ""),
+    );
+    const menu = document.createDocumentFragment();
+    for (const option of options) {
+        option.dataset.added = String(existing.has(option.value));
+        if (!existing.has(option.value)) continue;
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "language-option";
+        button.dataset.language = option.value;
+        button.textContent = option.dataset.name ?? option.text;
+        button.setAttribute("role", "menuitemradio");
+        button.setAttribute("aria-checked", String(option.value === language));
+        menu.append(button);
     }
-    const lang = $<HTMLInputElement>("fm-lang");
-    lang.readOnly = boot.contentLanguage !== boot.sourceLanguage;
+    lang.replaceChildren(...options);
+    lang.value = language;
+    $("preview-language-menu").replaceChildren(menu);
     applyUiLanguage();
 };
 updateLanguageControls();
@@ -281,8 +302,6 @@ autovalidateEl.checked = localStorage.getItem("docs-edit:autovalidate") === "1";
 
 const AUTOSAVE_KEY = "docs-edit:autosave";
 const CORR_KEY = "docs-edit:corr";
-const FM_KEY = "docs-edit:fm";
-const RESIZE_KEY = "docs-edit:panelw";
 
 let dirty = false;
 // Notification hook for HMR (the hmr.ts client script). Passes dirty so unsaved edits are not
@@ -334,22 +353,15 @@ const setStatus = (text: string, err = false): void => {
 };
 
 const readFm = (): DraftFrontmatter => ({
-    title: $<HTMLInputElement>("fm-title").value,
-    description: $<HTMLInputElement>("fm-description").value,
-    tags: $<HTMLInputElement>("fm-tags")
-        .value.split(",")
-        .map((t) => t.trim())
-        .filter((t) => t !== ""),
-    lang: $<HTMLInputElement>("fm-lang").value,
+    title: boot.title,
+    lang: boot.docLanguage ?? "",
 });
 
 // Reflect a conflict (disk frontmatter -> form). Inverse of readFm. Assigning value
 // programmatically doesn't fire input events, so it doesn't trigger onChange (= marking dirty).
 const applyFm = (fm: DraftFrontmatter | undefined): void => {
-    $<HTMLInputElement>("fm-title").value = fm?.title ?? "";
-    $<HTMLInputElement>("fm-tags").value = (fm?.tags ?? []).join(", ");
-    $<HTMLInputElement>("fm-description").value = fm?.description ?? "";
-    $<HTMLInputElement>("fm-lang").value = fm?.lang ?? "";
+    boot.title = fm?.title ?? "";
+    boot.docLanguage = fm?.lang;
 };
 
 const debounce = (ms: number, fn: () => void): (() => void) => {
@@ -488,7 +500,7 @@ const runLint = async (automatic = false): Promise<LintFinding[] | undefined> =>
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
             body: doc.toString(),
-            lang: $<HTMLInputElement>("fm-lang").value.trim() || boot.defaultLang,
+            lang: boot.docLanguage || boot.defaultLang,
         }),
     });
     if (!res.ok) throw new Error(`Validation failed: ${res.status}`);
@@ -1046,10 +1058,14 @@ const post = async (url: string): Promise<DraftResponse> => {
 // Keep the active page, its live title and the ancestor breadcrumb in sync.
 const updateNavLocation = (): void => {
     const header = $("site-title");
-    header.textContent = header.title = siteTitle ?? "docs";
-    const docTitle = $<HTMLInputElement>("fm-title").value.trim() || boot.docId;
+    header.textContent = header.title = siteTitle ?? "dooc";
+    const logo = $<HTMLImageElement>("site-icon");
+    logo.hidden = !siteIcon;
+    if (siteIcon) logo.src = siteIcon;
+    else logo.removeAttribute("src");
+    const docTitle = boot.title.trim() || boot.docId;
     document.title =
-        docTitle === siteTitle ? docTitle : `${docTitle} — ${siteTitle ?? "docs edit"}`;
+        docTitle === siteTitle ? docTitle : `${docTitle} — ${siteTitle ?? "dooc edit"}`;
     const item = document.querySelector<HTMLElement>(
         `#nav-groups .nav-item[data-doc-id="${CSS.escape(boot.docId)}"]`,
     );
@@ -1063,11 +1079,10 @@ const updateNavLocation = (): void => {
     }
     const cur = item.querySelector(":scope > .nav-row > a");
     cur?.classList.add("cur");
-    // Reflect the right panel's title input live in the nav label too (empty -> id, like the
-    // server's docDisplayName).
+    // Reflect the current title (empty -> id, like the server's docDisplayName).
     const label = cur?.querySelector(".nav-label");
     if (cur && label) {
-        label.textContent = $<HTMLInputElement>("fm-title").value.trim() || boot.docId;
+        label.textContent = boot.title.trim() || boot.docId;
         cur.setAttribute("title", label.textContent);
     }
     for (
@@ -1077,6 +1092,7 @@ const updateNavLocation = (): void => {
     ) {
         it.classList.add("open");
     }
+    focusNavTree($("nav-groups"));
 };
 
 const apply = (r: RenderSnapshot, keepLastValid = true): void => {
@@ -1169,8 +1185,7 @@ const render = async (): Promise<RenderSnapshot | undefined> => {
 // cursor/scroll/undo history and unsaved content are left untouched (for other files) / left
 // untouched if dirty (for our own file).
 
-// Replace the nav (`#nav-groups`) with the current list on disk and re-apply any search query
-// (`window.__docsNavFilter` is exposed by serve.ts's nav search script).
+// Refresh the tree and restore its expanded branches.
 const refreshNav = async (): Promise<void> => {
     const requestedBoot = boot;
     try {
@@ -1179,8 +1194,11 @@ const refreshNav = async (): Promise<void> => {
             return;
         }
         const data = (await res.json()) as NavResponse;
-        if (boot !== requestedBoot) return;
+        if (boot !== requestedBoot || document.querySelector(".nav-rename-form")) return;
         siteTitle = data.siteTitle;
+        siteIcon = data.siteIcon;
+        boot.translatedLanguages = data.translatedLanguages;
+        updateLanguageControls();
         const navGroups = document.getElementById("nav-groups");
         if (navGroups) {
             navGroups.innerHTML = data.html;
@@ -1197,7 +1215,7 @@ const refreshNav = async (): Promise<void> => {
                 history.replaceState(null, "", localeUrl(currentPath + location.hash));
             }
         }
-        (window as unknown as { __docsNavFilter?: () => void }).__docsNavFilter?.();
+        (window as unknown as { __docsNavRestore?: () => void }).__docsNavRestore?.();
         updateNavLocation();
         applyUiLanguage();
     } catch {
@@ -1215,6 +1233,10 @@ const refreshNav = async (): Promise<void> => {
 const ownWatchPath = (): string => `content/${boot.file}`;
 
 const handleContentChange = async (files: string[]): Promise<void> => {
+    if (document.querySelector(".nav-rename-form")) {
+        pendingContentFiles.push(...files);
+        return;
+    }
     if (saveTask) await saveTask;
     await textfiles.reloadChanged(files);
     const currentBoot = boot;
@@ -1295,6 +1317,8 @@ const saveCurrent = async (): Promise<void> => {
             return;
         }
         baseRaw = r.raw;
+        const language = boot.contentLanguage ?? boot.defaultLang;
+        boot.translatedLanguages = [...new Set([...(boot.translatedLanguages ?? []), language])];
         if (view.state.doc !== savingDoc || JSON.stringify(readFm()) !== savingFm) {
             setSaveState(autosaveEl.checked ? "saving" : "pending");
             if (autosaveEl.checked) autosave();
@@ -1362,7 +1386,7 @@ const tagCorrespondence = (blockLines: number[]): void => {
         return;
     }
     const kids = ([...article.children] as HTMLElement[]).filter(
-        (el) => !el.matches(".errors, h1, .fullname, .lead"),
+        (el) => !el.matches(".errors, h1, .fullname"),
     );
     const n = Math.min(kids.length, blockLines.length);
     for (let i = 0; i < n; i++) {
@@ -1452,91 +1476,116 @@ workspace.addEventListener("click", (ev) => {
     view.focus();
 });
 
-// ── fm inputs / save button ───────────────────────────────────────────────
-// The input fields are replaced wholesale on doc switch, so bind once on the container (.fm)
-// instead of on each field (input events bubble up to the container).
-const fmBox = document.querySelector(".fm") as HTMLElement;
-fmBox.addEventListener("input", onChange);
+// ── Language / save controls ────────────────────────────────────────────
+$("fm-lang").addEventListener("change", () => {
+    const language = $<HTMLSelectElement>("fm-lang").value;
+    updateLanguageControls();
+    void changeLanguage(language);
+});
+$("fm-lang").addEventListener("docs:toggle-language", (event) => {
+    void toggleTranslation((event as CustomEvent<string>).detail);
+});
 $("save").addEventListener("click", () => void save());
 
-// ── Changing the doc id (edit the file name in the header in place) ───────
-// The id is the resolution key for the file name (content/<id>.md) / URL / doc: links. Changing
-// it makes the server rewrite doc: links from other docs to follow. No dialog: the header's file
-// name turns into an input. Enter = confirm / Esc or blur = cancel; an invalid id turns the
-// field red and is reported in the status.
+// ── Edit title and ID over the existing tree label ───────────────────────
 const DOC_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 const FLASH_KEY = "docs:flash";
 const startRename = (): void => {
-    const pfile = $("pfile");
-    if ($("phead").classList.contains("renaming")) {
+    const existing = document.querySelector<HTMLFormElement>(".nav-rename-form");
+    if (existing) {
+        existing.requestSubmit();
         return;
     }
-    const name = pfile.querySelector("span");
+    const row = document.querySelector<HTMLElement>(
+        `#nav-groups [data-doc-id="${CSS.escape(boot.docId)}"] > .nav-row`,
+    );
+    const link = row?.querySelector<HTMLAnchorElement>(":scope > a");
+    if (!row || !link) return;
+    const editingBoot = boot;
+    const form = document.createElement("form");
+    form.className = "nav-rename-form";
+    const bounds = link.getBoundingClientRect();
+    const rowBounds = row.getBoundingClientRect();
+    form.style.left = `${bounds.left - rowBounds.left}px`;
+    form.style.top = `${bounds.top - rowBounds.top}px`;
+    form.style.width = `${bounds.width}px`;
+    form.style.height = `${bounds.height}px`;
+    const title = document.createElement("input");
+    title.id = "fm-title";
+    title.name = "title";
+    title.value = boot.title;
+    title.setAttribute("aria-label", t("title"));
     const input = document.createElement("input");
     input.id = "pfile-input";
+    input.name = "id";
     input.value = boot.docId;
+    input.required = true;
+    input.pattern = "[a-z0-9][a-z0-9\\-]*";
     input.spellcheck = false;
-    input.setAttribute("aria-label", "doc id (file name)");
-    const ext = document.createElement("em");
-    ext.textContent = ".md";
-    name?.replaceWith(input, ext);
-    $("phead").classList.add("renaming");
-    setStatus("Enter to rename / Esc to cancel (doc: links follow)");
-    input.select();
+    input.setAttribute("aria-label", "ID");
+    form.append(title, input);
+    row.append(form);
+    row.classList.add("renaming");
+    setStatus("Enter to save / Esc to cancel");
+    title.select();
     let busy = false;
+    let closed = false;
     const end = (): void => {
-        const span = document.createElement("span");
-        span.textContent = boot.file;
-        input.replaceWith(span);
-        ext.remove();
-        $("phead").classList.remove("renaming");
+        if (closed) return;
+        closed = true;
+        form.remove();
+        row.classList.remove("renaming");
         setStatus("");
+        if (pendingContentFiles.length) flushContent();
+        void refreshNav();
     };
-    input.addEventListener("input", () => {
-        const ok = DOC_ID_RE.test(input.value.trim());
-        input.classList.toggle("invalid", !ok);
-        setStatus(
-            ok ? "Enter to rename / Esc to cancel (doc: links follow)" : "only a-z, 0-9 and -",
-            !ok,
-        );
+    form.addEventListener("focusout", (ev) => {
+        if (busy || closed || form.contains(ev.relatedTarget as Node)) return;
+        end();
+        setStatus("");
     });
-    input.addEventListener("blur", () => {
-        if (!busy) end();
-    });
-    input.addEventListener("keydown", (ev) => {
-        if (ev.key === "Escape") {
+    form.addEventListener("keydown", (ev) => {
+        if (ev.key === "Escape" && !busy) {
             ev.preventDefault();
-            input.blur();
-            return;
+            end();
+            setStatus("");
+            link.focus();
+        } else if (ev.key === "Enter") {
+            ev.preventDefault();
+            form.requestSubmit();
         }
-        if (ev.key !== "Enter") {
-            return;
-        }
+    });
+    form.addEventListener("submit", (ev) => {
         ev.preventDefault();
+        if (busy || boot !== editingBoot) return;
         const next = input.value.trim();
-        if (next === boot.docId) {
-            input.blur();
-            return;
-        }
-        if (!DOC_ID_RE.test(next)) {
-            return;
-        }
+        if (!DOC_ID_RE.test(next)) return;
         busy = true;
+        paneBusy = true;
+        title.readOnly = input.readOnly = true;
         void (async () => {
             try {
-                // Save unsaved changes first (so they aren't lost on the reload after renaming).
-                if (dirty) {
-                    await save();
+                await saveTask;
+                if (boot !== editingBoot) return;
+                if (boot.title !== title.value) {
+                    boot.title = title.value;
+                    setDirty(true);
                 }
+                if (dirty) await save();
+                // A failed or unresolved save must never be followed by a rename/reload.
+                if (dirty) throw new Error(t("Unsaved changes"));
+                if (next === boot.docId) {
+                    end();
+                    return;
+                }
+                if (!(await confirmLeave(true, true))) return;
                 const res = await localeFetch("/api/rename", {
                     method: "POST",
                     headers: { "content-type": "application/json" },
                     body: JSON.stringify({ file: boot.file, newId: next }),
                 });
                 const data = (await res.json()) as RenameResponse;
-                if (!res.ok || !data.ok) {
-                    throw new Error(data.error ?? String(res.status));
-                }
+                if (!res.ok || !data.ok) throw new Error(data.error ?? String(res.status));
                 sessionStorage.setItem(
                     FLASH_KEY,
                     data.updatedRefs > 0
@@ -1546,10 +1595,8 @@ const startRename = (): void => {
                           })
                         : t("Renamed to {id}.md", { id: data.id }),
                 );
-                window.location.href = localeUrl(data.path);
+                goToPage(localeUrl(data.path));
             } catch (e) {
-                busy = false;
-                input.classList.add("invalid");
                 setStatus(
                     t("Can't rename: {error}", {
                         error: e instanceof Error ? e.message : String(e),
@@ -1557,12 +1604,14 @@ const startRename = (): void => {
                     true,
                 );
                 input.focus();
+            } finally {
+                busy = false;
+                paneBusy = false;
+                title.readOnly = input.readOnly = false;
             }
         })();
     });
 };
-$("rename").addEventListener("click", startRename);
-$("pfile").addEventListener("dblclick", startRename);
 // Show the result stored before the rename (= reload) exactly once.
 {
     const flash = sessionStorage.getItem(FLASH_KEY);
@@ -1634,70 +1683,6 @@ const insertFigures = async (files: File[], pos?: number): Promise<void> => {
         );
     }
 };
-// ── Doc icon (left of the file name in the header, 1:1 dotted frame) ─────────
-// svg only. The server pads it to 1:1 and writes icons/<id>.svg. It shows in the sidebar row,
-// so the nav is re-fetched.
-const iconSlot = $("docicon");
-const iconInput = $<HTMLInputElement>("iconfile");
-const showIcon = (uri: string | null): void => {
-    iconSlot.classList.toggle("has", uri != null);
-    iconSlot.querySelector("img")?.remove();
-    if (uri != null) {
-        const img = document.createElement("img");
-        img.alt = "";
-        img.src = uri;
-        iconSlot.prepend(img);
-    }
-};
-const setIcon = async (file: File | null): Promise<void> => {
-    if (file && !/\.svg$/i.test(file.name) && file.type !== "image/svg+xml") {
-        setStatus("Icon must be svg", true);
-        return;
-    }
-    try {
-        const res = await localeFetch("/api/icon", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ file: boot.file, data: file ? await readBase64(file) : null }),
-        });
-        const data = (await res.json()) as { icon?: string | null; error?: string };
-        if (!res.ok) {
-            throw new Error(data.error ?? String(res.status));
-        }
-        boot.icon = data.icon ?? null;
-        showIcon(boot.icon);
-        setStatus(boot.icon ? "Icon set (auto-padded to 1:1)" : "Icon removed");
-        await refreshNav();
-    } catch (e) {
-        setStatus(
-            t("Failed to set icon: {error}", { error: e instanceof Error ? e.message : String(e) }),
-            true,
-        );
-    }
-};
-iconInput.addEventListener("change", () => {
-    const f = iconInput.files?.[0];
-    iconInput.value = "";
-    if (f) void setIcon(f);
-});
-$("docicon-clear").addEventListener("click", (ev) => {
-    ev.preventDefault();
-    ev.stopPropagation();
-    void setIcon(null);
-});
-iconSlot.addEventListener("dragover", (ev) => {
-    if (!hasFiles(ev)) return;
-    ev.preventDefault();
-    iconSlot.classList.add("over");
-});
-iconSlot.addEventListener("dragleave", () => iconSlot.classList.remove("over"));
-iconSlot.addEventListener("drop", (ev) => {
-    iconSlot.classList.remove("over");
-    const f = ev.dataTransfer?.files[0];
-    if (!f) return;
-    ev.preventDefault();
-    void setIcon(f);
-});
 const cmBox = $("cm");
 cmBox.addEventListener("dragover", (ev) => {
     if (!hasFiles(ev)) return;
@@ -1734,39 +1719,52 @@ workspace.addEventListener("drop", (ev) => {
 });
 
 // ── Deleting a doc ─────────────────────────────────────────────────────
-// /api/delete after confirm(). If other docs reference it via doc: links, 409 + referencedBy is
+// If other docs reference it via doc: links, 409 + referencedBy is
 // returned; show the list, re-confirm deletion anyway, then resend with force.
 const deleteDoc = async (): Promise<void> => {
-    if (!window.confirm(t('Delete "{file}"? (this cannot be undone)', { file: boot.file }))) {
+    const file = boot.file;
+    if (
+        !(await confirmDialog(
+            t('Delete "{file}"? (this cannot be undone)', { file }),
+            t("Delete doc"),
+            true,
+        ))
+    ) {
         return;
     }
+    if (!(await confirmLeave(true, true))) return;
     const attempt = async (force: boolean): Promise<void> => {
         const res = await localeFetch("/api/delete", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ file: boot.file, force }),
+            body: JSON.stringify({ file, force }),
         });
         const data = (await res.json()) as DeleteResponse;
         if (res.status === 409 && data.referencedBy && !force) {
             const list = data.referencedBy.join("\n");
-            if (window.confirm(t("Referenced documents: {list}", { list }))) {
+            if (
+                await confirmDialog(
+                    t("Referenced documents: {list}", { list }),
+                    t("Delete doc"),
+                    true,
+                )
+            ) {
                 await attempt(true);
             }
             return;
         }
         if (!res.ok || !data.ok) {
-            window.alert(t("Failed to delete: {error}", { error: data.error ?? res.status }));
+            await showNotice(t("Failed to delete: {error}", { error: data.error ?? res.status }));
             return;
         }
-        window.location.href = localeUrl(data.path);
+        goToPage(localeUrl(data.path));
     };
     try {
         await attempt(false);
     } catch (e) {
-        window.alert(t("Failed to delete: {error}", { error: String(e) }));
+        await showNotice(t("Failed to delete: {error}", { error: String(e) }));
     }
 };
-$("delete").addEventListener("click", () => void deleteDoc());
 
 // ── Gear hover menu toggles (persisted in localStorage) ────────────────────
 autosaveEl.checked = localStorage.getItem(AUTOSAVE_KEY) !== "0";
@@ -1806,9 +1804,6 @@ bindToggle("opt-corr", CORR_KEY, false, (v) => {
         view.dispatch({ effects: setCorr.of(null) });
     }
 });
-bindToggle("opt-fm", FM_KEY, true, (v) => {
-    $("panel").classList.toggle("hide-fm", !v);
-});
 
 // The gear opens on hover / focus-within (CSS). Click / Enter also pins it open or closed (for
 // keyboard use).
@@ -1830,63 +1825,11 @@ document.addEventListener("click", (ev) => {
     }
 });
 
-// ── Panel width resize (drag / double-click for default / Ctrl+Alt+←→) ─────
-const panel = $("panel");
-const handle = $("resize");
-const clampW = (w: number): number => Math.min(Math.max(w, 320), window.innerWidth - 360);
-const setPanelW = (w: number, persist: boolean): void => {
-    const c = clampW(w);
-    panel.style.width = `${c}px`;
-    if (persist) {
-        localStorage.setItem(RESIZE_KEY, String(c));
-    }
-};
-const savedW = localStorage.getItem(RESIZE_KEY);
-if (savedW != null) {
-    setPanelW(Number(savedW), false);
-}
-let dragging = false;
-handle.addEventListener("mousedown", (ev) => {
-    dragging = true;
-    handle.classList.add("drag");
-    ev.preventDefault();
-});
-window.addEventListener("mousemove", (ev) => {
-    if (dragging) {
-        setPanelW(window.innerWidth - ev.clientX, false);
-    }
-});
-window.addEventListener("mouseup", () => {
-    if (!dragging) {
-        return;
-    }
-    dragging = false;
-    handle.classList.remove("drag");
-    localStorage.setItem(RESIZE_KEY, String(Math.round(panel.getBoundingClientRect().width)));
-});
-handle.addEventListener("dblclick", () => {
-    panel.style.width = "";
-    localStorage.removeItem(RESIZE_KEY);
-});
-window.addEventListener("keydown", (ev) => {
-    if (!(ev.ctrlKey || ev.metaKey) || !ev.altKey) {
-        return;
-    }
-    if (ev.key === "ArrowLeft") {
-        setPanelW(panel.getBoundingClientRect().width + 40, true);
-        ev.preventDefault();
-    } else if (ev.key === "ArrowRight") {
-        setPanelW(panel.getBoundingClientRect().width - 40, true);
-        ev.preventDefault();
-    }
-});
-
+let leavingPage = false;
+const otherUnsaved = (): boolean =>
+    textfiles.hasUnsavedChanges() || panes.some((pane) => pane !== activePane && pane.draft?.dirty);
 window.addEventListener("beforeunload", (ev) => {
-    if (
-        dirty ||
-        textfiles.hasUnsavedChanges() ||
-        panes.some((pane) => pane !== activePane && pane.draft?.dirty)
-    ) {
+    if (!leavingPage && (dirty || otherUnsaved())) {
         ev.preventDefault();
         // Chrome compatibility (some versions show no prompt with preventDefault alone).
         ev.returnValue = "";
@@ -1904,17 +1847,24 @@ let currentPath = location.pathname;
 // Handling of leaving a doc with unsaved changes: same decision as beforeunload (real
 // navigation). With autosave ON, silently save and then move (= treated as a continuation of
 // typing).
-const confirmLeave = async (): Promise<boolean> => {
-    if (!dirty) {
-        return true;
-    }
-    if (autosaveEl.checked && !conflictPending) {
+const confirmLeave = async (all = false, activeApproved = false): Promise<boolean> => {
+    if (!activeApproved && dirty && autosaveEl.checked && !conflictPending) {
         await save();
-        if (!dirty) {
-            return true;
-        }
     }
-    return window.confirm(t("You have unsaved changes. Discard them and leave?"));
+    if ((activeApproved || !dirty) && (!all || !otherUnsaved())) return true;
+    return confirmDialog(
+        t("You have unsaved changes. Discard them and leave?"),
+        t("Discard changes"),
+        true,
+    );
+};
+const goToPage = (url: string): void => {
+    leavingPage = true;
+    window.location.href = url;
+};
+const leavePage = async (url: string, activeApproved = false): Promise<void> => {
+    await saveTask;
+    if (await confirmLeave(true, activeApproved)) goToPage(url);
 };
 
 let languageButton: HTMLButtonElement | undefined;
@@ -1994,7 +1944,6 @@ interface PaneDraft {
     boot: Boot;
     state: EditorState;
     fm: DraftFrontmatter;
-    fmHtml: string;
     baseRaw: string;
     dirty: boolean;
     conflictPending: boolean;
@@ -2016,7 +1965,6 @@ const capturePane = (): void => {
         boot,
         state: view.state,
         fm: readFm(),
-        fmHtml: fmBox.innerHTML,
         baseRaw,
         dirty,
         conflictPending,
@@ -2050,13 +1998,8 @@ const restorePane = (pane: PreviewPane): void => {
     conflictPending = draft.conflictPending;
     suppressChange = false;
     view.setState(draft.state);
-    fmBox.innerHTML = draft.fmHtml;
     applyFm(draft.fm);
     updateNavLocation();
-    const fileLabel = $("pfile").querySelector("span");
-    if (fileLabel) fileLabel.textContent = boot.file;
-    $("pfile").title = boot.file;
-    showIcon(boot.icon);
     applySpellcheckLang();
     rebuildCompletions();
     setDirty(draft.dirty);
@@ -2118,6 +2061,7 @@ window.addEventListener("blur", () => {
 const changeLanguage = async (language: string): Promise<void> => {
     if (paneBusy || language === boot.contentLanguage) return;
     paneBusy = true;
+    $<HTMLSelectElement>("fm-lang").disabled = true;
     const buttons = languageMenu.querySelectorAll<HTMLButtonElement>("button");
     for (const button of buttons) button.disabled = true;
     try {
@@ -2133,6 +2077,55 @@ const changeLanguage = async (language: string): Promise<void> => {
         await refreshNav();
     } finally {
         for (const button of buttons) button.disabled = false;
+        $<HTMLSelectElement>("fm-lang").disabled = false;
+        updateLanguageControls();
+        paneBusy = false;
+    }
+};
+const toggleTranslation = async (language: string): Promise<void> => {
+    const source = boot.sourceLanguage ?? boot.defaultLang;
+    if (paneBusy || language === source) return;
+    const docId = boot.docId;
+    const file = boot.file;
+    const added = !boot.translatedLanguages?.includes(language);
+    const originalPane = activePane;
+    try {
+        if (!added) {
+            for (const pane of panes) {
+                const state = pane === activePane ? boot : pane.draft?.boot;
+                if (state?.docId !== docId || state.contentLanguage !== language) continue;
+                await activatePane(pane);
+                if (activePane !== pane) return;
+                await changeLanguage(source);
+                if (boot.contentLanguage !== source) return;
+            }
+            await activatePane(originalPane);
+        }
+        if (paneBusy || boot.docId !== docId) return;
+        paneBusy = true;
+        $<HTMLSelectElement>("fm-lang").disabled = true;
+        await saveTask;
+        const response = await localeFetch("/api/translation", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ file, language, added }),
+        });
+        const result = (await response.json()) as {
+            error?: string;
+            translatedLanguages?: string[];
+        };
+        if (!response.ok) throw new Error(result.error ?? response.statusText);
+        boot.translatedLanguages = result.translatedLanguages;
+        for (const pane of panes) {
+            if (pane.draft?.boot.docId === docId)
+                pane.draft.boot.translatedLanguages = result.translatedLanguages;
+        }
+        updateLanguageControls();
+        await refreshNav();
+    } catch (error) {
+        setStatus(String(error), true);
+    } finally {
+        $<HTMLSelectElement>("fm-lang").disabled = false;
         paneBusy = false;
     }
 };
@@ -2146,7 +2139,11 @@ $("split-preview").addEventListener("click", () => {
                 const other = panes.find((pane) => pane !== activePane);
                 if (
                     other?.draft?.dirty &&
-                    !window.confirm(t("Close pane and discard its unsaved changes?"))
+                    !(await confirmDialog(
+                        t("Close pane and discard its unsaved changes?"),
+                        t("Discard changes"),
+                        true,
+                    ))
                 )
                     return;
                 other?.element.remove();
@@ -2192,6 +2189,7 @@ const swapDoc = (data: PageResponse, remember = true): void => {
     const prevKey = stateKey(boot);
     boot = data.boot;
     siteTitle = boot.siteTitle;
+    siteIcon = boot.siteIcon;
     baseRaw = boot.baseRaw;
     applySpellcheckLang();
     rebuildCompletions();
@@ -2208,14 +2206,8 @@ const swapDoc = (data: PageResponse, remember = true): void => {
         suppressChange = true;
         view.dispatch({ changes: { from: 0, to: cached.doc.length, insert: boot.body } });
     }
-    fmBox.innerHTML = data.fm;
     updateLanguageControls();
     applyUiLanguage();
-    const pfile = $("pfile");
-    const pname = pfile.querySelector("span");
-    if (pname) pname.textContent = data.file;
-    pfile.title = data.file;
-    showIcon(data.boot.icon ?? null);
     document.title = data.title;
     setDirty(false);
     conflictPending = false;
@@ -2275,22 +2267,45 @@ const scrollToAnchor = (hash: string): void => {
     mainEl.querySelector(`#${CSS.escape(id)}`)?.scrollIntoView({ block: "start" });
 };
 
-const navigateTo = async (path: string, hash = ""): Promise<void> => {
-    if (paneBusy) return;
-    await saveTask;
-    if (!(await confirmLeave())) {
-        return;
-    }
-    if (await openDoc(path)) {
-        history.pushState(null, "", localeUrl(currentPath + hash));
-        scrollToAnchor(hash);
-        return;
-    }
-    window.location.href = localeUrl(path + hash);
+let navigationTask: Promise<void> | undefined;
+const navigateTo = (path: string, hash = ""): Promise<void> => {
+    navigationTask ??= (async () => {
+        if (paneBusy) return;
+        await saveTask;
+        if (!(await confirmLeave())) return;
+        if (await openDoc(path)) {
+            history.pushState(null, "", localeUrl(currentPath + hash));
+            scrollToAnchor(hash);
+            return;
+        }
+        await leavePage(localeUrl(path + hash), true);
+    })().finally(() => {
+        navigationTask = undefined;
+    });
+    return navigationTask;
 };
+(window as unknown as { __docsNavigate: typeof navigateTo }).__docsNavigate = navigateTo;
 
-// Only intercept document paths (hierarchy paths). Modified clicks are left
-// alone.
+const docAction = async (id: string, action: string): Promise<void> => {
+    if (boot.docId !== id) {
+        const link = document.querySelector<HTMLAnchorElement>(
+            `#nav-groups [data-doc-id="${CSS.escape(id)}"] > .nav-row > a`,
+        );
+        if (!link) return;
+        await navigateTo(new URL(link.href).pathname);
+    }
+    if (boot.docId !== id || paneBusy) return;
+    if (action === "rename") startRename();
+    else if (action === "delete") await deleteDoc();
+};
+(window as unknown as { __docsDocAction: typeof docAction }).__docsDocAction = docAction;
+const initialAction = new URL(location.href).searchParams.get("doc-action");
+if (initialAction) {
+    history.replaceState(null, "", localeUrl(currentPath + location.hash));
+    void docAction(boot.docId, initialAction);
+}
+
+// Document links stay in the editor; full navigation also checks drafts before leaving.
 const isDocPath = (path: string): boolean =>
     /^\/(?:[a-z0-9][a-z0-9-]*\/)*[a-z0-9][a-z0-9-]*\/?$/.test(path);
 
@@ -2310,7 +2325,10 @@ document.addEventListener("click", (ev) => {
         return;
     }
     const url = new URL(a.href, location.href);
-    if (url.origin !== location.origin) {
+    if (url.origin !== location.origin || !isDocPath(url.pathname)) {
+        if (url.protocol !== "http:" && url.protocol !== "https:") return;
+        ev.preventDefault();
+        void leavePage(url.href);
         return;
     }
     if (url.pathname === currentPath) {
@@ -2320,9 +2338,6 @@ document.addEventListener("click", (ev) => {
             history.pushState(null, "", targetUrl);
         }
         scrollToAnchor(url.hash);
-        return;
-    }
-    if (!isDocPath(url.pathname)) {
         return;
     }
     ev.preventDefault();
@@ -2346,7 +2361,7 @@ window.addEventListener("popstate", () => {
             return;
         }
         if (!(await openDoc(target, language))) {
-            window.location.reload();
+            await leavePage(location.href, true);
         } else {
             scrollToAnchor(location.hash);
         }

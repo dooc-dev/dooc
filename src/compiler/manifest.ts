@@ -32,6 +32,11 @@ export const readManifest = (root: string): ParsedManifest => {
         : { tree: [], errors: [] };
 };
 
-export const writeManifest = (root: string, tree: readonly DocNode[], title?: string): void => {
-    writeFileSync(join(root, MANIFEST_FILE), serializeManifest(tree, title));
+export const writeManifest = (
+    root: string,
+    tree: readonly DocNode[],
+    title?: string,
+    icon?: string,
+): void => {
+    writeFileSync(join(root, MANIFEST_FILE), serializeManifest(tree, title, icon));
 };

@@ -56,6 +56,8 @@ export type ArtifactDoc = Frontmatter & {
 export interface DocsArtifact {
     /** Site title declared in manifest.yaml. */
     title?: string;
+    /** Site icon as SVG markup, rendered as an image. */
+    icon?: string;
     /**
      * Dialect / contract generation (generation.ts). Consumers check it directionally with
      * canRenderGeneration.

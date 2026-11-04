@@ -54,6 +54,7 @@ export const squareSvg = (svg: string): string | undefined => {
 export const loadIcons = (
     root: string,
     docIds: ReadonlySet<string>,
+    siteIconFile?: string,
 ): { icons: Map<string, string>; errors: string[] } => {
     const dir = join(root, ICONS_DIR);
     const icons = new Map<string, string>();
@@ -67,6 +68,7 @@ export const loadIcons = (
         }
         const id = f.endsWith(".svg") ? f.slice(0, -4) : "";
         if (!docIds.has(id)) {
+            if (siteIconFile?.replace(/^\.\//, "") === `${ICONS_DIR}/${f}`) continue;
             errors.push(`${ICONS_DIR}/${f}: no matching doc (content/${id || f}.md)`);
             continue;
         }

@@ -66,9 +66,11 @@ export const createDocOps = (root: string) => {
 
     // Read before rewriting manifest.yaml. If it's broken, don't write (= don't clobber
     // hand-written content).
-    const loadTree = (): OpResult<{ tree: DocNode[]; title?: string }> => {
-        const { tree, title, errors } = readManifest(root);
-        return errors.length > 0 ? { error: errors.join(" / "), status: 409 } : { tree, title };
+    const loadTree = (): OpResult<{ tree: DocNode[]; title?: string; icon?: string }> => {
+        const { tree, title, icon, errors } = readManifest(root);
+        return errors.length > 0
+            ? { error: errors.join(" / "), status: 409 }
+            : { tree, title, icon };
     };
 
     const existingDoc = (id: unknown): OpResult<{ id: string }> =>
@@ -108,7 +110,7 @@ export const createDocOps = (root: string) => {
         }
         mkdirSync(contentDir, { recursive: true });
         writeFileSync(docPath(id), assembleDoc({ title }, ""));
-        writeManifest(root, tree, loaded.title);
+        writeManifest(root, tree, loaded.title, loaded.icon);
         return { id };
     };
 
@@ -131,7 +133,7 @@ export const createDocOps = (root: string) => {
                 status: 409,
             };
         }
-        writeManifest(root, tree, loaded.title);
+        writeManifest(root, tree, loaded.title, loaded.icon);
         return { id };
     };
 
@@ -173,7 +175,7 @@ export const createDocOps = (root: string) => {
         if (existsSync(iconPath(oldId))) {
             renameSync(iconPath(oldId), iconPath(newId));
         }
-        writeManifest(root, tree, loaded.title);
+        writeManifest(root, tree, loaded.title, loaded.icon);
         let updatedRefs = 0;
         for (const f of readdirSync(contentDir).filter((n) => docIdOfFile(n) != null)) {
             const p = join(contentDir, f);
@@ -245,7 +247,7 @@ export const createDocOps = (root: string) => {
             };
         }
         const parent = flattenTree(loaded.tree).find((n) => n.id === id)?.parent;
-        writeManifest(root, tree, loaded.title);
+        writeManifest(root, tree, loaded.title, loaded.icon);
         unlinkSync(docPath(id));
         if (existsSync(iconPath(id))) {
             unlinkSync(iconPath(id));

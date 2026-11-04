@@ -10,6 +10,7 @@ import {
     rewriteDocLinks,
     writeArtifact,
 } from "./compile.js";
+import { writeCatalog } from "./locales.js";
 
 const writeDoc = (path: string, title: string): void => {
     writeFileSync(path, `---\ntitle: "${title}"\n---\n\nBody.\n`);
@@ -197,23 +198,36 @@ describe("sample-content (bundled docs root)", () => {
         const root = new URL("../../sample-content", import.meta.url).pathname;
         expect(compileSite(root).errors).toEqual([]);
     });
+});
 
-    it.each(["jpn", "eng", "zho"])("keeps external embeds in the %s media article", (locale) => {
-        const root = new URL("../../sample-content", import.meta.url).pathname;
-        const result = compileSite(root, { defaultLang: "jpn", locale });
-        expect(result.errors).toEqual([]);
-        const media = result.artifact.docs.find((doc) => doc.id === "media");
-        expect(media?.lang).toBe(locale);
-        for (const [name, tag] of [
-            ["external-iframe", "iframe"],
-            ["external-video", "video"],
-            ["external-audio", "audio"],
-        ]) {
-            expect(media?.refs.figures).toContain(name);
-            const figure = result.figures.find((fig) => fig.name === name);
-            expect(figure?.kind).toBe("html");
-            expect(figure?.markup).toContain(`<${tag}`);
-            expect(figure?.markup).toContain('src="https://');
+describe("HTML embeds", () => {
+    it.each(["jpn", "eng", "zho"])("keeps external embeds in %s articles", (locale) => {
+        const root = makeRoot("- media\n");
+        try {
+            const tags = ["iframe", "video", "audio"];
+            const body = tags.map((tag) => `:::html(${tag}.html)`).join("\n\n");
+            writeFileSync(join(root, "content/media.md"), `---\ntitle: Media\n---\n\n${body}\n`);
+            mkdirSync(join(root, "figures"));
+            for (const tag of tags) {
+                writeFileSync(
+                    join(root, `figures/${tag}.html`),
+                    `<!--fig\ntitle: Fig.${tag}\n-->\n<${tag} src="https://example.com/${tag}"></${tag}>`,
+                );
+            }
+            if (locale !== "jpn") writeCatalog(root, locale, { media: { title: "Media", body } });
+            const result = compileSite(root, { defaultLang: "jpn", locale });
+            expect(result.errors).toEqual([]);
+            const media = result.artifact.docs.find((doc) => doc.id === "media");
+            expect(media?.lang).toBe(locale);
+            for (const tag of tags) {
+                expect(media?.refs.figures).toContain(tag);
+                const figure = result.figures.find((fig) => fig.name === tag);
+                expect(figure?.kind).toBe("html");
+                expect(figure?.markup).toContain(`<${tag}`);
+                expect(figure?.markup).toContain(`src="https://example.com/${tag}"`);
+            }
+        } finally {
+            rmSync(root, { recursive: true, force: true });
         }
     });
 });

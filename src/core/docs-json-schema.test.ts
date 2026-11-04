@@ -68,8 +68,6 @@ const doc = (): ArtifactDoc => ({
     file: "content/guide.md",
     title: "Guide",
     lang: "ja-JP",
-    tags: ["guide"],
-    description: "Description",
     icon: "<svg></svg>",
     body: "Source",
     blocks: structuredClone(Object.values(blocks)),
@@ -138,6 +136,27 @@ describe("docs.json schema registry", () => {
 });
 
 describe("validateDocsArtifact", () => {
+    it("rejects document descriptions in the current format while retaining released schemas", () => {
+        const legacyDoc = { ...doc(), description: "Legacy description" };
+        expect(validateDocsArtifact(artifact([legacyDoc])).join()).toContain("docs.json/docs/0");
+        expect(
+            validateDocsArtifact({ generation: 13, docs: [legacyDoc], terms: [], figures: [] }),
+        ).toEqual([]);
+    });
+
+    it("accepts a site icon and rejects document tags in the current format", () => {
+        const value = {
+            generation: GENERATION,
+            docs: [doc()],
+            terms: [],
+            figures: [],
+            icon: '<svg viewBox="0 0 10 10"/>',
+        };
+        expect(validateDocsArtifact(value)).toEqual([]);
+        expect(
+            validateDocsArtifact({ ...value, docs: [{ ...doc(), tags: ["obsolete"] }] }).join(),
+        ).toContain("additional properties");
+    });
     it("accepts all block variants and nested structures without changing data", () => {
         const value = artifact([
             doc(),

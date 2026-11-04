@@ -89,15 +89,6 @@ const checkFrontmatter = (raw: unknown, errors: string[]): Frontmatter | undefin
             errors.push(`front-matter: "${key}" (string) is required`);
         }
     }
-    if (fm.description !== undefined && typeof fm.description !== "string") {
-        errors.push('front-matter: "description" must be a string');
-    }
-    if (
-        fm.tags !== undefined &&
-        !(Array.isArray(fm.tags) && fm.tags.every((t) => typeof t === "string"))
-    ) {
-        errors.push('front-matter: "tags" must be a string[]');
-    }
     if (fm.lang !== undefined && !(typeof fm.lang === "string" && isLangTag(fm.lang))) {
         errors.push(
             'front-matter: "lang" must be a BCP 47 language tag (e.g. "en", "ja", "pt-BR")',

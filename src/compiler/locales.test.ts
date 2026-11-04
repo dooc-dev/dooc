@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { compileSite } from "./compile.js";
 import { exportEntries } from "./export.js";
 import { contentLanguageCode, isContentLanguage, webLanguage } from "./language-codes.js";
-import { catalogLanguages, readCatalog, writeCatalog } from "./locales.js";
+import { catalogLanguages, readCatalog, setDocTranslation, writeCatalog } from "./locales.js";
 import { createDocOps } from "./ops.js";
 
 const fixture = (): string => {
@@ -18,6 +18,34 @@ const fixture = (): string => {
 };
 
 describe("ISO 639-3 content catalogs", () => {
+    it("adds and removes only the chosen translation, preserving existing text and source", () => {
+        const root = fixture();
+        const source = readFileSync(join(root, "content/guide.md"), "utf8");
+        writeCatalog(root, "eng", { child: { title: "Child", body: "Translated child\n" } });
+        setDocTranslation(root, "jpn", "guide", "eng", true);
+        expect(readCatalog(root, "eng")).toEqual({
+            guide: { title: "ガイド", body: "原文\n" },
+            child: { title: "Child", body: "Translated child\n" },
+        });
+        const edited = { title: "Guide", body: "Edited translation\n" };
+        writeCatalog(root, "eng", { ...readCatalog(root, "eng"), guide: edited });
+        setDocTranslation(root, "jpn", "guide", "eng", true);
+        expect(readCatalog(root, "eng").guide).toEqual(edited);
+        setDocTranslation(root, "jpn", "guide", "eng", false);
+        setDocTranslation(root, "jpn", "guide", "eng", false);
+        expect(readCatalog(root, "eng")).toEqual({
+            child: { title: "Child", body: "Translated child\n" },
+        });
+        expect(() => setDocTranslation(root, "jpn", "guide", "jpn", false)).toThrow(
+            "Source language",
+        );
+        expect(() => setDocTranslation(root, "jpn", "../guide", "eng", true)).toThrow(
+            "Invalid document id",
+        );
+        expect(() => setDocTranslation(root, "jpn", "guide", "../eng", true)).toThrow("ISO 639-3");
+        expect(() => setDocTranslation(root, "jpn", "missing", "eng", true)).toThrow();
+        expect(readFileSync(join(root, "content/guide.md"), "utf8")).toBe(source);
+    });
     it("uses the dedicated package for validation and Web language mapping", () => {
         expect(contentLanguageCode("ja-JP")).toBe("jpn");
         expect(contentLanguageCode("en")).toBe("eng");
@@ -80,5 +108,15 @@ describe("ISO 639-3 content catalogs", () => {
         });
         expect(ops.remove("detail", true)).toMatchObject({ danglingRefs: 1 });
         expect(readCatalog(root, "eng").detail).toBeUndefined();
+    });
+
+    it("rejects removed document descriptions in translation catalogs", () => {
+        const root = fixture();
+        mkdirSync(join(root, "locales"));
+        writeFileSync(
+            join(root, "locales/eng.json"),
+            JSON.stringify({ guide: { title: "Guide", body: "Text", description: "Removed" } }),
+        );
+        expect(() => readCatalog(root, "eng")).toThrow("invalid translation");
     });
 });

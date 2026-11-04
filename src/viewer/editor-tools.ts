@@ -144,13 +144,13 @@ export async function runCodeTool(
     const block = codeBlockAt(body, position);
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_+-]*$/.test(block.language))
         throw new Error("Unsupported code language identifier");
-    const path = join(root, ".document-system", "editor-tools", `${block.language}.json`);
+    const path = join(root, ".dooc", "editor-tools", `${block.language}.json`);
     let config: Record<string, unknown>;
     try {
         config = JSON.parse(await readFile(path, "utf8"));
     } catch {
         throw new Error(
-            `Create .document-system/editor-tools/${block.language}.json to configure this language`,
+            `Create .dooc/editor-tools/${block.language}.json to configure this language`,
         );
     }
     if (!config || typeof config !== "object") throw new Error("Invalid editor tool configuration");
@@ -245,10 +245,7 @@ export async function validateCodeTools(root: string, body: string) {
                 continue;
             let raw: string;
             try {
-                raw = await readFile(
-                    join(root, ".document-system/editor-tools", `${node.lang}.json`),
-                    "utf8",
-                );
+                raw = await readFile(join(root, ".dooc/editor-tools", `${node.lang}.json`), "utf8");
             } catch (error) {
                 if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
                 throw error;

@@ -1,4 +1,5 @@
 import { iso6393To1 } from "iso-639-3";
+import { mountLanguagePickers } from "./language-picker.js";
 import eng from "./locales/eng.json" with { type: "json" };
 import jpn from "./locales/jpn.json" with { type: "json" };
 import zho from "./locales/zho.json" with { type: "json" };
@@ -69,4 +70,5 @@ export const mountUiLanguage = (): void => {
         }
     });
     document.addEventListener("docs:ui-refresh", applyUiLanguage);
+    mountLanguagePickers(t);
 };

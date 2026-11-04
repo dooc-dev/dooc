@@ -1,9 +1,19 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    rmSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { parse } from "yaml";
+import { publishHtml, siteFrom } from "../viewer/serve.js";
 import { compileSite } from "./compile.js";
+import { exportEntries } from "./export.js";
 import { createDocOps } from "./ops.js";
 
 it.each([
@@ -50,6 +60,52 @@ it("does not overwrite malformed site metadata when adding a document", () => {
         expect(createDocOps(root).add("guide", "Guide")).toMatchObject({ status: 409 });
         expect(readFileSync(join(root, "manifest.yaml"), "utf8")).toBe(raw);
         expect(existsSync(join(root, "content", "guide.md"))).toBe(false);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+it("keeps the site SVG file through document operations, compilation and export", () => {
+    const root = mkdtempSync(join(tmpdir(), "docs-site-icon-"));
+    try {
+        mkdirSync(join(root, "icons"));
+        writeFileSync(
+            join(root, "icons/logo.svg"),
+            '<svg viewBox="0 0 20 10"><path d="M0 0h20"/></svg>',
+        );
+        writeFileSync(
+            join(root, "manifest.yaml"),
+            "title: Guide\nicon: icons/logo.svg\ndocs: []\n",
+        );
+        const ops = createDocOps(root);
+        expect(ops.add("guide", "Guide")).not.toHaveProperty("error");
+        expect(ops.add("child", "Child")).not.toHaveProperty("error");
+        expect(ops.move("child", "guide")).not.toHaveProperty("error");
+        expect(ops.rename("child", "detail")).not.toHaveProperty("error");
+        expect(ops.remove("detail")).not.toHaveProperty("error");
+        expect(parse(readFileSync(join(root, "manifest.yaml"), "utf8"))).toMatchObject({
+            title: "Guide",
+            icon: "icons/logo.svg",
+        });
+        const compiled = compileSite(root);
+        expect(compiled.errors).toEqual([]);
+        expect(compiled.artifact.icon).toContain('viewBox="0 -5 20 20"');
+        const html = publishHtml(siteFrom(compiled), "");
+        expect(html).toContain('<img id="site-icon" alt="" src="data:image/svg+xml;base64,');
+        expect(html).not.toContain('id="nav-search"');
+        expect(html).toContain("doc-search");
+        expect(exportEntries(root).filter((entry) => entry.name === "icons/logo.svg")).toHaveLength(
+            1,
+        );
+        writeFileSync(join(root, "logo.svg"), '<svg viewBox="0 0 10 10"/>');
+        writeFileSync(join(root, "manifest.yaml"), "title: Guide\nicon: logo.svg\ndocs: [guide]\n");
+        expect(exportEntries(root).map((entry) => entry.name)).toContain("logo.svg");
+        writeFileSync(join(root, "logo.svg"), "not SVG");
+        expect(compileSite(root).errors.join()).toContain("expected an SVG");
+        rmSync(join(root, "logo.svg"));
+        expect(compileSite(root).errors.join()).toContain("icon logo.svg");
+        symlinkSync("/etc/hosts", join(root, "logo.svg"));
+        expect(compileSite(root).errors.join()).toContain("outside the docs root");
     } finally {
         rmSync(root, { recursive: true, force: true });
     }

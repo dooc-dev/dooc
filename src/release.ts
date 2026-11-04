@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
-const repo = "sasaki-s-sci/document-system";
+const repo = "sasaki-s-sci/dooc";
 const gh = (args: string[]): string =>
     execFileSync("gh", [...args, "--repo", repo], {
         encoding: "utf8",
