@@ -4,7 +4,6 @@
 import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { type CompileOptions, createCompiler } from "./compiler/compile.js";
-import { loadDocsConfig } from "./compiler/config.js";
 import { createDocOps, isOpError } from "./compiler/ops.js";
 import { docDisplayName } from "./core/taxonomy.js";
 
@@ -26,8 +25,11 @@ export const createTools = (root: string, options: CompileOptions = {}): Record<
     const ops = createDocOps(root);
     const optStr = (v: unknown): string | undefined =>
         typeof v === "string" && v !== "" ? v : undefined;
-    const docErrors = (id: string): string[] =>
-        compiler.compile().sources.get(`content/${id}.md`)?.errors ?? [];
+    const docErrors = (id: string): string[] => {
+        const compiled = compiler.compile();
+        const file = compiled.artifact.docs.find((doc) => doc.id === id)?.file;
+        return file ? (compiled.sources.get(file)?.errors ?? []) : [];
+    };
 
     return {
         list_docs: {
@@ -109,7 +111,7 @@ export const createTools = (root: string, options: CompileOptions = {}): Record<
         },
         add_doc: {
             description:
-                "Create a new doc (content/<id>.md, appended as the last child of parent in the manifest).",
+                "Create a new doc using the file layout, appended as the last child of parent in the manifest.",
             props: {
                 id: { ...str, description: "New id (lowercase alphanumerics and hyphens)" },
                 title: { ...str, description: "Title" },
@@ -262,9 +264,7 @@ export const handleRpc = (tools: Record<string, Tool>, msg: Rpc): object | undef
 };
 
 export const startMcp = async (root: string): Promise<void> => {
-    // Only the default language matters here (docs are read / validated, not rendered).
-    const { defaultLang } = await loadDocsConfig(root);
-    const tools = createTools(root, { defaultLang });
+    const tools = createTools(root);
     console.error(`dooc mcp: ${root}`);
     createInterface({ input: process.stdin }).on("line", (line) => {
         if (line.trim() === "") {

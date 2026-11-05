@@ -11,6 +11,8 @@ import { join } from "node:path";
 import { isDocId } from "../core/content-metadata.js";
 import { parseDoc } from "./dialect.js";
 import { isContentLanguage } from "./language-codes.js";
+import { docFile, readManifest } from "./manifest.js";
+import { textfilePath } from "./textfile.js";
 
 export interface Translation {
     title: string;
@@ -75,7 +77,7 @@ export const setDocTranslation = (
     if (!isDocId(id)) throw new Error("Invalid document id");
     if (language === sourceLanguage) throw new Error("Source language cannot be removed");
     const catalog = readCatalog(root, language);
-    const source = readFileSync(join(root, "content", `${id}.md`), "utf8");
+    const source = readFileSync(textfilePath(root, docFile(id, readManifest(root).files)), "utf8");
     if (added === Object.hasOwn(catalog, id)) return;
     if (added) {
         const doc = parseDoc(source);

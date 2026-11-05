@@ -6,7 +6,7 @@ import { bundledLanguages } from "shiki/langs";
 import { CODE_LANGS } from "../core/taxonomy.js";
 
 export const CODE_LANGUAGES_DIR = ".dooc/code-languages";
-const supported = new Set<string>([...languageNames, ...languageAliasNames]);
+const supported = new Set<string>([...languageNames, ...languageAliasNames, "grapth", "termth"]);
 const safeName = /^[a-z0-9][a-z0-9_-]*$/;
 
 const parseGrammars = (value: unknown, source: string): LanguageRegistration[] => {
@@ -46,6 +46,24 @@ export const loadCodeGrammars = async (
 ): Promise<LanguageRegistration[]> => {
     const grammars = await Promise.all(
         names.map(async (name) => {
+            if (name === "grapth")
+                return [
+                    {
+                        name,
+                        scopeName: "source.grapth",
+                        patterns: [
+                            { match: "^\\s*#.*$", name: "comment.line.grapth" },
+                            { match: "\\[[^\\[\\]\\n]*\\]", name: "variable.other.grapth" },
+                            { match: "-->|->|--", name: "keyword.operator.grapth" },
+                            { match: "(?<=\\s)@\\S+", name: "entity.name.tag.grapth" },
+                        ],
+                    },
+                ] as LanguageRegistration[];
+            if (name === "termth")
+                return [
+                    ...(await bundledLanguages.yaml()).default,
+                    { name, scopeName: "source.termth", patterns: [{ include: "source.yaml" }] },
+                ] as LanguageRegistration[];
             if (!supported.has(name)) throw new Error(`Unsupported Shiki language: ${name}`);
             return (await bundledLanguages[name as keyof typeof bundledLanguages]()).default;
         }),

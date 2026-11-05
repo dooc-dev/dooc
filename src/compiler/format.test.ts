@@ -15,9 +15,9 @@ describe("Markdown formatting", () => {
     });
     it("preserves custom directives, code, and significant inline code spaces", () => {
         const body =
-            "# Title\n\n:::figure(overview.svg)[caption]\n\n:::schema[Model]\na:\n  id: pk\n:::\n\n```tdl\n  field\n```\n\n`     field`\n";
+            "# Title\n\n![caption](figures/overview.svg)\n\n:::schema[Model]\na:\n  id: pk\n:::\n\n```tdl\n  field\n```\n\n`     field`\n";
         const formatted = formatMarkdown(body);
-        expect(formatted).toContain(":::figure(overview.svg)[caption]");
+        expect(formatted).toContain("![caption](figures/overview.svg)");
         expect(formatted).toContain(":::schema[Model]\na:\n  id: pk\n:::");
         expect(formatted).toContain("```tdl\n  field\n```");
         expect(formatted).toContain("`     field`");

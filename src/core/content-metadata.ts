@@ -3,6 +3,11 @@
 // have children). id = the file name stem is the resolution key for URLs / doc: links and is
 // unique site-wide. YAML reading/writing lives in compiler/manifest.ts; this file only does
 // browser-safe tree validation and manipulation.
+
+import { docFile, type FileLayout, localFile, parseFileLayout } from "./files.js";
+import { isLangTag } from "./language.js";
+import { type PreviewSettings, parsePreviewSettings } from "./previewers.js";
+
 export const MANIFEST_FILE = "manifest.yaml";
 
 export interface DocNode {
@@ -14,6 +19,9 @@ export interface ParsedManifest {
     tree: DocNode[];
     title?: string;
     icon?: string;
+    defaultLang?: string;
+    previews?: PreviewSettings;
+    files?: FileLayout;
     errors: string[];
 }
 
@@ -36,10 +44,20 @@ export const parseManifest = (value: unknown): ParsedManifest => {
     const errors: string[] = [];
     let title: string | undefined;
     let icon: string | undefined;
+    let defaultLang: string | undefined;
+    let previews: PreviewSettings | undefined;
+    let files: FileLayout | undefined;
     if (value != null && typeof value === "object" && !Array.isArray(value)) {
         const manifest = value as Record<string, unknown>;
         for (const key of Object.keys(manifest))
-            if (key !== "title" && key !== "icon" && key !== "docs")
+            if (
+                key !== "title" &&
+                key !== "icon" &&
+                key !== "defaultLang" &&
+                key !== "docs" &&
+                key !== "previews" &&
+                key !== "files"
+            )
                 errors.push(`${MANIFEST_FILE}: unknown field "${key}"`);
         if (manifest.title !== undefined) {
             if (typeof manifest.title !== "string" || !manifest.title.trim())
@@ -49,13 +67,30 @@ export const parseManifest = (value: unknown): ParsedManifest => {
         if (manifest.icon !== undefined) {
             if (
                 typeof manifest.icon !== "string" ||
-                !/^(?!\/)(?![a-z][a-z\d+.-]*:)[^\\\0\r\n]+\.svg$/i.test(manifest.icon.trim()) ||
-                manifest.icon.split("/").includes("..")
+                !localFile(manifest.icon.trim()) ||
+                !manifest.icon.trim().endsWith(".svg")
             )
-                errors.push(
-                    `${MANIFEST_FILE}: icon must be a relative .svg file path inside the docs root`,
-                );
+                errors.push(`${MANIFEST_FILE}: icon must be a local .svg file`);
             else icon = manifest.icon.trim();
+        }
+        if (manifest.defaultLang !== undefined) {
+            if (typeof manifest.defaultLang !== "string" || !isLangTag(manifest.defaultLang))
+                errors.push(`${MANIFEST_FILE}: defaultLang must be a BCP 47 language tag`);
+            else defaultLang = manifest.defaultLang;
+        }
+        if (manifest.previews !== undefined) {
+            try {
+                previews = parsePreviewSettings(manifest.previews);
+            } catch (error) {
+                errors.push(`${MANIFEST_FILE}: ${error instanceof Error ? error.message : error}`);
+            }
+        }
+        if (manifest.files !== undefined) {
+            try {
+                files = parseFileLayout(manifest.files);
+            } catch (error) {
+                errors.push(`${MANIFEST_FILE}: ${error instanceof Error ? error.message : error}`);
+            }
         }
         if (!Array.isArray(manifest.docs)) errors.push(`${MANIFEST_FILE}: docs must be a list`);
         value = manifest.docs;
@@ -102,10 +137,22 @@ export const parseManifest = (value: unknown): ParsedManifest => {
         }
         return nodes;
     };
+    const tree = walk(value, "root");
+    if (files) {
+        for (const id of [...Object.keys(files.documents), ...Object.keys(files.icons ?? {})])
+            if (!seen.has(id))
+                errors.push(`${MANIFEST_FILE}: files references unknown document "${id}"`);
+        const paths = [...seen].map((id) => docFile(id, files));
+        if (new Set(paths).size !== paths.length)
+            errors.push(`${MANIFEST_FILE}: documents must use distinct files`);
+    }
     return {
-        tree: walk(value, "root"),
+        tree,
         ...(title === undefined ? {} : { title }),
         ...(icon === undefined ? {} : { icon }),
+        ...(defaultLang === undefined ? {} : { defaultLang }),
+        ...(previews === undefined ? {} : { previews }),
+        ...(files === undefined ? {} : { files }),
         errors,
     };
 };
@@ -113,8 +160,7 @@ export const parseManifest = (value: unknown): ParsedManifest => {
 /** Tree → manifest.yaml text (serialized in the hand-written shape, keeping git diffs clean). */
 export const serializeManifest = (
     tree: readonly DocNode[],
-    title?: string,
-    icon?: string,
+    { title, icon, defaultLang, previews, files }: Omit<ParsedManifest, "tree" | "errors"> = {},
 ): string => {
     const write = (nodes: readonly DocNode[], indent: string): string[] =>
         nodes.flatMap((n) =>
@@ -122,10 +168,24 @@ export const serializeManifest = (
                 ? [`${indent}- ${n.id}:`, ...write(n.children, `${indent}    `)]
                 : [`${indent}- ${n.id}`],
         );
-    if (title !== undefined || icon !== undefined) {
+    if (
+        title !== undefined ||
+        icon !== undefined ||
+        defaultLang !== undefined ||
+        previews !== undefined ||
+        files !== undefined
+    ) {
         const lines = write(tree, "  ");
-        const metadata = `${title === undefined ? "" : `title: ${JSON.stringify(title)}\n`}${icon === undefined ? "" : `icon: ${JSON.stringify(icon)}\n`}`;
-        return `${metadata}docs:${lines.length ? `\n${lines.join("\n")}\n` : " []\n"}`;
+        const metadata = `${title === undefined ? "" : `title: ${JSON.stringify(title)}\n`}${icon === undefined ? "" : `icon: ${JSON.stringify(icon)}\n`}${defaultLang === undefined ? "" : `defaultLang: ${JSON.stringify(defaultLang)}\n`}`;
+        const previewLines =
+            previews === undefined
+                ? ""
+                : `previews:\n  domains: ${JSON.stringify(previews.domains)}\n  formats:\n${Object.entries(
+                      previews.formats,
+                  )
+                      .map(([id, extensions]) => `    ${id}: ${JSON.stringify(extensions)}\n`)
+                      .join("")}`;
+        return `${metadata}${previewLines}${files ? `files: ${JSON.stringify(files)}\n` : ""}docs:${lines.length ? `\n${lines.join("\n")}\n` : " []\n"}`;
     }
     const lines = write(tree, "");
     return `# Doc hierarchy and order (each id = content/<id>.md)\n${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`;

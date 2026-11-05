@@ -1,5 +1,8 @@
 title: "dooc"
-icon: "logo.svg"
+icon: "icons/_site.svg"
+defaultLang: "jpn"
+files:
+  defaultLayout: true
 docs:
   - guide:
       - writing
@@ -10,4 +13,5 @@ docs:
               - ccccc
           - bbb:
               - a
+              - ac
       - publishing

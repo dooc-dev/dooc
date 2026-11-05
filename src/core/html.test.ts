@@ -19,7 +19,7 @@ const MODEL_FIG: FigureEntry = {
 const CTX: RenderCtx = {
     figures: new Map([[MODEL_FIG.name, MODEL_FIG]]),
     terms: [
-        { id: "sla", name: "SLA", definition: "Service Level Agreement" },
+        { id: "sla.termth", name: "SLA", definition: "Service Level Agreement" },
         { id: "api", name: "api", definition: "External-facing interface" },
     ],
 };
@@ -114,7 +114,7 @@ describe("blocksHtml", () => {
     });
 
     it("callout renders title + list; a figure with no file becomes a placeholder", () => {
-        const out = html(":::callout[Key points]\n- Item\n:::\n\n:::figure(unknown_fig.svg)");
+        const out = html(":::callout[Key points]\n- Item\n:::\n\n![](figures/unknown_fig.svg)");
         expect(out).toContain('<aside class="callout"><div class="cap">Key points</div><ul>');
         expect(out).toContain("Fig. unknown_fig");
         expect(out).toContain("not found in figures/");
@@ -135,7 +135,7 @@ describe("blocksHtml", () => {
     });
 
     it("figure is isolated in a sandboxed iframe; caption = label + newline + desc", () => {
-        const out = html(":::figure(data_model.svg)", CTX);
+        const out = html("![](figures/data_model.svg)", CTX);
         // svg gets everything forbidden, scripts included (sandbox=""); markup goes into srcdoc
         // escaped
         expect(out).toContain(
@@ -149,7 +149,7 @@ describe("blocksHtml", () => {
             '<figcaption class="cap">Fig.data_model\nDescription text</figcaption>',
         );
         // [caption], if given, takes precedence over the figure's title
-        expect(html(":::figure(data_model.svg)[Data model]", CTX)).toContain(
+        expect(html("![Data model](figures/data_model.svg)", CTX)).toContain(
             '<figcaption class="cap">Data model\nDescription text</figcaption>',
         );
     });
@@ -238,7 +238,7 @@ describe("blocksHtml", () => {
             "[input] -> [pre-process] -> [worker]",
             "[worker] --> [validator]: input validation",
         ].join("\n");
-        const out = html(`:::graph[Output processing flow]\n${dsl}\n:::`);
+        const out = html(`~~~grapth Output processing flow\n${dsl}\n~~~`);
         expect(out).toContain('<figure class="fig"><svg xmlns=');
         expect(out).toContain('<figcaption class="cap">Output processing flow</figcaption>');
         // node labels and region frame labels
@@ -260,13 +260,13 @@ describe("blocksHtml", () => {
         // colors always go through CSS variables (follow the theme)
         expect(out).toContain("var(--doc-panel, #ffffff)");
         // a graph without nodes degrades to a placeholder
-        expect(html(":::graph\n:::")).toContain('<div class="ph">graph');
+        expect(html("~~~grapth\n~~~")).toContain('<div class="ph">graph');
         // same result with the content indented by 2 spaces (the common indent is stripped)
-        expect(html(":::graph\n  [a]: A\n  [b]: B\n  [a] -- [b]\n:::")).toContain('class="gr-e ');
+        expect(html("~~~grapth\n  [a]: A\n  [b]: B\n  [a] -- [b]\n~~~")).toContain('class="gr-e ');
     });
 
     it(":::graph draws no arrowhead on undirected edges", () => {
-        const out = html(":::graph\n[a]: A\n[b]: B\n[a] -- [b]\n:::");
+        const out = html("~~~grapth\n[a]: A\n[b]: B\n[a] -- [b]\n~~~");
         expect(out).toContain('class="gr-e ');
         expect(out).not.toContain("marker-end");
     });
@@ -339,15 +339,15 @@ describe("inline references (figures / dictionary)", () => {
         expect(figureIndexRoute([doc("a", [])])).toBeUndefined();
     });
 
-    it("links only explicit term IDs, including when the same name is plain text", () => {
-        const out = html("SLA and :::term(sla).", {
+    it("links only explicit term file links, including when the same name is plain text", () => {
+        const out = html("SLA and [](sla.termth).", {
             ...CTX,
-            termLinks: new Map([["sla", "/terms#term-sla"]]),
+            termLinks: new Map([["sla.termth", "/terms#term-sla"]]),
         });
         expect(out).toContain('SLA and <a class="dictref" href="/terms#term-sla">SLA');
         expect(out).toContain("Service Level Agreement");
         expect(html("SLA api api-v2", CTX)).not.toContain("dictref");
-        expect(html("`:::term(sla)`", CTX)).not.toContain("dictref");
+        expect(html("`[](sla.termth)`", CTX)).not.toContain("dictref");
     });
 
     it("term lists sort by name and escape optional descriptions and definitions", () => {
@@ -379,7 +379,7 @@ describe("inline references (figures / dictionary)", () => {
         expect(out).toContain('<fieldset class="dict-card"');
         expect(out).toContain('<legend id="term-api">');
         expect(out).toContain('class="term-icon"');
-        expect(out).toContain('href="/_resources/terms#term-api">API</a>');
+        expect(out).toContain('href="/_files/terms#term-api">API</a>');
         expect(out).toContain("Interface");
         expect(out).not.toContain("data-dict-sort");
     });

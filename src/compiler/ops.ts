@@ -10,24 +10,24 @@ import {
     unlinkSync,
     writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
-    type DocNode,
-    docIdOfFile,
     flattenTree,
     insertDoc,
     isDocId,
     moveDoc,
+    type ParsedManifest,
     removeDoc,
     renameDoc,
 } from "../core/content-metadata.js";
+import { defaultFilePath, docIconFile, isDocumentFileName } from "../core/files.js";
 import { parseDocLink } from "../core/routing.js";
 import { collectDocLinks, compileSite, rewriteDocLinks } from "./compile.js";
 import { figureName, figureUploadName } from "./figures.js";
-import { ICONS_DIR } from "./icons.js";
 import { catalogLanguages, readCatalog, writeCatalog } from "./locales.js";
-import { readManifest, writeManifest } from "./manifest.js";
+import { docFile, readManifest, writeManifest } from "./manifest.js";
 import { assembleDoc } from "./serialize.js";
+import { textfilePath } from "./textfile.js";
 
 export interface OpError {
     error: string;
@@ -43,11 +43,11 @@ export const isOpError = (r: unknown): r is OpError =>
 export { assembleDoc } from "./serialize.js";
 
 export const createDocOps = (root: string) => {
-    const contentDir = join(root, "content");
     const figuresDir = join(root, "figures");
-    const iconsDir = join(root, ICONS_DIR);
-    const docPath = (id: string): string => join(contentDir, `${id}.md`);
-    const iconPath = (id: string): string => join(iconsDir, `${id}.svg`);
+    const docPath = (id: string): string =>
+        textfilePath(root, docFile(id, readManifest(root).files));
+    const iconPath = (id: string): string =>
+        textfilePath(root, docIconFile(id, readManifest(root).files));
 
     const loadCatalogs = (): OpResult<{
         catalogs: { lang: string; catalog: ReturnType<typeof readCatalog> }[];
@@ -66,11 +66,11 @@ export const createDocOps = (root: string) => {
 
     // Read before rewriting manifest.yaml. If it's broken, don't write (= don't clobber
     // hand-written content).
-    const loadTree = (): OpResult<{ tree: DocNode[]; title?: string; icon?: string }> => {
-        const { tree, title, icon, errors } = readManifest(root);
-        return errors.length > 0
-            ? { error: errors.join(" / "), status: 409 }
-            : { tree, title, icon };
+    const loadTree = (): OpResult<ParsedManifest> => {
+        const manifest = readManifest(root);
+        return manifest.errors.length > 0
+            ? { error: manifest.errors.join(" / "), status: 409 }
+            : manifest;
     };
 
     const existingDoc = (id: unknown): OpResult<{ id: string }> =>
@@ -81,22 +81,30 @@ export const createDocOps = (root: string) => {
     // Files whose body text references id via a doc: link (<id>.md directly under content/,
     // excluding the doc itself).
     const referencingFiles = (id: string): string[] =>
-        readdirSync(contentDir)
-            .filter((f) => f !== `${id}.md` && docIdOfFile(f) != null)
-            .filter((f) =>
-                collectDocLinks(readFileSync(join(contentDir, f), "utf8")).some(
+        flattenTree(readManifest(root).tree)
+            .filter((doc) => doc.id !== id)
+            .filter((doc) =>
+                collectDocLinks(readFileSync(docPath(doc.id), "utf8")).some(
                     (url) => parseDocLink(url) === id,
                 ),
-            );
+            )
+            .map((doc) => `${doc.id}.md`);
 
-    /** Creates content/<id>.md (title only) and appends it as the last child of parent. */
-    const add = (id: string, title: string, parent?: string): OpResult<{ id: string }> => {
+    /** Creates a document and appends it as the last child of parent. */
+    const add = (
+        id: string,
+        title: string,
+        parent?: string,
+        filename?: string,
+    ): OpResult<{ id: string }> => {
         if (!title) {
             return { error: "title is required", status: 400 };
         }
         if (!isDocId(id)) {
             return { error: "id must be lowercase alphanumerics and hyphens", status: 400 };
         }
+        if (filename !== undefined && !isDocumentFileName(filename))
+            return { error: "Enter a file name ending in .md", status: 400 };
         if (existsSync(docPath(id))) {
             return { error: `id "${id}" is already in use`, status: 409 };
         }
@@ -108,10 +116,37 @@ export const createDocOps = (root: string) => {
         if (!tree) {
             return { error: `duplicate id "${id}" or missing parent "${parent}"`, status: 409 };
         }
-        mkdirSync(contentDir, { recursive: true });
-        writeFileSync(docPath(id), assembleDoc({ title }, ""));
-        writeManifest(root, tree, loaded.title, loaded.icon);
+        if (filename !== undefined || loaded.files?.defaultLayout) {
+            loaded.files ??= { defaultLayout: false, documents: {}, order: [] };
+            loaded.files.documents[id] = loaded.files.defaultLayout
+                ? defaultFilePath(filename ?? `${id}.md`)
+                : `content/${filename}`;
+        }
+        const file = textfilePath(root, docFile(id, loaded.files));
+        if (existsSync(file)) return { error: "File already exists", status: 409 };
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, assembleDoc({ title }, ""), { flag: "wx" });
+        writeManifest(root, tree, loaded);
         return { id };
+    };
+
+    const addFile = (name: string, title: string, parent?: string): OpResult<{ id: string }> => {
+        if (!isDocumentFileName(name))
+            return { error: "Enter a file name ending in .md", status: 400 };
+        const loaded = loadTree();
+        if (isOpError(loaded)) return loaded;
+        const ids = new Set(flattenTree(loaded.tree).map((doc) => doc.id));
+        const stem =
+            name
+                .slice(0, -3)
+                .normalize("NFKD")
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "-")
+                .replace(/^-+|-+$/g, "") || "doc";
+        let id = stem;
+        for (let index = 2; ids.has(id) || existsSync(docPath(id)); index++)
+            id = `${stem}-${index}`;
+        return add(id, title, parent, name);
     };
 
     /**
@@ -133,7 +168,7 @@ export const createDocOps = (root: string) => {
                 status: 409,
             };
         }
-        writeManifest(root, tree, loaded.title, loaded.icon);
+        writeManifest(root, tree, loaded);
         return { id };
     };
 
@@ -171,14 +206,18 @@ export const createDocOps = (root: string) => {
         if (translations.catalogs.some(({ catalog }) => Object.hasOwn(catalog, newId))) {
             return { error: `translation id "${newId}" is already in use`, status: 409 };
         }
-        renameSync(docPath(oldId), docPath(newId));
-        if (existsSync(iconPath(oldId))) {
-            renameSync(iconPath(oldId), iconPath(newId));
-        }
-        writeManifest(root, tree, loaded.title, loaded.icon);
+        if (loaded.files && Object.hasOwn(loaded.files.documents, oldId)) {
+            loaded.files.documents[newId] = docFile(oldId, loaded.files);
+            delete loaded.files.documents[oldId];
+        } else renameSync(docPath(oldId), docPath(newId));
+        if (loaded.files?.icons && Object.hasOwn(loaded.files.icons, oldId)) {
+            loaded.files.icons[newId] = docIconFile(oldId, loaded.files);
+            delete loaded.files.icons[oldId];
+        } else if (existsSync(iconPath(oldId))) renameSync(iconPath(oldId), iconPath(newId));
+        writeManifest(root, tree, loaded);
         let updatedRefs = 0;
-        for (const f of readdirSync(contentDir).filter((n) => docIdOfFile(n) != null)) {
-            const p = join(contentDir, f);
+        for (const { id } of flattenTree(tree)) {
+            const p = docPath(id);
             const raw = readFileSync(p, "utf8");
             const next = rewriteDocLinks(raw, oldId, newId);
             if (next !== raw) {
@@ -247,10 +286,19 @@ export const createDocOps = (root: string) => {
             };
         }
         const parent = flattenTree(loaded.tree).find((n) => n.id === id)?.parent;
-        writeManifest(root, tree, loaded.title, loaded.icon);
-        unlinkSync(docPath(id));
-        if (existsSync(iconPath(id))) {
-            unlinkSync(iconPath(id));
+        const removedPath = docPath(id);
+        const removedIcon = iconPath(id);
+        if (loaded.files) {
+            delete loaded.files.documents[id];
+            if (loaded.files.icons) delete loaded.files.icons[id];
+            loaded.files.order = loaded.files.order.filter(
+                (file) => join(root, file) !== removedPath,
+            );
+        }
+        writeManifest(root, tree, loaded);
+        unlinkSync(removedPath);
+        if (existsSync(removedIcon)) {
+            unlinkSync(removedIcon);
         }
         for (const { lang, catalog } of translations.catalogs) {
             if (Object.hasOwn(catalog, id)) {
@@ -277,7 +325,7 @@ export const createDocOps = (root: string) => {
      * -2, -3… is appended (if the same name with the same content exists, returns it without
      * writing).
      */
-    const addFigure = (file: string, data: Buffer): OpResult<{ file: string }> => {
+    const addFigure = (file: string, data: Buffer): OpResult<{ file: string; path?: string }> => {
         const upload = figureUploadName(file);
         if (!upload) {
             return { error: "specify an svg / png / webp / jpeg / html file", status: 400 };
@@ -287,6 +335,22 @@ export const createDocOps = (root: string) => {
             (upload.endsWith(".svg") && !data.toString("utf8").includes("<svg"))
         ) {
             return { error: `${upload} has invalid content`, status: 400 };
+        }
+        const manifest = loadTree();
+        if (isOpError(manifest)) return manifest;
+        if (manifest.files?.defaultLayout) {
+            const initial = defaultFilePath(upload);
+            let path = initial;
+            const ext = upload.slice(figureName(upload).length);
+            for (let i = 2; existsSync(textfilePath(root, path)); i++) {
+                if (readFileSync(textfilePath(root, path)).equals(data))
+                    return { file: path.split("/").pop() as string, path };
+                path = `${initial.slice(0, -ext.length)}-${i}${ext}`;
+            }
+            const target = textfilePath(root, path);
+            mkdirSync(dirname(target), { recursive: true });
+            writeFileSync(target, data, { flag: "wx" });
+            return { file: path.split("/").pop() as string, path };
         }
         mkdirSync(figuresDir, { recursive: true });
         const taken = new Map(readdirSync(figuresDir).map((f) => [figureName(f), f]));
@@ -309,13 +373,14 @@ export const createDocOps = (root: string) => {
     /** Files in figures/ (figure name → file). */
     const figureFiles = (): Map<string, string> =>
         new Map(
-            existsSync(figuresDir)
-                ? readdirSync(figuresDir).map((f) => [figureName(f), f] as const)
-                : [],
+            compileSite(root).figures.map((f) => [
+                f.name,
+                f.file.startsWith("figures/") ? f.file.slice(8) : f.file,
+            ]),
         );
 
     /**
-     * Deletes a figure. If a doc references it via :::figure, refuses without force and returns
+     * Deletes a figure. If a doc references it via a Markdown embed, refuses without force and returns
      * referencedBy.
      */
     const removeFigure = (name: string, force = false): OpResult<{ file: string }> => {
@@ -341,17 +406,18 @@ export const createDocOps = (root: string) => {
                 referencedBy,
             };
         }
-        unlinkSync(join(figuresDir, file));
+        unlinkSync(textfilePath(root, file.includes("/") ? file : `figures/${file}`));
         return { file };
     };
 
     return {
-        contentDir,
+        contentDir: join(root, "content"),
         figuresDir,
         loadTree,
         referencingFiles,
         figureFiles,
         add,
+        addFile,
         move,
         rename,
         remove,

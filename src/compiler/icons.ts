@@ -2,6 +2,8 @@
 // Separate from body-text figures (figures/): one per doc, following the doc's rename / deletion.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { docIconFile, type FileLayout } from "../core/files.js";
+import { textfilePath } from "./textfile.js";
 
 export const ICONS_DIR = "icons";
 
@@ -55,14 +57,12 @@ export const loadIcons = (
     root: string,
     docIds: ReadonlySet<string>,
     siteIconFile?: string,
+    layout?: FileLayout,
 ): { icons: Map<string, string>; errors: string[] } => {
     const dir = join(root, ICONS_DIR);
     const icons = new Map<string, string>();
     const errors: string[] = [];
-    if (!existsSync(dir)) {
-        return { icons, errors };
-    }
-    for (const f of readdirSync(dir)) {
+    for (const f of existsSync(dir) ? readdirSync(dir) : []) {
         if (f.startsWith(".")) {
             continue;
         }
@@ -79,5 +79,17 @@ export const loadIcons = (
         }
         icons.set(id, svg);
     }
+    for (const id of docIds)
+        if (layout?.icons?.[id]) {
+            try {
+                const file = textfilePath(root, docIconFile(id, layout));
+                if (!existsSync(file)) continue;
+                const svg = readFileSync(file, "utf8");
+                if (!ROOT_SVG_RE.test(svg)) throw new Error("not an svg");
+                icons.set(id, svg);
+            } catch (error) {
+                errors.push(`${docIconFile(id, layout)}: ${error}`);
+            }
+        }
     return { icons, errors };
 };

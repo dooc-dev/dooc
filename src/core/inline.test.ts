@@ -3,30 +3,30 @@ import { inlineSegmenter } from "./inline.js";
 
 const segment = inlineSegmenter({
     terms: [
-        { id: "api-one", name: "API", definition: "First" },
-        { id: "api-two", name: "API", definition: "Second" },
+        { id: "api-one.termth", name: "API", definition: "First" },
+        { id: "api-two.termth", name: "API", definition: "Second" },
     ],
 });
 
-describe("explicit term references", () => {
-    it("uses IDs rather than names and leaves ordinary words unchanged", () => {
-        expect(segment("API :::term(api-two) / :::term( api-one )")).toEqual([
+describe("term file links", () => {
+    it("resolves paths, uses default names and preserves explicit labels", () => {
+        expect(segment("API [](api-two.termth) / [Interface](./api-one.termth)")).toEqual([
             { kind: "text", text: "API " },
-            { kind: "term", id: "api-two", text: "API" },
+            { kind: "term", id: "api-two.termth", text: "API" },
             { kind: "text", text: " / " },
-            { kind: "term", id: "api-one", text: "API" },
+            { kind: "term", id: "api-one.termth", text: "Interface" },
         ]);
     });
-    it("does not resolve terms in code, links or escaped references", () => {
+    it("leaves code, escaped links, ordinary URLs and removed syntax alone", () => {
         expect(
             segment(
-                "`:::term(api-one)` [API](https://example.com/:::term(api-two)) \\:::term(api-one)",
-            ).filter((s) => s.kind === "term"),
+                "`[](api-one.termth)` \\[](api-one.termth) [API](https://example.com) :::term(api-one)",
+            ).filter((item) => item.kind === "term"),
         ).toEqual([]);
     });
-    it("preserves unresolved references so validation can report their IDs", () => {
-        expect(segment(":::term(missing)")).toEqual([
-            { kind: "term", id: "missing", text: ":::term(missing)" },
+    it("keeps missing paths visible", () => {
+        expect(segment("[](missing.termth)")).toEqual([
+            { kind: "term", id: "missing.termth", text: "missing.termth" },
         ]);
     });
 });

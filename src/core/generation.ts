@@ -2,11 +2,12 @@
 // version. Bump it for changes to the wire contract (including additions) or incompatible
 // directive changes. Add a docs-json-schema/<generation>.json and register it in
 // docs-json-schema.ts; keep released schemas unchanged.
-export const GENERATION = 14;
+export const GENERATION = 17;
 
 /**
- * Generation 11 replaces dictionaries with ID-based terms. Older artifacts need migration;
- * within each compatible format family, consumers can render their own or earlier generations.
+ * Generation 11 introduces term IDs; generation 17 replaces their inline syntax with file links.
+ * Consumers can render their own or earlier generations within each compatible format family.
  */
 export const canRenderGeneration = (consumerGen: number, dataGen: number): boolean =>
-    consumerGen >= dataGen && consumerGen >= 11 === dataGen >= 11;
+    consumerGen >= dataGen &&
+    [11, 17].every((version) => consumerGen >= version === dataGen >= version);

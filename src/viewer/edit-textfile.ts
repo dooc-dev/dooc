@@ -1,25 +1,24 @@
 import { indentWithTab, isolateHistory } from "@codemirror/commands";
 import { EditorState, type Extension, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, keymap, WidgetType } from "@codemirror/view";
-import { normalizeLeafDirectives, TEXTFILE_LINE_RE } from "../core/taxonomy.js";
+import type { PreviewSettings } from "../core/previewers.js";
 import { isRemoteTextfile, textfileName } from "../core/textfile.js";
 import { editorCodeHighlight } from "./edit-code-highlight.js";
 import { chooseConflict } from "./edit-conflict.js";
 import { confirmDialog } from "./edit-dialog.js";
+import { previewSettingsState, setPreviewSettings } from "./edit-file-preview.js";
 import { createFoldButton } from "./edit-fold.js";
 import { editorSetup } from "./edit-setup.js";
+import { fileReferences } from "./file-references.js";
 import { t } from "./i18n.js";
 
-export const textfileLines = (body: string): { line: number; file: string }[] => {
-    const original = body.split("\n");
-    return normalizeLeafDirectives(body)
-        .source.split("\n")
-        .flatMap((line, i) => {
-            if (!/^ {0,3}::textfile\{/.test(line)) return [];
-            const file = TEXTFILE_LINE_RE.exec(original[i] ?? "")?.[2]?.trim();
-            return file ? [{ line: i + 1, file: file.replace(/^(\.\/)+/, "") }] : [];
-        });
-};
+export const textfileLines = (
+    body: string,
+    settings?: PreviewSettings,
+): { line: number; file: string }[] =>
+    fileReferences(body, settings)
+        .filter((ref) => ref.kind === "textfile" || ref.kind === "term")
+        .map(({ line, file }) => ({ line, file }));
 
 interface FileDraft {
     base?: string | null;
@@ -34,7 +33,7 @@ interface FileDraft {
 /** File drafts outlive widgets, folds and article switches; duplicate references share edits. */
 export const createTextfileEditors = (
     theme: Extension,
-    onRefresh: () => void,
+    onRefresh: (file: string) => void,
     onDirty: () => void,
 ) => {
     const drafts = new Map<string, FileDraft>();
@@ -84,7 +83,7 @@ export const createTextfileEditors = (
                 else await save(file, draft);
                 return;
             }
-            onRefresh();
+            onRefresh(file);
         } catch (error) {
             draft.error = String(error);
         } finally {
@@ -119,7 +118,7 @@ export const createTextfileEditors = (
                 }).state;
             draft.validation = result.findings?.length ? "error" : "valid";
             draft.error = (result.findings ?? []).map((finding) => finding.message).join("\n");
-            onRefresh();
+            onRefresh(file);
         } catch (error) {
             draft.validation = "error";
             draft.error = String(error);
@@ -181,11 +180,11 @@ export const createTextfileEditors = (
                         draft.error = "";
                         draft.validation = "pending";
                         notify(draft);
-                        onRefresh();
+                        onRefresh(file);
                     }),
                 ],
             });
-            onRefresh();
+            onRefresh(file);
         } catch (error) {
             draft.error = String(error);
         } finally {
@@ -365,21 +364,23 @@ export const createTextfileEditors = (
     }
     const decorations = (state: EditorState): DecorationSet =>
         Decoration.set(
-            textfileLines(state.doc.toString()).flatMap(({ line, file }) => {
-                const position = state.doc.line(line).to;
-                const controls = Decoration.widget({
-                    widget: new FileWidget(file, true),
-                    side: 1,
-                }).range(position);
-                return [
-                    controls,
-                    Decoration.widget({
-                        widget: new FileWidget(file, false),
-                        block: true,
+            textfileLines(state.doc.toString(), state.field(previewSettingsState, false)).flatMap(
+                ({ line, file }) => {
+                    const position = state.doc.line(line).to;
+                    const controls = Decoration.widget({
+                        widget: new FileWidget(file, true),
                         side: 2,
-                    }).range(position),
-                ];
-            }),
+                    }).range(position);
+                    return [
+                        controls,
+                        Decoration.widget({
+                            widget: new FileWidget(file, false),
+                            block: true,
+                            side: 3,
+                        }).range(position),
+                    ];
+                },
+            ),
         );
     return {
         hasUnsavedChanges: () => [...drafts.values()].some((draft) => dirty(draft) || draft.busy),
@@ -423,7 +424,10 @@ export const createTextfileEditors = (
         extension: StateField.define<DecorationSet>({
             create: decorations,
             update: (value, transaction) =>
-                transaction.docChanged ? decorations(transaction.state) : value,
+                transaction.docChanged ||
+                transaction.effects.some((effect) => effect.is(setPreviewSettings))
+                    ? decorations(transaction.state)
+                    : value,
             provide: (field) => EditorView.decorations.from(field),
         }),
     };

@@ -1,16 +1,15 @@
-// Loads `<docs root>/docs.config.mjs` (optional): the site default language and extra language
+// Loads `<docs root>/docs.config.mjs` (optional): extra language
 // adapters (the language socket, core/language.ts). The file is a JS module, so loading it runs
 // its code — it belongs to the docs root like a build config. Read once per process; restart
 // after changing it.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { DEFAULT_LANG, isLangTag, type LanguageAdapter } from "../core/language.js";
+import { isLangTag, type LanguageAdapter } from "../core/language.js";
 
 export const CONFIG_FILE = "docs.config.mjs";
 
 export interface ResolvedConfig {
-    defaultLang: string;
     languages: LanguageAdapter[];
 }
 
@@ -41,7 +40,6 @@ export const loadDocsConfig = async (root: string): Promise<ResolvedConfig> => {
     const file = join(root, CONFIG_FILE);
     if (!existsSync(file)) {
         return {
-            defaultLang: DEFAULT_LANG,
             languages: [],
         };
     }
@@ -50,15 +48,13 @@ export const loadDocsConfig = async (root: string): Promise<ResolvedConfig> => {
     if (typeof config !== "object" || config == null || Array.isArray(config)) {
         throw new Error(`${CONFIG_FILE}: the default export must be an object`);
     }
-    const { defaultLang, languages } = config as Record<string, unknown>;
-    if (defaultLang !== undefined && !(typeof defaultLang === "string" && isLangTag(defaultLang))) {
-        throw new Error(`${CONFIG_FILE}: defaultLang must be a BCP 47 language tag`);
-    }
+    if ("defaultLang" in config)
+        throw new Error(`${CONFIG_FILE}: move defaultLang to manifest.yaml`);
+    const { languages } = config as Record<string, unknown>;
     if (languages !== undefined && !Array.isArray(languages)) {
         throw new Error(`${CONFIG_FILE}: languages must be an array`);
     }
     return {
-        defaultLang: (defaultLang as string | undefined) ?? DEFAULT_LANG,
         languages: (languages ?? []).map(checkAdapter),
     };
 };

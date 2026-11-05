@@ -29,11 +29,10 @@ try {
     assert.match(run("--help"), /usage: dooc/);
     assert.ok(JSON.parse(run("json-schema", "latest")).properties.generation);
     mkdirSync(join(root, "content"));
-    writeFileSync(join(root, "manifest.yaml"), "docs:\n  - guide\n");
-    writeFileSync(join(root, "docs.config.mjs"), 'export default { defaultLang: "ja" };\n');
+    writeFileSync(join(root, "manifest.yaml"), "defaultLang: ja\ndocs:\n  - guide\n");
     writeFileSync(
         join(root, "content/guide.md"),
-        "---\ntitle: Guide\n---\n# Hello\n\n```js\nconst x = 1;\n```\n\n:::graph\n[a]: 書く\n[b]: 共有する\n[a] -> [b]\n:::\n",
+        "---\ntitle: Guide\n---\n# Hello\n\n```js\nconst x = 1;\n```\n\n```grapth\n[a]: 書く\n[b]: 共有する\n[a] -> [b]\n```\n",
     );
     run("code-language", "add", "python");
     assert.ok(JSON.parse(readFileSync(join(root, ".dooc/code-languages/python.json"))).length);

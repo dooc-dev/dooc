@@ -162,7 +162,7 @@ describe("navGroupsHtml", () => {
         expect(html).toContain('<div class="nav-item" data-doc-id="d">');
     });
 
-    it("edit mode exposes editable title/ID labels, SVG, and create/delete actions", () => {
+    it("edit mode shows titles without filenames and keeps metadata editing actions", () => {
         const edit = navGroupsHtml("edit", fixtureSite(), undefined);
         expect(edit).toContain('draggable="true"');
         expect(edit).not.toContain("drag-handle");
@@ -171,12 +171,12 @@ describe("navGroupsHtml", () => {
         expect(edit.match(/class="nav-create"/g)).toHaveLength(1);
         expect(edit).toContain('class="nav-item nav-placeholder nav-add-hover"');
         expect(edit).toContain('class="nav-create" type="button" data-parent=""');
-        expect(edit.match(/class="nav-tree-toggle"/g)).toHaveLength(3);
+        expect(edit.match(/class="nav-tree-toggle"/g)).toHaveLength(4);
         expect(edit).not.toContain('class="nav-rename"');
         expect(edit.match(/aria-keyshortcuts="F2"/g)).toHaveLength(4);
         expect(edit.match(/data-doc-action="delete"/g)).toHaveLength(4);
         expect(edit.match(/class="nav-doc-icon"/g)).toHaveLength(4);
-        expect(edit).toContain('<span class="nav-doc-id">b.md</span>');
+        expect(edit).not.toContain("nav-doc-id");
         const preview = navGroupsHtml("preview", fixtureSite(), undefined);
         expect(preview).not.toContain("draggable");
         expect(preview).not.toContain("drag-handle");
@@ -202,12 +202,12 @@ describe("navGroupsHtml", () => {
         expect(edit.match(/class="nav-create"/g)).toHaveLength(1);
         expect(edit).toContain('class="nav-create" type="button" data-parent=""');
         expect(edit).toContain('<span class="nav-label">...</span>');
-        expect(edit).toContain('<span class="nav-doc-id">... .md</span>');
+        expect(edit).not.toContain("nav-doc-id");
         expect(edit).not.toContain("nav-add-hover");
         expect(edit.indexOf('class="nav-create"')).toBeLessThan(edit.indexOf("nav-resources"));
     });
 
-    it("the Resources section is edit-only (index › kind › individual file), with the current branch open", () => {
+    it("Files navigation is edit-only and opens the folder manager", () => {
         const site: Site = {
             ...fixtureSite(),
             ctx: {
@@ -236,19 +236,40 @@ describe("navGroupsHtml", () => {
         };
         expect(navGroupsHtml("preview", site)).not.toContain("nav-resources");
         const html = navGroupsHtml("edit", site, undefined, "figures/x.svg");
-        expect(html).toContain('<div class="nav-item open" data-node-id="_res">');
-        expect(html).toContain('<div class="nav-item open" data-node-id="_res:figures">');
-        expect(html).toContain('<a class="nav-tree-link cur" href="/_resources/figures/x.svg"');
-        expect(html).toContain('href="/_resources/icons"');
-        expect(html).not.toContain("/_resources/presentations");
-        expect(html).toContain('href="/_resources/html/widget.html"');
-        expect(html).not.toContain('href="/_resources/figures/widget.html"');
-        const selected = navGroupsHtml("edit", site, undefined, "html/widget.html");
-        expect(selected).toContain('<div class="nav-item open" data-node-id="_res:html">');
-        expect(selected).toContain(
-            '<a class="nav-tree-link cur" href="/_resources/html/widget.html"',
+        expect(html).toContain('class="nav-tree-link cur" href="/_files/file/figures%2Fx.svg"');
+        expect(html).toContain('data-i18n="Files">Files');
+        expect(resourcesMain(site, "")?.main).toContain('id="files-manager"');
+        expect(resourcesMain(site, "figures/x.svg")?.main).toContain("<iframe");
+        expect(resourcesMain(site, "html/widget.html")?.main).toContain("Widget");
+    });
+
+    it("shows the physical file tree in saved order, including unreferenced files", () => {
+        const site = fixtureSite();
+        site.entries[1] = { ...entry("b", "a"), sourceFile: "files/md/b.md" };
+        site.filePaths = [
+            "files/ts/z.ts",
+            "files/ts/a%20.ts",
+            "files/md/b.md",
+            'notes/<tag> & "name".txt',
+            "files/ts/z.ts",
+            "../outside.txt",
+        ];
+        const html = navGroupsHtml("edit", site, undefined, "file/files%2Fts%2Fa%2520.ts");
+        expect(html).toContain('class="nav-item open" data-node-id="_files:files"');
+        expect(html).toContain('class="nav-item open" data-node-id="_files:files/ts"');
+        expect(html).toContain('class="nav-item" data-node-id="_files:files/md"');
+        expect(html).toContain('data-file-folder aria-expanded="true" title="files/ts"');
+        expect(html).toContain(
+            'href="/_files/file/files%2Fts%2Fa%2520.ts" title="files/ts/a%20.ts" aria-current="page"',
         );
-        expect(selected).not.toContain('<div class="nav-item open" data-node-id="_res:figures">');
+        expect(html.indexOf('title="files/ts/z.ts"')).toBeLessThan(
+            html.indexOf('title="files/ts/a%20.ts"'),
+        );
+        expect(html.match(/title="files\/ts\/z.ts"/g)).toHaveLength(1);
+        expect(html).toContain('href="/a/b" title="files/md/b.md"');
+        expect(html).toContain("&lt;tag&gt; &amp; &quot;name&quot;.txt");
+        expect(html).not.toContain("../outside.txt");
+        expect(navGroupsHtml("preview", site)).not.toContain("_files:");
     });
 
     it("a doc icon replaces the book icon at top level and precedes the label below it (wrapped in an img)", () => {
@@ -262,6 +283,26 @@ describe("navGroupsHtml", () => {
         );
         expect(html).toContain('title="B"><span class="doc-icon-frame"');
         expect(html).toContain("--doc-icon:url('data:image/svg+xml;base64,");
+    });
+
+    it("lists Markdown filenames in Files with escaped source and a link to the document", () => {
+        const site = fixtureSite();
+        site.entries[1] = {
+            ...entry("b", "a"),
+            raw: '---\ntitle: B\n---\n<script>alert("x")</script>\n',
+        };
+        const nav = navGroupsHtml("edit", site, undefined, "markdown/b.md");
+        expect(nav).toContain('href="/_files"');
+        const list = resourcesMain(site, "markdown")?.main;
+        for (const entry of site.entries) {
+            expect(list).toContain(`href="/_files/markdown/${entry.file}"`);
+        }
+        const detail = resourcesMain(site, "markdown/b.md")?.main;
+        expect(detail).toContain("content/b.md");
+        expect(detail).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;");
+        expect(detail).not.toContain("<script>");
+        expect(detail).toContain('<a href="/b">B</a>');
+        expect(resourcesMain(site, "markdown/missing.md")).toBeUndefined();
     });
 });
 
@@ -360,6 +401,7 @@ describe("editorBoot / pageDataResponse (backing `GET /api/page`)", () => {
             icon: null,
             defaultLang: "en",
             spellcheckLang: "en",
+            filePreviews: {},
         });
     });
 
@@ -464,21 +506,21 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
         expect(html).toContain('class="site-title" title="dooc">dooc</div>');
     });
 
-    it("lists terms under Resources, with sorting only on the list page", () => {
+    it("lists terms under Files, with sorting only on the list page", () => {
         const nav = navGroupsHtml("edit", site, undefined);
-        expect(nav).toContain('href="/_resources/terms"');
-        expect(nav).toContain('href="/_resources/terms/docs-root"');
+        expect(nav).toContain('href="/_files"');
         const list = resourcesMain(site, "terms")?.main ?? "";
-        for (const term of site.ctx.terms) expect(list).toContain(`id="term-${term.id}"`);
+        for (const term of site.ctx.terms)
+            expect(list).toContain(`id="term-${encodeURIComponent(term.id)}"`);
         expect(list).toContain("data-dict-sort");
-        const detail = resourcesMain(site, "terms/docs-root")?.main ?? "";
-        expect(detail).toContain(":::term(docs-root)");
+        const detail = resourcesMain(site, "terms/terms%2Fdocs-root.termth")?.main ?? "";
+        expect(detail).toContain("[](terms/docs-root.termth)");
         expect(detail).toContain("資料の入力フォルダー。");
         expect(detail).not.toContain("data-dict-sort");
         expect(html.match(/<select data-dict-sort/g)).toHaveLength(1);
-        expect(html).toContain('<template data-route="_resources/terms"');
-        expect(html).toContain('href="#/_resources/terms#term-docs-root"');
-        expect(list).toContain('href="/_resources/terms#term-docs-root"');
+        expect(html).toContain('<template data-route="_files/terms"');
+        expect(html).toContain('href="#/_files/terms#term-terms%252Fdocs-root.termth"');
+        expect(list).toContain('href="/_files/terms#term-terms%252Fdocs-root.termth"');
         expect(resourcesMain(site, "terms/missing")).toBeUndefined();
     });
 

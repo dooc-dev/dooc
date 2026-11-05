@@ -31,6 +31,7 @@ export type Block =
           lang?: CodeLang;
           filename?: string;
           range?: string;
+          alt?: string;
           unavailable?: "missing" | "unreachable";
       }
     | {
@@ -42,7 +43,7 @@ export type Block =
       }
     | { type: "callout"; title?: string; body: CalloutItem[] }
     // Inline placement of a figure (figures/<name>). The markup is looked up in
-    // artifact/figures/<name>.json. caption = `:::figure(...)[caption]` in content (falling back
+    // artifact/figures/<name>.json. caption = `![caption](figures/...)` in content (falling back
     // to the figure's own title).
     | { type: "figureRef"; name: string; caption?: string }
     | { type: "term"; entry: TermEntry }
@@ -55,7 +56,7 @@ export type Block =
     // (rebuilding from the model would lose the original order / notes / blank lines, so the
     // original is carried rather than derived). Optional (if absent, the viewer shows no button).
     | { type: "schemaGraph"; caption?: string; graph: SchemaModel; source?: string }
-    // Relationship diagram derived from the node / edge DSL (`:::graph`). Like schemaGraph, the
+    // Relationship diagram derived from the node / edge DSL (`grapth`). Like schemaGraph, the
     // parsed model is baked into the artifact and html.ts renders it to SVG with a deterministic
     // layout. `source` is the DSL as written (not derived, since rebuilding it from the model
     // loses notes / blank lines / order).

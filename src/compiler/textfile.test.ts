@@ -12,7 +12,8 @@ import { readTextfile, selectTextfileRange } from "./textfile.js";
 
 const roots: string[] = [];
 const source = (body: string): string => `---\ntitle: Sample\n---\n\n${body}\n`;
-const directive = (file: string): string => `:::textfile(${file})`;
+const embed = (file: string, range = ""): string =>
+    `![](${encodeURI(file).replaceAll("#", "%23").replaceAll("?", "%3F").replaceAll("(", "%28").replaceAll(")", "%29")}${range})`;
 const fixture = (body: string): string => {
     const root = mkdtempSync(join(tmpdir(), "docs-textfile-"));
     roots.push(root);
@@ -27,7 +28,7 @@ afterEach(() => {
 });
 
 it("previews unsaved file contents and ranges without changing disk or later builds", () => {
-    const body = ":::textfile(./examples/hello.rs)[2,2]";
+    const body = "![](./examples/hello.rs#L2)";
     const root = fixture(body);
     writeFileSync(join(root, "examples/hello.rs"), "disk\nold\n");
     const context = {
@@ -47,8 +48,8 @@ it("previews unsaved file contents and ranges without changing disk or later bui
     );
 });
 
-it("parses and formats single-line textfile directives without interpreting fenced examples", () => {
-    const body = `${directive("examples/日本語 & sample.tdl")}\n\nAfter\n\n\`\`\`md\n${directive("missing.txt")}\n\`\`\``;
+it("parses and formats Markdown file embeds without interpreting fenced examples", () => {
+    const body = `${embed("examples/日本語 & sample.tdl")}\n\nAfter\n\n\`\`\`md\n${embed("missing.txt")}\n\`\`\``;
     for (const input of [source(body), source(body).replaceAll("\n", "\r\n")]) {
         const parsed = parseDoc(input);
         expect(parsed.errors).toEqual([]);
@@ -58,12 +59,11 @@ it("parses and formats single-line textfile directives without interpreting fenc
             textfiles: ["examples/日本語 & sample.tdl"],
         });
         const formatted = formatMarkdown(input);
-        expect(formatted.replaceAll("\r\n", "\n")).toContain(
-            directive("examples/日本語 & sample.tdl"),
-        );
+        expect(formatted.replaceAll("\r\n", "\n")).toContain(embed("examples/日本語 & sample.tdl"));
         expect(formatMarkdown(formatted)).toBe(formatted);
     }
     for (const body of [
+        ":::textfile(a.txt)",
         ":::textfile()\n:::",
         ":::textfile\n:::",
         ':::textfile{src=""}\n:::',
@@ -71,11 +71,30 @@ it("parses and formats single-line textfile directives without interpreting fenc
         ":::textfile(a.txt)[caption]",
     ])
         expect(parseDoc(source(body)).errors.length, body).toBeGreaterThan(0);
+    expect(
+        parseDoc(source("```md\n:::textfile(a.txt)\n```\n\n`:::textfile(a.txt)`")).errors,
+    ).toEqual([]);
+});
+
+it("decodes local URLs once and applies the filesystem boundary after decoding", () => {
+    const file = "examples/a #?(draft)%.txt";
+    const root = fixture(embed(file, "#L2"));
+    writeFileSync(join(root, file), "one\ntwo\n");
+    const compiled = compileSite(root);
+    expect(compiled.errors).toEqual([]);
+    expect(compiled.artifact.docs[0]?.blocks[0]).toMatchObject({ filename: file, lines: ["two"] });
+    expect(exportEntries(root).some((entry) => entry.name === file)).toBe(true);
+    for (const url of ["%2e%2e/secret.txt", "%2Fetc/passwd", "..%5Csecret.txt"]) {
+        writeFileSync(join(root, "content/sample.md"), source(`![](${url})`));
+        expect(compileSite(root).errors.join()).toContain(
+            "relative file path inside the docs root",
+        );
+    }
 });
 
 it("embeds files with extension languages, safe filename headers and standalone JSON/HTML exports", () => {
     const filenames = ["Sample.TS", "model.tdl", "notes.unknown", "Dockerfile", "a<b>.txt"];
-    const body = filenames.map((file) => directive(`examples/${file}`)).join("\n\n");
+    const body = filenames.map((file) => embed(`examples/${file}`)).join("\n\n");
     const root = fixture(`${body}\n\nAfter`);
     const text = '<script>alert("x")</script>\n  日本語 & code\n';
     for (const file of filenames) writeFileSync(join(root, "examples", file), text);
@@ -110,7 +129,7 @@ it("embeds files with extension languages, safe filename headers and standalone 
 });
 
 it("refreshes referenced content without reparsing Markdown and resolves unsaved drafts", () => {
-    const root = fixture(directive("examples/model.tdl"));
+    const root = fixture(embed("examples/model.tdl"));
     const path = join(root, "examples/model.tdl");
     writeFileSync(path, "first");
     const compiler = createCompiler(root);
@@ -120,7 +139,7 @@ it("refreshes referenced content without reparsing Markdown and resolves unsaved
     expect(first.artifact.docs[0]?.blocks[0]).toMatchObject({ lines: ["first"] });
     expect(second.artifact.docs[0]?.blocks[0]).toMatchObject({ lines: ["second", ""] });
     const ctx = { root, docs: second.artifact.docs, figures: new Map() };
-    const draft = compileDraft(ctx, "content/sample.md", source(directive("examples/model.tdl")));
+    const draft = compileDraft(ctx, "content/sample.md", source(embed("examples/model.tdl")));
     expect(draft.source.errors).toEqual([]);
     expect(draft.doc.blocks).toEqual(second.artifact.docs[0]?.blocks);
     rmSync(path);
@@ -129,8 +148,7 @@ it("refreshes referenced content without reparsing Markdown and resolves unsaved
         unavailable: "missing",
     });
     expect(
-        compileDraft(ctx, "content/sample.md", source(directive("examples/model.tdl"))).source
-            .errors,
+        compileDraft(ctx, "content/sample.md", source(embed("examples/model.tdl"))).source.errors,
     ).toEqual([]);
     writeFileSync(path, "");
     expect(compiler.compile().errors).toEqual([]);
@@ -139,13 +157,11 @@ it("refreshes referenced content without reparsing Markdown and resolves unsaved
 });
 
 it("renders missing files gracefully and keeps the document exportable", () => {
-    const root = fixture(':::textfile(examples/missing.rs)["<start>", *]\n\nAfter');
+    const root = fixture("![](examples/missing.rs#L2-L4)\n\nAfter");
     const compiled = compileSite(root);
     expect(compiled.errors).toEqual([]);
     const html = blocksHtml(compiled.artifact.docs[0]?.blocks ?? []);
-    expect(html).toContain(
-        'title=":::textfile(examples/missing.rs)[&quot;&lt;start&gt;&quot;, *]"',
-    );
+    expect(html).toContain('title="examples/missing.rs#L2-L4"');
     expect(html).toContain('data-i18n="File not found"');
     expect(html).toContain("<p>After</p>");
     expect(html).not.toContain('class="codecopy"');
@@ -154,7 +170,7 @@ it("renders missing files gracefully and keeps the document exportable", () => {
 });
 
 it("rejects traversal, outside symlinks, directories and invalid text without exporting", () => {
-    const root = fixture(directive("examples/invalid.txt"));
+    const root = fixture(embed("examples/invalid.txt"));
     const outside = fixture("");
     writeFileSync(join(outside, "secret.txt"), "secret");
     symlinkSync(join(outside, "secret.txt"), join(root, "examples/link.txt"));
@@ -171,22 +187,20 @@ it("rejects traversal, outside symlinks, directories and invalid text without ex
         "..\\secret.txt",
     ])
         expect(() => readTextfile(root, file), file).toThrow();
-    expect(compileSite(root).errors.join()).toContain(":::textfile(examples/invalid.txt)");
+    expect(compileSite(root).errors.join()).toContain("examples/invalid.txt:");
     expect(writeArtifact(compileSite(root), join(root, "artifact"))).toBe(false);
     expect(() => exportEntries(root)).toThrow();
 });
 
 it("keeps referenced source files and translated references in ZIP exports once each", () => {
-    const root = fixture(
-        `${directive("examples/model.tdl")}\n\n${directive("./examples/model.tdl")}`,
-    );
+    const root = fixture(`${embed("examples/model.tdl")}\n\n${embed("./examples/model.tdl")}`);
     writeFileSync(join(root, "examples/model.tdl"), "model\n");
     writeFileSync(join(root, "examples/translated.py"), "print('hello')\n");
     writeFileSync(join(root, "examples/unreferenced.txt"), "omit");
     mkdirSync(join(root, "locales"));
     writeFileSync(
         join(root, "locales/eng.json"),
-        JSON.stringify({ sample: { title: "Sample", body: directive("examples/translated.py") } }),
+        JSON.stringify({ sample: { title: "Sample", body: embed("examples/translated.py") } }),
     );
     const entries = exportEntries(root);
     expect(
@@ -201,32 +215,22 @@ it("keeps referenced source files and translated references in ZIP exports once 
     ).toMatchObject({ lang: "py", lines: ["print('hello')", ""] });
 });
 
-it("preserves selectors through parsing/formatting, embeds only excerpts, and exports the complete source", () => {
+it("preserves GitHub selectors, embeds only excerpts, and exports the complete source", () => {
     const text = 'before\nAAAA start\nC:\\src, "quoted" &quot; [text]\nBBB end\nafter\n';
-    const selectors = [
-        "[2,4]",
-        "[1,*]",
-        "[2:3,4:2]",
-        '["AAAA", "BBB"]',
-        '["AAAA", *]',
-        JSON.stringify(['C:\\src, "quoted" &quot;', "[text]"]),
-    ];
-    const body = selectors
-        .map((selector) => `${directive("examples/source.txt")}${selector}`)
-        .join("\n\n");
+    const selectors = ["#L2-L4", "#L1", "#L2-L2", "#L3-L5"];
+    const body = selectors.map((range) => embed("examples/source.txt", range)).join("\n\n");
     const root = fixture(body);
     writeFileSync(join(root, "examples/source.txt"), text);
     const parsed = parseDoc(source(body));
     expect(parsed.errors).toEqual([]);
     expect(collectRefs(parsed.root).textfiles).toEqual(["examples/source.txt"]);
     const formatted = formatMarkdown(source(body));
-    for (const selector of selectors)
-        expect(formatted).toContain(`${directive("examples/source.txt")}${selector}`);
+    for (const range of selectors) expect(formatted).toContain(embed("examples/source.txt", range));
     expect(formatMarkdown(formatted)).toBe(formatted);
     const compiled = compileSite(root);
     expect(compiled.errors).toEqual([]);
     expect(blocksHtml(compiled.artifact.docs[0]?.blocks ?? [])).toContain(
-        'title=":::textfile(examples/source.txt)[&quot;AAAA&quot;, &quot;BBB&quot;]"',
+        'title="examples/source.txt#L2-L4"',
     );
     expect(compiled.artifact.docs[0]?.blocks).toEqual(
         selectors.map((range) => ({
@@ -247,13 +251,35 @@ it("preserves selectors through parsing/formatting, embeds only excerpts, and ex
     const draft = compileDraft(
         { root, docs: compiled.artifact.docs, figures: new Map() },
         "content/sample.md",
-        source(`${directive("examples/source.txt")}["absent",*]`),
+        source(embed("examples/source.txt", "#L99")),
     );
-    expect(draft.source.errors.join()).toContain('range text "absent" was not found');
+    expect(draft.source.errors.join()).toContain("range line 99 does not exist");
     expect(draft.doc.blocks[0]).toMatchObject({ lines: [] });
     writeFileSync(
         join(root, "content/sample.md"),
-        source(`${directive("examples/source.txt")}[2,999]`),
+        source(embed("examples/source.txt", "#L2-L999")),
     );
     expect(writeArtifact(compileSite(root), out)).toBe(false);
+});
+
+it("keeps Markdown links as links, supports multiple embeds, and preserves alternative text", () => {
+    const body =
+        "[Source](examples/a.txt#L2)\n\n![Example](examples/a.txt#L2)\n![](examples/a.txt#L1)";
+    const root = fixture(body);
+    writeFileSync(join(root, "examples/a.txt"), "one\ntwo\n");
+    const compiled = compileSite(root);
+    expect(compiled.errors).toEqual([]);
+    expect(compiled.artifact.docs[0]?.blocks).toMatchObject([
+        { type: "p", text: "[Source](examples/a.txt#L2)" },
+        { type: "code", lines: ["two"], alt: "Example" },
+        { type: "code", lines: ["one"] },
+    ]);
+    expect(blocksHtml(compiled.artifact.docs[0]?.blocks ?? [])).toContain('aria-label="Example"');
+    expect(compiled.sources.get("content/sample.md")?.lines).toEqual([1, 3, 4]);
+    for (const invalid of [
+        "Text ![](examples/a.txt)",
+        "- ![](examples/a.txt)",
+        ":::callout\n![](examples/a.txt)\n:::",
+    ])
+        expect(parseDoc(source(invalid)).errors.join()).toContain("standalone paragraph");
 });

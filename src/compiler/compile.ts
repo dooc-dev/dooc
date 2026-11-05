@@ -9,24 +9,30 @@
 // routing.ts is the SoT for URL / id resolution, inline.ts for inline splitting.
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { ArtifactDoc, DocsArtifact, FigureEntry } from "../core/artifact-types.js";
+import type { ArtifactDoc, DocsArtifact, FigureEntry, TermEntry } from "../core/artifact-types.js";
 import type { Block, TocEntry } from "../core/blocks.js";
 import { docIdOfFile, flattenTree, MANIFEST_FILE } from "../core/content-metadata.js";
 import { validateDocsArtifact } from "../core/docs-json-schema.js";
 import { GENERATION } from "../core/generation.js";
+import { termMap } from "../core/inline.js";
 import { DEFAULT_LANG } from "../core/language.js";
+import { defaultPreviewSettings, type PreviewSettings } from "../core/previewers.js";
 import { DOC_LINK_SCHEME, type DocRef, parseDocLink } from "../core/routing.js";
 import type { Frontmatter } from "../core/taxonomy.js";
+import { isTermFile } from "../core/term-reference.js";
+import { isRemoteTextfile } from "../core/textfile.js";
+import { parseContentSource } from "./code-blocks.js";
 import { collectRefs, type ParsedDoc, parseDoc } from "./dialect.js";
 import { figureName, loadFigures } from "./figures.js";
-import { createFileCache, createSigCache, dirSig } from "./file-cache.js";
+import { createFileCache, createSigCache, dirSig, fileSig } from "./file-cache.js";
+import { projectFiles } from "./files.js";
 import { toBlocks } from "./from-mdast.js";
 import { loadIcons, squareSvg } from "./icons.js";
 import { contentLanguageCode, isContentLanguage } from "./language-codes.js";
 import { readCatalog } from "./locales.js";
-import { parseManifestText } from "./manifest.js";
+import { parseManifestText, readManifest } from "./manifest.js";
 import { assembleDoc } from "./serialize.js";
-import { collectTerms, type TermSource } from "./terms.js";
+import { parseTermSource } from "./terms.js";
 import { readTextfile, selectTextfileRange } from "./textfile.js";
 import { TextfileUnavailable } from "./textfile-remote.js";
 
@@ -44,8 +50,8 @@ export const collectDocLinks = (body: string): string[] =>
         .map((m) => m[1] ?? "")
         .filter((u) => u.startsWith(DOC_LINK_SCHEME));
 
-// On a doc id rename, makes doc: links in other docs' body text follow it (used by serve.ts's
-// /api/rename). `parseDocLink` compares docIds exactly, so it doesn't misfire when oldId is a
+// On a doc id rename, makes doc: links in other docs' body text follow it (used by CLI / MCP).
+// `parseDocLink` compares docIds exactly, so it doesn't misfire when oldId is a
 // prefix of another id (e.g. "api" and "api-v2"). Only the matching URL part is rewritten; the
 // label is left as-is.
 export const rewriteDocLinks = (body: string, oldId: string, newId: string): string =>
@@ -55,6 +61,7 @@ export const rewriteDocLinks = (body: string, oldId: string, newId: string): str
 
 /** Extra info for editing (not distributed = not put in docs.json). key = ArtifactDoc.file. */
 export interface DocSource {
+    terms: TermEntry[];
     /**
      * Raw text on disk (including front-matter). The editor's initial value and the base for
      * detecting external changes.
@@ -75,6 +82,7 @@ export interface DocSource {
 }
 
 export interface Compiled {
+    previews: PreviewSettings;
     /** Built even with errors (for the viewer). Distribute only when errors.length === 0. */
     artifact: DocsArtifact;
     figures: FigureEntry[];
@@ -90,7 +98,7 @@ export interface Compiled {
 export interface CompileOptions {
     /** Selected content language; translations live in locales/<locale>.json. */
     locale?: string;
-    /** Site default language (BCP 47; docs.config.mjs `defaultLang`). Default: DEFAULT_LANG. */
+    /** Override manifest.yaml's defaultLang for programmatic compilation. */
     defaultLang?: string;
 }
 
@@ -104,7 +112,8 @@ export interface Compiler {
 
 /** Site context needed to check a draft's references (doc: link targets / figures). */
 export interface DraftContext {
-    /** Docs root used to resolve :::textfile paths. */
+    previews?: PreviewSettings;
+    /** Docs root used to resolve embedded file paths. */
     root?: string;
     /** Unsaved local file contents, used only for draft previews. */
     textfiles?: ReadonlyMap<string, string>;
@@ -114,7 +123,6 @@ export interface DraftContext {
     figures: { get(name: string): { file: string } | undefined };
     /** Site default language for a draft without front-matter `lang`. Default: DEFAULT_LANG. */
     defaultLang?: string;
-    termSources?: readonly TermSource[];
 }
 
 interface ParsedFile {
@@ -124,7 +132,7 @@ interface ParsedFile {
     toc: TocEntry[];
     lines: number[];
     refs: ArtifactDoc["refs"];
-    /** Files referenced by :::figure / :::html (relative to figures/). */
+    /** Visual assets referenced by Markdown embeds (relative to figures/). */
     figureFiles: string[];
 }
 
@@ -136,10 +144,10 @@ const toBodyLines = (raw: string, body: string, lines: number[]): number[] => {
     return lines.map((l) => Math.max(1, l - before));
 };
 
-const parseFile = (raw: string): ParsedFile => {
-    const parsed = parseDoc(raw);
-    const { blocks, toc, lines } = toBlocks(parsed.root, parsed.source);
-    const refs = collectRefs(parsed.root);
+const parseFile = (raw: string, previews?: PreviewSettings, file?: string): ParsedFile => {
+    const parsed = parseDoc(raw, previews, file);
+    const { blocks, toc, lines } = toBlocks(parsed.root, parsed.source, previews, file);
+    const refs = collectRefs(parsed.root, previews);
     const figureFiles = refs.figures;
     return {
         raw,
@@ -152,24 +160,45 @@ const parseFile = (raw: string): ParsedFile => {
     };
 };
 
-const resolveTextfiles = (
+const resolveFiles = (
     f: ParsedFile,
     root?: string,
     textfiles?: ReadonlyMap<string, string>,
 ): ParsedFile => {
-    if (!f.blocks.some((b) => b.type === "code" && b.filename)) return f;
+    if (!f.refs.terms.length && !f.blocks.some((b) => b.type === "code" && b.filename)) return f;
     const errors = [...f.parsed.errors];
+    const terms = [...f.parsed.terms];
     const blocks = f.blocks.map((b): Block => {
         if (b.type !== "code" || !b.filename) return b;
         try {
             if (!root) throw new Error("docs root is required to read text files");
+            const source = selectTextfileRange(
+                textfiles?.get(b.filename.replace(/^(\.\/)+/, "")) ??
+                    readTextfile(root, b.filename),
+                b.range,
+            );
+            const parsed =
+                b.range === undefined && !isRemoteTextfile(b.filename)
+                    ? parseContentSource(
+                          b.lang ?? "",
+                          source,
+                          b.filename.replace(/^(\.\/)+/, ""),
+                          b.alt,
+                      )
+                    : undefined;
+            if (parsed) {
+                errors.push(
+                    ...parsed.errors.map(
+                        (error) => `${b.filename}: L${error.line + 1}: ${error.message}`,
+                    ),
+                );
+                for (const block of parsed.blocks)
+                    if (block.type === "term") terms.push(block.entry);
+                if (parsed.blocks[0]) return parsed.blocks[0];
+            }
             return {
                 ...b,
-                lines: selectTextfileRange(
-                    textfiles?.get(b.filename.replace(/^(\.\/)+/, "")) ??
-                        readTextfile(root, b.filename),
-                    b.range,
-                ).split("\n"),
+                lines: source.split("\n"),
             };
         } catch (error) {
             if (
@@ -181,12 +210,37 @@ const resolveTextfiles = (
                     unavailable: error instanceof TextfileUnavailable ? error.reason : "missing",
                 };
             errors.push(
-                `:::textfile(${b.filename})${b.range ?? ""}: ${error instanceof Error ? error.message : error}`,
+                `${b.filename}${b.range ?? ""}: ${error instanceof Error ? error.message : error}`,
             );
             return b;
         }
     });
-    return { ...f, blocks, parsed: { ...f.parsed, errors } };
+    for (const file of f.refs.terms) {
+        try {
+            if (!root) throw new Error("docs root is required to read term files");
+            const parsed = parseTermSource(file, textfiles?.get(file) ?? readTextfile(root, file));
+            terms.push(...parsed.entries);
+            errors.push(
+                ...parsed.errors.map((error) => `${file}: L${error.line + 1}: ${error.message}`),
+            );
+        } catch (error) {
+            errors.push(`${file}: ${error instanceof Error ? error.message : error}`);
+        }
+    }
+    return {
+        ...f,
+        blocks,
+        refs: {
+            ...f.refs,
+            terms: [
+                ...new Set([
+                    ...f.refs.terms,
+                    ...terms.filter((term) => isTermFile(term.id)).map((term) => term.id),
+                ]),
+            ],
+        },
+        parsed: { ...f.parsed, errors, terms },
+    };
 };
 
 const toDoc = (
@@ -209,24 +263,12 @@ const toDoc = (
     refs: f.refs,
 });
 
-// Validates a single doc: dialect errors, :::figure / :::html targets exist, doc: links resolve.
-const docErrors = (
-    file: string,
-    f: ParsedFile,
-    { docs, figures, termSources = [] }: DraftContext,
-): string[] => {
+// Validate the dialect and resolution of visual assets, terms and document links.
+const docErrors = (f: ParsedFile, { docs, figures }: DraftContext): string[] => {
     const errors = [...f.parsed.errors];
-    const terms = collectTerms([
-        ...termSources.filter((source) => source.file !== file),
-        { file, entries: f.parsed.terms },
-    ]);
-    errors.push(...terms.errors);
-    for (const id of f.refs.terms)
-        if (!terms.entries.some((term) => term.id === id))
-            errors.push(`:::term(${id}) is unresolved (check the term ID)`);
     for (const file of f.figureFiles) {
-        if (figures.get(figureName(file))?.file !== `figures/${file}`) {
-            errors.push(`"${file}" is not in figures/`);
+        if (figures.get(figureName(file))?.file !== file) {
+            errors.push(`"${file.replace(/^figures\//, "")}" is not in figures/`);
         }
     }
     for (const url of collectDocLinks(f.parsed.body)) {
@@ -242,21 +284,34 @@ const docErrors = (
     return errors;
 };
 
+import { docFile } from "../core/files.js";
+import { textfilePath } from "./textfile.js";
+
 export const createCompiler = (root: string, options: CompileOptions = {}): Compiler => {
     if (options.locale && !isContentLanguage(options.locale))
         throw new Error("Expected an ISO 639-3 language code");
-    const defaultLang = options.defaultLang ?? DEFAULT_LANG;
     const contentDir = join(root, "content");
     const figuresDir = join(root, "figures");
-    const docCache = createFileCache<ParsedFile>();
+    let docCache = createFileCache<ParsedFile>();
+    let previewKey = "";
     const manifestCache = createFileCache<ReturnType<typeof parseManifestText>>();
     const figuresCache = createSigCache<ReturnType<typeof loadFigures>>();
 
     const compile = (): Compiled => {
-        const { figures, errors: figErrors } = figuresCache.get(dirSig(figuresDir), () =>
-            loadFigures(figuresDir),
+        const manifestPath = join(root, MANIFEST_FILE);
+        const manifest = existsSync(manifestPath)
+            ? manifestCache.get(manifestPath, parseManifestText)
+            : { tree: [], errors: [`${MANIFEST_FILE} is required`] };
+        const defaultLang = options.defaultLang ?? manifest.defaultLang ?? DEFAULT_LANG;
+        const visualFiles = projectFiles(root)
+            .map((file) => file.path)
+            .filter((file) => /\.(svg|html|png|webp|jpe?g)$/.test(file));
+        const { figures, errors: figErrors } = figuresCache.get(
+            dirSig(figuresDir) +
+                visualFiles.map((file) => `${file}:${fileSig(textfilePath(root, file))}`).join("|"),
+            () => loadFigures(figuresDir, visualFiles),
         );
-        const siteErrors: string[] = [...figErrors];
+        const siteErrors: string[] = figErrors.filter((error) => error.startsWith("figures/"));
         let catalog: ReturnType<typeof readCatalog> = {};
         if (options.locale && options.locale !== contentLanguageCode(defaultLang)) {
             try {
@@ -265,22 +320,27 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                 siteErrors.push(String(error));
             }
         }
+        let previews = defaultPreviewSettings();
         let title: string | undefined;
         let icon: string | undefined;
         let iconFile: string | undefined;
         const files: { doc: ArtifactDoc; parsed: ParsedFile }[] = [];
-        if (!existsSync(contentDir)) {
+        if (!existsSync(contentDir) && !manifest.files) {
             siteErrors.push(`${contentDir}: content/ is missing`);
         } else {
-            const manifestPath = join(root, MANIFEST_FILE);
             const {
                 tree,
                 title: manifestTitle,
                 icon: manifestIcon,
+                previews: manifestPreviews,
                 errors: manifestErrors,
-            } = existsSync(manifestPath)
-                ? manifestCache.get(manifestPath, parseManifestText)
-                : { tree: [], errors: [`${MANIFEST_FILE} is required`] };
+            } = manifest;
+            previews = manifestPreviews ?? defaultPreviewSettings();
+            const nextPreviewKey = JSON.stringify(previews);
+            if (nextPreviewKey !== previewKey) {
+                docCache = createFileCache<ParsedFile>();
+                previewKey = nextPreviewKey;
+            }
             title = manifestTitle;
             iconFile = manifestIcon;
             if (iconFile) {
@@ -297,12 +357,15 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             siteErrors.push(...manifestErrors);
             // Directly under content/: flat <id>.md files only (no folders).
             const onDisk = new Set<string>();
-            for (const entry of readdirSync(contentDir, { withFileTypes: true })) {
+            for (const entry of existsSync(contentDir)
+                ? readdirSync(contentDir, { withFileTypes: true })
+                : []) {
                 if (entry.name.startsWith(".")) {
                     continue;
                 }
                 const id = entry.isFile() ? docIdOfFile(entry.name) : undefined;
                 if (id == null) {
+                    if (manifest.files) continue;
                     siteErrors.push(
                         `content/${entry.name}: only <id>.md (lowercase alphanumerics and hyphens) are allowed directly under content/`,
                     );
@@ -312,12 +375,23 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             }
             // Manifest pre-order = artifact order = display order.
             for (const { id, parent } of flattenTree(tree)) {
-                const rel = `content/${id}.md`;
-                if (!onDisk.delete(id)) {
+                const rel = docFile(id, manifest.files);
+                if (rel.startsWith("content/")) {
+                    const diskId = docIdOfFile(rel.slice("content/".length));
+                    if (diskId) onDisk.delete(diskId);
+                }
+                let path: string;
+                try {
+                    path = textfilePath(root, rel);
+                } catch (error) {
+                    siteErrors.push(`${rel}: ${error}`);
+                    continue;
+                }
+                if (!existsSync(path)) {
                     siteErrors.push(`${rel}: listed in ${MANIFEST_FILE} but the file is missing`);
                     continue;
                 }
-                let parsed = docCache.get(join(contentDir, `${id}.md`), (raw) => parseFile(raw));
+                let parsed = docCache.get(path, (raw) => parseFile(raw, previews, rel));
                 if (options.locale && options.locale !== contentLanguageCode(defaultLang)) {
                     const translation = Object.hasOwn(catalog, id) ? catalog[id] : undefined;
                     parsed = parseFile(
@@ -328,9 +402,11 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                             },
                             translation?.body ?? parsed.parsed.body,
                         ),
+                        previews,
+                        rel,
                     );
                 }
-                parsed = resolveTextfiles(parsed, root);
+                parsed = resolveFiles(parsed, root);
                 files.push({ doc: toDoc(id, parent, rel, parsed, defaultLang), parsed });
             }
             for (const id of onDisk) {
@@ -338,11 +414,16 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             }
         }
 
+        for (const file of new Set(files.flatMap(({ parsed }) => parsed.figureFiles)))
+            if (!file.startsWith("figures/"))
+                siteErrors.push(...figErrors.filter((error) => error.startsWith(`${file}:`)));
+
         // Icons are small, so read them every time (no cache).
         const { icons, errors: iconErrors } = loadIcons(
             root,
             new Set(files.map((f) => f.doc.id)),
             iconFile,
+            manifest.files,
         );
         siteErrors.push(...iconErrors);
         for (const { doc } of files) {
@@ -355,17 +436,13 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
         if (docs.length === 0) {
             siteErrors.push(`${contentDir}: no docs`);
         }
-        const terms = collectTerms(
-            files.map(({ doc, parsed }) => ({ file: doc.file, entries: parsed.parsed.terms })),
-        );
-        siteErrors.push(...terms.errors);
 
         const artifact: DocsArtifact = {
             generation: GENERATION,
             ...(title === undefined ? {} : { title }),
             ...(icon === undefined ? {} : { icon }),
             docs,
-            terms: terms.entries,
+            terms: [...termMap(files.flatMap(({ parsed }) => parsed.parsed.terms)).values()],
             figures: figures.map(({ markup: _markup, ...index }) => index),
         };
         siteErrors.push(...validateDocsArtifact(artifact));
@@ -374,17 +451,14 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             docs,
             figures: new Map(figures.map((f) => [f.name, f])),
             defaultLang,
-            termSources: files.map(({ doc, parsed }) => ({
-                file: doc.file,
-                entries: parsed.parsed.terms,
-            })),
         };
         const sources = new Map<string, DocSource>();
         const errors = [...siteErrors];
         for (const { doc, parsed } of files) {
-            const errs = docErrors(doc.file, parsed, ctx);
+            const errs = docErrors(parsed, ctx);
             errors.push(...errs.map((e) => `${doc.file}: ${e}`));
             sources.set(doc.file, {
+                terms: parsed.parsed.terms,
                 raw: parsed.raw,
                 frontmatter: parsed.parsed.frontmatter,
                 lines: parsed.lines,
@@ -392,6 +466,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             });
         }
         return {
+            previews,
             artifact,
             figures,
             sources,
@@ -415,14 +490,16 @@ export const compileDraft = (
     raw: string,
 ): { doc: ArtifactDoc; source: DocSource } => {
     const known = ctx.docs.find((d) => d.file === file);
-    const parsed = resolveTextfiles(parseFile(raw), ctx.root, ctx.textfiles);
+    const previews = ctx.previews ?? (ctx.root ? readManifest(ctx.root).previews : undefined);
+    const parsed = resolveFiles(parseFile(raw, previews, file), ctx.root, ctx.textfiles);
     return {
         doc: toDoc(known?.id ?? "", known?.parent, file, parsed, ctx.defaultLang ?? DEFAULT_LANG),
         source: {
+            terms: parsed.parsed.terms,
             raw,
             frontmatter: parsed.parsed.frontmatter,
             lines: parsed.lines,
-            errors: docErrors(file, parsed, ctx),
+            errors: docErrors(parsed, ctx),
         },
     };
 };

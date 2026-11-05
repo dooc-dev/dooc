@@ -57,9 +57,11 @@ const svgBox = (markup: string): { width: number; w: number; h: number } | undef
 };
 
 /** One figure → an isolated iframe (rasters stay as <img>). */
-export const figureFrameHtml = (fig: FigureEntry, cls = "fig-frame"): string => {
+export const figureFrameHtml = (fig: FigureEntry, cls = "fig-frame", label?: string): string => {
     if (fig.kind === "image") {
-        return fig.markup;
+        return label === undefined
+            ? fig.markup
+            : fig.markup.replace(/\balt="[^"]*"/, () => `alt="${esc(label)}"`);
     }
     const box = fig.kind === "svg" ? svgBox(fig.markup) : undefined;
     const style = box
@@ -67,7 +69,7 @@ export const figureFrameHtml = (fig: FigureEntry, cls = "fig-frame"): string => 
         : fig.kind === "svg"
           ? "width:100%;height:240px"
           : "width:100%;height:120px";
-    return `<iframe class="${cls}" data-doc-figure-frame="${fig.kind}" sandbox="${fig.kind === "html" ? "allow-scripts" : ""}" scrolling="no" loading="lazy" title="${esc(fig.title ?? `Fig.${fig.name}`)}" style="${style}" srcdoc="${esc(figureSrcdoc(fig))}"></iframe>`;
+    return `<iframe class="${cls}" data-doc-figure-frame="${fig.kind}" sandbox="${fig.kind === "html" ? "allow-scripts" : ""}" scrolling="no" loading="lazy" title="${esc(label ?? fig.title ?? `Fig.${fig.name}`)}" style="${style}" srcdoc="${esc(figureSrcdoc(fig))}"></iframe>`;
 };
 
 /**

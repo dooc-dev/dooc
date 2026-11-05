@@ -28,25 +28,35 @@ import type { SyntaxNode } from "@lezer/common";
 import { tags } from "@lezer/highlight";
 import type { TermEntry } from "../core/artifact-types.js";
 import type { TocEntry } from "../core/blocks.js";
-import {
-    CODE_LANGS,
-    DIRECTIVES,
-    type Directive,
-    normalizeLeafDirectives,
-} from "../core/taxonomy.js";
+import { isDocumentFileName } from "../core/files.js";
+import type { PreviewSettings } from "../core/previewers.js";
+import { CODE_LANGS, CODE_TEMPLATES, DIRECTIVES, type Directive } from "../core/taxonomy.js";
+import { isTermFile, termFileUrl } from "../core/term-reference.js";
+import { codeFileButtons } from "./edit-code-file.js";
 import { editorCodeHighlight } from "./edit-code-highlight.js";
 import { chooseConflict } from "./edit-conflict.js";
 import { confirmDialog, showNotice } from "./edit-dialog.js";
+import {
+    filePreviewState,
+    previewSettingsState,
+    setFilePreviews,
+    setPreviewSettings,
+} from "./edit-file-preview.js";
 import { inlineFoldButtons } from "./edit-fold.js";
 import { schemaCompletion } from "./edit-schema-completion.js";
 import { editorSetup } from "./edit-setup.js";
 import { createTextfileEditors } from "./edit-textfile.js";
 import { CODE_BLOCK_NODE_NAMES, isEditingCodeBlock } from "./edit-validation.js";
+import { type FilePreview, type FilePreviewResults, fileReferences } from "./file-references.js";
+import { mountFileUpload } from "./file-upload.js";
 import type { HmrBridge } from "./hmr.js";
 import { applyUiLanguage, mountUiLanguage, t } from "./i18n.js";
 import { focusNavTree } from "./nav-focus.js";
+import { mountPreviewSettings } from "./preview-settings-ui.js";
 
 interface Boot {
+    previews?: PreviewSettings;
+    filePreviews: FilePreviewResults;
     siteTitle?: string;
     siteIcon?: string;
     contentLanguage?: string;
@@ -54,7 +64,8 @@ interface Boot {
     docLanguage?: string;
     translatedLanguages?: string[];
     file: string;
-    /** Resolution key for URLs / doc: links (= file name stem; current value in the rename UI). */
+    sourceFile?: string;
+    /** Stable resolution key for URLs / doc: links. */
     docId: string;
     title: string;
     path: string;
@@ -83,8 +94,7 @@ interface RenameResponse {
     path: string;
     ok?: boolean;
     error?: string;
-    id: string;
-    updatedRefs: number;
+    sourceFile: string;
 }
 
 /** Response of /api/delete. referencedBy is set only on 409 (without force). */
@@ -108,6 +118,9 @@ interface DraftFrontmatter {
  * render/save/doc responses).
  */
 interface RenderSnapshot {
+    sourceFile?: string;
+    previews?: PreviewSettings;
+    filePreviews: FilePreviewResults;
     html: string;
     errors: string[];
     blockLines: number[];
@@ -240,6 +253,7 @@ const updatePreview = (fragment: DocumentFragment): void => {
     }
 };
 mountUiLanguage();
+mountPreviewSettings();
 
 const updateLanguageControls = (): void => {
     const lang = $<HTMLSelectElement>("fm-lang");
@@ -271,30 +285,55 @@ const updateLanguageControls = (): void => {
 updateLanguageControls();
 
 const statusEl = $("status");
-const previewStatusEl = $("preview-status");
-type PreviewState = "loading" | "valid" | "error";
 let renderRevision = 0;
-const setPreviewState = (state: PreviewState, message = ""): void => {
-    mainEl.dataset.previewState = state;
-    mainEl.dataset.previewMessage = message;
-    previewStatusEl.dataset.state = state;
-    const label = {
-        loading: "Updating preview",
-        valid: "Preview is up to date",
-        error: "Preview could not be updated",
-    }[state];
-    previewStatusEl.dataset.i18nAriaLabel = label;
-    previewStatusEl.setAttribute("aria-label", t(label));
-    previewStatusEl.setAttribute("aria-busy", String(state === "loading"));
-    previewStatusEl.title = message ? `${t(label)}\n${message}` : t(label);
+const setPreviewState = (
+    state: FilePreview["state"],
+    message = "",
+    files?: readonly string[],
+): void => {
+    const currentBoot = boot;
+    const doc = view.state.doc;
+    // Changes can originate inside CodeMirror's update listener.
+    queueMicrotask(() => {
+        if (boot !== currentBoot || view.state.doc !== doc) return;
+        const previews = new Map(Object.entries(view.state.field(filePreviewState).previews));
+        for (const { file } of fileReferences(
+            doc.toString(),
+            view.state.field(previewSettingsState, false),
+        )) {
+            if (!files || files.includes(file)) previews.set(file, { state, message });
+        }
+        view.dispatch({ effects: setFilePreviews.of(Object.fromEntries(previews)) });
+    });
 };
-setPreviewState(mainEl.querySelector(".errors, .textfile.unavailable") ? "error" : "valid");
-document.addEventListener("docs:ui-language", () =>
-    setPreviewState(
-        (mainEl.dataset.previewState as PreviewState) ?? "valid",
-        mainEl.dataset.previewMessage,
-    ),
-);
+const applyFilePreviews = (results: FilePreviewResults, blocked: readonly string[] = []): void => {
+    const previous = view.state.field(filePreviewState).previews;
+    view.dispatch({
+        effects: setFilePreviews.of(
+            Object.fromEntries(
+                Object.entries(results).map(([file, errors]) => [
+                    file,
+                    {
+                        state: errors.length
+                            ? "error"
+                            : blocked.length && previous[file]?.state !== "valid"
+                              ? "pending"
+                              : "valid",
+                        message: errors.length
+                            ? errors.join("\n")
+                            : previous[file]?.state !== "valid"
+                              ? blocked.join("\n")
+                              : "",
+                    },
+                ]),
+            ),
+        ),
+    });
+    boot.filePreviews = results;
+};
+document.addEventListener("docs:ui-language", () => {
+    view.dispatch({ effects: setFilePreviews.of(view.state.field(filePreviewState).previews) });
+});
 const autosaveEl = $<HTMLInputElement>("opt-autosave");
 
 const autovalidateEl = $<HTMLInputElement>("opt-autovalidate");
@@ -516,7 +555,7 @@ const runLint = async (automatic = false): Promise<LintFinding[] | undefined> =>
 // (arrows + Enter to insert).
 // `:::` palette: `:` to `:::` at line start lists the custom syntax (directives); every directive
 // starts with `:::`.
-// Contextual completion: figure files inside `:::figure(` / `:::html(`, doc refs inside `(doc:`.
+// Contextual completion: file paths inside Markdown embeds, doc refs inside `(doc:`.
 // All fully keyboard-driven.
 
 // Map the `<...>` placeholders in samples from the vocabulary SoT (taxonomy.DIRECTIVES) to
@@ -525,7 +564,7 @@ const toSnippet = (sample: string): string => sample.replace(/<([^<>\n]+)>/g, "$
 
 // Completion info panel: sample + whether a caption is allowed (so usage can be read in place).
 const directiveInfo = (d: Directive): string =>
-    `${d.sample}\n\n${d.caption ? "[caption] optional" : "no caption"}${d.exts ? ` / file: ${d.exts.join(", ")}` : ""}`;
+    `${d.sample}\n\n${d.caption ? "[caption] optional" : "no caption"}`;
 
 const directiveLabel = (d: Directive): string => `:::${d.name}`;
 
@@ -545,6 +584,12 @@ const DIRECTIVE_OPTS: Completion[] = DIRECTIVES.map(directiveOpt);
 
 const buildSlash = (): Completion[] => {
     const o: Completion[] = [
+        snippetCompletion("\n![${label}](${path})\n", {
+            label: "/file",
+            detail: t("File preview"),
+            type: "keyword",
+            section: t("Templates"),
+        }),
         snippetCompletion("\n## ${h}\n", {
             label: "/h2",
             detail: t("heading"),
@@ -571,19 +616,21 @@ const buildSlash = (): Completion[] => {
     }
     for (const l of boot.codeLanguages ?? CODE_LANGS) {
         o.push(
-            snippetCompletion(`\n\`\`\`${l}\n\${code}\n\`\`\`\n`, {
-                label: `/code-${l}`,
-                detail: t("code fence"),
-                type: "keyword",
-                section: t("Templates"),
-            }),
+            snippetCompletion(
+                `\n${toSnippet(CODE_TEMPLATES[l] ?? `\`\`\`${l}\n<code>\n\`\`\``)}\n`,
+                {
+                    label: `/code-${l}`,
+                    detail: t("code fence"),
+                    type: "keyword",
+                    section: t("Templates"),
+                },
+            ),
         );
     }
     for (const f of boot.figures) {
-        const name = f.endsWith(".html") ? "html" : "figure";
         o.push(
-            snippetCompletion(`\n:::${name}(${f})\n`, {
-                label: `/${name}:${f}`,
+            snippetCompletion(`\n![](${f})\n`, {
+                label: `/file:${f}`,
                 detail: t("figure reference"),
                 type: "class",
                 section: t("Figures"),
@@ -600,13 +647,14 @@ const buildSlash = (): Completion[] => {
         });
     }
     for (const term of boot.terms) {
+        if (!isTermFile(term.id)) continue;
         o.push({
             label: `/term:${term.id}`,
             detail: term.name,
             info: term.definition,
             type: "text",
             section: t("Terms"),
-            apply: `:::term(${term.id})`,
+            apply: `[](${termFileUrl(term.id)})`,
         });
     }
     return o;
@@ -653,11 +701,10 @@ const atLineStart = (state: EditorState, from: number): boolean =>
 const insideContainer = (state: EditorState, pos: number): boolean => {
     const current = state.doc.lineAt(pos).number;
     let open = false;
-    const lines = normalizeLeafDirectives(state.doc.toString()).source.split("\n");
+    const lines = state.doc.toString().split("\n");
     for (let i = 1; i < current; i++) {
         const text = lines[i - 1] ?? "";
-        // `:::figure(...)` / `:::html(...)` are single lines with no close, so don't count them.
-        if (text.startsWith(":::") && !/^:::(figure|html|term)\(/.test(text)) {
+        if (text.startsWith(":::")) {
             open = text.slice(3).trim() !== "";
         }
     }
@@ -670,29 +717,31 @@ const docsComplete = (ctx: CompletionContext): CompletionResult | null => {
     if (inCodeContext(ctx)) {
         return null;
     }
-    const termM = ctx.matchBefore(/:::term\(\s*[a-z0-9_-]*/);
-    if (termM)
-        return {
-            from: termM.from + termM.text.indexOf("(") + 1,
-            options: boot.terms.map((term) => ({
-                label: term.id,
-                detail: term.name,
-                info: term.definition,
-                type: "text",
-            })),
-            validFor: /[a-z0-9_-]*/,
-        };
-    // `:::figure(` takes a figure file, `:::html(` an .html file.
-    const figM = ctx.matchBefore(/:::(figure|html)\([\w.-]*/);
-    if (figM && atLineStart(ctx.state, figM.from)) {
-        const html = figM.text.startsWith(":::html(");
-        const options = FIG_OPTS.filter((o) => o.label.endsWith(".html") === html);
-        return { from: figM.from + figM.text.indexOf("(") + 1, options, validFor: /[\w.-]*/ };
-    }
     const docM = ctx.matchBefore(/\(doc:[\w/-]*/);
     if (docM) {
         return { from: docM.from + 5, options: DOC_REF_OPTS, validFor: /[\w/-]*/ };
     }
+    const termM = ctx.matchBefore(/\[[^\]\n]*\]\([^()\n]*/);
+    if (termM && ctx.state.sliceDoc(Math.max(0, termM.from - 1), termM.from) !== "!")
+        return {
+            from: termM.from + termM.text.lastIndexOf("(") + 1,
+            options: boot.terms
+                .filter((term) => isTermFile(term.id))
+                .map((term) => ({
+                    label: termFileUrl(term.id),
+                    detail: term.name,
+                    info: term.definition,
+                    type: "text",
+                })),
+            validFor: /[^()\s]*/,
+        };
+    const figM = ctx.matchBefore(/!\[[^\]\n]*\]\([\w./-]*/);
+    if (figM && atLineStart(ctx.state, figM.from))
+        return {
+            from: figM.from + figM.text.lastIndexOf("(") + 1,
+            options: FIG_OPTS,
+            validFor: /[\w./-]*/,
+        };
     // `:` to `:::` = list of custom syntax (directives). The typed colons are replaced with the
     // template. No validFor (the candidate set itself depends on the colon count, so re-query on
     // every keystroke).
@@ -809,7 +858,7 @@ const mdHighlight = HighlightStyle.define([
 // another doc).
 const textfiles = createTextfileEditors(
     theme,
-    () => schedulePreview(),
+    (file) => schedulePreview([file]),
     () => setDirty(dirty),
 );
 const editorExtensions: Extension[] = [
@@ -834,6 +883,9 @@ const editorExtensions: Extension[] = [
     ]),
     editorSetup,
     inlineFoldButtons,
+    codeFileButtons(() => boot.docId),
+    previewSettingsState.init(() => boot.previews),
+    filePreviewState,
     textfiles.extension,
     markdown({ base: markdownLanguage }),
     autocompletion({ override: [docsComplete] }),
@@ -904,6 +956,7 @@ const view = new EditorView({
     state: EditorState.create({ doc: boot.body, extensions: editorExtensions }),
     parent: $("cm"),
 });
+applyFilePreviews(boot.filePreviews);
 
 const setValidationState = (state: "pending" | "checking" | "valid" | "error"): void => {
     const button = $("validate");
@@ -1096,12 +1149,25 @@ const updateNavLocation = (): void => {
 };
 
 const apply = (r: RenderSnapshot, keepLastValid = true): void => {
+    if (r.sourceFile) boot.sourceFile = r.sourceFile;
+    if (JSON.stringify(view.state.field(previewSettingsState)) !== JSON.stringify(r.previews)) {
+        boot.previews = r.previews;
+        view.dispatch({ effects: setPreviewSettings.of(r.previews) });
+    }
     renderRevision++;
     const template = document.createElement("template");
     template.innerHTML = r.html;
-    const unavailable = template.content.querySelector(".textfile-unavailable")?.textContent;
-    const errors = [...r.errors, ...(unavailable ? [t(unavailable)] : [])];
-    setPreviewState(errors.length ? "error" : "valid", errors.join("\n"));
+    const errors = [
+        ...new Set([
+            ...r.errors,
+            ...Object.entries(r.filePreviews).flatMap(([file, messages]) =>
+                messages.map((message) =>
+                    message.startsWith(`${file}:`) ? message : `${file}: ${t(message)}`,
+                ),
+            ),
+        ]),
+    ];
+    applyFilePreviews(r.filePreviews, keepLastValid ? errors : []);
     if (errors.length && keepLastValid) return;
     updatePreview(template.content);
     tagCorrespondence(r.blockLines ?? []);
@@ -1132,7 +1198,7 @@ const handleConflict = async (r: ExternalSnapshot): Promise<"local" | "external"
     const currentBoot = boot;
     conflictPending = true;
     const choice = await chooseConflict(
-        boot.file,
+        boot.sourceFile ?? boot.file,
         `${JSON.stringify(readFm(), null, 2)}\n\n${view.state.doc}`,
         r.raw,
     );
@@ -1164,7 +1230,6 @@ const render = async (): Promise<RenderSnapshot | undefined> => {
         boot === currentBoot &&
         JSON.stringify(readFm()) === fm &&
         JSON.stringify(textfiles.previewFiles()) === files;
-    setPreviewState("loading");
     try {
         const result = await post("/api/render");
         if (!isCurrent()) return;
@@ -1172,7 +1237,13 @@ const render = async (): Promise<RenderSnapshot | undefined> => {
         return result;
     } catch (e) {
         if (!isCurrent()) return;
-        setPreviewState("error", String(e));
+        setPreviewState(
+            "error",
+            String(e),
+            Object.entries(view.state.field(filePreviewState).previews)
+                .filter(([, value]) => value.state === "loading")
+                .map(([file]) => file),
+        );
         setStatus(t("Failed to update preview: {error}", { error: String(e) }), true);
     }
 };
@@ -1227,10 +1298,8 @@ const refreshNav = async (): Promise<void> => {
 // diverged from disk). Shares this implementation instead of duplicating the nav refresh there.
 (window as unknown as { __docsRefreshNav?: () => Promise<void> }).__docsRefreshNav = refreshNav;
 
-// Files pushed by the watcher are repo-root relative (hmr.ts WATCH_DIRS = content/figures/src),
-// while boot.file is `<id>.md` like the save API, so prefix content/ to compare
-// (recomputed each time since boot is replaced on doc switch).
-const ownWatchPath = (): string => `content/${boot.file}`;
+// Watch events use physical paths; the save API keeps the document's stable ID.
+const ownWatchPath = (): string => boot.sourceFile ?? `content/${boot.file}`;
 
 const handleContentChange = async (files: string[]): Promise<void> => {
     if (document.querySelector(".nav-rename-form")) {
@@ -1240,7 +1309,11 @@ const handleContentChange = async (files: string[]): Promise<void> => {
     if (saveTask) await saveTask;
     await textfiles.reloadChanged(files);
     const currentBoot = boot;
-    if (files.includes(ownWatchPath()) || files.includes(`locales/${boot.contentLanguage}.json`)) {
+    if (
+        files.includes("manifest.yaml") ||
+        files.some((file) => file.endsWith(".md")) ||
+        files.includes(`locales/${boot.contentLanguage}.json`)
+    ) {
         try {
             const res = await localeFetch(`/api/doc?file=${encodeURIComponent(boot.file)}`);
             if (!res.ok) {
@@ -1288,11 +1361,18 @@ const flushContent = debounce(120, () => {
     ...(hmr() ?? ({} as HmrBridge)),
     onContent: (files: string[]) => {
         renderRevision++;
-        setPreviewState("loading");
+        setPreviewState(
+            "loading",
+            "",
+            files.includes(ownWatchPath()) || files.includes(`locales/${boot.contentLanguage}.json`)
+                ? undefined
+                : files,
+        );
         pendingContentFiles.push(...files);
         flushContent();
     },
 };
+mountFileUpload();
 
 let saveTask: Promise<void> | undefined;
 const save = (): Promise<void> => {
@@ -1346,9 +1426,9 @@ const saveCurrent = async (): Promise<void> => {
 };
 
 const refresh = debounce(150, () => void render());
-const schedulePreview = (): void => {
+const schedulePreview = (files?: readonly string[]): void => {
     renderRevision++;
-    setPreviewState("loading");
+    setPreviewState("loading", "", files);
     refresh();
 };
 const autosave = debounce(1000, () => {
@@ -1487,8 +1567,7 @@ $("fm-lang").addEventListener("docs:toggle-language", (event) => {
 });
 $("save").addEventListener("click", () => void save());
 
-// ── Edit title and ID over the existing tree label ───────────────────────
-const DOC_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
+// ── Edit title and file name over the existing tree label ───────────────────────
 const FLASH_KEY = "docs:flash";
 const startRename = (): void => {
     const existing = document.querySelector<HTMLFormElement>(".nav-rename-form");
@@ -1502,14 +1581,15 @@ const startRename = (): void => {
     const link = row?.querySelector<HTMLAnchorElement>(":scope > a");
     if (!row || !link) return;
     const editingBoot = boot;
+    const originalSource = ownWatchPath();
+    const originalName = originalSource.split("/").pop() ?? boot.file;
     const form = document.createElement("form");
     form.className = "nav-rename-form";
+    form.title = t("Enter to save / Esc to cancel");
     const bounds = link.getBoundingClientRect();
     const rowBounds = row.getBoundingClientRect();
     form.style.left = `${bounds.left - rowBounds.left}px`;
-    form.style.top = `${bounds.top - rowBounds.top}px`;
     form.style.width = `${bounds.width}px`;
-    form.style.height = `${bounds.height}px`;
     const title = document.createElement("input");
     title.id = "fm-title";
     title.name = "title";
@@ -1517,16 +1597,15 @@ const startRename = (): void => {
     title.setAttribute("aria-label", t("title"));
     const input = document.createElement("input");
     input.id = "pfile-input";
-    input.name = "id";
-    input.value = boot.docId;
+    input.name = "name";
+    input.value = originalName;
     input.required = true;
-    input.pattern = "[a-z0-9][a-z0-9\\-]*";
     input.spellcheck = false;
-    input.setAttribute("aria-label", "ID");
+    input.setAttribute("aria-label", t("File name"));
+    input.addEventListener("input", () => input.setCustomValidity(""));
     form.append(title, input);
     row.append(form);
     row.classList.add("renaming");
-    setStatus("Enter to save / Esc to cancel");
     title.select();
     let busy = false;
     let closed = false;
@@ -1559,7 +1638,11 @@ const startRename = (): void => {
         ev.preventDefault();
         if (busy || boot !== editingBoot) return;
         const next = input.value.trim();
-        if (!DOC_ID_RE.test(next)) return;
+        if (!isDocumentFileName(next)) {
+            input.setCustomValidity(t("Enter a file name ending in .md"));
+            input.reportValidity();
+            return;
+        }
         busy = true;
         paneBusy = true;
         title.readOnly = input.readOnly = true;
@@ -1574,7 +1657,7 @@ const startRename = (): void => {
                 if (dirty) await save();
                 // A failed or unresolved save must never be followed by a rename/reload.
                 if (dirty) throw new Error(t("Unsaved changes"));
-                if (next === boot.docId) {
+                if (next === originalName) {
                     end();
                     return;
                 }
@@ -1582,19 +1665,15 @@ const startRename = (): void => {
                 const res = await localeFetch("/api/rename", {
                     method: "POST",
                     headers: { "content-type": "application/json" },
-                    body: JSON.stringify({ file: boot.file, newId: next }),
+                    body: JSON.stringify({
+                        file: boot.file,
+                        name: next,
+                        sourceFile: originalSource,
+                    }),
                 });
                 const data = (await res.json()) as RenameResponse;
                 if (!res.ok || !data.ok) throw new Error(data.error ?? String(res.status));
-                sessionStorage.setItem(
-                    FLASH_KEY,
-                    data.updatedRefs > 0
-                        ? t("Renamed to {id}.md ({count} links updated)", {
-                              id: data.id,
-                              count: data.updatedRefs,
-                          })
-                        : t("Renamed to {id}.md", { id: data.id }),
-                );
+                sessionStorage.setItem(FLASH_KEY, t("Renamed to {filename}", { filename: next }));
                 goToPage(localeUrl(data.path));
             } catch (e) {
                 setStatus(
@@ -1622,7 +1701,7 @@ const startRename = (): void => {
 }
 
 // ── Adding figures (file picker / drop onto the editor) ──────────────────────
-// Write to figures/ (POST /api/figure) and insert :::figure(<file>). Figures are site-wide, so
+// Write to figures/ (POST /api/figure) and insert a Markdown embed. Figures are site-wide, so
 // they work the same from a doc at any depth. Insertion point: the line itself if blank,
 // otherwise after the end of the line.
 const FIG_ACCEPT = /\.(svg|png|webp|jpe?g)$/i;
@@ -1640,15 +1719,16 @@ const uploadFigure = async (file: File): Promise<string> => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ name: file.name, data: await readBase64(file) }),
     });
-    const data = (await res.json()) as { file?: string; error?: string };
+    const data = (await res.json()) as { file?: string; path?: string; error?: string };
     if (!res.ok || !data.file) {
         throw new Error(data.error ?? String(res.status));
     }
-    if (!boot.figures.includes(data.file)) {
-        boot.figures.push(data.file);
+    const path = data.path ?? `figures/${data.file}`;
+    if (!boot.figures.includes(path)) {
+        boot.figures.push(path);
         rebuildCompletions();
     }
-    return data.file;
+    return path;
 };
 const insertFigures = async (files: File[], pos?: number): Promise<void> => {
     const ok = files.filter((f) => FIG_ACCEPT.test(f.name));
@@ -1663,7 +1743,7 @@ const insertFigures = async (files: File[], pos?: number): Promise<void> => {
             names.push(await uploadFigure(f));
         }
         const line = view.state.doc.lineAt(pos ?? view.state.selection.main.head);
-        const block = names.map((n) => `:::figure(${n})`).join("\n\n");
+        const block = names.map((n) => `![](${n})`).join("\n\n");
         const blank = line.text.trim() === "";
         const insert = blank ? block : `\n\n${block}`;
         const from = blank ? line.from : line.to;
@@ -1725,7 +1805,7 @@ const deleteDoc = async (): Promise<void> => {
     const file = boot.file;
     if (
         !(await confirmDialog(
-            t('Delete "{file}"? (this cannot be undone)', { file }),
+            t('Delete "{file}"? (this cannot be undone)', { file: boot.sourceFile ?? file }),
             t("Delete doc"),
             true,
         ))
@@ -1989,10 +2069,6 @@ const restorePane = (pane: PreviewPane): void => {
     activePane = pane;
     mainEl = pane.element.querySelector(".preview-content") as HTMLElement;
     renderRevision++;
-    setPreviewState(
-        (mainEl.dataset.previewState as PreviewState) ?? "valid",
-        mainEl.dataset.previewMessage,
-    );
     boot = draft.boot;
     baseRaw = draft.baseRaw;
     conflictPending = draft.conflictPending;
@@ -2214,11 +2290,20 @@ const swapDoc = (data: PageResponse, remember = true): void => {
     setStatus("");
     renderRevision++;
     apply(
-        { html: data.html, errors: data.errors, toc: data.toc, blockLines: boot.blockLines },
+        {
+            html: data.html,
+            errors: data.errors,
+            toc: data.toc,
+            blockLines: boot.blockLines,
+            filePreviews: boot.filePreviews,
+            previews: boot.previews,
+        },
         false,
     );
     activePane.element.scrollTop = 0;
     syncPane();
+    const unsavedFiles = Object.keys(textfiles.previewFiles());
+    if (unsavedFiles.length) schedulePreview(unsavedFiles);
     markValidationPending();
     validateSoon();
 };

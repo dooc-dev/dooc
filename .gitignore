@@ -5,6 +5,7 @@ build/
 .codex/
 .agents/
 .claude/
+.playwright-mcp/
 .env
 .env.*
 *.tgz

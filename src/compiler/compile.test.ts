@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { blocksHtml } from "../core/html.js";
+import { defaultPreviewSettings } from "../core/previewers.js";
 import { docDisplayName } from "../core/taxonomy.js";
 import {
     compileDraft,
@@ -10,6 +12,7 @@ import {
     rewriteDocLinks,
     writeArtifact,
 } from "./compile.js";
+import { exportEntries } from "./export.js";
 import { writeCatalog } from "./locales.js";
 
 const writeDoc = (path: string, title: string): void => {
@@ -84,26 +87,29 @@ describe("rewriteDocLinks", () => {
     });
 });
 
-describe("term directives", () => {
-    it("collects registered document definitions and blocks conflicting global names", () => {
+describe("term code blocks", () => {
+    it("collects inline definitions with document-based identities", () => {
         const root = makeRoot("- a\n- b\n");
         const dir = join(root, "content");
         const declaration = (term: string) =>
-            `---\ntitle: terms\n---\n\n:::term(${term})\nname: ${term}\ndefinition: Definition\n:::\n`;
+            `---\ntitle: terms\n---\n\n~~~termth\nname: ${term}\ndefinition: Definition\n~~~\n`;
         writeFileSync(join(dir, "a.md"), declaration("alpha"));
         writeFileSync(join(dir, "b.md"), declaration("beta"));
         const built = compileSite(root);
         expect(built.errors).toEqual([]);
-        expect(built.artifact?.terms.map((e) => e.id)).toEqual(["alpha", "beta"]);
+        expect(built.artifact?.terms.map((e) => e.id)).toEqual([
+            "content/a.md#L5",
+            "content/b.md#L5",
+        ]);
         expect(built.artifact?.docs[0]?.blocks).toEqual([
             {
                 type: "term",
-                entry: { id: "alpha", name: "alpha", definition: "Definition" },
+                entry: { id: "content/a.md#L5", name: "alpha", definition: "Definition" },
             },
         ]);
         writeFileSync(join(dir, "b.md"), declaration("alpha"));
         const conflict = compileSite(root);
-        expect(conflict.errors.some((e) => e.includes('duplicate term ID "alpha"'))).toBe(true);
+        expect(conflict.errors).toEqual([]);
     });
 });
 
@@ -112,6 +118,76 @@ describe("createCompiler (incremental compile for the viewer)", () => {
         const root = makeRoot("- a\n- b\n", { a: "A", b: "B" });
         return { root, all: join(root, "content") };
     };
+
+    it("routes Markdown media embeds, preserves binary exports and applies changed registrations to cached docs and drafts", () => {
+        const { root, all } = fixture();
+        mkdirSync(join(root, "figures"));
+        const svg =
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><title>Shape</title></svg>';
+        const png = Buffer.from(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aT6sAAAAASUVORK5CYII=",
+            "base64",
+        );
+        writeFileSync(join(root, "figures/shape.svg"), svg);
+        writeFileSync(join(root, "figures/pixel.png"), png);
+        writeFileSync(
+            join(root, "figures/card.html"),
+            "<!--fig\ntitle: Card\n-->\n<p>HTML content</p>",
+        );
+        const body =
+            "---\ntitle: Media\n---\n\n![Shape label](figures/shape.svg)\n![Pixel & label](figures/pixel.png)\n![](figures/card.html)\n\n![](figures/shape.svg#L1)\n";
+        writeFileSync(join(all, "a.md"), body);
+        const compiler = createCompiler(root);
+        const first = compiler.compile();
+        expect(first.errors).toEqual([]);
+        const doc = first.artifact.docs[0];
+        if (!doc) throw new Error("Missing document");
+        expect(doc.blocks).toEqual([
+            { type: "figureRef", name: "shape", caption: "Shape label" },
+            { type: "figureRef", name: "pixel", caption: "Pixel & label" },
+            { type: "figureRef", name: "card" },
+            {
+                type: "code",
+                filename: "figures/shape.svg",
+                range: "#L1",
+                lang: "svg",
+                lines: [svg],
+            },
+        ]);
+        expect(first.sources.get("content/a.md")?.lines).toEqual([1, 2, 3, 5]);
+        expect(doc.refs.figures).toEqual(["shape", "pixel", "card"]);
+        const figures = new Map(first.figures.map((figure) => [figure.name, figure]));
+        const html = blocksHtml(doc.blocks, { figures, terms: [] });
+        expect(html).toContain('title="Shape label"');
+        expect(html).toContain('alt="Pixel &amp; label"');
+        expect(html).toContain('data-doc-figure-frame="html" sandbox="allow-scripts"');
+        expect(html).not.toContain("allow-same-origin");
+        expect(
+            exportEntries(root).find((entry) => entry.name === "figures/pixel.png")?.data,
+        ).toEqual(png);
+
+        const previews = defaultPreviewSettings();
+        previews.formats.image = previews.formats.image.filter((ext) => ext !== "svg");
+        previews.formats.code.push("svg");
+        writeFileSync(join(root, "manifest.yaml"), JSON.stringify({ docs: ["a", "b"], previews }));
+        const second = compiler.compile();
+        expect(second.errors).toEqual([]);
+        expect(second.artifact.docs[0]?.blocks[0]).toEqual({
+            type: "code",
+            filename: "figures/shape.svg",
+            alt: "Shape label",
+            lang: "svg",
+            lines: [svg],
+        });
+        expect(second.artifact.docs[0]?.refs.figures).toEqual(["pixel", "card"]);
+        const draft = compileDraft(
+            { root, docs: second.artifact.docs, figures },
+            "content/a.md",
+            body,
+        );
+        expect(draft.source.errors).toEqual([]);
+        expect(draft.doc.blocks).toEqual(second.artifact.docs[0]?.blocks);
+    });
 
     it("does not re-parse docs when the disk is unchanged (same blocks reference) and rebuilds them when it changes", () => {
         const { root, all } = fixture();
@@ -146,6 +222,24 @@ describe("createCompiler (incremental compile for the viewer)", () => {
         expect(langs("de")).toEqual(["ja", "de"]);
     });
 
+    it("reads manifest defaultLang on every compile, including source-language catalog selection", () => {
+        const { root, all } = fixture();
+        writeFileSync(join(all, "a.md"), "---\ntitle: A\nlang: ja\n---\nBody\n");
+        writeFileSync(join(root, "manifest.yaml"), "defaultLang: jpn\ndocs: [a, b]\n");
+        writeCatalog(root, "eng", { b: { title: "English B", body: "English body" } });
+        const compiler = createCompiler(root);
+        const english = createCompiler(root, { locale: "eng" });
+        expect(compiler.compile().defaultLang).toBe("jpn");
+        expect(compiler.compile().artifact.docs.map((doc) => doc.lang)).toEqual(["ja", "jpn"]);
+        expect(english.compile().artifact.docs[1]?.title).toBe("English B");
+        writeFileSync(join(root, "manifest.yaml"), "defaultLang: eng\ndocs: [a, b]\n");
+        expect(compiler.compile().defaultLang).toBe("eng");
+        expect(compiler.compile().artifact.docs.map((doc) => doc.lang)).toEqual(["ja", "eng"]);
+        expect(english.compile().artifact.docs[1]?.title).toBe("B");
+        writeFileSync(join(root, "manifest.yaml"), "defaultLang: invalid language\ndocs: [a, b]\n");
+        expect(compiler.compile().errors.join()).toContain("manifest.yaml: defaultLang");
+    });
+
     it("compileDraft: validates unsaved source in the site context (doc: links / figures)", () => {
         const { root } = fixture();
         const compiled = compileSite(root);
@@ -155,7 +249,7 @@ describe("createCompiler (incremental compile for the viewer)", () => {
                 figures: new Map([["x", { file: "figures/x.svg" }]]),
             },
             "content/a.md",
-            '---\ntitle: "A"\n---\n\n[ok](doc:b) [ng](doc:zzz)\n\n:::figure(nope.svg)\n\n:::figure(x.png)\n\n:::figure(x.svg)[ok]\n',
+            '---\ntitle: "A"\n---\n\n[ok](doc:b) [ng](doc:zzz)\n\n![](figures/nope.svg)\n\n![](figures/x.png)\n\n![ok](figures/x.svg)\n',
         );
         expect(doc.id).toBe("a");
         expect(doc.refs).toEqual({ figures: ["nope", "x", "x"], terms: [] });
@@ -205,7 +299,7 @@ describe("HTML embeds", () => {
         const root = makeRoot("- media\n");
         try {
             const tags = ["iframe", "video", "audio"];
-            const body = tags.map((tag) => `:::html(${tag}.html)`).join("\n\n");
+            const body = tags.map((tag) => `![](figures/${tag}.html)`).join("\n\n");
             writeFileSync(join(root, "content/media.md"), `---\ntitle: Media\n---\n\n${body}\n`);
             mkdirSync(join(root, "figures"));
             for (const tag of tags) {

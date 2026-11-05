@@ -12,6 +12,7 @@ import {
 } from "./compiler/compile.js";
 import { exportEntries } from "./compiler/export.js";
 import { figureName } from "./compiler/figures.js";
+import { docFile, readManifest } from "./compiler/manifest.js";
 import { createDocOps, isOpError, type OpResult } from "./compiler/ops.js";
 import { zip } from "./compiler/zip.js";
 
@@ -113,12 +114,11 @@ switch (command) {
         const [format, rootArg, outArg] = positionals;
         const root = docsRoot(rootArg);
         const out = (fallback: string): string => resolve(outArg ?? join(root, "dist", fallback));
-        // docs.config.mjs: default language + extra language adapters.
+        // docs.config.mjs supplies optional language adapters.
         const { loadSiteLanguages } = await import("./viewer/languages.js");
         const site = await loadSiteLanguages(root);
         if (format === "json") {
             const compiled = compileOrFail(root, {
-                defaultLang: site.defaultLang,
                 locale: values.lang,
             });
             writeArtifact(compiled, out("artifact"));
@@ -134,7 +134,6 @@ switch (command) {
             console.log(`${out(`${basename(root)}.zip`)} — ${entries.length} files`);
         } else if (format === "html") {
             const compiled = compileOrFail(root, {
-                defaultLang: site.defaultLang,
                 locale: values.lang,
             });
             const { bundleClient, publishHtml, siteFrom } = await import("./viewer/serve.js");
@@ -214,7 +213,7 @@ switch (command) {
             const id = need(a, "id");
             report(
                 ops.add(id, values.title ?? id, values.parent),
-                (r) => `added content/${r.id}.md`,
+                (r) => `added ${docFile(r.id, readManifest(root).files)}`,
             );
         } else if (op === "doc move") {
             const index = values.index == null ? undefined : Number(values.index);
@@ -238,11 +237,14 @@ switch (command) {
             const file = basename(src);
             const name =
                 values.name == null ? file : `${values.name}${file.slice(figureName(file).length)}`;
-            report(ops.addFigure(name, readFileSync(src)), (r) => `added figures/${r.file}`);
+            report(
+                ops.addFigure(name, readFileSync(src)),
+                (r) => `added ${r.path ?? `figures/${r.file}`}`,
+            );
         } else if (op === "figure delete") {
             report(
                 ops.removeFigure(need(a, "name"), values.force),
-                (r) => `deleted figures/${r.file}`,
+                (r) => `deleted ${r.file.includes("/") ? r.file : `figures/${r.file}`}`,
             );
         } else {
             fail(`unknown command: ${op}\n\n${USAGE}`);

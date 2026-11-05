@@ -6,13 +6,13 @@ const fm = (body: string): string => `---\ntitle: "t"\n---\n\n${body}\n`;
 describe("parseDoc", () => {
     it("accepts an in-dialect doc and returns body / front-matter", () => {
         const doc = parseDoc(
-            `---\ntitle: "Sample"\n---\n\n:::figure(sample_model.png)[Sample model]\n\n## Details\n\nBody \`code\` and [link](https://example.com).\n\n:::callout[Key points]\n- Item\n  - Child\n:::\n`,
+            `---\ntitle: "Sample"\n---\n\n![Sample model](figures/sample_model.png)\n\n## Details\n\nBody \`code\` and [link](https://example.com).\n\n:::callout[Key points]\n- Item\n  - Child\n:::\n`,
         );
         expect(doc.errors).toEqual([]);
         expect(doc.frontmatter?.title).toBe("Sample");
         // body is the original text (leaf rewriting only applies to the source used for parsing).
-        expect(doc.body.startsWith(":::figure(sample_model.png)[Sample model]")).toBe(true);
-        expect(collectRefs(doc.root).figures).toEqual(["sample_model.png"]);
+        expect(doc.body.startsWith("![Sample model](figures/sample_model.png)")).toBe(true);
+        expect(collectRefs(doc.root).figures).toEqual(["figures/sample_model.png"]);
     });
 
     it("rejects removed document tags", () => {
@@ -73,65 +73,23 @@ describe("parseDoc", () => {
         expect(parseDoc(fm("# h1 heading")).errors).toEqual([]);
     });
 
-    it("validates directive shapes", () => {
-        expect(parseDoc(fm(":::html(a.html)")).errors).toEqual([]);
-        expect(parseDoc(fm(":::figure(a.drawio.svg)")).errors).toEqual([]);
-        // Extensions are a closed set per directive
-        expect(
-            parseDoc(fm(":::figure(a.html)")).errors.some((e) =>
-                e.includes("unsupported extension"),
-            ),
-        ).toBe(true);
-        expect(
-            parseDoc(fm(":::html(a.svg)")).errors.some((e) => e.includes("unsupported extension")),
-        ).toBe(true);
-        // html takes no caption
-        expect(
-            parseDoc(fm(":::html(a.html)[x]")).errors.some((e) =>
-                e.includes("does not take a [caption]"),
-            ),
-        ).toBe(true);
-        // Malformed one-line syntax (path with spaces / no closing paren) is rejected with a
-        // line number
-        expect(parseDoc(fm(":::figure(a b.png)")).errors[0]).toContain(
-            "L5: leaf directives must be written as",
-        );
-        expect(parseDoc(fm(":::figure(a.png")).errors[0]).toContain(
-            "L5: leaf directives must be written as",
-        );
-        // Syntax inside code fences is neither rewritten nor validated
-        expect(parseDoc(fm("```bash\n:::figure(a b.png)\n```")).errors).toEqual([]);
-        // Attribute form / unknown directives are errors
-        expect(
-            parseDoc(fm('::figure{name="x"}')).errors.some((e) =>
-                e.includes(":::figure must be written as"),
-            ),
-        ).toBe(true);
-        expect(
-            parseDoc(fm(':::callout{title="t"}\nBody\n:::')).errors.some((e) =>
-                e.includes("attributes are not allowed"),
-            ),
-        ).toBe(true);
-        expect(
-            parseDoc(fm(":::figure\nx\n:::")).errors.some((e) => e.includes("unknown container")),
-        ).toBe(true);
-        for (const src of ["::figures", "::dictionary", '::presentation{name="x"}']) {
-            expect(parseDoc(fm(src)).errors.some((e) => e.includes("unknown leaf"))).toBe(true);
+    it("accepts Markdown visual embeds and rejects removed file directives", () => {
+        for (const body of ["![](figures/a.html)", "![Caption](./figures/a.drawio.svg)"])
+            expect(parseDoc(fm(body)).errors).toEqual([]);
+        for (const name of ["figure", "html", "textfile", "term", "graph"]) {
+            for (const body of [
+                `:::${name}(a.svg)`,
+                `:::${name}\nx\n:::`,
+                `::${name}{src="a.svg"}`,
+            ])
+                expect(parseDoc(fm(body)).errors.length).toBeGreaterThan(0);
+            expect(parseDoc(fm(`\`\`\`md\n:::${name}(a.svg)\n\`\`\``)).errors).toEqual([]);
         }
-        expect(
-            parseDoc(fm(":::table\n| a |\n| --- |\n| 1 |\n:::")).errors.some((e) =>
-                e.includes("unknown container"),
-            ),
-        ).toBe(true);
-        // callout accepts paragraphs only, lists only, or a mix
-        expect(parseDoc(fm(":::callout\nBody only\n:::")).errors).toEqual([]);
-        expect(parseDoc(fm(":::callout[t]\nBody\n\n- Item\n:::")).errors).toEqual([]);
-        // Anything other than list/paragraph (table, etc.) is rejected
-        expect(
-            parseDoc(fm(":::callout\n| a | b |\n| --- | --- |\n| 1 | 2 |\n:::")).errors.some((e) =>
-                e.includes("paragraphs / lists"),
-            ),
-        ).toBe(true);
+        expect(parseDoc(fm("![](../a.svg)")).errors.join()).toContain("inside the docs root");
+        expect(parseDoc(fm(':::graph{caption="x"}\n[a]: A\n:::')).errors.join()).toContain(
+            "unknown container",
+        );
+        expect(parseDoc(fm("::callout[x]")).errors.join()).toContain("unknown leaf");
     });
 
     it("validates :::schema content as raw table DSL text (not as markdown)", () => {
@@ -175,21 +133,21 @@ describe("parseDoc", () => {
         // `[id]: ...` has the same shape as a markdown link definition, so check it's read as raw
         // text
         const dsl = "[input]: Input @edge\n[worker]: Worker @compute\n\n[input] -> [worker]";
-        expect(parseDoc(fm(`:::graph[Route]\n${dsl}\n:::`)).errors).toEqual([]);
+        expect(parseDoc(fm(`~~~grapth Route\n${dsl}\n~~~`)).errors).toEqual([]);
         // A leading # is a note (not taken as a heading); also accepted with a common indent
         expect(
-            parseDoc(fm(":::graph\n  # Note\n  [a]: A\n  [b]: B\n  [a] -> [b]\n:::")).errors,
+            parseDoc(fm("~~~grapth\n  # Note\n  [a]: A\n  [b]: B\n  [a] -> [b]\n~~~")).errors,
         ).toEqual([]);
-        const empty = parseDoc(fm(":::graph\n:::"));
+        const empty = parseDoc(fm("~~~grapth\n~~~"));
         expect(empty.errors.some((e) => e.includes("is empty"))).toBe(true);
         const attr = parseDoc(fm(':::graph{caption="x"}\n[a]: A\n:::'));
-        expect(attr.errors.some((e) => e.includes("attributes are not allowed"))).toBe(true);
+        expect(attr.errors.some((e) => e.includes("unknown container"))).toBe(true);
     });
 
     it(":::graph DSL errors are reported at the doc line number (= not publishable)", () => {
         // 1:--- 2:title 3:--- 4:empty 5=:::graph 6=[a]: A 7=[a] -> [nope]
-        const doc = parseDoc(fm(":::graph\n[a]: A\n[a] -> [nope]\n:::"));
-        expect(doc.errors).toEqual(['L7: :::graph edge node "nope" is not declared']);
+        const doc = parseDoc(fm("~~~grapth\n[a]: A\n[a] -> [nope]\n~~~"));
+        expect(doc.errors).toEqual(['L7: grapth edge node "nope" is not declared']);
     });
 
     it("code fences accept standard and custom language labels", () => {

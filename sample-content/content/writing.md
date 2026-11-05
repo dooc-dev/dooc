@@ -19,15 +19,17 @@ lang: "jpn"
 [はじめに](doc:guide)へ戻ります。
 ```
 
-`doc:<id>` で他のページを参照します。IDはMarkdownのファイル名から拡張子を除いたものです。
+`doc:<id>` で他のページを参照します。IDは `manifest.yaml` の目次にある識別子です。ファイル名を変更しても、IDとリンク先は維持されます。
 
 ## ファイル参照
 
-`:::textfile(examples/hello.rs)` で、ルートからの相対パスにあるファイルを表示します。
+`![](examples/hello.rs)` で、ルートからの相対パスにあるファイルを表示します。
 
-:::textfile(examples/hello.rs)
+![](examples/hello.rs)
 
-末尾に `[2,2]` を付けると2行目だけを表示します。エディタでは参照行のボタンから元ファイルを開けます。
+`![](examples/hello.rs#L2)` で2行目だけを、`![](examples/hello.rs#L2-L3)` で2〜3行目を表示します。エディタでは参照行のボタンから元ファイルを開けます。
+
+コードブロックのファイル作成ボタンから内容をファイルに切り出せます。Default folder layoutが有効な場合は、保存先を自動で決め、本文をファイル参照に置き換えます。
 
 ## 注意書き
 
@@ -38,10 +40,9 @@ lang: "jpn"
 
 ## 用語
 
-:::term(docs-root)
-name: "docs root"
-definition: "manifest.yaml と content/ を置く、文書一式のルートフォルダー。"
-description: "資料の入力フォルダー。"
-:::
+```termth
+name: "preview"
+definition: "公開前に確認する表示結果。"
+```
 
-`:::term(docs-root)` と書くと、:::term(docs-root) の説明を参照できます。宣言した用語はリソース一覧にも表示されます。
+`terms/docs-root.termth` に用語のYAMLを保存し、`[](terms/docs-root.termth)` と書くと、[](terms/docs-root.termth) の説明を参照できます。用語ファイルもFilesで管理できます。
