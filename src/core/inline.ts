@@ -1,5 +1,6 @@
-// Shared mini syntax for prose. Terms are resolved only by explicit :::term(id) references.
+// Shared inline syntax: local .termth links display terms, ordinary links remain links.
 import type { TermEntry } from "./artifact-types.js";
+import { parseTermReference } from "./term-reference.js";
 
 export type InlineSegment =
     | { kind: "text"; text: string }
@@ -8,15 +9,9 @@ export type InlineSegment =
     | { kind: "figref"; name: string; text: string }
     | { kind: "term"; id: string; text: string };
 
-export const TERM_ID_RE = /^[a-z0-9][a-z0-9_-]*$/;
-export const TERM_REF_SOURCE = ":::term\\(([^()\\n]*)\\)";
 export const FIG_REF_SOURCE = "Fig\\.\\s?[a-z0-9_-]+";
 const FIG_REF_RE = /^Fig\.\s?([a-z0-9_-]+)$/;
-const TERM_REF_RE = new RegExp(`^${TERM_REF_SOURCE}$`);
-const MINI_RE = new RegExp(
-    `(\`+[^\`]*\`+|\\[[^\\]]*\\]\\([^)]*\\)|\\\\?${TERM_REF_SOURCE}|${FIG_REF_SOURCE})`,
-    "g",
-);
+const MINI_RE = new RegExp(`(\`+[^\`]*\`+|\\\\?\\[[^\\]]*\\]\\([^)]*\\)|${FIG_REF_SOURCE})`, "g");
 const LINK_RE = /^\[([^\]]*)\]\(([^)]*)\)$/;
 
 export const termMap = (terms: readonly TermEntry[]): Map<string, TermEntry> =>
@@ -36,18 +31,27 @@ export const inlineSegmenter = (ctx: InlineContext = {}): ((text: string) => Inl
         for (const match of text.matchAll(MINI_RE)) {
             if (match.index > last) out.push({ kind: "text", text: text.slice(last, match.index) });
             const token = match[0];
-            const term = TERM_REF_RE.exec(token);
             const link = LINK_RE.exec(token);
             const fig = FIG_REF_RE.exec(token)?.[1];
-            if (token.startsWith("`"))
+            if (token.startsWith("\\[")) out.push({ kind: "text", text: token.slice(1) });
+            else if (token.startsWith("`"))
                 out.push({ kind: "code", text: token.replace(/^`+|`+$/g, "") });
-            else if (link) out.push({ kind: "link", text: link[1] ?? "", url: link[2] ?? "" });
-            else if (term) {
-                const id = (term[1] ?? "").trim();
-                out.push({ kind: "term", id, text: terms.get(id)?.name ?? token });
+            else if (link) {
+                const url = link[2] ?? "";
+                let id: string | undefined;
+                try {
+                    id = parseTermReference(url);
+                } catch {
+                    /* The compiler reports invalid paths. */
+                }
+                out.push(
+                    id
+                        ? { kind: "term", id, text: link[1] || terms.get(id)?.name || url }
+                        : { kind: "link", text: link[1] ?? "", url },
+                );
             } else if (fig && figures.has(fig))
                 out.push({ kind: "figref", name: fig, text: token });
-            else out.push({ kind: "text", text: token.replace(/^\\(?=:::term\()/, "") });
+            else out.push({ kind: "text", text: token });
             last = match.index + token.length;
         }
         if (last < text.length) out.push({ kind: "text", text: text.slice(last) });

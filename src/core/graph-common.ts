@@ -1,5 +1,5 @@
 // Layout helpers shared by the two DSLs that draw static SVG graphs (`:::schema` = ER diagram /
-// `:::graph` = relationship graph); browser-safe, no dependencies. Text-width estimation, band
+// `grapth` = relationship graph); browser-safe, no dependencies. Text-width estimation, band
 // (level) assignment, column splitting, orthogonal paths and namespace uids are the rules behind
 // "same input, same picture", so they live here as the SoT instead of being written twice.
 

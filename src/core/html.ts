@@ -23,6 +23,7 @@ import {
     schemaGraphUid,
 } from "./schema-graph.js";
 import { docDisplayName, type Frontmatter } from "./taxonomy.js";
+import { termAnchor } from "./term-reference.js";
 import { textfileName } from "./textfile.js";
 
 export interface RenderCtx {
@@ -92,8 +93,10 @@ const segmentsHtml = (text: string, ctx: RenderCtx, seg: Segmenter): string =>
                 case "term": {
                     const entry = termMap(ctx.terms).get(s.id);
                     if (!entry) return escapeHtml(s.text);
-                    const href = ctx.termLinks?.get(s.id) ?? `#term-${s.id}`;
-                    return `<a class="dictref" href="${escapeHtml(href)}">${escapeHtml(entry.name)}<span class="dictpop">${escapeHtml(entry.definition)}${entry.description ? `<span class="dictpop-description">${escapeHtml(entry.description)}</span>` : ""}</span></a>`;
+                    const href =
+                        ctx.termLinks?.get(s.id) ??
+                        `/_files/terms#${encodeURIComponent(termAnchor(s.id))}`;
+                    return `<a class="dictref" href="${escapeHtml(href)}">${escapeHtml(s.text)}<span class="dictpop">${escapeHtml(entry.definition)}${entry.description ? `<span class="dictpop-description">${escapeHtml(entry.description)}</span>` : ""}</span></a>`;
                 }
                 default:
                     return "";
@@ -122,7 +125,7 @@ const listHtml = (items: ListItem[], ctx: RenderCtx, seg: Segmenter, ordered = f
 const figureHtml = (fig: FigureEntry, withLabel = true, caption?: string): string => {
     const label = caption ?? fig.title ?? `Fig.${fig.name}`;
     const cap = [withLabel ? label : undefined, fig.desc].filter(Boolean).join("\n");
-    return `<figure class="fig">${figureFrameHtml(fig)}${
+    return `<figure class="fig">${figureFrameHtml(fig, "fig-frame", caption)}${
         cap ? `<figcaption class="cap">${escapeHtml(cap)}</figcaption>` : ""
     }</figure>`;
 };
@@ -303,7 +306,7 @@ const graphBoxHtml = (n: GraphLayoutNode): string =>
         "</g>",
     ].join("");
 
-// Relationship graph (`:::graph`) → self-contained SVG. Geometry comes from graph.ts
+// Relationship graph (`grapth`) → self-contained SVG. Geometry comes from graph.ts
 // (deterministic layout); this is markup only. Colors reference `var(--doc-*, fallback)` like
 // figures / schema graph, and linked hover (highlighting related edges) is done entirely with CSS
 // :has() (no JS = same behavior on every consumer). Classes / marker ids are namespaced by the
@@ -392,7 +395,7 @@ export const termsHtml = (
     return `<section class="terms" aria-label="Terms">${sortable ? `<div class="dict-toolbar"><span>${entries.length} terms</span><label>Sort <select data-dict-sort><option value="asc">Name A → Z</option><option value="desc">Name Z → A</option><option value="source">Source order</option></select></label></div>` : ""}<div class="dict">${entries
         .map(
             (e, i) =>
-                `<fieldset class="dict-card" data-source-order="${e.sourceOrder}" data-sort-order="${i}" data-term="${escapeHtml(e.id)}"><legend id="term-${escapeHtml(e.id)}">${TERM_ICON}<a class="term-name" href="/_resources/terms#term-${encodeURIComponent(e.id)}"${e.description ? ` aria-describedby="term-description-${escapeHtml(e.id)}"` : ""}>${escapeHtml(e.name)}${e.description ? `<span class="term-description" role="tooltip" id="term-description-${escapeHtml(e.id)}">${escapeHtml(e.description)}</span>` : ""}</a></legend><p class="term-definition">${escapeHtml(e.definition)}</p></fieldset>`,
+                `<fieldset class="dict-card" data-source-order="${e.sourceOrder}" data-sort-order="${i}" data-term="${escapeHtml(e.id)}"><legend id="${termAnchor(e.id)}">${TERM_ICON}<a class="term-name" href="/_files/terms#${encodeURIComponent(termAnchor(e.id))}"${e.description ? ` aria-describedby="term-description-${encodeURIComponent(e.id)}"` : ""}>${escapeHtml(e.name)}${e.description ? `<span class="term-description" role="tooltip" id="term-description-${encodeURIComponent(e.id)}">${escapeHtml(e.description)}</span>` : ""}</a></legend><p class="term-definition">${escapeHtml(e.definition)}</p></fieldset>`,
         )
         .join("")}</div></section>`;
 };
@@ -414,7 +417,7 @@ const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
                 ? `<span class="codeblk-filename">${escapeHtml(filename)}</span>`
                 : "";
             const title = b.filename
-                ? ` title="${escapeHtml(`:::textfile(${b.filename})${b.range ?? ""}`)}"`
+                ? ` title="${escapeHtml(`${b.filename}${b.range ?? ""}`)}"${b.alt ? ` role="region" aria-label="${escapeHtml(b.alt)}"` : ""}`
                 : "";
             if (b.filename && b.unavailable) {
                 const message =

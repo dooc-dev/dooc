@@ -143,3 +143,85 @@ export const mountPanelResize = (): void => {
     });
     layout();
 };
+
+/** The navigation is replaced on refresh; keep listeners and height on its stable sidebar. */
+export const mountFilesResize = (): (() => void) => {
+    const sidebar = document.getElementById("sidebar");
+    if (!sidebar) return () => {};
+    const key = "docs:files-height";
+    let preferred: number | undefined;
+    try {
+        const saved = Number(localStorage.getItem(key));
+        if (Number.isFinite(saved) && saved > 0) preferred = saved;
+    } catch {
+        /* Persistence is optional. */
+    }
+    const apply = (height = preferred ?? Math.min(320, innerHeight * 0.4)): void => {
+        const handle = document.getElementById("files-resize");
+        if (!handle) return;
+        const min = 96;
+        const max = Math.max(min, Math.floor(innerHeight * 0.8));
+        const value = Math.round(Math.max(min, Math.min(height, max)));
+        sidebar.style.setProperty("--files-height", `${value}px`);
+        handle.setAttribute("aria-valuemin", String(min));
+        handle.setAttribute("aria-valuemax", String(max));
+        handle.setAttribute("aria-valuenow", String(value));
+    };
+    const persist = (): void => {
+        preferred = Number.parseFloat(sidebar.style.getPropertyValue("--files-height"));
+        try {
+            localStorage.setItem(key, String(preferred));
+        } catch {
+            /* Optional. */
+        }
+    };
+    const isHandle = (event: Event): boolean =>
+        event.target instanceof Element && !!event.target.closest("#files-resize");
+    const height = (): number =>
+        document.getElementById("nav-files")?.getBoundingClientRect().height ?? 0;
+    let drag: { id: number; y: number; height: number; handle: HTMLElement } | undefined;
+    sidebar.addEventListener("pointerdown", (event) => {
+        if (!isHandle(event) || event.button !== 0 || drag) return;
+        const handle = document.getElementById("files-resize");
+        if (!handle) return;
+        event.preventDefault();
+        handle.focus({ preventScroll: true });
+        drag = { id: event.pointerId, y: event.clientY, height: height(), handle };
+        handle.setPointerCapture(event.pointerId);
+        document.body.classList.add("resizing-files");
+    });
+    sidebar.addEventListener("pointermove", (event) => {
+        if (drag?.id === event.pointerId) apply(drag.height + event.clientY - drag.y);
+    });
+    const stop = (): void => {
+        if (!drag) return;
+        drag = undefined;
+        document.body.classList.remove("resizing-files");
+        persist();
+    };
+    for (const type of ["pointerup", "pointercancel", "lostpointercapture"] as const)
+        sidebar.addEventListener(type, (event) => {
+            if (drag?.id === event.pointerId) stop();
+        });
+    sidebar.addEventListener("keydown", (event) => {
+        if (!isHandle(event) || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+        event.preventDefault();
+        apply(height() + (event.key === "ArrowDown" ? 20 : -20));
+        persist();
+    });
+    sidebar.addEventListener("dblclick", (event) => {
+        if (!isHandle(event)) return;
+        preferred = undefined;
+        try {
+            localStorage.removeItem(key);
+        } catch {
+            /* Optional. */
+        }
+        apply();
+    });
+    window.addEventListener("resize", () => apply());
+    return () => {
+        if (drag && !drag.handle.isConnected) stop();
+        apply();
+    };
+};

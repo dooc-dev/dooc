@@ -1,10 +1,11 @@
+import { createHash } from "node:crypto";
 // figures/ = the SoT for HTML-based Figs (figures). Two formats:
 //   - <name>.svg  : self-contained SVG (xmlns + viewBox + <title>Fig.<name></title> +
 //                   optional <desc>description</desc>)
 //   - <name>.html : self-contained HTML fragment (leading <!--fig title/desc --> meta comment,
 //                   styles such as CSS animations bundled in <style>, no scripts)
 // Both use var(--doc-*, fallback) for colors (follows the theme + works standalone). Content
-// references them via `:::figure(<file>)[caption]` / `:::html(<file>)` (png / webp / jpeg become
+// references them via `![caption](figures/<file>)` (png / webp / jpeg become
 // data-URI <img>s).
 //
 // Figures drawn in draw.io live in the same figures/. Two ways to place them; in both, name is
@@ -20,9 +21,10 @@
 // injecting title) before the same validation as hand-written SVGs. Colors stay in draw.io's
 // scheme (see the top of drawio.ts).
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname } from "node:path";
 import type { FigureEntry } from "../core/artifact-types.js";
 import { extractMxfile, isDrawioSvg, normalizeDrawioSvg } from "./drawio.js";
+import { textfilePath } from "./textfile.js";
 
 const EXT_RE = /\.(drawio\.svg|svg|html|png|webp|jpe?g)$/;
 const FILE_RE = /^[a-z0-9][a-z0-9_-]*\.(drawio\.svg|svg|html|png|webp|jpe?g)$/;
@@ -34,7 +36,10 @@ const IMAGE_MIME: Record<string, string> = {
 };
 
 /** File relative to figures/ → the figure's registered name (stem without the extension). */
-export const figureName = (file: string): string => file.replace(EXT_RE, "");
+export const figureName = (file: string): string =>
+    !FILE_RE.test(file.replace(/^figures\//, ""))
+        ? `file-${createHash("sha256").update(file).digest("hex").slice(0, 24)}`
+        : file.replace(/^figures\//, "").replace(EXT_RE, "");
 
 /**
  * Original file name of a figure added from the editing UI → a name following the figures/
@@ -103,14 +108,14 @@ const parseSvg = (
 ): Omit<FigureEntry, "name" | "file"> => {
     const markup = withSvgTheme(normalizeHardcodedSurfaces(raw.trim()));
     if (!markup.startsWith("<svg") || !markup.endsWith("</svg>")) {
-        errors.push(`figures/${file}: a single root <svg>…</svg> is required`);
+        errors.push(`${file}: a single root <svg>…</svg> is required`);
     }
     const head = markup.slice(0, markup.indexOf(">"));
     if (!head.includes("xmlns=")) {
-        errors.push(`figures/${file}: root <svg> requires xmlns (for standalone publishing)`);
+        errors.push(`${file}: root <svg> requires xmlns (for standalone publishing)`);
     }
     if (!head.includes("viewBox=")) {
-        errors.push(`figures/${file}: root <svg> requires viewBox (to scale with the width)`);
+        errors.push(`${file}: root <svg> requires viewBox (to scale with the width)`);
     }
     return {
         kind: "svg",
@@ -127,9 +132,7 @@ const parseHtml = (
 ): Omit<FigureEntry, "name" | "file"> => {
     const m = HTML_META_RE.exec(raw);
     if (!m) {
-        errors.push(
-            `figures/${file}: a <!--fig\\ntitle: ...\\n--> meta comment is required at the top`,
-        );
+        errors.push(`${file}: a <!--fig\\ntitle: ...\\n--> meta comment is required at the top`);
         return { kind: "html", markup: raw.trim() };
     }
     const meta = new Map(
@@ -140,20 +143,21 @@ const parseHtml = (
     );
     const markup = withHtmlTheme(raw.slice(m[0].length).trim());
     if (!meta.get("title")) {
-        errors.push(`figures/${file}: the meta comment requires title:`);
+        errors.push(`${file}: the meta comment requires title:`);
     }
     if (!markup.startsWith("<")) {
-        errors.push(`figures/${file}: the meta comment must be followed by an HTML fragment`);
+        errors.push(`${file}: the meta comment must be followed by an HTML fragment`);
     }
     if (/<script/i.test(markup)) {
-        errors.push(
-            `figures/${file}: <script> is not allowed (self-contained static fragments only)`,
-        );
+        errors.push(`${file}: <script> is not allowed (self-contained static fragments only)`);
     }
     return { kind: "html", markup, title: meta.get("title"), desc: meta.get("desc") };
 };
 
-export const loadFigures = (figuresDir: string): { figures: FigureEntry[]; errors: string[] } => {
+export const loadFigures = (
+    figuresDir: string,
+    extraFiles: string[] = [],
+): { figures: FigureEntry[]; errors: string[] } => {
     const errors: string[] = [];
     const figures: FigureEntry[] = [];
     let files: string[] = [];
@@ -162,42 +166,56 @@ export const loadFigures = (figuresDir: string): { figures: FigureEntry[]; error
             .filter((f) => /\.(svg|html|png|webp|jpe?g)$/.test(f))
             .sort();
     } catch {
-        return { figures, errors }; // a missing figures/ is valid as "zero figures"
+        // A missing figures/ is valid.
     }
+    files = [...new Set([...files.map((file) => `figures/${file}`), ...extraFiles])];
     const keyframeOwner = new Map<string, { file: string; body: string }>();
     for (const file of files) {
-        if (!FILE_RE.test(file)) {
+        if (
+            file.startsWith("figures/") &&
+            !file.slice(8).includes("/") &&
+            !FILE_RE.test(file.slice(8))
+        ) {
             errors.push(
-                `figures/${file}: file name must be <name>.svg|.drawio.svg|.html|.png|.webp|.jpg|.jpeg ([a-z0-9_-])`,
+                `${file}: file name must be <name>.svg|.drawio.svg|.html|.png|.webp|.jpg|.jpeg ([a-z0-9_-])`,
             );
             continue;
         }
-        const name = file.replace(EXT_RE, "");
+        const name = figureName(file);
         const dup = figures.find((f) => f.name === name);
         if (dup) {
-            errors.push(`figures/${file}: duplicate name "${name}" (also used by ${dup.file})`);
+            errors.push(`${file}: duplicate name "${name}" (also used by ${dup.file})`);
             continue;
         }
         const mime = IMAGE_MIME[file.slice(file.lastIndexOf(".") + 1)];
         if (mime != null) {
             // Rasters are inlined as data URIs (= the artifact is self-contained). The caption
             // comes from [caption] on the content side.
-            const data = readFileSync(join(figuresDir, file)).toString("base64");
+            const data = readFileSync(
+                file.startsWith("figures/")
+                    ? textfilePath(figuresDir, file.slice(8))
+                    : textfilePath(dirname(figuresDir), file),
+            ).toString("base64");
             figures.push({
                 name,
-                file: `figures/${file}`,
+                file,
                 kind: "image",
                 markup: `<img src="data:${mime};base64,${data}" alt="${name}">`,
             });
             continue;
         }
-        const raw = readFileSync(join(figuresDir, file), "utf8");
+        const raw = readFileSync(
+            file.startsWith("figures/")
+                ? textfilePath(figuresDir, file.slice(8))
+                : textfilePath(dirname(figuresDir), file),
+            "utf8",
+        );
         // The point of .drawio.svg is "can be reopened in draw.io", so the mxfile copy is required
         // (rejects an Export as > SVG output without the copy that was merely renamed).
         const editable = file.endsWith(".drawio.svg");
         if (editable && !extractMxfile(raw)) {
             errors.push(
-                `figures/${file}: .drawio.svg doubles as the editable source, so it requires a copy of the mxfile (content=) (save it as .drawio.svg via File > Save as in draw.io)`,
+                `${file}: .drawio.svg doubles as the editable source, so it requires a copy of the mxfile (content=) (save it as .drawio.svg via File > Save as in draw.io)`,
             );
         }
         const parsed = file.endsWith(".svg")
@@ -209,7 +227,7 @@ export const loadFigures = (figuresDir: string): { figures: FigureEntry[]; error
             : parseHtml(file, raw, errors);
         if (/var\(--doc-[a-z0-9-]+\)/.test(parsed.markup)) {
             errors.push(
-                `figures/${file}: contains var(--doc-*) without a fallback (use the var(--doc-x, #hex) form)`,
+                `${file}: contains var(--doc-*) without a fallback (use the var(--doc-x, #hex) form)`,
             );
         }
         // @keyframes names must not collide when several figures are inlined on one page.
@@ -229,14 +247,14 @@ export const loadFigures = (figuresDir: string): { figures: FigureEntry[]; error
             const owner = keyframeOwner.get(key);
             if (owner && owner.file !== file && owner.body !== body) {
                 errors.push(
-                    `figures/${file}: @keyframes "${kname}" conflicts with a different definition in ${owner.file}`,
+                    `${file}: @keyframes "${kname}" conflicts with a different definition in ${owner.file}`,
                 );
             }
             keyframeOwner.set(key, { file, body });
         }
         figures.push({
             name,
-            file: `figures/${file}`,
+            file,
             ...parsed,
         });
     }

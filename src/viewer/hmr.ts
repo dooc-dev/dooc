@@ -16,6 +16,7 @@
 import { existsSync, unwatchFile, watch, watchFile } from "node:fs";
 import type { ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
+import { managedFile } from "../compiler/files.js";
 import { textfilePath } from "../compiler/textfile.js";
 import { MANIFEST_FILE } from "../core/content-metadata.js";
 import { isRemoteTextfile } from "../core/textfile.js";
@@ -40,8 +41,21 @@ export const classifyChange = (rel: string): HmrKind | undefined => {
     // scope (= tsx watch restart → the client picks it up from the bootId difference in hello).
     if (
         p === "src/viewer/edit-client.ts" ||
+        p === "src/viewer/files-ui.ts" ||
+        p === "src/viewer/edit-code-file.ts" ||
+        p === "src/core/code-file.ts" ||
+        p === "src/core/files.ts" ||
         p === "src/viewer/edit-schema-completion.ts" ||
         p === "src/viewer/edit-textfile.ts" ||
+        p === "src/viewer/file-references.ts" ||
+        p === "src/core/markdown.ts" ||
+        p === "src/core/textfile.ts" ||
+        p === "src/core/file-embed.ts" ||
+        p === "src/core/term-reference.ts" ||
+        p === "src/core/taxonomy.ts" ||
+        p === "src/core/previewers.ts" ||
+        p === "src/viewer/edit-file-preview.ts" ||
+        p === "src/viewer/preview-settings-ui.ts" ||
         p === "src/viewer/edit-conflict.ts" ||
         p === "src/viewer/edit-code-highlight.ts" ||
         p === "src/viewer/code-tokens.ts" ||
@@ -127,7 +141,6 @@ export const createHmrHub = (bootId: string): HmrHub => {
  * Folders to watch. The docs-side ones are relative to docsRoot, src to pkgRoot (only files that
  * classifyChange marks "client" count).
  */
-const DOCS_DIRS = ["content", "figures", "icons", "locales"];
 
 /**
  * Notifies data-side changes batched by kind. An editor save fires multiple events
@@ -164,10 +177,7 @@ export const watchProject = (
         }
     };
     // Skip missing folders (checkouts / test fixtures without optional asset folders) to avoid ENOENT.
-    const dirs: [string, string][] = [
-        ...DOCS_DIRS.map((dir): [string, string] => [dir, join(docsRoot, dir)]),
-        ["src", join(pkgRoot, "src")],
-    ];
+    const dirs: [string, string][] = [["src", join(pkgRoot, "src")]];
     const watchers = dirs
         .filter(([, abs]) => existsSync(abs))
         .map(([dir, abs]) =>
@@ -179,8 +189,12 @@ export const watchProject = (
         );
     // Watch the directory so atomic replacements of the manifest are detected too.
     watchers.push(
-        watch(docsRoot, (_event, name) => {
-            if (name && String(name) === MANIFEST_FILE) note(MANIFEST_FILE);
+        watch(docsRoot, { recursive: true }, (_event, name) => {
+            if (!name) return;
+            const path = String(name).replaceAll("\\", "/");
+            if (path === MANIFEST_FILE || path.startsWith("locales/")) note(path, "content");
+            else if (managedFile(path) && !path.startsWith("src/") && !/\.(tmp|swp)$/.test(path))
+                note(path, "content");
         }),
     );
     const textfiles = new Map<string, () => void>();

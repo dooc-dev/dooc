@@ -4,17 +4,17 @@ import { createTextfileEditors, textfileLines } from "./edit-textfile.js";
 
 it("adds editors only to actual single-line references, preserving spaces and ignoring code/DSL examples", () => {
     const source = [
-        ":::textfile(./examples/hello.rs)[1:5,7:3]",
-        ':::textfile(examples/日本語 & example.rs)["a,b", *]',
+        "![](./examples/hello.rs#L1-L7)",
+        "![](<examples/日本語 & example.rs#L2>)",
         "```md",
-        ":::textfile(hidden.rs)",
+        "![](hidden.rs)",
         "```",
         ":::schema",
-        ":::textfile(hidden.rs)",
+        "![](hidden.rs)",
         ":::",
-        ":::textfile()",
-        "Prose :::textfile(hidden.rs)",
-        "    :::textfile(hidden.rs)",
+        "![]()",
+        "Prose ![](hidden.rs)",
+        "    ![](hidden.rs)",
     ].join("\n");
     expect(textfileLines(source)).toEqual([
         { line: 1, file: "examples/hello.rs" },

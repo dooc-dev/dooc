@@ -5,7 +5,6 @@ import remarkGfm from "remark-gfm";
 import remarkStringify from "remark-stringify";
 import stringWidth from "string-width";
 import { unified } from "unified";
-import { normalizeLeafDirectives } from "../core/taxonomy.js";
 import { parseMdast } from "./dialect.js";
 
 export function formatMarkdown(body: string): string {
@@ -32,8 +31,6 @@ export function formatMarkdown(body: string): string {
             listItemIndent: "one",
             fences: true,
             handlers: {
-                text: (node, _parent, state, info) =>
-                    state.safe(node.value, info).replace(/::\\:term\(([^()\n]*)\)/g, ":::term($1)"),
                 containerDirective: preserve,
                 leafDirective: preserve,
                 code: (node, parent) => {
@@ -53,6 +50,6 @@ export function formatMarkdown(body: string): string {
                 },
             },
         });
-    const formatted = printer.stringify(parseMdast(normalizeLeafDirectives(body).source));
+    const formatted = printer.stringify(parseMdast(body));
     return body.includes("\r\n") ? formatted.replaceAll("\n", "\r\n") : formatted;
 }

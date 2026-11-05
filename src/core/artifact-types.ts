@@ -7,7 +7,7 @@ import type { Block, TocEntry } from "./blocks.js";
 import type { Frontmatter } from "./taxonomy.js";
 
 export interface TermEntry {
-    /** Stable ID used by explicit :::term(id) references. */
+    /** Root-relative .termth path, or a document position for an inline definition. */
     id: string;
     name: string;
     description?: string;
@@ -66,7 +66,7 @@ export interface DocsArtifact {
     /** Display order (manifest pre-order). The hierarchy is expressed by each doc's parent. */
     docs: ArtifactDoc[];
     /**
-     * Terms defined by :::term(id) in content. Only explicit references become links.
+     * Terms loaded from local .termth links and inline termth code blocks.
      */
     terms: TermEntry[];
     figures: FigureIndexEntry[];

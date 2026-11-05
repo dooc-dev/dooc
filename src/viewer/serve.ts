@@ -1,3 +1,13 @@
+import { filesSnapshot, updateFiles, uploadFile } from "../compiler/files.js";
+import { textfilePath } from "../compiler/textfile.js";
+import {
+    defaultFilePath,
+    docIconFile,
+    localFile,
+    MAX_FILE_UPLOAD_BYTES,
+    docFile as sourceDocFile,
+    suggestDocFileName,
+} from "../core/files.js";
 // The local server itself (shared by preview / edit). Files are re-read on every request, so a
 // change is always reflected on the next request. HMR (hmr.ts) triggers that "next request"
 // automatically: content changes are pushed over SSE and preview swaps just the main body, while
@@ -39,32 +49,43 @@ import {
     setDocTranslation,
     writeCatalog,
 } from "../compiler/locales.js";
-import { readManifest } from "../compiler/manifest.js";
+import { readManifest, writeManifest } from "../compiler/manifest.js";
 import { assembleDoc, createDocOps, isOpError, type OpResult } from "../compiler/ops.js";
 import type { ArtifactDoc, TermEntry } from "../core/artifact-types.js";
 import type { Block, TocEntry } from "../core/blocks.js";
 import { docIdOfFile } from "../core/content-metadata.js";
 import { figureFrameHtml, mountFigureFrames } from "../core/figure-frame.js";
 import { docHtml, escapeHtml, figureIndexRoute, type RenderCtx, termsHtml } from "../core/html.js";
-import { isLangTag, type LanguageAdapter, resolveLanguage } from "../core/language.js";
+import {
+    DEFAULT_LANG,
+    isLangTag,
+    type LanguageAdapter,
+    resolveLanguage,
+} from "../core/language.js";
+import type { PreviewSettings } from "../core/previewers.js";
 import { ancestorsOf, childrenOf, docPath, resolveDocPath } from "../core/routing.js";
 import { CODE_LANGS, docDisplayName, type Frontmatter } from "../core/taxonomy.js";
+import { isTermFile, termAnchor, termFileUrl } from "../core/term-reference.js";
 import { mountTerms } from "../core/terms-ui.js";
 import { isRemoteTextfile, textfileName } from "../core/textfile.js";
 import { readViewerAsset, prebuilt as usePrebuiltAssets } from "./assets.js";
+import { codeFileResponse } from "./code-file.js";
 import {
     isLocalToolRequest,
     runCodeTool,
     validateCodeTools,
     validateTextfileCode,
 } from "./editor-tools.js";
+import { type FilePreviewResults, fileReferences } from "./file-references.js";
 import { fontCss, readFont } from "./fonts.js";
 import { createHmrHub, HMR_PATH, hmrClientScript, watchProject } from "./hmr.js";
 import { translate } from "./i18n.js";
 import { DEFAULT_SITE_LANGUAGES, loadSiteLanguages } from "./languages.js";
 import { focusNavTree } from "./nav-focus.js";
-import { mountPanelResize } from "./resize.js";
+import { previewSettingsResponse } from "./preview-settings.js";
+import { mountFilesResize, mountPanelResize } from "./resize.js";
 import { mountSearch, SEARCH_LABELS, searchIndex, searchSections } from "./search.js";
+import { siteIconResponse } from "./site-icon.js";
 import { previewTextfiles, textfileResponse } from "./textfile.js";
 
 export type ServeMode = "preview" | "edit";
@@ -73,8 +94,6 @@ export type ServeMode = "preview" | "edit";
 // follows the layout convention (content/ figures/).
 const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const root = resolve(process.env.DOCS_ROOT ?? process.cwd());
-const contentDir = join(root, "content");
-const iconsDir = join(root, ICONS_DIR);
 
 /**
  * One doc in the viewer = a view model combining the compiler's ArtifactDoc (rendering) and
@@ -88,6 +107,8 @@ export interface Entry {
     /** Parent doc id (omitted = top level). */
     parent?: string;
     file: string;
+    sourceFile?: string;
+    iconFile?: string;
     frontmatter: Frontmatter | undefined;
     /** Resolved language (front-matter `lang`, else the site default). */
     lang: string;
@@ -112,15 +133,17 @@ export interface Entry {
     /** Names of the figures the body references (Resources' "used in"). */
     figureRefs?: string[];
     termRefs?: string[];
+    terms?: TermEntry[];
 }
 
 export interface Site {
+    filePaths?: readonly string[];
+    previews?: PreviewSettings;
     title?: string;
     icon?: string;
     codeLanguages?: string[];
     codeGrammars?: LanguageRegistration[];
     contentLanguage?: string;
-    availableLanguages?: string[];
     /** Display order (pre-order traversal of the manifest). */
     entries: Entry[];
     ctx: RenderCtx;
@@ -137,7 +160,8 @@ const CONTENT_PREFIX = "content/";
 const toEntry = (doc: ArtifactDoc, source: DocSource): Entry => ({
     id: doc.id,
     ...(doc.parent == null ? {} : { parent: doc.parent }),
-    file: doc.file.slice(CONTENT_PREFIX.length),
+    file: `${doc.id}.md`,
+    sourceFile: doc.file,
     frontmatter: source.frontmatter,
     lang: doc.lang,
     body: doc.body,
@@ -149,11 +173,12 @@ const toEntry = (doc: ArtifactDoc, source: DocSource): Entry => ({
     ...(doc.icon == null ? {} : { icon: doc.icon }),
     figureRefs: doc.refs.figures,
     termRefs: doc.refs.terms,
+    terms: source.terms,
 });
 
 // Recompile on every request (= read the docs.json equivalent in real time). The compiler's cache
 // skips re-parsing files unchanged on disk, so it stays cheap even when called on every keystroke
-// (POST /api/render). Replaced in startServer once docs.config.mjs (default language / adapters)
+// (POST /api/render). Replaced in startServer once docs.config.mjs (language adapters)
 // has been loaded.
 let siteLanguages = DEFAULT_SITE_LANGUAGES;
 let compiler = createCompiler(root);
@@ -161,10 +186,11 @@ const ops = createDocOps(root);
 
 /** Compile result → viewer Site (shared by the server's per-request path and one-off publish). */
 export const siteFrom = (
-    { artifact, figures, sources, siteErrors, defaultLang }: Compiled,
+    { artifact, figures, sources, siteErrors, defaultLang, previews }: Compiled,
     languages: readonly LanguageAdapter[] = DEFAULT_SITE_LANGUAGES.languages,
 ): Site => {
     return {
+        previews,
         ...(artifact.title === undefined ? {} : { title: artifact.title }),
         ...(artifact.icon === undefined ? {} : { icon: artifact.icon }),
         entries: artifact.docs.flatMap((doc) => {
@@ -174,15 +200,27 @@ export const siteFrom = (
         ctx: {
             figures: new Map(figures.map((f) => [f.name, f])),
             terms: artifact.terms,
-            termLinks: new Map(
-                artifact.docs.flatMap((doc) =>
+            termLinks: new Map([
+                ...artifact.terms.map(
+                    (term) =>
+                        [
+                            term.id,
+                            `/_files/terms#${encodeURIComponent(termAnchor(term.id))}`,
+                        ] as const,
+                ),
+                ...artifact.docs.flatMap((doc) =>
                     doc.blocks.flatMap((block) =>
                         block.type === "term"
-                            ? [[block.entry.id, `/${doc.id}#term-${block.entry.id}`] as const]
+                            ? [
+                                  [
+                                      block.entry.id,
+                                      `/${doc.id}#${encodeURIComponent(termAnchor(block.entry.id))}`,
+                                  ] as const,
+                              ]
                             : [],
                     ),
                 ),
-            ),
+            ]),
             figureIndex: figureIndexRoute(artifact.docs),
         },
         errors: siteErrors,
@@ -195,24 +233,27 @@ const localeCompilers = new Map<string, ReturnType<typeof createCompiler>>();
 let watchTextfiles: ((files: Iterable<string>) => void) | undefined;
 const watchEntryTextfiles = (entries: readonly Entry[]): void => {
     watchTextfiles?.(
-        entries.flatMap((entry) =>
-            entry.blocks.flatMap((block) =>
-                block.type === "code" && block.filename ? [block.filename] : [],
-            ),
-        ),
+        entries.flatMap((entry) => [
+            entry.sourceFile ?? CONTENT_PREFIX + entry.file,
+            ...fileReferences(entry.body).map((reference) => reference.file),
+        ]),
     );
 };
-const loadSite = (locale = contentLanguageCode(siteLanguages.defaultLang)): Site => {
+const loadSite = (locale?: string): Site => {
+    const manifest = readManifest(root);
+    const source = contentLanguageCode(manifest.defaultLang ?? DEFAULT_LANG);
+    locale ??= source;
     let selected = compiler;
-    if (locale !== contentLanguageCode(siteLanguages.defaultLang)) {
-        selected =
-            localeCompilers.get(locale) ??
-            createCompiler(root, { defaultLang: siteLanguages.defaultLang, locale });
+    if (locale !== source) {
+        selected = localeCompilers.get(locale) ?? createCompiler(root, { locale });
         localeCompilers.set(locale, selected);
     }
     const site = siteFrom(selected.compile(), siteLanguages.languages);
     const sourceLanguage = contentLanguageCode(site.defaultLang);
-    for (const entry of site.entries) entry.translatedLanguages = [sourceLanguage];
+    for (const entry of site.entries) {
+        entry.translatedLanguages = [sourceLanguage];
+        entry.iconFile = docIconFile(entry.id, manifest.files);
+    }
     for (const language of catalogLanguages(root)) {
         try {
             const catalog = readCatalog(root, language);
@@ -224,43 +265,28 @@ const loadSite = (locale = contentLanguageCode(siteLanguages.defaultLang)): Site
         }
     }
     watchEntryTextfiles(site.entries);
-    const siteIconFile = readManifest(root).icon;
+    const siteIconFile = manifest.icon;
     if (siteIconFile) watchTextfiles?.([siteIconFile]);
     return {
         ...site,
+        filePaths: manifest.errors.length
+            ? undefined
+            : filesSnapshot(root).files.map((file) => file.path),
         codeLanguages: siteLanguages.codeLanguages,
         codeGrammars: siteLanguages.codeGrammars,
         contentLanguage: locale,
-        availableLanguages: [
-            ...new Set([
-                contentLanguageCode(site.defaultLang),
-                locale,
-                "eng",
-                "jpn",
-                "zho",
-                "kor",
-                "fra",
-                "deu",
-                "spa",
-                "por",
-                ...catalogLanguages(root),
-            ]),
-        ],
     };
 };
 
 const draftContext = (site: Site): DraftContext => ({
+    previews: site.previews,
     root,
     docs: site.entries.map((e) => ({
         id: e.id,
         ...(e.parent == null ? {} : { parent: e.parent }),
-        file: CONTENT_PREFIX + e.file,
+        file: e.sourceFile ?? CONTENT_PREFIX + e.file,
     })),
     figures: site.ctx.figures,
-    termSources: site.entries.map((entry) => ({
-        file: CONTENT_PREFIX + entry.file,
-        entries: entry.blocks.flatMap((block) => (block.type === "term" ? [block.entry] : [])),
-    })),
     defaultLang: site.defaultLang,
 });
 
@@ -282,19 +308,7 @@ const renderEntry = (site: Site, entry: Entry, fallbackTitle: string): string =>
             [...site.errors, ...entry.errors],
             {
                 ...site.ctx,
-                terms: [
-                    ...site.ctx.terms.filter(
-                        (term) =>
-                            !site.entries
-                                .find((saved) => saved.file === entry.file)
-                                ?.blocks.some(
-                                    (block) => block.type === "term" && block.entry.id === term.id,
-                                ),
-                    ),
-                    ...entry.blocks.flatMap((block) =>
-                        block.type === "term" ? [block.entry] : [],
-                    ),
-                ],
+                terms: entry.terms ?? site.ctx.terms,
                 lang: webLanguage(entry.lang),
                 tocTitle: translate(entry.lang, "Contents"),
                 sectionUrl: `${docPath(site.entries, entry.id)}?lang=${encodeURIComponent(site.contentLanguage ?? entry.lang)}`,
@@ -313,12 +327,50 @@ const draftEntry = (
 ): Entry => {
     const { doc, source } = compileDraft(
         { ...draftContext(site), textfiles },
-        CONTENT_PREFIX + file,
+        site.entries.find((e) => e.file === file)?.sourceFile ?? CONTENT_PREFIX + file,
         raw,
     );
     const entry = toEntry(doc, source);
     watchEntryTextfiles([entry]);
     return entry;
+};
+
+export const filePreviewResults = (entry: Entry, site: Site): FilePreviewResults => {
+    const results = new Map<string, string[]>();
+    const bodyOffset =
+        entry.raw.slice(0, entry.raw.length - entry.body.length).split("\n").length - 1;
+    for (const { line, file, kind } of fileReferences(entry.body, site.previews)) {
+        const errors = results.get(file) ?? [];
+        if (kind !== "term" && !entry.blockLines.includes(line))
+            errors.push("Preview could not be updated");
+        errors.push(...entry.errors.filter((error) => error.startsWith(`L${bodyOffset + line}:`)));
+        if (kind === "term") {
+            errors.push(...entry.errors.filter((error) => error.startsWith(`${file}:`)));
+        } else if (kind === "textfile") {
+            errors.push(...entry.errors.filter((error) => error.startsWith(`${file}:`)));
+            for (const block of entry.blocks) {
+                if (block.type !== "code" || block.filename?.replace(/^(\.\/)+/, "") !== file)
+                    continue;
+                if (block.unavailable)
+                    errors.push(
+                        block.unavailable === "missing"
+                            ? "File not found"
+                            : "File could not be loaded",
+                    );
+                errors.push(
+                    ...entry.errors.filter((error) =>
+                        error.startsWith(`${block.filename}${block.range ?? ""}:`),
+                    ),
+                );
+            }
+        } else {
+            if (site.ctx.figures.get(figureName(file))?.file !== file)
+                errors.push("File not found");
+            errors.push(...site.errors.filter((error) => error.startsWith(`${file}:`)));
+        }
+        results.set(file, [...new Set(errors)]);
+    }
+    return Object.fromEntries(results);
 };
 
 // Render the raw being edited (unsaved draft) to body html — shared by the save / render APIs.
@@ -327,13 +379,24 @@ const renderDraft = (
     file: string,
     raw: string,
     textfiles?: ReadonlyMap<string, string>,
-): { html: string; errors: string[]; toc: TocEntry[]; blockLines: number[] } => {
+): {
+    html: string;
+    errors: string[];
+    toc: TocEntry[];
+    blockLines: number[];
+    filePreviews: FilePreviewResults;
+    previews?: PreviewSettings;
+    sourceFile?: string;
+} => {
     const entry = draftEntry(site, file, raw, textfiles);
     return {
+        sourceFile: entry.sourceFile,
         html: renderEntry(site, entry, ""),
         errors: [...site.errors, ...entry.errors],
         toc: entry.toc,
         blockLines: entry.blockLines,
+        filePreviews: filePreviewResults(entry, site),
+        previews: site.previews,
     };
 };
 
@@ -396,9 +459,13 @@ export const renderDocFile = (
     errors: string[];
     toc: TocEntry[];
     blockLines: number[];
+    filePreviews: FilePreviewResults;
+    previews?: PreviewSettings;
+    sourceFile?: string;
 } => {
     const entry = draftEntry(site, file, raw);
     return {
+        sourceFile: entry.sourceFile,
         raw,
         frontmatter: entry.frontmatter,
         body: entry.body,
@@ -406,6 +473,8 @@ export const renderDocFile = (
         errors: [...site.errors, ...entry.errors],
         toc: entry.toc,
         blockLines: entry.blockLines,
+        filePreviews: filePreviewResults(entry, site),
+        previews: site.previews,
     };
 };
 
@@ -457,7 +526,13 @@ export const resolveContentFile = (
     rel: unknown,
 ): { id: string; name: string; abs: string } | undefined => {
     const id = typeof rel === "string" ? docIdOfFile(rel) : undefined;
-    return id == null ? undefined : { id, name: `${id}.md`, abs: join(contentDir, `${id}.md`) };
+    return id == null
+        ? undefined
+        : {
+              id,
+              name: `${id}.md`,
+              abs: textfilePath(root, sourceDocFile(id, readManifest(root).files)),
+          };
 };
 
 // Default palette — resolves the figures' var(--doc-*) and color-mix() following the theme. The
@@ -503,6 +578,9 @@ const DOCS_ICON = icon(
     '<path d="M10 5.2c-1.2-1-2.9-1.5-4.7-1.5-.7 0-1.3.6-1.3 1.3v9c0 .7.6 1.3 1.3 1.3 1.8 0 3.5.5 4.7 1.5"/><path d="M10 5.2c1.2-1 2.9-1.5 4.7-1.5.7 0 1.3.6 1.3 1.3v9c0 .7-.6 1.3-1.3 1.3-1.8 0-3.5.5-4.7 1.5Z"/><path d="M10 5.2v11.6"/>',
 );
 const CHEVRON_ICON = icon('<path d="M8 5.5 12.5 10 8 14.5"/>', 14);
+const GLOBE_ICON = icon(
+    '<circle cx="10" cy="10" r="7"/><ellipse cx="10" cy="10" rx="3" ry="7"/><path d="M3 10h14"/>',
+);
 const BOX_ICON = icon(
     '<path d="M3.5 6.5 10 3l6.5 3.5v7L10 17l-6.5-3.5v-7Z"/><path d="M3.5 6.5 10 10l6.5-3.5M10 10v7"/>',
 );
@@ -625,11 +703,12 @@ body.sidebar-closed #sidebar-foot .nav-label { display: none; }
 #sidebar-toggle { flex: none; display: flex; align-items: center; padding: 14px 16px;
   background: transparent; border: none; color: var(--c-fg-muted); cursor: pointer; }
 #sidebar-toggle:hover { color: var(--c-fg); }
-#site-icon { flex: none; width: 24px; height: 24px; margin: 0 8px 0 16px; object-fit: contain; }
-body.sidebar-closed #site-icon { margin: 0 auto; }
+#site-icon-slot { position: relative; flex: none; width: 24px; height: 24px; margin: 0 8px 0 16px; color: var(--c-fg-muted); }
+#site-icon, #site-icon-slot > .nav-icon { display: block; width: 100%; height: 100%; object-fit: contain; }
+#site-icon[hidden], #site-icon-slot:has(#site-icon:not([hidden])) > .nav-icon { display: none; }
+body.sidebar-closed #site-icon-slot { margin: 0 auto; }
 body.sidebar-closed #sidebar-toggle { position: absolute; inset: 0; width: 100%; justify-content: center; padding: 0; }
-body.sidebar-closed #sidebar-head:has(#site-icon:not([hidden])) #sidebar-toggle svg { visibility: hidden; }
-#site-icon[hidden] { display: block; visibility: hidden; }
+body.sidebar-closed #sidebar-toggle svg { visibility: hidden; }
 .site-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
   padding-right: 12px; color: var(--c-fg); white-space: nowrap; }
 #sidebar-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
@@ -680,7 +759,15 @@ body.sidebar-closed #sidebar-head:has(#site-icon:not([hidden])) #sidebar-toggle 
 .nav-tree > .nav-item:has(~ .nav-item .cur)::before, .nav-tree > .nav-item:has(.cur) > .nav-row::before,
 .nav-tree > .nav-item:has(.cur) > .nav-row::after { background: var(--c-accent); }
 .nav-ancestor { --nav-pad: 12px; --nav-line: var(--nav-rail, 21px); }
-.nav-list:has(> .nav-ancestor) > .nav-item:not(.nav-ancestor) { display: none; }
+.nav-list:has(> .nav-ancestor) > .nav-item:not(.nav-ancestor) { height: 0; opacity: 0; overflow: hidden; visibility: hidden; }
+#nav-groups { --nav-motion: 260ms cubic-bezier(.2, .8, .2, 1); }
+#nav-groups :is(.nav-tree-link, .nav-doc-row) { transition: padding-left var(--nav-motion); }
+#nav-groups :is(.nav-create, .nav-new) { transition: margin-left var(--nav-motion); }
+#nav-groups .nav-item::before, #nav-groups .nav-row::before, #nav-groups .nav-row::after {
+  transition: left var(--nav-motion), width var(--nav-motion), height var(--nav-motion), top var(--nav-motion); }
+/* A connector changing orientation must stay 1px thick instead of morphing into a rectangle. */
+#nav-groups .nav-row::before { transition-property: left, top; }
+@media (prefers-reduced-motion: reduce) { #nav-groups { --nav-motion: 0s; } }
 .nav-ancestor > .nav-tree > .nav-item::before,
 .nav-ancestor > .nav-tree > .nav-item > .nav-row::before,
 .nav-ancestor > .nav-tree > .nav-item > .nav-row::after { display: none; }
@@ -713,9 +800,40 @@ img.doc-icon { flex: none; width: 18px; height: 18px; object-fit: contain; }
 .nav-row > a.cur .doc-icon-frame::after, .nav-doc-row:has(> a.cur) > .nav-doc-icon .doc-icon-frame::after {
   content: ""; position: absolute; inset: 0; background: currentColor; mask: var(--doc-icon) center / contain no-repeat; }
 .nav-count { margin-left: auto; padding-left: 8px; color: var(--c-fg-faint); font-size: 11px; }
-/* Resources (edit only). Dashed border to set it apart from the doc tree */
-.nav-resources { margin: 12px 12px 4px; border: 1px dashed var(--c-line); border-radius: 6px; overflow: hidden; }
-.nav-resources .nav-row > .nav-link { padding: 8px 12px; gap: 12px; }
+/* Files (edit only). Dashed border to set it apart from the doc tree */
+.nav-resources { position: relative; container-type: size; height: var(--files-height, min(320px, 40dvh)); margin: 12px 0 4px; padding-bottom: 8px;
+  border: 1px dashed var(--c-line); border-radius: 6px; overflow: hidden; }
+#files-resize { top: auto; bottom: 0; left: 0; right: 0; width: auto; height: 8px; cursor: row-resize; }
+#files-resize::after { content: ""; position: absolute; top: 3px; left: 50%; transform: translateX(-50%);
+  width: 32px; border-top: 1px solid var(--c-fg-faint); }
+body.resizing-files, body.resizing-files * { cursor: row-resize !important; user-select: none !important; }
+body.resizing-files #files-resize { background: color-mix(in srgb, var(--c-accent) 60%, transparent); }
+.nav-resources > .nav-item { height: 100%; display: flex; flex-direction: column; }
+.nav-resources > .nav-item > .nav-row { flex: none; }
+.nav-resources > .nav-item > .nav-list { flex: 1; min-height: 0; overflow-y: auto;
+  overflow-x: hidden; scrollbar-gutter: stable; }
+.nav-resources .nav-row > .nav-link { padding: 8px 12px; gap: 6px; }
+.nav-resources .nav-row { cursor: default; }
+.files-upload { flex: none; display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
+  border: 0; border-radius: 4px; background: transparent; color: var(--c-fg-muted); cursor: pointer; }
+.files-upload:hover, .files-upload:focus-visible { color: var(--c-fg); background: var(--c-raised); }
+.files-upload > svg { width: 16px; height: 16px; }
+.files-upload > span { display: none; font: 10px var(--doc-mono); }
+.files-upload[data-state] > svg { display: none; }
+.files-upload[data-state] > span { display: block; }
+.files-upload[data-state="error"] { color: var(--c-danger); }
+.files-upload[data-state="done"] { color: var(--doc-ok); }
+.files-drop-hint { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center;
+  justify-content: center; gap: 10px; padding: 12px; pointer-events: none; text-align: center; }
+.files-drop-hint > svg { width: 28px; height: 28px; }
+.files-drop-hint ul { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 8px;
+  margin: 0; padding: 0; list-style: none; font: 11px var(--doc-mono); color: var(--c-fg-muted); }
+@container (max-height: 140px) { .files-drop-hint ul { display: none; } }
+body.files-dragging #nav-files { border-color: var(--c-accent); }
+body.files-dragging #nav-files > .nav-item { opacity: .15; }
+body.files-dragging .files-drop-hint { display: flex; }
+body.files-over #nav-files { background: color-mix(in srgb, var(--c-accent) 10%, var(--c-bg1)); }
+.nav-file-folder { border: 0; background: transparent; font-family: inherit; text-align: left; cursor: pointer; }
 .nav-resources .nav-tree { --nav-pad: calc(42px + (var(--nav-depth, 2) - 2) * 22px); }
 #nav-status { min-height: 16px; margin: 6px 16px 0; color: var(--c-fg-faint); font-size: 11px;
   line-height: 1.35; }
@@ -768,7 +886,7 @@ pre code { background: none; padding: 0; font-size: 13.5px; }
 .codeblk-lang { order: -1; display: flex; align-items: center; gap: 4px;
   font-family: var(--doc-mono); font-size: 11px; color: var(--doc-fg-2); }
 .codeblk-lang::before { flex: 0 0 8px; }
-.codeblk-filename { order: 1; margin: 0; min-width: 0; max-width: 70%;
+.codeblk-filename { margin: 0; min-width: 0; max-width: 70%;
   font-family: var(--doc-mono); font-size: 11px; color: var(--doc-fg-2);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .codefold svg { transition: transform 150ms ease; }
@@ -857,6 +975,12 @@ details summary { cursor: pointer; opacity: .8; }
 // (autosave / correspondence display / fm visibility) are gathered in the header gear's hover
 // menu. Width is drag-resizable.
 const EDIT_CSS = `
+#site-icon-slot input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+#site-icon-slot:hover, #site-icon-slot:focus-within, #sidebar-head.over #site-icon-slot { background: var(--c-line); border-radius: 3px; }
+#site-icon-slot:focus-within, #sidebar-head.over #site-icon-slot { outline: 1px solid var(--c-fg-muted); outline-offset: 2px; }
+body.sidebar-closed #site-icon-slot { margin: 0 0 0 4px; }
+body.sidebar-closed #sidebar-toggle { position: static; width: 20px; height: 32px; flex: none; }
+body.sidebar-closed #sidebar-toggle svg { visibility: visible; }
 /* Right panel = header / properties / editor stacked on one surface, separated by rules (no
    nested frames). */
 #panel { width: var(--panel-width, min(760px, 52vw)); flex-shrink: 0; position: sticky; top: 0; height: 100vh;
@@ -874,7 +998,6 @@ body.edit #nav-groups { --nav-rail: 22px; --nav-icon-half: 9px; }
 .nav-row.nav-doc-row > a { padding: 4px 2px; background: transparent; }
 .nav-doc-row > a::before { display: none; }
 .nav-doc-name { display: flex; flex-direction: column; min-width: 0; line-height: 17px; }
-.nav-doc-id { color: var(--c-fg-faint); font: 10px/12px var(--doc-mono); overflow: hidden; text-overflow: ellipsis; }
 .nav-doc-icon { position: relative; flex: none; display: flex; align-items: center; justify-content: center;
   width: 20px; height: 24px; cursor: pointer; border-radius: 3px; color: var(--c-fg-faint); }
 .nav-doc-icon:hover, .nav-doc-icon.over, .nav-doc-icon:focus-within { background: var(--c-line); color: var(--c-fg); }
@@ -885,13 +1008,14 @@ body.edit #nav-groups { --nav-rail: 22px; --nav-icon-half: 9px; }
   color: var(--c-fg); background: var(--c-surface); cursor: pointer; visibility: hidden; }
 .nav-doc-icon:hover .nav-icon-clear, .nav-doc-icon:focus-within .nav-icon-clear { visibility: visible; }
 .nav-icon-clear:hover { color: var(--c-danger); }
-.nav-rename-form { position: absolute; z-index: 4; display: flex; flex-direction: column; justify-content: center;
+.nav-rename-form { position: absolute; top: 0; bottom: 0; z-index: 4; display: flex; flex-direction: column; justify-content: center;
   background: var(--c-bg0); }
 .nav-rename-form input { width: 100%; min-width: 0; box-sizing: border-box; color: var(--c-fg);
   background: transparent; border: 0; border-radius: 2px; padding: 0 2px; font: inherit; line-height: 17px; }
-.nav-rename-form input[name="id"] { font: 10px/12px var(--doc-mono); color: var(--c-fg-faint); }
-.nav-rename-form input:focus { outline: 1px solid var(--c-accent); }
-.nav-rename-form input:invalid { outline-color: var(--c-danger); }
+.nav-rename-form input[name="name"] { font: 10px/12px var(--doc-mono); color: var(--c-fg-faint); }
+.nav-rename-form input:invalid { outline: 1px solid var(--c-danger); }
+.nav-rename-form input:focus, .nav-new input:focus { outline: 1px solid var(--c-line); }
+@media (forced-colors: active) { .nav-rename-form input:focus, .nav-new input:focus { outline: 1px solid CanvasText; } }
 .nav-doc-row.renaming > a { visibility: hidden; }
 .pbtn { flex: none; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px;
   padding: 0; color: var(--c-fg-faint); background: none; border: none; border-radius: 5px; cursor: pointer;
@@ -901,17 +1025,14 @@ body.edit #nav-groups { --nav-rail: 22px; --nav-icon-half: 9px; }
 #status { flex: 1; min-width: 0; padding: 0 8px; text-align: right; color: var(--c-fg-faint);
   font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #status.err { color: var(--c-danger); }
-#preview-status { display: inline-flex; flex-shrink: 0; color: var(--c-ok); }
-#preview-status svg { width: 18px; height: 18px; }
-#preview-status [data-preview-icon] { display: none; }
-#preview-status[data-state="valid"] [data-preview-icon="valid"],
-#preview-status[data-state="error"] [data-preview-icon="error"],
-#preview-status[data-state="loading"] [data-preview-icon="loading"] { display: block; }
-#preview-status[data-state="error"] { color: var(--c-danger); }
-#preview-status[data-state="loading"] { color: var(--c-accent); }
-#preview-status[data-state="loading"] svg { animation: preview-spin 1s linear infinite; }
+.cm-file-preview { display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; margin-left: 4px; vertical-align: middle; color: var(--c-fg-faint); }
+.cm-file-preview[data-state="valid"] { color: var(--c-ok); }
+.cm-file-preview[data-state="error"] { color: var(--c-danger); }
+.cm-file-preview[data-state="loading"] { color: var(--c-accent); }
+.cm-file-preview[data-state="loading"] svg { animation: preview-spin 1s linear infinite; }
 @keyframes preview-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { #preview-status[data-state="loading"] svg { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .cm-file-preview[data-state="loading"] svg { animation: none; } }
 .app-dialog { width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 22px;
   color: var(--c-fg); background: color-mix(in srgb, var(--c-bg1) 90%, transparent);
   border: 1px solid var(--c-fg-faint); border-radius: 10px; box-shadow: 0 16px 48px #0004; backdrop-filter: blur(16px); }
@@ -951,6 +1072,12 @@ body.edit #nav-groups { --nav-rail: 22px; --nav-icon-half: 9px; }
 .language-select-input:hover { background: var(--c-raised); }
 .language-select-input:focus-visible, .language-picker :focus-visible { outline: 1px solid var(--c-fg-muted); outline-offset: 1px; }
 .language-select-input[aria-disabled="true"] { opacity: .5; cursor: wait; }
+.fm-language > .nav-icon { color: var(--c-fg-muted); }
+.fm-language .language-select::after { display: none; }
+.fm-language .language-select-input { padding: 4px; border: 0; border-bottom: 1px solid var(--c-line);
+  border-radius: 0; background: transparent; }
+.fm-language .language-select-input:hover { border-bottom-color: var(--c-fg-muted); }
+.fm-language .language-select-input:focus-visible { outline: none; border-bottom-color: var(--c-accent); }
 .language-picker { position: fixed; margin: 0; padding: 0; overflow: hidden; border: 1px solid var(--c-line);
   border-radius: 5px; color: var(--c-fg); background: var(--c-surface); box-shadow: 0 8px 24px var(--c-shadow); }
 .language-picker:popover-open { display: flex; flex-direction: column; }
@@ -1023,16 +1150,35 @@ body.corr main article > [data-ln].corr-hi {
   background: color-mix(in srgb, var(--c-accent) 12%, transparent);
   box-shadow: -6px 0 0 color-mix(in srgb, var(--c-accent) 55%, transparent); border-radius: 2px; }
 
-/* Upload target for body assets (bottom of the sidebar, dashed 16:9 frame) */
-#dropzone { flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 4px; margin: 8px 12px; aspect-ratio: 16 / 9; max-height: 120px; color: var(--c-fg-faint);
-  border: 1px dashed var(--c-line); border-radius: 6px; cursor: pointer; text-align: center;
-  font-size: 12px; transition: border-color 120ms ease, background 120ms ease, color 120ms ease; }
-#dropzone:hover, #dropzone.over { color: var(--c-fg-muted); border-color: var(--c-accent);
-  background: color-mix(in srgb, var(--c-accent) 6%, transparent); }
-body.sidebar-closed #dropzone { display: none; }
+.files-toolbar {display:flex;flex-wrap:wrap;gap:8px;margin:16px 0;align-items:center;}
+.files-toolbar input,.files-toolbar button,.files-root {height:34px;border:1px solid var(--c-line);background:var(--c-bg);color:var(--c-fg);border-radius:5px;padding:6px 10px;}
+.files-toolbar input {min-width:100px;flex:1;width:180px;}.files-toolbar .files-extension {flex:0 1 120px;width:120px;}
+.files-toolbar button {position:relative;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;}
+.files-toolbar button[aria-pressed=true] {border-color:var(--c-accent);color:var(--c-accent);}
+.files-toolbar button:disabled {opacity:.5;cursor:default;}.files-toolbar button[data-state=loading] {color:transparent;opacity:1;}
+.files-toolbar button[data-state=loading]:after {content:"";position:absolute;left:calc(50% - 6px);top:calc(50% - 6px);width:12px;height:12px;border:1px solid var(--c-line);border-top-color:var(--c-accent);border-radius:50%;animation:files-spin .8s linear infinite;}
+@keyframes files-spin {to{transform:rotate(360deg);}}
+@media(prefers-reduced-motion:reduce){.files-toolbar button[data-state=loading]:after{animation:none;}}
+.files-toolbar button[data-state=error] {border-color:var(--c-danger);}
+.files-viewport {overflow:auto;min-height:360px;max-height:70vh;}
+.files-table {width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;}
+.files-table th,.files-table td {height:38px;padding:4px 8px;border-bottom:1px solid var(--c-line);text-align:left;}
+.files-table th:first-child {width:32px;}.files-table th:nth-child(3) {width:85px;}.files-table th:last-child {width:36px;}
+.files-table tr.selected {outline:1px solid var(--c-accent);outline-offset:-1px;}
+.files-table input[type=checkbox] {appearance:none;background:transparent;width:14px;height:14px;border:1px solid currentColor;border-radius:2px;display:grid;place-content:center;color:var(--c-fg);cursor:pointer;}
+.files-table input[type=checkbox]:checked {color:var(--c-accent);}.files-table input[type=checkbox]:checked:after {content:"✓";font-size:12px;}
+.files-name {display:flex;min-width:0;}.files-name a,.files-folder {display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%;height:30px;}
+.files-folder:before {content:"▾";width:12px;flex-shrink:0;}.files-folder[aria-expanded=false]:before {content:"▸";}
+.files-name span {display:flex;flex-shrink:0;}.files-name a {color:var(--c-accent);text-decoration:none;}
+.files-table button {border:0;background:none;color:inherit;cursor:pointer;padding:4px;}.files-folder {font:inherit;}
+.files-table [data-drop=before] {box-shadow:inset 0 2px var(--c-accent);}.files-table [data-drop=after] {box-shadow:inset 0 -2px var(--c-accent);}.files-table [data-drop=into] {outline:2px solid var(--c-accent);outline-offset:-2px;}
+.files-table .files-placeholder {height:280px;text-align:center;vertical-align:middle;}.files-root {width:100%;text-align:left;}
+.app-dialog textarea {display:block;box-sizing:border-box;width:100%;min-height:64px;max-height:65vh;resize:both;font:inherit;}
+@media(max-width:600px){.files-table {min-width:0;}.files-table th:nth-child(3){width:65px;}.files-toolbar input{width:120px;}.files-name{max-width:100%;}}
 
-/* Resources pages */
+@media(max-width:400px){.files-table th:nth-child(3),.files-table td:nth-child(3){display:none;}}
+
+/* Files pages */
 .res-page h1 { margin-bottom: 6px; }
 .res-crumbs { color: var(--c-fg-faint); font-size: 12.5px; margin: 0 0 20px; }
 .res-crumbs a { color: var(--c-fg-muted); text-decoration: none; }
@@ -1061,6 +1207,9 @@ body.sidebar-closed #dropzone { display: none; }
 .res-preview .res-img { max-width: 100%; max-height: 480px; }
 .res-preview.square .res-img { width: 160px; height: 160px; outline: 1px dashed var(--c-line); }
 .res-preview .res-frame { width: 100%; height: 420px; border: 0; background: #fff; }
+.res-markdown { width: 100%; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.res-thumb .res-markdown { max-height: 100%; overflow: hidden; font-size: 11px; }
+.res-preview .res-markdown { max-height: 480px; overflow: auto; }
 .res-empty { color: var(--c-fg-faint); }
 .res-dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 16px 0 0; font-size: 13px; }
 .res-dl dt { color: var(--c-fg-faint); }
@@ -1076,39 +1225,44 @@ body.sidebar-closed #dropzone { display: none; }
 .nav-doc-row .nav-tree-toggle, .nav-tree-spacer { width: 18px; margin-right: 3px; }
 .nav-tree-spacer { flex: none; height: 28px; }
 @media (hover: none) { .nav-row :is(.new, .nav-delete) { opacity: 1; } }
-.nav-row > .nav-create { display: flex; flex: 1; min-width: 0; align-items: center; gap: 5px; margin: 4px 12px; padding: 5px 10px;
+.nav-row > .nav-create { display: flex; flex: 1; min-width: 0; align-items: center; gap: 6px; margin: 4px 0; padding: 5px 12px;
   min-height: 42px; border: 1px dashed var(--c-line); border-radius: 6px; background: none;
   color: var(--c-fg-faint); font: inherit; text-align: left; cursor: pointer; }
 .nav-tree .nav-create { margin-left: calc(var(--nav-pad) - 12px); }
 .nav-create:hover { color: var(--c-fg-muted); background: var(--c-raised); }
 .nav-create > .nav-icon { color: var(--c-fg-muted); }
 .nav-create .nav-label { color: var(--c-fg-muted); }
-.nav-add-hover { display: none; }
-#sidebar:hover .nav-add-hover, #sidebar:focus-within .nav-add-hover { display: block; }
+.nav-add-hover { visibility: hidden; }
+#sidebar:hover .nav-add-hover, #sidebar:focus-within .nav-add-hover { visibility: visible; }
 #sidebar .nav-list:has(> .nav-new-item) > .nav-placeholder { display: none; }
-/* Create form = a draft row inserted into the tree (same guide lines / indent; the └ connects to
-   it). Line 1 = title (underline-only input), line 2 = /id (mono) + ↵. */
-.nav-row.nav-new { flex-direction: column; align-items: stretch; gap: 1px; cursor: auto;
-  padding: 5px 12px 6px var(--nav-pad, 48px); background: var(--c-raised); }
-.nav-new > .nav-icon { position: absolute; left: 16px; top: 8px; color: var(--c-fg-faint); }
+/* The create form occupies the same card as its placeholder. */
+.nav-row > .nav-new { position: relative; display: flex; flex: 1; min-width: 0;
+  flex-direction: column; justify-content: center; align-items: stretch; cursor: auto;
+  margin: 4px 0; height: 42px; padding: 5px 38px 5px 36px;
+  border: 1px dashed var(--c-line); border-radius: 6px; background: var(--c-raised); }
+.nav-tree .nav-new { margin-left: calc(var(--nav-pad) - 12px); }
+.nav-new > .nav-icon { position: absolute; left: 12px; top: 10px; color: var(--c-fg-faint); }
 .nav-new input { font: inherit; color: var(--c-fg); background: transparent; border: none;
-  padding: 1px 0; min-width: 0; outline: none; }
+  padding: 0; min-width: 0; outline: none; }
 .nav-new input::placeholder { color: var(--c-fg-faint); }
-.nav-new input[name="title"] { font-size: 13px; border-bottom: 1px solid var(--c-line); }
-.nav-new input[name="title"]:focus { border-bottom-color: var(--c-accent); }
-.nav-new-id { display: flex; align-items: center; gap: 1px; color: var(--c-fg-faint);
-  font-family: var(--doc-mono); font-size: 11px; }
-.nav-new-id input { flex: 1; font-family: inherit; font-size: inherit; color: var(--c-fg-muted); }
-.nav-new-go { flex: none; display: flex; align-items: center; justify-content: center; width: 20px;
-  height: 18px; padding: 0; font-size: 11px; color: var(--c-fg-faint); background: none;
+.nav-new input[name="title"] { font-size: 13px; line-height: 17px; }
+.nav-new-file { display: flex; align-items: center; color: var(--c-fg-faint);
+  font: 10px/12px var(--doc-mono); }
+.nav-new-file input { flex: 1; font-family: inherit; font-size: inherit; color: var(--c-fg-muted); }
+.nav-new-go { position: absolute; right: 7px; top: 50%; transform: translateY(-50%);
+  display: flex; align-items: center; justify-content: center; width: 24px;
+  height: 24px; padding: 0; font-size: 11px; color: var(--c-fg-faint); background: none;
   border: 1px solid var(--c-line); border-radius: 4px; cursor: pointer; }
 .nav-new-go:hover { color: var(--c-accent); border-color: var(--c-accent); }
-.nav-new .err { color: var(--c-danger); font-size: 11px; line-height: 1.4; }
+.nav-new .err { position: absolute; top: 100%; left: 0; right: 0; z-index: 5; padding: 4px;
+  background: var(--c-surface); color: var(--c-danger); font-size: 11px; line-height: 1.4; }
 .nav-new .err:empty { display: none; }
-.nav-tree > .nav-new-item > .nav-row::before { top: 16px; }
-.nav-tree > .nav-new-item:last-child > .nav-row::after { height: 16px; }
-.nav-tree > .nav-new-item > .nav-row::before, .nav-tree > .nav-new-item > .nav-row::after,
-.nav-tree > .nav-item:has(~ .nav-new-item)::before { background: var(--c-accent); }
+.nav-tree > .nav-new-item > .nav-row::before { width: calc(var(--nav-pad) - 12px - var(--nav-line)); }
+.nav-ancestor > .nav-tree > .nav-new-item { --nav-line: var(--nav-rail, 21px); }
+.nav-ancestor > .nav-tree > .nav-new-item > .nav-row::before,
+.nav-ancestor > .nav-tree > .nav-new-item > .nav-row::after { display: block; }
+.nav-ancestor > .nav-tree > .nav-item:has(~ .nav-new-item)::before {
+  display: block; left: var(--nav-rail, 21px); background: var(--c-line); }
 body.edit .nav-row { cursor: grab; }
 .nav-item.dragging { opacity: .35; }
 .nav-row.drop-before { box-shadow: inset 0 2px 0 var(--c-accent); }
@@ -1120,7 +1274,7 @@ interface PageOpts {
     title: string;
     main: string;
     currentId?: string;
-    /** Current location among the Resources pages (the part after `/_resources`). */
+    /** Current location among the Resources pages (the part after `/_files`). */
     currentRes?: string;
     /** edit-mode doc pages only: right-panel html + client boot data. */
     aside?: string;
@@ -1163,7 +1317,7 @@ export const navGroupsHtml = (
                 let actions = "";
                 let editableIcon = "";
                 if (mode === "edit") {
-                    link = `<a class="${depth === 0 ? "nav-link" : "nav-tree-link"}${cur}" href="/${e.id}" title="${label}" aria-keyshortcuts="F2"><span class="nav-doc-name"><span class="nav-label">${label}</span><span class="nav-doc-id">${escapeHtml(e.file)}</span></span></a>`;
+                    link = `<a class="${depth === 0 ? "nav-link" : "nav-tree-link"}${cur}" href="/${e.id}" title="${label}" aria-keyshortcuts="F2"><span class="nav-doc-name"><span class="nav-label">${label}</span></span></a>`;
                     editableIcon = `<span class="nav-doc-icon" title="icon" data-i18n-title="icon">${e.icon ? svgImg(e.icon, "doc-icon") : DOCS_ICON}<input type="file" accept=".svg,image/svg+xml" aria-label="icon" data-i18n-aria-label="icon">${e.icon ? '<button class="nav-icon-clear" type="button" title="Remove icon" data-i18n-title="Remove icon" aria-label="Remove icon" data-i18n-aria-label="Remove icon">×</button>' : ""}</span>`;
                     actions = `<button class="new" type="button" data-parent="${escapeHtml(e.id)}" title="Add doc" data-i18n-title="Add doc" aria-label="Add doc" data-i18n-aria-label="Add doc">${PLUS_ICON}</button><button class="nav-delete" type="button" data-doc-action="delete" title="Delete doc" data-i18n-title="Delete doc" aria-label="Delete doc" data-i18n-aria-label="Delete doc">${DELETE_ICON}</button>`;
                 }
@@ -1178,20 +1332,20 @@ export const navGroupsHtml = (
             .join("");
         const placeholder =
             mode === "edit" && depth === 0
-                ? `<div class="nav-item nav-placeholder${items ? " nav-add-hover" : ""}"><div class="nav-row"><button class="nav-create" type="button" data-parent="" aria-label="Add doc" data-i18n-aria-label="Add doc">${DOCS_ICON}<span class="nav-doc-name" aria-hidden="true"><span class="nav-label">...</span><span class="nav-doc-id">... .md</span></span></button></div></div>`
+                ? `<div class="nav-item nav-placeholder${items ? " nav-add-hover" : ""}"><div class="nav-row"><button class="nav-create" type="button" data-parent="" aria-label="Add doc" data-i18n-aria-label="Add doc">${DOCS_ICON}<span class="nav-doc-name" aria-hidden="true"><span class="nav-label">...</span></span></button></div></div>`
                 : "";
         return depth === 0
             ? `<div class="nav-list nav-root" data-parent="">${items}${placeholder}</div>`
             : `<div class="nav-list nav-tree" data-parent="${escapeHtml(parent ?? "")}" style="--nav-depth:${depth + 1}">${items}${placeholder}</div>`;
     };
-    const html = list(undefined, 0) + (mode === "edit" ? navResourcesHtml(site, currentRes) : "");
+    const html = list(undefined, 0) + (mode === "edit" ? navFilesHtml(site, currentRes) : "");
     return docLinks(site, site.contentLanguage ? languageLinks(html, site.contentLanguage) : html);
 };
 
 // ── Resources (shown in edit mode only; asset list of the docs root) ──────────────────────
 // Structure: Resources (list page of everything) › kind (list pages for figures / html / icons) › individual file.
-// Route is `/_resources[/<kind>[/<file>]]` (doc ids can't start with `_`, so no collision).
-const RESOURCE_KINDS = ["figures", "html", "icons", "terms"] as const;
+// Route is `/_files[/<kind>[/<file>]]` (doc ids can't start with `_`, so no collision).
+const RESOURCE_KINDS = ["markdown", "figures", "html", "icons", "terms"] as const;
 type ResourceKind = (typeof RESOURCE_KINDS)[number];
 interface Resource {
     kind: ResourceKind;
@@ -1201,14 +1355,20 @@ interface Resource {
     path: string;
 }
 const siteResources = (site: Site): Resource[] => [
+    ...site.entries.map((entry) => ({
+        kind: "markdown" as const,
+        file: entry.file,
+        path: entry.sourceFile ?? CONTENT_PREFIX + entry.file,
+    })),
     ...site.ctx.terms.map((term) => ({
         kind: "terms" as const,
         file: term.id,
-        path:
-            CONTENT_PREFIX +
-            (site.entries.find((entry) =>
-                entry.blocks.some((block) => block.type === "term" && block.entry.id === term.id),
-            )?.file ?? ""),
+        path: isTermFile(term.id)
+            ? term.id
+            : CONTENT_PREFIX +
+              (site.entries.find((entry) =>
+                  entry.blocks.some((block) => block.type === "term" && block.entry.id === term.id),
+              )?.file ?? ""),
     })),
     ...[...site.ctx.figures.values()].map((f) => ({
         kind: f.kind === "html" ? ("html" as const) : ("figures" as const),
@@ -1220,38 +1380,60 @@ const siteResources = (site: Site): Resource[] => [
         .map((e) => ({
             kind: "icons" as const,
             file: `${e.id}.svg`,
-            path: `${ICONS_DIR}/${e.id}.svg`,
+            path: e.iconFile ?? `${ICONS_DIR}/${e.id}.svg`,
         })),
 ];
 const resourceHref = (kind?: ResourceKind, file?: string): string =>
-    `/_resources${kind ? `/${kind}` : ""}${file ? `/${encodeURIComponent(file)}` : ""}`;
+    `/_files${kind ? `/${kind}` : ""}${file ? `/${encodeURIComponent(file)}` : ""}`;
 
-/**
- * Resources section at the end of the sidebar (dashed box). currentRes = path after
- * `/_resources` (`""` = the list).
- */
-const navResourcesHtml = (site: Site, currentRes?: string): string => {
-    const all = siteResources(site);
-    const count = (n: number): string => `<span class="nav-count">${n}</span>`;
-    const groups = RESOURCE_KINDS.map((kind) => {
-        const files = all.filter((r) => r.kind === kind);
-        const items = files
-            .map((r) => {
-                const cur = currentRes === `${kind}/${r.file}` ? " cur" : "";
-                return `<div class="nav-item" data-node-id="_res:${kind}/${escapeHtml(r.file)}"><div class="nav-row"><a class="nav-tree-link${cur}" href="${resourceHref(kind, r.file)}" title="${escapeHtml(r.path)}"><span class="nav-label">${escapeHtml(r.file)}</span></a></div></div>`;
+/** Physical folders share the document tree's expand/collapse behavior. */
+const navFilesHtml = (site: Site, currentRes?: string): string => {
+    const resources = siteResources(site);
+    const paths = [...new Set(site.filePaths ?? resources.map((resource) => resource.path))].filter(
+        localFile,
+    );
+    const children = new Map<string, string[]>();
+    for (const file of paths) {
+        const parts = file.split("/");
+        for (let i = 0; i < parts.length; i++) {
+            const parent = parts.slice(0, i).join("/");
+            const path = parts.slice(0, i + 1).join("/");
+            const list = children.get(parent) ?? [];
+            if (!list.includes(path)) list.push(path);
+            children.set(parent, list);
+        }
+    }
+    let location = currentRes ?? "";
+    try {
+        location = decodeURIComponent(location);
+    } catch {
+        /* Invalid paths have no selected file. */
+    }
+    const current = location.startsWith("file/")
+        ? location.slice(5)
+        : resources.find((resource) => `${resource.kind}/${resource.file}` === location)?.path;
+    const folderIcon = icon('<path d="M2 5h6l2 2h8v10H2z"/>', 15);
+    const fileIcon = icon('<path d="M4 2h8l4 4v12H4zM12 2v5h4"/>', 15);
+    const toggle = (label: string, open: boolean) =>
+        `<button class="nav-tree-toggle" type="button" aria-label="Toggle ${escapeHtml(label)}" aria-expanded="${open}">${CHEVRON_ICON}</button>`;
+    const list = (parent: string, depth: number): string =>
+        `<div class="nav-list nav-tree" style="--nav-depth:${depth}">${(children.get(parent) ?? [])
+            .map((path) => {
+                const label = escapeHtml(path.split("/").pop() ?? path);
+                const folder = children.has(path);
+                const open = folder && !!current?.startsWith(`${path}/`);
+                const doc = site.entries.find(
+                    (entry) => (entry.sourceFile ?? CONTENT_PREFIX + entry.file) === path,
+                );
+                const link = folder
+                    ? `<button class="nav-tree-link nav-file-folder" type="button" data-file-folder aria-expanded="${open}" title="${escapeHtml(path)}">${folderIcon}<span class="nav-label">${label}</span></button>`
+                    : `<a class="nav-tree-link${path === current ? " cur" : ""}" href="${doc ? docPath(site.entries, doc.id) : `/_files/file/${encodeURIComponent(path)}`}" title="${escapeHtml(path)}"${path === current ? ' aria-current="page"' : ""}>${fileIcon}<span class="nav-label">${label}</span></a>`;
+                return `<div class="nav-item${open ? " open" : ""}" data-node-id="_files:${escapeHtml(path)}"><div class="nav-row">${link}${folder ? toggle(path, open) : ""}</div>${folder ? list(path, depth + 1) : ""}</div>`;
             })
-            .join("");
-        const open = currentRes?.startsWith(`${kind}`) ? " open" : "";
-        const cur = currentRes === kind ? " cur" : "";
-        const toggle =
-            files.length > 0
-                ? `<button class="nav-tree-toggle" type="button" aria-label="Toggle ${translate("eng", kind)}">${CHEVRON_ICON}</button>`
-                : "";
-        return `<div class="nav-item${open}" data-node-id="_res:${kind}"><div class="nav-row"><a class="nav-tree-link${cur}" href="${resourceHref(kind)}"><span class="nav-label" data-i18n="${kind}">${translate("eng", kind)}</span>${count(files.length)}</a>${toggle}</div><div class="nav-list nav-tree" style="--nav-depth:3">${items}</div></div>`;
-    }).join("");
-    const open = currentRes != null ? " open" : "";
-    const cur = currentRes === "" ? " cur" : "";
-    return `<div class="nav-resources"><div class="nav-list nav-root"><div class="nav-item${open}" data-node-id="_res"><div class="nav-row"><a class="nav-link${cur}" href="/_resources">${BOX_ICON}<span class="nav-label" data-i18n="Resources">Resources</span>${count(all.length)}</a><button class="nav-tree-toggle" type="button" aria-label="Toggle Resources">${CHEVRON_ICON}</button></div><div class="nav-list nav-tree" style="--nav-depth:2">${groups}</div></div></div></div>`;
+            .join("")}</div>`;
+    const upload = `<button class="files-upload" type="button" title="Upload files" data-i18n-title="Upload files" aria-label="Upload files" data-i18n-aria-label="Upload files">${UPLOAD_ICON}<span></span></button><input id="files-upload-input" type="file" multiple hidden>`;
+    const hint = `<div class="files-drop-hint" aria-hidden="true">${UPLOAD_ICON}<span data-i18n="Upload files">Upload files</span><ul>${["csv", "png", "html", "md", "txt", "mp4", "termth", "grapth"].map((extension) => `<li>.${extension}</li>`).join("")}<li>…</li></ul></div>`;
+    return `<div class="nav-resources" id="nav-files"><div class="nav-item open" data-node-id="_files"><div class="nav-row"><a class="nav-link${currentRes === "" ? " cur" : ""}" href="/_files">${BOX_ICON}<span class="nav-label" data-i18n="Files">Files</span></a>${upload}${paths.length ? toggle("Files", true) : ""}</div>${list("", 2)}</div>${hint}<div id="files-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="horizontal" aria-controls="nav-files" aria-label="Resize Files" data-i18n-aria-label="Resize Files" title="Resize Files" data-i18n-title="Resize Files"></div></div>`;
 };
 
 const formatSize = (bytes: number): string =>
@@ -1272,9 +1454,13 @@ const sizeOf = (path: string): string => {
 // collisions), raster is already <img data:>, and html figures are shown
 // isolated in a sandboxed iframe.
 const resourcePreview = (site: Site, r: Resource): string => {
+    if (r.kind === "markdown") {
+        const entry = site.entries.find((e) => e.file === r.file);
+        return `<pre class="res-markdown">${escapeHtml(entry?.raw ?? "")}</pre>`;
+    }
     if (r.kind === "terms") return termsHtml(site.ctx.terms.filter((term) => term.id === r.file));
     if (r.kind === "figures" || r.kind === "html") {
-        const f = site.ctx.figures.get(figureName(r.file));
+        const f = site.ctx.figures.get(figureName(r.path));
         if (!f) {
             return "";
         }
@@ -1289,11 +1475,13 @@ const resourcePreview = (site: Site, r: Resource): string => {
 };
 
 const resourceUsage = (site: Site, r: Resource): Entry[] =>
-    r.kind === "figures" || r.kind === "html"
-        ? site.entries.filter((e) => e.figureRefs?.includes(figureName(r.file)))
-        : r.kind === "icons"
-          ? site.entries.filter((e) => `${e.id}.svg` === r.file)
-          : site.entries.filter((e) => e.termRefs?.includes(r.file));
+    r.kind === "markdown"
+        ? site.entries.filter((e) => e.file === r.file)
+        : r.kind === "figures" || r.kind === "html"
+          ? site.entries.filter((e) => e.figureRefs?.includes(figureName(r.path)))
+          : r.kind === "icons"
+            ? site.entries.filter((e) => `${e.id}.svg` === r.file)
+            : site.entries.filter((e) => e.termRefs?.includes(r.file));
 
 const resourceCards = (site: Site, list: Resource[]): string =>
     list.length === 0
@@ -1305,7 +1493,7 @@ const resourceCards = (site: Site, list: Resource[]): string =>
               })
               .join("")}</div>`;
 
-/** Path after `/_resources` → main content (unknown → undefined = 404). */
+/** Path after `/_files` → main content (unknown → undefined = 404). */
 export const resourcesMain = (
     site: Site,
     rest: string,
@@ -1314,23 +1502,50 @@ export const resourcesMain = (
     const [kind, ...tail] = rest === "" ? [] : rest.split("/");
     const file = tail.length > 0 ? decodeURIComponent(tail.join("/")) : undefined;
     if (kind == null) {
-        const sections = RESOURCE_KINDS.map((k) => {
-            const list = all.filter((r) => r.kind === k);
-            return `<section class="res-section"><h2><a href="${resourceHref(k)}" data-i18n="${k}">${k}</a> <span class="res-sub">${list.length}</span></h2>${k === "terms" ? termsHtml(site.ctx.terms) : resourceCards(site, list)}</section>`;
-        }).join("");
         return {
-            title: "Resources",
-            main: `<article class="res-page"><h1 data-i18n="Resources">Resources</h1>${sections}</article>`,
+            title: "Files",
+            main: `<article class="res-page files-page"><h1 data-i18n="Files">Files</h1><div id="files-manager"></div></article>`,
         };
+    }
+    if (kind === "file" && file) {
+        const resource = all.find((item) => item.path === file);
+        if (resource)
+            return resourcesMain(site, `${resource.kind}/${encodeURIComponent(resource.file)}`);
+        try {
+            if (!filesSnapshot(root).files.some((item) => item.path === file)) return undefined;
+            const content = readFileSync(textfilePath(root, file));
+            let preview = "";
+            if (/\.(svg|png|jpe?g|gif|webp)$/i.test(file)) {
+                const extension = file.split(".").pop()?.toLowerCase();
+                const mime =
+                    extension === "svg" ? "svg+xml" : extension === "jpg" ? "jpeg" : extension;
+                preview = `<img alt="" src="data:image/${mime};base64,${content.toString("base64")}">`;
+            } else if (/\.(mp4|webm|ogg)$/i.test(file)) {
+                preview = `<video controls preload="metadata" src="data:video/${file.split(".").pop()};base64,${content.toString("base64")}"></video>`;
+            } else {
+                try {
+                    const source = new TextDecoder("utf-8", { fatal: true }).decode(content);
+                    preview = `<pre><code>${escapeHtml(source)}</code></pre>`;
+                } catch {
+                    preview = BOX_ICON;
+                }
+            }
+            return {
+                title: file,
+                main: `<article class="res-page"><nav class="res-crumbs"><a href="/_files" data-i18n="Files">Files</a></nav><h1>${escapeHtml(file)}</h1><div class="res-preview">${preview}</div></article>`,
+            };
+        } catch {
+            return undefined;
+        }
     }
     if (!RESOURCE_KINDS.includes(kind as ResourceKind)) {
         return undefined;
     }
     const k = kind as ResourceKind;
-    const crumbs = `<nav class="res-crumbs"><a href="/_resources" data-i18n="Resources">Resources</a> › ${file ? `<a href="${resourceHref(k)}" data-i18n="${k}">${k}</a> › ${escapeHtml(file)}` : k}</nav>`;
+    const crumbs = `<nav class="res-crumbs"><a href="/_files" data-i18n="Files">Files</a> › ${file ? `<a href="${resourceHref(k)}" data-i18n="${k}">${k}</a> › ${escapeHtml(file)}` : k}</nav>`;
     if (file == null) {
         return {
-            title: `${k} — Resources`,
+            title: `${k} — Files`,
             main: `<article class="res-page">${k === "terms" ? "" : crumbs}<h1 data-i18n="${k}">${translate("eng", k)}</h1>${
                 k === "terms"
                     ? termsHtml(
@@ -1350,13 +1565,15 @@ export const resourcesMain = (
         return undefined;
     }
     const fig =
-        k === "figures" || k === "html" ? site.ctx.figures.get(figureName(r.file)) : undefined;
+        k === "figures" || k === "html" ? site.ctx.figures.get(figureName(r.path)) : undefined;
     const used = resourceUsage(site, r);
     const snippet =
         k === "terms"
-            ? `:::term(${r.file})`
+            ? isTermFile(r.file)
+                ? `[](${termFileUrl(r.file)})`
+                : undefined
             : fig
-              ? `:::${fig.kind === "html" ? "html" : "figure"}(${r.file})`
+              ? `![](${r.path})`
               : undefined;
     const rows = [
         ["path", `<code>${escapeHtml(r.path)}</code>`],
@@ -1366,7 +1583,7 @@ export const resourcesMain = (
         ...(fig?.desc ? [["desc", escapeHtml(fig.desc)]] : []),
         ...(snippet ? [["syntax", `<code class="res-snippet">${escapeHtml(snippet)}</code>`]] : []),
         [
-            k === "icons" ? "doc" : "used in",
+            k === "icons" || k === "markdown" ? "doc" : "used in",
             used.length === 0
                 ? `<span class="res-sub" data-i18n="none">none</span>`
                 : used
@@ -1378,7 +1595,7 @@ export const resourcesMain = (
         ],
     ];
     return {
-        title: `${r.file} — Resources`,
+        title: `${r.file} — Files`,
         main: `<article class="res-page">${crumbs}<h1>${escapeHtml(r.file)}</h1><div class="res-preview${k === "icons" ? " square" : ""}">${resourcePreview(site, r)}</div><dl class="res-dl">${rows.map(([dt, dd]) => `<dt data-i18n="${dt}">${dt}</dt><dd>${dd}</dd>`).join("")}</dl></article>`,
     };
 };
@@ -1390,13 +1607,12 @@ const pageTitle = (mode: ServeMode, title: string, siteTitle?: string): string =
 // Navigation follows the manifest hierarchy via routing.docPath.
 const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
     const nav = navGroupsHtml(mode, site, opts.currentId, opts.currentRes);
-    // Upload target for body assets (figures/). edit only; pinned to the bottom of the sidebar
-    // (above theme).
-    const dropzone =
-        mode === "edit"
-            ? `<label id="dropzone" title="figures/"><input id="dropfile" type="file" multiple hidden accept=".svg,.png,.webp,.jpg,.jpeg,.html">${UPLOAD_ICON}<span data-i18n="figures">figures</span></label>`
-            : "";
     const siteTitle = escapeHtml(site.title ?? "dooc");
+    const siteIcon = `<span id="site-icon-slot"${mode === "edit" ? ' title="Change site icon" data-i18n-title="Change site icon"' : ""}><img id="site-icon" alt=""${site.icon ? ` src="${svgDataUri(site.icon)}"` : " hidden"}>${DOCS_ICON}${mode === "edit" ? '<input type="file" accept=".svg,image/svg+xml" aria-label="Change site icon" data-i18n-aria-label="Change site icon">' : ""}</span>`;
+    const previewSettings =
+        mode === "edit"
+            ? `<button id="preview-settings-open" class="nav-link" type="button" title="Preview settings" data-i18n-title="Preview settings" aria-label="Preview settings" data-i18n-aria-label="Preview settings">${GEAR_ICON}<span class="nav-label" data-i18n="Preview settings">Preview settings</span></button>`
+            : "";
     const bootScripts =
         opts.boot != null
             ? `<script id="boot" type="application/json">${JSON.stringify(opts.boot).replace(/</g, "\\u003c")}</script>
@@ -1413,7 +1629,7 @@ const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
 
 
 <div id="preview-language-menu" role="menu" aria-label="Change language" data-i18n-aria-label="Change language" hidden></div>
-<div id="preview-panes"><section class="preview-pane active" tabindex="0" aria-label="Active pane" data-i18n-aria-label="Active pane"><div class="pane-actions"><button class="pbtn pane-language" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="preview-language-menu" aria-label="Change language" data-i18n-aria-label="Change language" title="Change language" data-i18n-title="Change language">${icon('<circle cx="10" cy="10" r="7"/><ellipse cx="10" cy="10" rx="3" ry="7"/><path d="M3 10h14"/>')}</button></div><div class="preview-content">${opts.main}</div></section></div></main>`
+<div id="preview-panes"><section class="preview-pane active" tabindex="0" aria-label="Active pane" data-i18n-aria-label="Active pane"><div class="pane-actions"><button class="pbtn pane-language" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="preview-language-menu" aria-label="Change language" data-i18n-aria-label="Change language" title="Change language" data-i18n-title="Change language">${GLOBE_ICON}</button></div><div class="preview-content">${opts.main}</div></section></div></main>`
             : `<main>${opts.main}</main>`;
     const graphScript = opts.publish
         ? `<script>${inlineScript(opts.publish.graphJs)}</script>`
@@ -1423,7 +1639,7 @@ const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
 <title>${escapeHtml(pageTitle(mode, opts.title, site.title))}</title>
 <script>try{const t=localStorage.getItem("docs-preview:theme");if(t)document.documentElement.dataset.theme=t}catch{}</script>
 <style>${fontCss(Boolean(opts.publish))}${CSS}${mode === "edit" ? EDIT_CSS : ""}</style></head>
-<body${mode === "edit" ? ' class="edit"' : ""}><nav id="sidebar"><div id="sidebar-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" data-i18n-aria-label="Resize sidebar" title="Resize sidebar" data-i18n-title="Resize sidebar"></div><div id="sidebar-head"><img id="site-icon" alt=""${site.icon ? ` src="${svgDataUri(site.icon)}"` : " hidden"}><div id="site-title" class="site-title" title="${siteTitle}">${siteTitle}</div><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button></div><div id="sidebar-content"><div id="nav-groups">${nav}</div><div id="nav-status" role="status" aria-live="polite"></div></div>${dropzone}<div id="sidebar-foot"><button id="theme" class="nav-link" type="button"></button></div></nav>${main}${opts.aside ?? ""}
+<body${mode === "edit" ? ' class="edit"' : ""}><nav id="sidebar"><div id="sidebar-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" data-i18n-aria-label="Resize sidebar" title="Resize sidebar" data-i18n-title="Resize sidebar"></div><div id="sidebar-head">${siteIcon}<div id="site-title" class="site-title" title="${siteTitle}">${siteTitle}</div><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button></div><div id="sidebar-content"><div id="nav-groups">${nav}</div><div id="nav-status" role="status" aria-live="polite"></div></div><div id="sidebar-foot">${previewSettings}<button id="theme" class="nav-link" type="button"></button></div></nav>${main}${opts.aside ?? ""}
 ${bootScripts}${graphScript}
 <script id="code-grammars" type="application/json">${JSON.stringify(site.codeGrammars ?? []).replace(/</g, "\\u003c")}</script>
 ${opts.publish ? `<script>${inlineScript(opts.publish.codeJs)}</script>` : '<script src="/assets/code.js" defer></script>'}
@@ -1467,11 +1683,15 @@ const localeFetch = (url, init = {}) => fetch(url, { ...init, headers: { ...init
     toggle.dataset.i18nTitle = open ? "Close sidebar" : "Open sidebar";
     toggle.title = window.__docsTranslate ? window.__docsTranslate(toggle.dataset.i18nTitle) : toggle.dataset.i18nTitle;
   };
-  let open = true;
-  try { open = localStorage.getItem(KEY) !== "0"; } catch {}
+  const narrow = matchMedia("(max-width: 600px)");
+  let preferred;
+  try { const saved = localStorage.getItem(KEY); if (saved !== null) preferred = saved !== "0"; } catch {}
+  let open = !narrow.matches && preferred !== false;
   apply(open);
+  narrow.addEventListener("change", () => { open = !narrow.matches && preferred !== false; apply(open); });
   toggle.addEventListener("click", () => {
     open = !open;
+    preferred = open;
     try { localStorage.setItem(KEY, open ? "1" : "0"); } catch {}
     apply(open);
   });
@@ -1481,14 +1701,17 @@ const localeFetch = (url, init = {}) => fetch(url, { ...init, headers: { ...init
   // Open/close: by default "the branch containing the current doc is open" (the server adds
   // .open), overridden by explicit user actions (sessionStorage = per tab only).
   const OPEN_KEY = "docs:nav-open";
+  const resizeFiles = (${mountFilesResize.toString()})();
   const readOpen = () => { try { return JSON.parse(sessionStorage.getItem(OPEN_KEY) || "{}"); } catch { return {}; } };
   const applyOpen = () => {
     const o = readOpen();
     for (const it of document.querySelectorAll("#nav-groups .nav-item")) {
       const key = it.dataset.docId || it.dataset.nodeId;
       if (key in o) it.classList.toggle("open", o[key]);
+      for (const button of it.querySelectorAll(":scope > .nav-row > [aria-expanded]")) button.setAttribute("aria-expanded", String(it.classList.contains("open")));
     }
     (${focusNavTree.toString()})(document.getElementById("nav-groups"));
+    resizeFiles();
   };
   window.__docsNavOpen = (id, v) => {
     const o = readOpen();
@@ -1497,7 +1720,7 @@ const localeFetch = (url, init = {}) => fetch(url, { ...init, headers: { ...init
     applyOpen();
   };
   document.addEventListener("click", (ev) => {
-    const t = ev.target instanceof Element ? ev.target.closest(".nav-tree-toggle") : null;
+    const t = ev.target instanceof Element ? ev.target.closest(".nav-tree-toggle, [data-file-folder]") : null;
     if (!t) return;
     ev.preventDefault();
     const it = t.closest(".nav-item");
@@ -1527,8 +1750,8 @@ ${
     if (window.__docsRefreshNav) return window.__docsRefreshNav();
     const cur = document.querySelector("#nav-groups .nav-row a.cur");
     const id = (cur && cur.closest(".nav-item").dataset.docId) || "";
-    const rp = location.pathname.startsWith("/_resources") ? location.pathname.slice(12).replace(/^\\/|\\/$/g, "") : null;
-    const res = await localeFetch("/api/nav?current=" + encodeURIComponent(id) + (rp == null ? "" : "&res=" + encodeURIComponent(decodeURIComponent(rp))));
+    const rp = location.pathname.startsWith("/_files") ? location.pathname.slice(8).replace(/^\\/|\\/$/g, "") : null;
+    const res = await localeFetch("/api/nav?current=" + encodeURIComponent(id) + (rp == null ? "" : "&res=" + encodeURIComponent(rp)));
     if (res.ok) document.getElementById("nav-groups").innerHTML = (await res.json()).html;
     if (window.__docsNavRestore) window.__docsNavRestore();
     document.dispatchEvent(new Event("docs:ui-refresh"));
@@ -1572,10 +1795,15 @@ ${
       setStatus("Icon must be svg", true);
       return;
     }
-    const id = slot.closest(".nav-item").dataset.docId;
+    const id = slot.closest(".nav-item")?.dataset.docId;
     try {
       const data = file ? btoa(Array.from(new Uint8Array(await file.arrayBuffer()), (byte) => String.fromCharCode(byte)).join("")) : null;
-      await post("/api/icon", { file: id + ".md", data });
+      const result = await post(id ? "/api/icon" : "/api/site-icon", { file: id ? id + ".md" : undefined, data });
+      if (!id) {
+        const logo = document.getElementById("site-icon");
+        logo.src = result.icon;
+        logo.hidden = false;
+      }
       setStatus("", false);
       await refresh();
     } catch (error) {
@@ -1584,10 +1812,10 @@ ${
   };
   document.addEventListener("change", (event) => {
     const input = event.target;
-    if (!(input instanceof HTMLInputElement) || !input.closest(".nav-doc-icon")) return;
+    if (!(input instanceof HTMLInputElement) || !input.closest(".nav-doc-icon, #site-icon-slot")) return;
     const file = input.files[0];
     input.value = "";
-    if (file) void setIcon(input.closest(".nav-doc-icon"), file);
+    if (file) void setIcon(input.closest(".nav-doc-icon, #site-icon-slot"), file);
   });
   document.addEventListener("click", (event) => {
     const clear = event.target instanceof Element ? event.target.closest(".nav-icon-clear") : null;
@@ -1596,17 +1824,17 @@ ${
     void setIcon(clear.closest(".nav-doc-icon"), null);
   });
   document.addEventListener("dragover", (event) => {
-    const slot = event.target instanceof Element ? event.target.closest(".nav-doc-icon") : null;
+    const slot = event.target instanceof Element ? event.target.closest(".nav-doc-icon, #sidebar-head") : null;
     if (!slot || !event.dataTransfer?.types.includes("Files")) return;
     event.preventDefault();
     slot.classList.add("over");
   });
   document.addEventListener("dragleave", (event) => {
-    const slot = event.target instanceof Element ? event.target.closest(".nav-doc-icon") : null;
+    const slot = event.target instanceof Element ? event.target.closest(".nav-doc-icon, #sidebar-head") : null;
     if (slot && !slot.contains(event.relatedTarget)) slot.classList.remove("over");
   });
   document.addEventListener("drop", (event) => {
-    const slot = event.target instanceof Element ? event.target.closest(".nav-doc-icon") : null;
+    const slot = event.target instanceof Element ? event.target.closest(".nav-doc-icon, #sidebar-head") : null;
     const file = event.dataTransfer?.files[0];
     if (!slot || !file) return;
     event.preventDefault();
@@ -1682,45 +1910,10 @@ ${
     await refresh();
   });
 
-  // ── Uploading body assets (drop onto / click the dashed frame at the sidebar bottom) ──
-  const zone = document.getElementById("dropzone");
-  const zoneInput = document.getElementById("dropfile");
-  const toBase64 = (file) => new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result).replace(/^data:[^,]*,/, ""));
-    r.onerror = () => reject(r.error);
-    r.readAsDataURL(file);
-  });
-  const register = async (files) => {
-    if (files.length === 0) return;
-    setStatus("Adding… (" + files.length + ")", false);
-    const done = [];
-    try {
-      for (const f of files) done.push((await post("/api/figure", { name: f.name, data: await toBase64(f) })).file);
-      setStatus("Added to figures/: " + done.join(", "), false);
-    } catch (error) {
-      setStatus((done.length ? "Partially added (" + done.join(", ") + ") / " : "") + "Failed to add: " + error.message, true);
-    }
-    await refresh();
-  };
-  if (zone && zoneInput) {
-    zoneInput.addEventListener("change", () => { void register([...zoneInput.files]); zoneInput.value = ""; });
-    zone.addEventListener("dragover", (e) => {
-      if (!e.dataTransfer || !e.dataTransfer.types.includes("Files")) return;
-      e.preventDefault();
-      zone.classList.add("over");
-    });
-    zone.addEventListener("dragleave", () => zone.classList.remove("over"));
-    zone.addEventListener("drop", (e) => {
-      zone.classList.remove("over");
-      if (!e.dataTransfer || !e.dataTransfer.files.length) return;
-      e.preventDefault();
-      void register([...e.dataTransfer.files]);
-    });
-  }
+  document.addEventListener("docs:files-changed", () => { void refresh(); });
 
   // ── In-sidebar create form ──
-  const slugify = (t) => t.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const suggestFileName = ${suggestDocFileName.toString()};
   const closeForm = () => { for (const f of document.querySelectorAll(".nav-new-item")) f.remove(); };
   const openForm = (parent) => {
     closeForm();
@@ -1729,44 +1922,54 @@ ${
       : document.querySelector("#nav-groups > .nav-list");
     if (!host) return;
     if (parent) {
-      host.closest(".nav-item").classList.add("open");
+      window.__docsNavOpen(parent, true);
     }
     const item = document.createElement("div");
     item.className = "nav-item nav-new-item";
+    const row = document.createElement("div");
+    row.className = "nav-row";
     const form = document.createElement("form");
-    form.className = "nav-row nav-new";
+    form.className = "nav-new";
     form.innerHTML =
-      (parent ? "" : ${JSON.stringify(DOCS_ICON)}) +
+      ${JSON.stringify(DOCS_ICON)} +
       '<input name="title" placeholder="title" data-i18n-placeholder="title" required autocomplete="off">' +
-      '<div class="nav-new-id">/<input name="id" placeholder="id" required autocomplete="off" spellcheck="false">' +
+      '<div class="nav-new-file"><input name="name" placeholder="File name" data-i18n-placeholder="File name" aria-label="File name" data-i18n-aria-label="File name" required autocomplete="off" spellcheck="false">' +
       '<button class="nav-new-go" type="submit" title="Create" data-i18n-title="Create" aria-label="Create" data-i18n-aria-label="Create">↵</button></div>' +
       '<div class="err"></div>';
-    item.append(form);
+    row.append(form);
+    item.append(row);
     host.append(item);
     document.dispatchEvent(new Event("docs:ui-refresh"));
     const title = form.elements.namedItem("title");
-    const idInput = form.elements.namedItem("id");
+    const nameInput = form.elements.namedItem("name");
+    const submit = form.querySelector(".nav-new-go");
     const err = form.querySelector(".err");
-    // id follows the title until edited by hand (empty for non-alphanumeric titles = type it).
-    let idTouched = false;
-    title.addEventListener("input", () => { if (!idTouched) idInput.value = slugify(title.value); });
-    idInput.addEventListener("input", () => { idTouched = true; });
-    form.addEventListener("keydown", (e) => { if (e.key === "Escape") closeForm(); });
+    let nameTouched = false;
+    let busy = false;
+    title.addEventListener("input", () => { if (!nameTouched) nameInput.value = suggestFileName(title.value); });
+    nameInput.addEventListener("input", () => { nameTouched = true; });
+    form.addEventListener("keydown", (e) => { if (e.key === "Escape" && !busy) closeForm(); });
     // Close when focus moves out with nothing typed (keep partially filled forms).
     // (remove itself fires focusout, so defer one tick and close only if still there)
     form.addEventListener("focusout", (e) => {
-      if (form.contains(e.relatedTarget) || title.value.trim() || idInput.value.trim()) return;
+      if (busy || form.contains(e.relatedTarget) || title.value.trim() || nameInput.value.trim()) return;
       setTimeout(() => { if (item.isConnected && !item.contains(document.activeElement)) item.remove(); }, 0);
     });
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
+      if (busy) return;
+      busy = submit.disabled = title.readOnly = nameInput.readOnly = true;
+      submit.setAttribute("aria-busy", "true");
       err.textContent = "";
       try {
-        const data = await post("/api/create", { parent: parent || undefined, id: idInput.value.trim(), title: title.value.trim() });
-        if (window.__docsNavigate) await window.__docsNavigate(data.path);
-        else window.location.href = data.path + "?lang=" + encodeURIComponent(contentLanguage());
+        await post("/api/create", { parent: parent || undefined, name: nameInput.value.trim(), title: title.value.trim() });
+        closeForm();
+        await refresh();
       } catch (error) {
         err.textContent = error.message;
+      } finally {
+        busy = submit.disabled = title.readOnly = nameInput.readOnly = false;
+        submit.removeAttribute("aria-busy");
       }
     });
     item.scrollIntoView({ block: "nearest" });
@@ -1895,7 +2098,7 @@ export const publishHtml = (
     const first = pages[0]?.route ?? "";
     if (site.ctx.terms.length > 0) {
         const terms = resourcesMain(site, "terms");
-        if (terms) pages.push({ route: "_resources/terms", ...terms });
+        if (terms) pages.push({ route: "_files/terms", ...terms });
     }
     const templates = pages
         .map(
@@ -1941,6 +2144,8 @@ const entryMain = (site: Site, e: Entry): string => {
  * display.
  */
 export interface EditorBoot {
+    filePreviews: FilePreviewResults;
+    previews?: PreviewSettings;
     siteTitle?: string;
     siteIcon?: string;
     contentLanguage?: string;
@@ -1949,6 +2154,7 @@ export interface EditorBoot {
     translatedLanguages?: string[];
     /** `<id>.md` (the save API's key). */
     file: string;
+    sourceFile?: string;
     /** Resolution key for URLs / doc: links. */
     docId: string;
     title: string;
@@ -1982,14 +2188,14 @@ export const languageFieldHtml = (
                 `<option value="${code}" data-name="${escapeHtml(name)}" data-added="${existing.has(code)}"${code === language ? " selected" : ""}>${escapeHtml(name)} (${code})</option>`,
         )
         .join("");
-    return `<div class="fm-language"><select id="fm-lang" data-source="${contentLanguageCode(defaultLang)}" aria-label="Change language" data-i18n-aria-label="Change language">${options}</select></div>`;
+    return `<div class="fm-language">${GLOBE_ICON}<select id="fm-lang" data-source="${contentLanguageCode(defaultLang)}" aria-label="Change language" data-i18n-aria-label="Change language">${options}</select></div>`;
 };
 
 // The same thing is passed for the initial render (editorAside) and doc switch (`/api/page`)
 // (= the client only has to handle one boot shape, initially and after a switch).
 export const editorBoot = (entry: Entry, site: Site): EditorBoot => {
-    // Completion candidates are figures/-relative files, as written in :::figure( / :::html(.
-    const figures = [...site.ctx.figures.values()].map((f) => f.file.replace(/^figures\//, ""));
+    // Completion candidates are files in the figures/ catalog.
+    const figures = [...site.ctx.figures.values()].map((f) => f.file);
     const docs = site.entries.map((e) => ({
         ref: e.id,
         title: docDisplayName(e.frontmatter, e.id),
@@ -2006,6 +2212,7 @@ export const editorBoot = (entry: Entry, site: Site): EditorBoot => {
               }
             : {}),
         file: entry.file,
+        sourceFile: entry.sourceFile,
         docId: entry.id,
         title: entry.frontmatter?.title ?? "",
         path: docPath(site.entries, entry.id),
@@ -2019,6 +2226,8 @@ export const editorBoot = (entry: Entry, site: Site): EditorBoot => {
         icon: entry.icon ? svgDataUri(entry.icon) : null,
         defaultLang: site.defaultLang,
         spellcheckLang: resolveLanguage(entry.lang, site.languages).spellcheckLang ?? entry.lang,
+        filePreviews: filePreviewResults(entry, site),
+        previews: site.previews,
     };
 };
 
@@ -2028,7 +2237,6 @@ const editorAside = (entry: Entry, site: Site): { aside: string; boot: EditorBoo
 <div id="phead">
 ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLanguages)}
 <span id="status"></span>
-<span id="preview-status" role="status" data-state="valid" aria-label="Preview is up to date" data-i18n-aria-label="Preview is up to date" title="Preview is up to date"><span data-preview-icon="valid">${icon('<path d="m4 10 4 4 8-8"/>')}</span><span data-preview-icon="error">${icon('<circle cx="10" cy="10" r="7"/><path d="M10 5v6m0 3h.01"/>')}</span><span data-preview-icon="loading">${icon('<path d="M17 10a7 7 0 1 1-7-7"/>')}</span></span>
 <button id="validate" class="pbtn" type="button" title="Validate and apply" data-i18n-title="Validate and apply" aria-label="Validate and apply" data-i18n-aria-label="Validate and apply">${icon('<path d="M5 5l-4 5 4 5M15 5l4 5-4 5M7 10l2 2 4-5"/>')}</button>
 <button id="save" class="pbtn" data-state="saved" type="button" title="Save (Ctrl+S)" data-i18n-title="Save (Ctrl+S)" aria-label="Save" data-i18n-aria-label="Save">${icon('<path d="M3 3h11l3 3v11H3z"/><path d="M6 3v5h7V3M6 17v-6h8v6"/>')}</button>
 <button id="split-preview" class="pbtn" type="button" aria-pressed="false" aria-label="Split view" data-i18n-aria-label="Split view" title="Split view" data-i18n-title="Split view">${icon('<rect x="3" y="3" width="14" height="14" rx="2"/><path d="M10 3v14"/>')}</button>
@@ -2073,13 +2281,17 @@ export const pageDataResponse = (site: Site, path: unknown): { status: number; b
             errors,
             toc: doc.toc,
             boot: editorBoot(doc, site),
+            filePreviews: filePreviewResults(doc, site),
         },
     };
 };
 
-const readJson = async (req: IncomingMessage): Promise<Record<string, unknown> | undefined> => {
+const readJson = async (
+    req: IncomingMessage,
+    limit?: number,
+): Promise<Record<string, unknown> | undefined> => {
     try {
-        const v: unknown = JSON.parse(await readBody(req));
+        const v: unknown = JSON.parse(await readBody(req, limit));
         return typeof v === "object" && v != null ? (v as Record<string, unknown>) : undefined;
     } catch {
         return undefined;
@@ -2117,13 +2329,13 @@ const sendPage = (res: ServerResponse, mode: ServeMode, site: Site, opts: PageOp
     res.end(site.contentLanguage ? languageLinks(html, site.contentLanguage) : html);
 };
 
-const readBody = (req: IncomingMessage): Promise<string> =>
+const readBody = (req: IncomingMessage, limit = 5_000_000): Promise<string> =>
     new Promise((resolve, reject) => {
         let data = "";
         req.setEncoding("utf8");
         req.on("data", (chunk: string) => {
             data += chunk;
-            if (data.length > 5_000_000) {
+            if (data.length > limit) {
                 reject(new Error("body too large"));
                 req.destroy();
             }
@@ -2213,19 +2425,22 @@ const handleLint = async (req: IncomingMessage, res: ServerResponse): Promise<vo
         return;
     }
     const { body, lang } = (parsedBody ?? {}) as { body?: unknown; lang?: unknown };
-    const tag = typeof lang === "string" && isLangTag(lang) ? lang : siteLanguages.defaultLang;
+    const tag =
+        typeof lang === "string" && isLangTag(lang)
+            ? lang
+            : (readManifest(root).defaultLang ?? DEFAULT_LANG);
     const { lint } = resolveLanguage(tag, siteLanguages.languages);
     const findings = lint ? await lint(typeof body === "string" ? body : "") : [];
     sendJson(res, 200, { findings });
 };
 
-// Create a new doc (sidebar create form). The client navigates to the id in the response.
+// Create a new doc; the sidebar refresh keeps the current document open.
 const handleCreate = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const body = await readJson(req);
-    const id = typeof body?.id === "string" ? body.id.trim() : "";
+    const name = typeof body?.name === "string" ? body.name.trim() : "";
     const title = typeof body?.title === "string" ? body.title.trim() : "";
     const parent = typeof body?.parent === "string" && body.parent !== "" ? body.parent : undefined;
-    const result = ops.add(id, title, parent);
+    const result = ops.addFile(name, title, parent);
     sendOp(
         res,
         isOpError(result) ? result : { ...result, path: docPath(loadSite().entries, result.id) },
@@ -2233,14 +2448,18 @@ const handleCreate = async (req: IncomingMessage, res: ServerResponse): Promise<
 };
 
 // Add a figure (sidebar file picker / drag-and-drop). Returns the written file name
-// (the client inserts :::figure(<file>)).
+// (the client inserts ![](figures/<file>)).
 const handleFigure = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const body = await readJson(req);
     if (typeof body?.name !== "string" || typeof body?.data !== "string") {
         sendJson(res, 400, { error: "specify an svg / png / webp / jpeg / html file" });
         return;
     }
-    sendOp(res, ops.addFigure(body.name, Buffer.from(body.data, "base64")));
+    const result = ops.addFigure(body.name, Buffer.from(body.data, "base64"));
+    sendOp(
+        res,
+        isOpError(result) ? result : { ...result, path: result.path ?? `figures/${result.file}` },
+    );
 };
 
 // Doc icon (the header's icon slot). data = base64 of an svg (null = remove). Pads it to 1:1 and
@@ -2252,7 +2471,19 @@ const handleIcon = async (req: IncomingMessage, res: ServerResponse): Promise<vo
         sendJson(res, 404, { error: "target doc not found" });
         return;
     }
-    const path = join(iconsDir, `${target.id}.svg`);
+    const manifest = readManifest(root);
+    if (manifest.errors.length) {
+        sendJson(res, 409, { error: manifest.errors.join("\n") });
+        return;
+    }
+    const previous = docIconFile(target.id, manifest.files);
+    const file =
+        manifest.files?.defaultLayout &&
+        !Object.hasOwn(manifest.files.icons ?? {}, target.id) &&
+        !existsSync(textfilePath(root, previous))
+            ? defaultFilePath(`${target.id}-icon.svg`)
+            : previous;
+    const path = textfilePath(root, file);
     if (body?.data == null) {
         if (existsSync(path)) {
             unlinkSync(path);
@@ -2268,8 +2499,17 @@ const handleIcon = async (req: IncomingMessage, res: ServerResponse): Promise<vo
         sendJson(res, 400, { error: "specify an svg (viewBox or width / height required)" });
         return;
     }
-    mkdirSync(iconsDir, { recursive: true });
+    if (file !== previous && existsSync(path)) {
+        sendJson(res, 409, { error: "File already exists" });
+        return;
+    }
+    mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, svg);
+    if (file !== previous && manifest.files) {
+        manifest.files.icons ??= {};
+        manifest.files.icons[target.id] = file;
+        writeManifest(root, manifest.tree, manifest);
+    }
     sendJson(res, 200, { ok: true, icon: svgDataUri(svg) });
 };
 
@@ -2288,7 +2528,7 @@ const handleMove = async (req: IncomingMessage, res: ServerResponse): Promise<vo
     sendOp(res, ops.move(id, parent, index));
 };
 
-// Change a doc id (= file name = resolution key for URLs / doc: links); doc: links follow.
+// Rename the source file while preserving the document's URL and doc: links.
 const handleRename = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const body = await readJson(req);
     const target = resolveContentFile(body?.file);
@@ -2296,12 +2536,23 @@ const handleRename = async (req: IncomingMessage, res: ServerResponse): Promise<
         sendJson(res, 404, { error: "target doc not found" });
         return;
     }
-    const newId = typeof body?.newId === "string" ? body.newId.trim() : "";
-    const result = ops.rename(target.id, newId);
-    sendOp(
-        res,
-        isOpError(result) ? result : { ...result, path: docPath(loadSite().entries, result.id) },
-    );
+    try {
+        const snapshot = filesSnapshot(root);
+        const file = sourceDocFile(target.id, snapshot.layout);
+        if (body?.sourceFile !== file) throw new Error("Files changed. Reload before retrying.");
+        const result = updateFiles(root, {
+            action: "rename",
+            file,
+            name: typeof body?.name === "string" ? body.name.trim() : "",
+            revision: snapshot.revision,
+        });
+        sendOp(res, {
+            path: docPath(loadSite().entries, target.id),
+            sourceFile: sourceDocFile(target.id, result.layout),
+        });
+    } catch (error) {
+        sendJson(res, 409, { error: error instanceof Error ? error.message : String(error) });
+    }
 };
 
 // Delete a doc. If it's referenced, refuse without force and return the referrers (the client
@@ -2378,9 +2629,9 @@ export const bundleClient = async (entry: string, publish = false): Promise<stri
 };
 
 export const startServer = async (mode: ServeMode, port = 5179): Promise<void> => {
-    // docs.config.mjs (default language / extra adapters) is read once; restart after editing it.
+    // Language adapters are read once; the manifest is re-read by the compiler.
     siteLanguages = await loadSiteLanguages(root);
-    compiler = createCompiler(root, { defaultLang: siteLanguages.defaultLang });
+    compiler = createCompiler(root);
     // Client bundles (bundleClient) = edit's editing UI and the schema graph interaction layer
     // shared by preview/edit. React Flow's stylesheet isn't mixed into the bundle — the mount
     // layer (flow-css.ts) injects it into a <style> at runtime, so the page needs no CSS delivery
@@ -2412,7 +2663,7 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
         const requestedLanguage =
             req.headers["x-docs-language"] ??
             requestUrl.searchParams.get("lang") ??
-            contentLanguageCode(siteLanguages.defaultLang);
+            contentLanguageCode(readManifest(root).defaultLang ?? DEFAULT_LANG);
         if (typeof requestedLanguage !== "string" || !isContentLanguage(requestedLanguage)) {
             sendJson(res, 400, { error: "Expected an ISO 639-3 language code" });
             return;
@@ -2473,6 +2724,73 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
             return;
         }
         if (mode === "edit" && req.method === "POST") {
+            if (path === "/api/preview-settings") {
+                if (
+                    !isLocalToolRequest(
+                        req.headers.host ?? "",
+                        req.headers.origin,
+                        req.headers["content-type"],
+                    )
+                ) {
+                    sendJson(res, 403, {
+                        error: "Preview settings require a same-origin local editor request",
+                    });
+                    return;
+                }
+                const result = previewSettingsResponse(root, await readJson(req));
+                sendJson(res, result.status, result.body);
+                return;
+            }
+            if (path === "/api/files") {
+                if (
+                    !isLocalToolRequest(
+                        req.headers.host ?? "",
+                        req.headers.origin,
+                        req.headers["content-type"],
+                    )
+                ) {
+                    sendJson(res, 403, {
+                        error: "Files require a same-origin local editor request",
+                    });
+                    return;
+                }
+                try {
+                    const input = await readJson(
+                        req,
+                        Math.ceil((MAX_FILE_UPLOAD_BYTES * 4) / 3) + 16_384,
+                    );
+                    if (!input) throw new Error("Invalid file request");
+                    const result =
+                        input.action === "read"
+                            ? filesSnapshot(root)
+                            : input.action === "upload"
+                              ? uploadFile(root, input)
+                              : updateFiles(root, input);
+                    sendJson(res, 200, result);
+                } catch (error) {
+                    sendJson(res, 409, {
+                        error: error instanceof Error ? error.message : String(error),
+                    });
+                }
+                return;
+            }
+            if (path === "/api/code-file") {
+                if (
+                    !isLocalToolRequest(
+                        req.headers.host ?? "",
+                        req.headers.origin,
+                        req.headers["content-type"],
+                    )
+                ) {
+                    sendJson(res, 403, {
+                        error: "Code tools require a same-origin local editor request",
+                    });
+                    return;
+                }
+                const result = codeFileResponse(root, await readJson(req));
+                sendJson(res, result.status, result.body);
+                return;
+            }
             if (path === "/api/textfile") {
                 if (
                     !isLocalToolRequest(
@@ -2552,7 +2870,7 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
                 try {
                     setDocTranslation(
                         root,
-                        contentLanguageCode(siteLanguages.defaultLang),
+                        contentLanguageCode(readManifest(root).defaultLang ?? DEFAULT_LANG),
                         target.id,
                         input.language,
                         input.added,
@@ -2624,6 +2942,23 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
             }
             if (path === "/api/icon") {
                 await handleIcon(req, res);
+                return;
+            }
+            if (path === "/api/site-icon") {
+                if (
+                    !isLocalToolRequest(
+                        req.headers.host ?? "",
+                        req.headers.origin,
+                        req.headers["content-type"],
+                    )
+                ) {
+                    sendJson(res, 403, {
+                        error: "Site icons require a same-origin local editor request",
+                    });
+                    return;
+                }
+                const result = siteIconResponse(root, await readJson(req));
+                sendJson(res, result.status, result.body);
                 return;
             }
             if (path === "/api/figure") {
@@ -2703,10 +3038,10 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
         }
 
         if (
-            (mode === "edit" && (path === "/_resources" || path.startsWith("/_resources/"))) ||
-            path === "/_resources/terms"
+            (mode === "edit" && (path === "/_files" || path.startsWith("/_files/"))) ||
+            path === "/_files/terms"
         ) {
-            const rest = path.slice("/_resources".length).replace(/^\/|\/$/g, "");
+            const rest = requestUrl.pathname.slice("/_files".length).replace(/^\/|\/$/g, "");
             const page = resourcesMain(site, rest);
             if (!page) {
                 notFound(res, path);

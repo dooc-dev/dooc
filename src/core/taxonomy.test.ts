@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { parseDoc } from "../compiler/dialect.js";
 import {
+    CODE_TEMPLATES,
     CONTAINER_DIRECTIVES,
     DIRECTIVES,
     findDirective,
     LEAF_DIRECTIVES,
-    normalizeLeafDirectives,
 } from "./taxonomy.js";
 
 // Reduce the author-filled spots `<...>` to bare words (the editor makes the same spots snippet
@@ -14,8 +14,8 @@ const fill = (sample: string): string => sample.replace(/<([^<>\n]+)>/g, "$1");
 
 describe("DIRECTIVES (catalog of the custom syntax vocabulary)", () => {
     it("name lists are derived from the catalog (no double declaration)", () => {
-        expect(LEAF_DIRECTIVES).toEqual(["figure", "html", "textfile"]);
-        expect(CONTAINER_DIRECTIVES).toEqual(["callout", "schema", "graph", "term"]);
+        expect(LEAF_DIRECTIVES).toEqual([]);
+        expect(CONTAINER_DIRECTIVES).toEqual(["callout", "schema"]);
         for (const d of DIRECTIVES) {
             expect(findDirective(d.kind, d.name)).toBe(d);
         }
@@ -39,19 +39,9 @@ describe("DIRECTIVES (catalog of the custom syntax vocabulary)", () => {
         }
     });
 
-    it("rewrites one-line leaf syntax to the remark leaf form on the same line (line numbers kept, fenced content untouched)", () => {
-        const { source, badLines } = normalizeLeafDirectives(
-            ":::figure(a.png)[cap]\n```\n:::figure(b.png)\n```\n  :::html(c.html)\n:::figure()",
-        );
-        expect(source.split("\n")).toEqual([
-            '::figure[cap]{src="a.png"}',
-            "```",
-            ":::figure(b.png)",
-            "```",
-            '  ::html{src="c.html"}',
-            ":::figure()",
-        ]);
-        expect(badLines).toEqual([6]);
+    it("inserts valid named code blocks without IDs for terms", () => {
+        for (const sample of Object.values(CODE_TEMPLATES))
+            expect(parseDoc(`---\ntitle: Test\n---\n\n${fill(sample)}\n`).errors).toEqual([]);
     });
 
     it("filled-in samples pass the dialect as-is (= never inserts a broken template)", () => {

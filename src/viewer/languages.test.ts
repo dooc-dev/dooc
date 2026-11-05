@@ -19,10 +19,9 @@ describe("built-in language adapters (Node side)", () => {
         const root = mkdtempSync(join(tmpdir(), "docs-langs-"));
         writeFileSync(
             join(root, "docs.config.mjs"),
-            'export default { defaultLang: "ja", languages: [{ code: "ja", spellcheckLang: "ja" }] };\n',
+            'export default { languages: [{ code: "ja", spellcheckLang: "ja" }] };\n',
         );
         const site = await loadSiteLanguages(root);
-        expect(site.defaultLang).toBe("ja");
         expect(resolveLanguage("ja", site.languages).spellcheckLang).toBe("ja");
         expect(resolveLanguage("ja", site.languages).lint).toBeUndefined();
     });

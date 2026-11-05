@@ -2,19 +2,15 @@
 // only a closed subset of generic directives (remark-directive syntax). 1:1 with the README.md
 // spec. Rejects here, before publish, everything that would break consumers (unrenderable /
 // degraded text for MCP).
-import type { Heading, Link, Node, Parent, Root } from "mdast";
+import type { Heading, Image, Link, Node, Parent, Root } from "mdast";
 import type { ContainerDirective, LeafDirective } from "mdast-util-directive";
-import remarkDirective from "remark-directive";
-import remarkFrontmatter from "remark-frontmatter";
-import remarkGfm from "remark-gfm";
-import remarkParse from "remark-parse";
-import { unified } from "unified";
 import { SKIP, visit } from "unist-util-visit";
 import { parse as parseYaml } from "yaml";
 import type { TermEntry } from "../core/artifact-types.js";
-import { parseGraphSource } from "../core/graph.js";
-import { inlineSegmenter, TERM_ID_RE } from "../core/inline.js";
+import { parseFileEmbed } from "../core/file-embed.js";
 import { isLangTag } from "../core/language.js";
+import { parseMdast, standaloneImages } from "../core/markdown.js";
+import type { PreviewSettings } from "../core/previewers.js";
 import { parseSchemaSource } from "../core/schema-graph.js";
 import {
     CONTAINER_DIRECTIVES,
@@ -25,31 +21,25 @@ import {
     type Frontmatter,
     findDirective,
     LEAF_DIRECTIVES,
-    normalizeLeafDirectives,
 } from "../core/taxonomy.js";
-import { parseTermSource } from "./terms.js";
-import { parseTextfileRange } from "./textfile.js";
+import { parseTermReference } from "../core/term-reference.js";
+import { parseTextfileRange } from "../core/textfile.js";
+import { parseContentCode } from "./code-blocks.js";
 
-const processor = unified()
-    .use(remarkParse)
-    .use(remarkFrontmatter)
-    .use(remarkGfm)
-    .use(remarkDirective);
-
-export const parseMdast = (raw: string): Root => processor.parse(raw);
+export { parseMdast } from "../core/markdown.js";
 
 export interface ParsedDoc {
     terms: TermEntry[];
     frontmatter: Frontmatter | undefined;
     /** Body text without the front-matter (becomes the manifest's body). */
     body: string;
-    /** Source passed to parse (one-line leaf syntax rewritten); root position offsets use it. */
+    /** Source passed to parse; root position offsets use it. */
     source: string;
     root: Root;
     errors: string[];
 }
 
-// Closed set of mdast node types the dialect allows. Anything else (html / blockquote / image /
+// Closed set of mdast node types the dialect allows. Anything else (html / blockquote /
 // emphasis / strong / thematicBreak / textDirective, etc.) is an error.
 const ALLOWED_TYPES = new Set([
     "root",
@@ -65,6 +55,7 @@ const ALLOWED_TYPES = new Set([
     "tableCell",
     "text",
     "link",
+    "image",
     "leafDirective",
     "containerDirective",
 ]);
@@ -137,35 +128,7 @@ const checkDirectiveAttrs = (
         return false;
     }
     const keys = Object.keys(n.attributes ?? {});
-    if (kind === "leaf") {
-        // Text files may also carry a display range; other file directives take only src.
-        const src = n.attributes?.src;
-        const allowed = n.name === "textfile" ? ["src", "range"] : ["src"];
-        if (keys.some((key) => !allowed.includes(key)) || !src?.trim()) {
-            errors.push(`${line(n)}: :::${n.name} must be written as ${spec.sample}`);
-            return true;
-        }
-        if (n.name === "textfile" && n.attributes?.range != null) {
-            try {
-                parseTextfileRange(n.attributes.range);
-            } catch (error) {
-                errors.push(
-                    `${line(n)}: :::textfile ${error instanceof Error ? error.message : error}`,
-                );
-            }
-        }
-        const ext = /\.([a-z]+)$/.exec(src)?.[1] ?? "";
-        if (spec.exts && !spec.exts.includes(ext)) {
-            errors.push(
-                `${line(n)}: :::${n.name}(${src}) has an unsupported extension (only ${spec.exts?.join(" / ")})`,
-            );
-        }
-    } else if (n.name === "term") {
-        if (keys.length !== 1 || !TERM_ID_RE.test(n.attributes?.id ?? ""))
-            errors.push(
-                `${line(n)}: use :::term(id) with a lowercase alphanumeric ID (hyphens and underscores allowed)`,
-            );
-    } else if (keys.length > 0) {
+    if (keys.length > 0) {
         errors.push(
             `${line(n)}: :::${n.name}{...} attributes are not allowed (${spec.caption ? `for a caption, use :::${n.name}[caption]` : "it takes no attributes"})`,
         );
@@ -193,7 +156,7 @@ const checkContainerDirective = (n: ContainerDirective, errors: string[]): void 
             }
             break;
         }
-        // Raw-text directives (schema / graph) have non-markdown content, so checkRawDirective
+        // Raw-text directives (schema) have non-markdown content, so checkRawDirective
         // handles them separately (not walked).
         default:
             break;
@@ -207,21 +170,14 @@ const RAW_PARSERS: Record<
     { parse: (source: string) => { errors: { line: number; message: string }[] }; hint: string }
 > = {
     schema: { parse: parseSchemaSource, hint: "write the table DSL directly" },
-    graph: { parse: parseGraphSource, hint: "write node / edge lines directly" },
 };
 
-// The content of :::schema / :::graph is raw DSL text, not markdown. Slice it from raw and only
+// The content of :::schema is raw DSL text, not markdown. Slice it from raw and only
 // run DSL validation (= `###` / indented lines inside aren't interpreted as markdown; the caller
 // doesn't walk descendants).
 const checkRawDirective = (n: ContainerDirective, raw: string, errors: string[]): void => {
     checkDirectiveAttrs(n, "container", errors);
-    const parser =
-        n.name === "term"
-            ? {
-                  parse: (source: string) => parseTermSource(n.attributes?.id ?? "", source),
-                  hint: "write name and definition as YAML",
-              }
-            : RAW_PARSERS[n.name];
+    const parser = RAW_PARSERS[n.name];
     if (parser == null) {
         return;
     }
@@ -232,8 +188,6 @@ const checkRawDirective = (n: ContainerDirective, raw: string, errors: string[])
         return;
     }
     const slice = raw.slice(start, end);
-    if (n.name === "term" && !/\n[ \t]*:::[ \t]*$/.test(slice.trimEnd()))
-        errors.push(`${line(n)}: :::term definition must close with :::`);
     const body = directiveRawBody(slice);
     if (body.trim() === "") {
         errors.push(`${line(n)}: :::${n.name} is empty (${parser.hint})`);
@@ -248,20 +202,21 @@ const checkRawDirective = (n: ContainerDirective, raw: string, errors: string[])
 };
 
 const checkLink = (n: Link, errors: string[]): void => {
+    try {
+        parseTermReference(n.url);
+    } catch (error) {
+        errors.push(`${line(n)}: ${error instanceof Error ? error.message : error}`);
+    }
     if (n.url === "") {
         errors.push(`${line(n)}: link with an empty URL`);
     }
 };
 
-export const parseDoc = (input: string): ParsedDoc => {
+export const parseDoc = (input: string, settings?: PreviewSettings, file?: string): ParsedDoc => {
     const errors: string[] = [];
-    const { source: raw, badLines } = normalizeLeafDirectives(input);
-    for (const l of badLines) {
-        errors.push(
-            `L${l}: leaf directives must be written as :::name(<file>)[caption] (file without spaces / parentheses / "); textfile uses :::textfile(<filepath>) on one line`,
-        );
-    }
+    const raw = input;
     const root = parseMdast(raw);
+    const embeds = new Set(root.children.flatMap(standaloneImages));
     const terms: TermEntry[] = [];
 
     const yamlNode = root.children[0];
@@ -279,28 +234,25 @@ export const parseDoc = (input: string): ParsedDoc => {
         errors.push("front-matter (---) is required at the top");
     }
 
-    visit(root, (node) => {
-        // Raw-text directives (`raw: true` = :::schema / :::graph) have non-markdown content, so
+    visit(root, (node, _index, parent) => {
+        // Raw-text directives (`raw: true` = :::schema) have non-markdown content, so
         // validation is completed here and descendants aren't walked (SKIP).
         if (
             node.type === "containerDirective" &&
             findDirective("container", (node as ContainerDirective).name)?.raw === true
         ) {
             checkRawDirective(node as ContainerDirective, raw, errors);
-            const d = node as ContainerDirective;
-            if (d.name === "term") {
-                const start = d.position?.start.offset;
-                const end = d.position?.end.offset;
-                if (start != null && end != null)
-                    terms.push(
-                        ...parseTermSource(
-                            d.attributes?.id ?? "",
-                            directiveRawBody(raw.slice(start, end)),
-                        ).entries,
-                    );
-            }
             return SKIP;
         }
+        if (
+            node.type === "text" &&
+            /:::(?:textfile|figure|html|graph|term)\b/.test(
+                raw.slice(node.position?.start.offset, node.position?.end.offset),
+            )
+        )
+            errors.push(
+                `${line(node)}: removed directive; use Markdown file embeds, grapth / termth code fences, or links to .termth files`,
+            );
         if (!ALLOWED_TYPES.has(node.type)) {
             const hint =
                 node.type === "textDirective"
@@ -314,6 +266,34 @@ export const parseDoc = (input: string): ParsedDoc => {
             return;
         }
         switch (node.type) {
+            case "code": {
+                const parsed = parseContentCode(node, raw, file);
+                if (!parsed) break;
+                if (parent?.type !== "root") {
+                    errors.push(`${line(node)}: ${node.lang} must be a top-level code block`);
+                    break;
+                }
+                for (const error of parsed.errors)
+                    errors.push(
+                        `L${(node.position?.start.line ?? 0) + 1 + error.line}: ${node.lang} ${error.message}`,
+                    );
+                for (const block of parsed.blocks)
+                    if (block.type === "term") terms.push(block.entry);
+                break;
+            }
+            case "image": {
+                if (!embeds.has(node as Image)) {
+                    errors.push(`${line(node)}: file previews must occupy a standalone paragraph`);
+                    break;
+                }
+                try {
+                    const { range } = parseFileEmbed((node as Image).url, settings);
+                    if (range !== undefined) parseTextfileRange(range);
+                } catch (error) {
+                    errors.push(`${line(node)}: ${error instanceof Error ? error.message : error}`);
+                }
+                break;
+            }
             case "heading":
                 checkHeading(node as Heading, errors);
                 break;
@@ -338,30 +318,38 @@ export const parseDoc = (input: string): ParsedDoc => {
 };
 
 /**
- * Collect the figures a doc references (:::figure / :::html files, relative to figures/), for
+ * Collect the files and terms referenced by Markdown embeds and term references, for
  * cross-checking against figures/.
  */
 export const collectRefs = (
     root: Root,
+    settings?: PreviewSettings,
 ): { figures: string[]; terms: string[]; textfiles: string[] } => {
     const figures: string[] = [];
     const terms: string[] = [];
     const textfiles: string[] = [];
-    const segments = inlineSegmenter();
+    for (const image of root.children.flatMap(standaloneImages)) {
+        try {
+            const { file, kind } = parseFileEmbed(image.url, settings);
+            if (kind === "textfile") textfiles.push(file);
+            else figures.push(file);
+        } catch {
+            // Invalid references are reported by parseDoc and must not reach file I/O.
+        }
+    }
     visit(root, (node) => {
         if (
             node.type === "containerDirective" &&
             findDirective("container", (node as ContainerDirective).name)?.raw
         )
             return SKIP;
-        if (node.type === "link" || node.type === "code" || node.type === "inlineCode") return SKIP;
-        if (node.type === "text")
-            for (const segment of segments(node.value))
-                if (segment.kind === "term") terms.push(segment.id);
-        if (node.type === "leafDirective") {
-            const d = node as LeafDirective;
-            const src = d.attributes?.src;
-            if (src) (d.name === "textfile" ? textfiles : figures).push(src);
+        if (node.type === "link") {
+            try {
+                const file = parseTermReference(node.url);
+                if (file) terms.push(file);
+            } catch {
+                /* Validation reports invalid term paths. */
+            }
         }
     });
     return { figures, terms: [...new Set(terms)], textfiles: [...new Set(textfiles)] };

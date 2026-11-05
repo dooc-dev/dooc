@@ -8,7 +8,7 @@ export * from "./core/content-metadata.js";
 // html figure height).
 export * from "./core/figure-frame.js";
 export * from "./core/generation.js";
-// node / edge DSL (`:::graph`): parse / graph model / deterministic layout via Dagre.
+// node / edge DSL (`grapth`): parse / graph model / deterministic layout via Dagre.
 // graph-common.js is the SoT for the geometry parts shared with the schema graph (text width
 // estimation / orthogonal routing / uid).
 export * from "./core/graph.js";
@@ -21,6 +21,7 @@ export * from "./core/inline.js";
 // (browser-safe part; its prose lint is Node-only and lives in the viewer).
 export * from "./core/language.js";
 export * from "./core/languages/ja.js";
+export * from "./core/previewers.js";
 export * from "./core/routing.js";
 // table DSL (`:::schema`): parse / graph model / deterministic layout. html.ts uses it for
 // rendering, and it also serves as the model source when consumers build their own UI

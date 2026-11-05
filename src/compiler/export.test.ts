@@ -35,7 +35,7 @@ describe("export / zip", () => {
         const root = mkdtempSync(join(tmpdir(), "docs-export-config-"));
         mkdirSync(join(root, "content"));
         writeFileSync(join(root, "content", "a.md"), "Body\n");
-        writeFileSync(join(root, "docs.config.mjs"), 'export default { defaultLang: "ja" };\n');
+        writeFileSync(join(root, "docs.config.mjs"), "export default { languages: [] };\n");
         writeFileSync(join(root, "manifest.yaml"), "- a\n");
         const entries = exportEntries(root);
         expect(entries.map((e) => e.name)).toEqual([

@@ -13,20 +13,18 @@ const rootWith = (config?: string): string => {
 };
 
 describe("loadDocsConfig (docs.config.mjs)", () => {
-    it("defaults to en and no extra adapters when the file is absent", async () => {
+    it("uses no extra adapters when the file is absent", async () => {
         expect(await loadDocsConfig(rootWith())).toEqual({
-            defaultLang: "en",
             languages: [],
         });
     });
 
-    it("reads defaultLang and adapters (functions included)", async () => {
+    it("reads adapters including functions", async () => {
         const config = await loadDocsConfig(
             rootWith(
-                'export default { defaultLang: "ko", languages: [{ code: "ko", spellcheckLang: "ko", compareTerms: (a, b) => a.term.localeCompare(b.term) }] };\n',
+                'export default { languages: [{ code: "ko", spellcheckLang: "ko", compareTerms: (a, b) => a.name.localeCompare(b.name) }] };\n',
             ),
         );
-        expect(config.defaultLang).toBe("ko");
         expect(config.languages.map((l) => l.code)).toEqual(["ko"]);
         expect(typeof config.languages[0]?.compareTerms).toBe("function");
     });
@@ -38,8 +36,8 @@ describe("loadDocsConfig (docs.config.mjs)", () => {
                 (e: Error) => e.message,
             );
         expect(await bad("export default 1;\n")).toContain("default export must be an object");
-        expect(await bad('export default { defaultLang: "日本語" };\n')).toContain(
-            "defaultLang must be a BCP 47",
+        expect(await bad('export default { defaultLang: "ja" };\n')).toContain(
+            "move defaultLang to manifest.yaml",
         );
         expect(await bad("export default { languages: {} };\n")).toContain(
             "languages must be an array",

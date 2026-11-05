@@ -4,7 +4,7 @@
 import type { LanguageRegistration } from "shiki/core";
 import { loadCodeLanguages } from "../compiler/code-languages.js";
 import { loadDocsConfig } from "../compiler/config.js";
-import { DEFAULT_LANG, type LanguageAdapter } from "../core/language.js";
+import type { LanguageAdapter } from "../core/language.js";
 import { ja } from "../core/languages/ja.js";
 
 export const BUILTIN_LANGUAGES: readonly LanguageAdapter[] = [
@@ -13,14 +13,12 @@ export const BUILTIN_LANGUAGES: readonly LanguageAdapter[] = [
 ];
 
 export interface SiteLanguages {
-    defaultLang: string;
     languages: readonly LanguageAdapter[];
     codeLanguages?: string[];
     codeGrammars?: LanguageRegistration[];
 }
 
 export const DEFAULT_SITE_LANGUAGES: SiteLanguages = {
-    defaultLang: DEFAULT_LANG,
     languages: BUILTIN_LANGUAGES,
 };
 
@@ -28,7 +26,6 @@ export const DEFAULT_SITE_LANGUAGES: SiteLanguages = {
 export const loadSiteLanguages = async (root: string): Promise<SiteLanguages> => {
     const config = await loadDocsConfig(root);
     return {
-        defaultLang: config.defaultLang,
         ...(await loadCodeLanguages(root)),
         languages: [...config.languages, ...BUILTIN_LANGUAGES],
     };

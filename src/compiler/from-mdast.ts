@@ -3,7 +3,7 @@
 // blocks.ts; validation is handled by dialect.ts.
 import { basename, extname } from "node:path";
 import type { Heading, List as MdList, Table as MdTable, PhrasingContent, Root } from "mdast";
-import type { ContainerDirective, LeafDirective } from "mdast-util-directive";
+import type { ContainerDirective } from "mdast-util-directive";
 import {
     type Block,
     type CalloutItem,
@@ -11,12 +11,15 @@ import {
     slugify,
     type TocEntry,
 } from "../core/blocks.js";
-import { parseGraphSource } from "../core/graph.js";
+import { parseFileEmbed } from "../core/file-embed.js";
+import { standaloneImages } from "../core/markdown.js";
+import type { PreviewSettings } from "../core/previewers.js";
 import { parseSchemaSource } from "../core/schema-graph.js";
 import { directiveRawBody } from "../core/taxonomy.js";
+import { parseTermReference, termFileUrl } from "../core/term-reference.js";
 import { textfileName } from "../core/textfile.js";
+import { parseContentCode } from "./code-blocks.js";
 import { figureName } from "./figures.js";
-import { parseTermSource } from "./terms.js";
 
 // Turn inline nodes (text / `code` / [text](url)) back into a mini-syntax string. Assumes the
 // dialect validator rejects anything but these 3 kinds (= the reverse conversion is faithful).
@@ -25,11 +28,19 @@ const inlineToText = (nodes: PhrasingContent[]): string =>
         .map((n) => {
             switch (n.type) {
                 case "text":
-                    return n.value;
+                    return n.value.replace(/(\[[^\]]*\]\([^)]*\))/g, "\\$1");
                 case "inlineCode":
                     return `\`${n.value}\``;
-                case "link":
-                    return `[${inlineToText(n.children)}](${n.url})`;
+                case "link": {
+                    let url = n.url;
+                    try {
+                        const file = parseTermReference(url);
+                        if (file) url = termFileUrl(file);
+                    } catch {
+                        /* Reported by validation. */
+                    }
+                    return `[${inlineToText(n.children)}](${url})`;
+                }
                 default:
                     return "";
             }
@@ -64,14 +75,12 @@ const tableBlock = (t: MdTable): Block => {
 
 // `[caption]` = a leaf's children themselves; for a container, the leading paragraph carrying
 // data.directiveLabel.
-const captionOf = (d: LeafDirective | ContainerDirective): { caption?: string } => {
-    const head = d.type === "containerDirective" ? d.children[0] : undefined;
+const captionOf = (d: ContainerDirective): { caption?: string } => {
+    const head = d.children[0];
     const label =
-        d.type === "leafDirective"
-            ? d.children
-            : head?.type === "paragraph" && head.data != null && "directiveLabel" in head.data
-              ? head.children
-              : [];
+        head?.type === "paragraph" && head.data != null && "directiveLabel" in head.data
+            ? head.children
+            : [];
     return label.length > 0 ? { caption: inlineToText(label) } : {};
 };
 
@@ -87,6 +96,8 @@ const captionOf = (d: LeafDirective | ContainerDirective): { caption?: string } 
 export const toBlocks = (
     root: Root,
     raw: string,
+    settings?: PreviewSettings,
+    file?: string,
 ): { blocks: Block[]; toc: TocEntry[]; lines: number[] } => {
     const blocks: Block[] = [];
     const toc: TocEntry[] = [];
@@ -116,51 +127,60 @@ export const toBlocks = (
                 add({ type: "h", level: depth, text, slug });
                 break;
             }
-            case "paragraph":
-                add({ type: "p", text: inlineToText(n.children) });
+            case "paragraph": {
+                const images = standaloneImages(n);
+                if (!images.length) add({ type: "p", text: inlineToText(n.children) });
+                for (const image of images) {
+                    try {
+                        const { file, range, kind } = parseFileEmbed(image.url, settings);
+                        if (kind !== "textfile") {
+                            add({
+                                type: "figureRef",
+                                name: figureName(file),
+                                ...(image.alt ? { caption: image.alt } : {}),
+                            });
+                            lines[lines.length - 1] = image.position?.start.line ?? 1;
+                            continue;
+                        }
+                        add({
+                            type: "code",
+                            filename: file,
+                            ...(range !== undefined ? { range } : {}),
+                            ...(image.alt ? { alt: image.alt } : {}),
+                            lang: (
+                                extname(textfileName(file)).slice(1) || basename(textfileName(file))
+                            ).toLowerCase(),
+                            lines: [],
+                        });
+                        lines[lines.length - 1] = image.position?.start.line ?? 1;
+                    } catch {
+                        // parseDoc reports malformed URLs; do not try to read them.
+                    }
+                }
                 break;
+            }
             case "list":
                 add({ type: "list", items: listItems(n), ...(n.ordered ? { ordered: true } : {}) });
                 break;
-            case "code":
+            case "code": {
+                const parsed = parseContentCode(n, raw, file);
+                if (parsed) {
+                    for (const block of parsed.blocks) add(block);
+                    break;
+                }
                 add({
                     type: "code",
                     lines: n.value.split("\n"),
                     ...(n.lang != null ? { lang: n.lang } : {}),
                 });
                 break;
+            }
             case "table":
                 add(tableBlock(n));
                 break;
-            case "leafDirective": {
-                // :::figure / :::html (normalized into a src attribute).
-                const d = n as LeafDirective;
-                const src = d.attributes?.src;
-                if (src && d.name === "textfile") {
-                    add({
-                        type: "code",
-                        filename: src,
-                        ...(d.attributes?.range != null ? { range: d.attributes.range } : {}),
-                        lang: (
-                            extname(textfileName(src)).slice(1) || basename(textfileName(src))
-                        ).toLowerCase(),
-                        lines: [],
-                    });
-                } else if (src) {
-                    add({ type: "figureRef", name: figureName(src), ...captionOf(d) });
-                }
-                break;
-            }
             case "containerDirective": {
                 const d = n as ContainerDirective;
-                if (d.name === "term") {
-                    const start = d.position?.start.offset;
-                    const end = d.position?.end.offset;
-                    const source =
-                        start == null || end == null ? "" : directiveRawBody(raw.slice(start, end));
-                    for (const entry of parseTermSource(d.attributes?.id ?? "", source).entries)
-                        add({ type: "term", entry });
-                } else if (d.name === "callout") {
+                if (d.name === "callout") {
                     const body: CalloutItem[] = d.children
                         .filter((c) => !(c.data && "directiveLabel" in c.data))
                         .flatMap((c): CalloutItem[] => {
@@ -181,7 +201,7 @@ export const toBlocks = (
                         });
                     const { caption } = captionOf(d);
                     add({ type: "callout", ...(caption != null ? { title: caption } : {}), body });
-                } else if (d.name === "schema" || d.name === "graph") {
+                } else if (d.name === "schema") {
                     // The content is raw DSL text, not markdown = slice it from raw and read it.
                     // Parsed at build time with the model baked into the artifact (consumers
                     // don't parse). DSL errors are already validated by dialect.ts = render
@@ -191,23 +211,12 @@ export const toBlocks = (
                     const source =
                         start == null || end == null ? "" : directiveRawBody(raw.slice(start, end));
                     const caption = captionOf(d);
-                    add(
-                        d.name === "schema"
-                            ? {
-                                  type: "schemaGraph",
-                                  ...caption,
-                                  graph: parseSchemaSource(source).model,
-                                  // Bake the original text in as-is too (the interactive UI's
-                                  // source viewer shows the "raw table").
-                                  source,
-                              }
-                            : {
-                                  type: "graph",
-                                  ...caption,
-                                  graph: parseGraphSource(source).model,
-                                  source,
-                              },
-                    );
+                    add({
+                        type: "schemaGraph",
+                        ...caption,
+                        graph: parseSchemaSource(source).model,
+                        source,
+                    });
                 }
                 break;
             }

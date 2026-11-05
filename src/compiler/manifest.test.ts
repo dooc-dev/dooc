@@ -75,7 +75,7 @@ it("keeps the site SVG file through document operations, compilation and export"
         );
         writeFileSync(
             join(root, "manifest.yaml"),
-            "title: Guide\nicon: icons/logo.svg\ndocs: []\n",
+            "title: Guide\nicon: icons/logo.svg\ndefaultLang: jpn\ndocs: []\n",
         );
         const ops = createDocOps(root);
         expect(ops.add("guide", "Guide")).not.toHaveProperty("error");
@@ -86,9 +86,12 @@ it("keeps the site SVG file through document operations, compilation and export"
         expect(parse(readFileSync(join(root, "manifest.yaml"), "utf8"))).toMatchObject({
             title: "Guide",
             icon: "icons/logo.svg",
+            defaultLang: "jpn",
         });
         const compiled = compileSite(root);
         expect(compiled.errors).toEqual([]);
+        expect(compiled.defaultLang).toBe("jpn");
+        expect(compiled.artifact.docs[0]?.lang).toBe("jpn");
         expect(compiled.artifact.icon).toContain('viewBox="0 -5 20 20"');
         const html = publishHtml(siteFrom(compiled), "");
         expect(html).toContain('<img id="site-icon" alt="" src="data:image/svg+xml;base64,');
@@ -97,14 +100,11 @@ it("keeps the site SVG file through document operations, compilation and export"
         expect(exportEntries(root).filter((entry) => entry.name === "icons/logo.svg")).toHaveLength(
             1,
         );
-        writeFileSync(join(root, "logo.svg"), '<svg viewBox="0 0 10 10"/>');
-        writeFileSync(join(root, "manifest.yaml"), "title: Guide\nicon: logo.svg\ndocs: [guide]\n");
-        expect(exportEntries(root).map((entry) => entry.name)).toContain("logo.svg");
-        writeFileSync(join(root, "logo.svg"), "not SVG");
+        writeFileSync(join(root, "icons/logo.svg"), "not SVG");
         expect(compileSite(root).errors.join()).toContain("expected an SVG");
-        rmSync(join(root, "logo.svg"));
-        expect(compileSite(root).errors.join()).toContain("icon logo.svg");
-        symlinkSync("/etc/hosts", join(root, "logo.svg"));
+        rmSync(join(root, "icons/logo.svg"));
+        expect(compileSite(root).errors.join()).toContain("icon icons/logo.svg");
+        symlinkSync("/etc/hosts", join(root, "icons/logo.svg"));
         expect(compileSite(root).errors.join()).toContain("outside the docs root");
     } finally {
         rmSync(root, { recursive: true, force: true });

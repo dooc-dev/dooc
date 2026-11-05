@@ -11,70 +11,27 @@ import {
     writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { isRemoteTextfile } from "../core/textfile.js";
+import { isRemoteTextfile, parseTextfileRange } from "../core/textfile.js";
+
+import { readManifest } from "./manifest.js";
 import { readRemoteTextfile } from "./textfile-remote.js";
 
-type Boundary = "*" | { text: string } | { line: number; column?: number };
-const BOUNDARY = String.raw`(?:\*|\d+(?::\d+)?|"(?:[^"\\\r\n]|\\.)*")`;
-const RANGE_RE = new RegExp(String.raw`^\[\s*(${BOUNDARY})\s*,\s*(${BOUNDARY})\s*\]$`);
+export { parseTextfileRange } from "../core/textfile.js";
 
-export const parseTextfileRange = (range: string): [Boundary, Boundary] => {
-    const match = RANGE_RE.exec(range);
-    if (!match?.[1] || !match[2])
-        throw new Error('range must be [start, end] using line numbers, line:column, "text", or *');
-    const boundary = (value: string): Boundary => {
-        if (value === "*") return "*";
-        if (value.startsWith('"')) {
-            const text: string = JSON.parse(value);
-            if (!text) throw new Error("range strings must not be empty");
-            return { text };
-        }
-        const [line, column] = value.split(":").map(Number);
-        if (
-            line == null ||
-            !Number.isSafeInteger(line) ||
-            line < 1 ||
-            (column != null && (!Number.isSafeInteger(column) || column < 1))
-        )
-            throw new Error("range line and column numbers must be positive integers");
-        return { line, ...(column == null ? {} : { column }) };
-    };
-    return [boundary(match[1]), boundary(match[2])];
-};
-
-/** One-based inclusive boundaries; columns count Unicode code points, not UTF-16 units. */
+/** Select whole lines, preserving their original separators and excluding the final separator. */
 export const selectTextfileRange = (text: string, range?: string): string => {
-    if (range == null) return text;
+    if (range === undefined) return text;
     const [start, end] = parseTextfileRange(range);
-    const lineStarts = [
+    const starts = [
         0,
-        ...[...text.matchAll(/\r\n|\n|\r/g)].map((match) => match.index + match[0].length),
+        ...[...text.matchAll(/\r\n|\n|\r/g)]
+            .map((match) => match.index + match[0].length)
+            .filter((offset) => offset < text.length),
     ];
-    const offset = (point: Boundary, isEnd: boolean, searchFrom = 0): number => {
-        if (point === "*") return isEnd ? text.length : 0;
-        if ("text" in point) {
-            const found = text.indexOf(point.text, searchFrom);
-            if (found < 0)
-                throw new Error(
-                    `range text ${JSON.stringify(point.text)} was not found${isEnd ? " after the start" : ""}`,
-                );
-            return found + (isEnd ? point.text.length : 0);
-        }
-        const from = lineStarts[point.line - 1];
-        if (from == null) throw new Error(`range line ${point.line} does not exist`);
-        const line = text
-            .slice(from, lineStarts[point.line] ?? text.length)
-            .replace(/(?:\r\n|\n|\r)$/, "");
-        if (point.column == null) return from + (isEnd ? line.length : 0);
-        const characters = [...line];
-        if (point.column > characters.length)
-            throw new Error(`range column ${point.line}:${point.column} does not exist`);
-        return from + characters.slice(0, point.column - (isEnd ? 0 : 1)).join("").length;
-    };
-    const from = offset(start, false);
-    const to = offset(end, true, from + (start !== "*" && "text" in start ? start.text.length : 0));
-    if (to < from) throw new Error("range end is before its start");
-    return text.slice(from, to);
+    const from = starts[start - 1];
+    if (from === undefined) throw new Error(`range line ${start} does not exist`);
+    if (starts[end - 1] === undefined) throw new Error(`range line ${end} does not exist`);
+    return text.slice(from, starts[end] ?? text.length).replace(/(?:\r\n|\n|\r)$/, "");
 };
 
 /** Embedded files must stay inside the docs root, including symlink targets. */
@@ -106,8 +63,11 @@ export const textfilePath = (root: string, file: string): string => {
 
 export const readTextfile = (root: string, file: string, refresh = false): string => {
     let data: Uint8Array;
-    if (isRemoteTextfile(file)) data = readRemoteTextfile(file, refresh);
-    else {
+    if (isRemoteTextfile(file)) {
+        const manifest = readManifest(root);
+        if (manifest.errors.length) throw new Error(manifest.errors.join("\n"));
+        data = readRemoteTextfile(file, manifest.previews?.domains ?? [], refresh);
+    } else {
         const path = textfilePath(root, file);
         if (!statSync(path).isFile()) throw new Error("expected a regular UTF-8 text file");
         data = readFileSync(path);
@@ -126,7 +86,8 @@ export const writeTextfile = (
 ): boolean => {
     if (/[\0\uD800-\uDFFF]/u.test(content)) throw new Error("expected UTF-8 text");
     const path = textfilePath(root, file);
-    const current = lstatSync(path, { throwIfNoEntry: false }) ? readTextfile(root, file) : null;
+    const exists = lstatSync(path, { throwIfNoEntry: false });
+    const current = exists ? readTextfile(root, file) : null;
     if (current !== base) return false;
     mkdirSync(dirname(path), { recursive: true });
     const temp = join(dirname(path), `.textfile-${randomUUID()}.tmp`);

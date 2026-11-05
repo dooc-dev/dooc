@@ -1,6 +1,6 @@
 {
   "media": {
     "title": "図とデータ",
-    "body": "流れは関係図、データの関連はスキーマで表します。SVGとHTMLは `figures/` に置きます。\n\n## 関係図\n\n`:::graph` の中でノードを定義し、`->` でつなぎます。\n\n:::graph[文書を共有する流れ]\n[write]: 書く\n[check]: 確認する\n[share]: 共有する\n[write] -> [check]\n[check] -> [share]\n:::\n\n## スキーマ\n\n架空の執筆者と文書のモデルです。`pk` は主キー、`fk(authors)` は執筆者への参照を表します。\n\n:::schema[執筆者と文書]\nauthors:\n  id: pk\n  name: string\n\ndocuments:\n  id: pk\n  author_id: fk(authors)\n  title: string\n:::\n\n## SVG\n\n`:::figure(overview.svg)[入力と出力]` で図と説明を表示します。\n\n:::figure(overview.svg)[入力と出力]\n\n## HTML\n\n`:::html(note.html)` でHTML断片を表示します。下の補足はクリックやキーボードで開閉できます。\n\n:::html(note.html)\n"
+    "body": "流れは関係図、データの関連はスキーマで表します。CSV・画像・HTMLはFilesから取り込み、`![](ファイルへの相対パス)` で表示します。\n\n## 関係図\n\n`grapth` の中でノードを定義し、`->` でつなぎます。\n\n```grapth 文書を共有する流れ\n[write]: 書く\n[check]: 確認する\n[share]: 共有する\n[write] -> [check]\n[check] -> [share]\n```\n\n## スキーマ\n\n架空の執筆者と文書のモデルです。`pk` は主キー、`fk(authors)` は執筆者への参照を表します。\n\n:::schema[執筆者と文書]\nauthors:\n  id: pk\n  name: string\n\ndocuments:\n  id: pk\n  author_id: fk(authors)\n  title: string\n:::\n\n## CSV\n\nCSVもFilesから取り込めます。ファイルのパスをコピーし、`![](files/csv/review.csv)` のように書くと内容を参照できます。\n\n![](files/csv/review.csv)\n\n## SVG\n\n`![入力と出力](figures/overview.svg)` で図と説明を表示します。\n\n![入力と出力](figures/overview.svg)\n\n## HTML\n\n`![](figures/note.html)` でHTML断片を表示します。下の補足はクリックやキーボードで開閉できます。\n\n![](figures/note.html)\n"
   }
 }

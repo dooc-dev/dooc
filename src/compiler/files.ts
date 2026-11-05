@@ -1,0 +1,438 @@
+import { createHash, randomUUID } from "node:crypto";
+import {
+    existsSync,
+    linkSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    rmdirSync,
+    rmSync,
+    statSync,
+    unlinkSync,
+    writeFileSync,
+} from "node:fs";
+import { dirname, join, posix } from "node:path";
+import { SKIP, visit } from "unist-util-visit";
+import { Document, isSeq, parseDocument } from "yaml";
+import { flattenTree, MANIFEST_FILE } from "../core/content-metadata.js";
+import {
+    defaultFilePath,
+    docFile,
+    docIconFile,
+    type FileLayout,
+    fileExtension,
+    isDocumentFileName,
+    localFile,
+    MAX_FILE_UPLOAD_BYTES,
+} from "../core/files.js";
+import { parseMdast } from "../core/markdown.js";
+import { findDirective } from "../core/taxonomy.js";
+import { termFileUrl } from "../core/term-reference.js";
+import { isRemoteTextfile, parseFileReference } from "../core/textfile.js";
+import { fileSig } from "./file-cache.js";
+import { catalogLanguages, readCatalog } from "./locales.js";
+import { readManifest } from "./manifest.js";
+import { textfilePath, writeTextfile } from "./textfile.js";
+
+// These files configure the project and are not authored content.
+const reserved = new Set([
+    MANIFEST_FILE,
+    "docs.config.mjs",
+    "node_modules",
+    "dist",
+    "artifact",
+    "locales",
+]);
+export const managedFile = (file: string): boolean =>
+    localFile(file) && !reserved.has(file.split("/")[0] ?? "");
+
+export interface ProjectFile {
+    path: string;
+    size: number;
+    extension: string;
+}
+export const projectFiles = (root: string): ProjectFile[] => {
+    const result: ProjectFile[] = [];
+    const walk = (directory: string) => {
+        for (const entry of readdirSync(join(root, directory), { withFileTypes: true })) {
+            const path = directory ? `${directory}/${entry.name}` : entry.name;
+            if (!managedFile(path) || entry.isSymbolicLink()) continue;
+            if (entry.isDirectory()) walk(path);
+            else if (entry.isFile())
+                result.push({
+                    path,
+                    size: statSync(textfilePath(root, path)).size,
+                    extension: fileExtension(path),
+                });
+        }
+    };
+    walk("");
+    return result.sort((a, b) => a.path.localeCompare(b.path));
+};
+
+export const filesSnapshot = (root: string) => {
+    const manifest = readManifest(root);
+    if (manifest.errors.length) throw new Error(manifest.errors.join("\n"));
+    const files = projectFiles(root);
+    const layout: FileLayout = manifest.files ?? { defaultLayout: false, documents: {}, order: [] };
+    const rank = new Map(layout.order.map((path, index) => [path, index]));
+    files.sort(
+        (a, b) =>
+            (rank.get(a.path) ?? Infinity) - (rank.get(b.path) ?? Infinity) ||
+            a.path.localeCompare(b.path),
+    );
+    const hash = createHash("sha256");
+    hash.update(
+        existsSync(join(root, MANIFEST_FILE)) ? readFileSync(join(root, MANIFEST_FILE)) : "",
+    );
+    for (const file of files)
+        hash.update(file.path)
+            .update(String(statSync(textfilePath(root, file.path)).mtimeMs))
+            .update(String(file.size));
+    return {
+        files,
+        layout,
+        revision: hash.digest("hex"),
+        documents: Object.fromEntries(
+            flattenTree(manifest.tree).map(({ id }) => [docFile(id, layout), id]),
+        ),
+    };
+};
+
+export const uploadFile = (root: string, input: Record<string, unknown>): { file: string } => {
+    if (typeof input.name !== "string" || !managedFile(input.name) || input.name.includes("/"))
+        throw new Error("Invalid file name");
+    if (typeof input.data !== "string") throw new Error("Invalid file content");
+    const data = Buffer.from(input.data, "base64");
+    if (data.length > MAX_FILE_UPLOAD_BYTES) throw new Error("File exceeds 64 MiB");
+    if (data.toString("base64") !== input.data) throw new Error("Invalid file content");
+    const manifest = readManifest(root);
+    if (manifest.errors.length) throw new Error(manifest.errors.join("\n"));
+    const initial = manifest.files?.defaultLayout ? defaultFilePath(input.name) : input.name;
+    const extension = posix.extname(initial);
+    const stem = initial.slice(0, initial.length - extension.length);
+    let file = initial;
+    for (let index = 2; existsSync(textfilePath(root, file)); index++)
+        file = `${stem}-${index}${extension}`;
+    const path = textfilePath(root, file);
+    mkdirSync(dirname(path), { recursive: true });
+    const temp = join(dirname(path), `.upload-${randomUUID()}.tmp`);
+    try {
+        writeFileSync(temp, data, { flag: "wx" });
+        linkSync(temp, path);
+    } finally {
+        rmSync(temp, { force: true });
+    }
+    return { file };
+};
+
+const imageDestination = (source: string): number => {
+    let depth = 0;
+    for (let i = source.indexOf("["); i < source.length; i++) {
+        const char = source[i];
+        if (char === "\\") {
+            i++;
+            continue;
+        }
+        if (char === "`") {
+            const marker = /^`+/.exec(source.slice(i))?.[0] ?? "`";
+            const end = source.indexOf(marker, i + marker.length);
+            if (end >= 0) {
+                i = end + marker.length - 1;
+                continue;
+            }
+        }
+        if (char === "[") depth++;
+        if (char === "]" && --depth === 0) return source[i + 1] === "(" ? i + 2 : -1;
+    }
+    return -1;
+};
+
+/** Rewrite destinations only: examples, labels, titles and code stay byte-for-byte intact. */
+export const rewriteFileLinks = (raw: string, moves: ReadonlyMap<string, string>): string => {
+    const changes: { from: number; to: number; text: string }[] = [];
+    visit(parseMdast(raw), (node) => {
+        if (node.type === "containerDirective" && findDirective("container", node.name)?.raw)
+            return SKIP;
+        if (node.type !== "image" && node.type !== "link" && node.type !== "definition") return;
+        let file: string;
+        try {
+            file = parseFileReference(node.url).file.replace(/^(\.\/)+/, "");
+        } catch {
+            return;
+        }
+        if (isRemoteTextfile(file)) return;
+        const next = moves.get(file);
+        if (!next) return;
+        const from = node.position?.start.offset;
+        const to = node.position?.end.offset;
+        if (from === undefined || to === undefined)
+            throw new Error(`Cannot update reference: ${node.url}`);
+        const source = raw.slice(from, to);
+        const head =
+            node.type === "definition"
+                ? /^\[[\s\S]*?\]:\s*/.exec(source)?.[0].length
+                : node.type === "image"
+                  ? imageDestination(source)
+                  : source.indexOf(
+                        "](",
+                        Math.max(0, (node.children.at(-1)?.position?.end.offset ?? from) - from),
+                    ) + 2;
+        if (!head || head < 2) throw new Error(`Cannot update reference: ${node.url}`);
+        const start = head + (source.slice(head).match(/^\s*/)?.[0].length ?? 0);
+        let end = start;
+        if (source[start] === "<") end = source.indexOf(">", start) + 1;
+        else {
+            let depth = 0;
+            for (; end < source.length; end++) {
+                const ch = source[end];
+                if (ch === "\\") {
+                    end++;
+                    continue;
+                }
+                if (ch === "(") depth++;
+                if (ch === ")") {
+                    if (!depth) break;
+                    depth--;
+                }
+                if (/\s/.test(ch ?? "")) break;
+            }
+        }
+        if (end <= start) throw new Error(`Cannot update reference: ${node.url}`);
+        const check = parseMdast(`[x](${source.slice(start, end)})`).children[0];
+        if (
+            check?.type !== "paragraph" ||
+            check.children[0]?.type !== "link" ||
+            check.children[0].url !== node.url
+        )
+            throw new Error(`Cannot update reference: ${node.url}`);
+        const fragment = node.url.includes("#") ? node.url.slice(node.url.indexOf("#")) : "";
+        changes.push({ from: from + start, to: from + end, text: termFileUrl(next) + fragment });
+    });
+    for (const change of changes.sort((a, b) => b.from - a.from))
+        raw = raw.slice(0, change.from) + change.text + raw.slice(change.to);
+    return raw;
+};
+
+export const updateFiles = (root: string, input: Record<string, unknown>) => {
+    const snapshot = filesSnapshot(root);
+    if (input.revision !== snapshot.revision)
+        throw new Error("Files changed. Reload before retrying.");
+    const manifest = readManifest(root);
+    const layout = snapshot.layout;
+    const paths = snapshot.files.map((file) => file.path);
+    const moves = new Map<string, string>();
+    let order = [...paths];
+    if (input.action === "layout") {
+        if (typeof input.enabled !== "boolean") throw new Error("Invalid layout setting");
+        layout.defaultLayout = input.enabled;
+    } else if (input.action === "restructure") {
+        const taken = new Set(paths);
+        for (const file of paths) {
+            let target = defaultFilePath(file);
+            if (target === file) continue;
+            const ext = posix.extname(target);
+            const stem = target.slice(0, target.length - ext.length);
+            for (let index = 2; taken.has(target); index++) target = `${stem}-${index}${ext}`;
+            taken.add(target);
+            moves.set(file, target);
+        }
+    } else if (input.action === "rename") {
+        if (typeof input.file !== "string" || !paths.includes(input.file))
+            throw new Error("File not found");
+        if (!localFile(input.name) || input.name.includes("/"))
+            throw new Error("Invalid file name");
+        if (
+            flattenTree(manifest.tree).some(({ id }) => docFile(id, layout) === input.file) &&
+            !isDocumentFileName(input.name)
+        )
+            throw new Error("Enter a file name ending in .md");
+        const target = posix.join(posix.dirname(input.file), input.name);
+        if (!managedFile(target)) throw new Error("Invalid file name");
+        if (target !== input.file) moves.set(input.file, target);
+    } else if (input.action === "move") {
+        if (
+            !Array.isArray(input.paths) ||
+            !input.paths.length ||
+            input.paths.some((path) => !managedFile(path)) ||
+            typeof input.directory !== "string" ||
+            (input.directory && !managedFile(input.directory))
+        )
+            throw new Error("Invalid move");
+        const selected = (input.paths as string[]).filter(
+            (path, i, all) => !all.some((parent, j) => i !== j && path.startsWith(`${parent}/`)),
+        );
+        const directory = input.directory;
+        const picked = paths.filter((path) =>
+            selected.some((item) => path === item || path.startsWith(`${item}/`)),
+        );
+        if (
+            !picked.length ||
+            selected.some(
+                (path) => !picked.some((file) => file === path || file.startsWith(`${path}/`)),
+            )
+        )
+            throw new Error("File not found");
+        for (const item of selected) {
+            if (directory === item || directory.startsWith(`${item}/`))
+                throw new Error("Cannot move a folder into itself");
+            const target = directory
+                ? `${directory}/${posix.basename(item)}`
+                : posix.basename(item);
+            for (const file of picked.filter(
+                (path) => path === item || path.startsWith(`${item}/`),
+            )) {
+                const next = target + file.slice(item.length);
+                if (next !== file) moves.set(file, next);
+            }
+        }
+        order = paths.filter((path) => !picked.includes(path));
+        const before = input.before;
+        const index =
+            before === undefined
+                ? order.length
+                : order.findIndex((path) => path === before || path.startsWith(`${before}/`));
+        if (index < 0) throw new Error("Invalid drop position");
+        order.splice(index, 0, ...picked);
+    } else throw new Error("Unknown file action");
+    if (new Set(moves.values()).size !== moves.size) throw new Error("Duplicate destination");
+    for (const target of moves.values()) {
+        const path = textfilePath(root, target);
+        if (existsSync(path)) throw new Error(`File already exists: ${target}`);
+    }
+    for (const { id } of flattenTree(manifest.tree)) {
+        const file = docFile(id, layout);
+        if (moves.has(file)) layout.documents[id] = moves.get(file) as string;
+        const icon = docIconFile(id, layout);
+        if (moves.has(icon)) {
+            layout.icons ??= {};
+            layout.icons[id] = moves.get(icon) as string;
+        }
+    }
+    layout.order = order.map((file) => moves.get(file) ?? file);
+    const rawManifest = existsSync(join(root, MANIFEST_FILE))
+        ? readFileSync(join(root, MANIFEST_FILE), "utf8")
+        : null;
+    const parsed = parseDocument(rawManifest ?? "docs: []\n");
+    const yaml = isSeq(parsed.contents) ? new Document({ docs: parsed.toJS() }) : parsed;
+    yaml.set("files", layout);
+    if (manifest.icon && moves.has(manifest.icon)) yaml.set("icon", moves.get(manifest.icon));
+    const writes: { file: string; data: Buffer; base: Buffer | null; mode?: number }[] = [];
+    const links = new Map(moves);
+    for (const file of paths.filter((file) => file.endsWith(".md"))) {
+        const base = readFileSync(textfilePath(root, file));
+        const next = rewriteFileLinks(
+            new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(base),
+            moves,
+        );
+        const data = Buffer.from(next);
+        if (base.equals(data)) continue;
+        links.delete(file);
+        const target = moves.get(file) ?? file;
+        writes.push({
+            file: target,
+            data,
+            base: target === file ? base : null,
+            mode: statSync(textfilePath(root, file)).mode,
+        });
+    }
+    for (const lang of catalogLanguages(root)) {
+        const file = `locales/${lang}.json`;
+        const base = readFileSync(join(root, file));
+        const catalog = readCatalog(root, lang);
+        let changed = false;
+        for (const entry of Object.values(catalog)) {
+            const body = rewriteFileLinks(entry.body, moves);
+            changed ||= body !== entry.body;
+            entry.body = body;
+        }
+        if (changed)
+            writes.push({ file, base, data: Buffer.from(`${JSON.stringify(catalog, null, 2)}\n`) });
+    }
+    writes.push({
+        file: MANIFEST_FILE,
+        base: rawManifest === null ? null : Buffer.from(rawManifest),
+        data: Buffer.from(yaml.toString()),
+    });
+    const originalModes = new Map(
+        [...moves.keys()].map((file) => [file, statSync(textfilePath(root, file)).mode]),
+    );
+    const originals = new Map(
+        [...moves.keys()].map((file) => [
+            file,
+            {
+                signature: fileSig(textfilePath(root, file)),
+                data: links.has(file) ? undefined : readFileSync(textfilePath(root, file)),
+            },
+        ]),
+    );
+    const linked: [string, string][] = [];
+    const completed: typeof writes = [];
+    const removed: string[] = [];
+    try {
+        for (const [source, target] of links) {
+            const destination = textfilePath(root, target);
+            mkdirSync(dirname(destination), { recursive: true });
+            linkSync(textfilePath(root, source), destination);
+            linked.push([source, target]);
+        }
+        for (const write of writes) {
+            const path = textfilePath(root, write.file);
+            mkdirSync(dirname(path), { recursive: true });
+            if (write.base === null)
+                writeFileSync(path, write.data, { flag: "wx", mode: write.mode });
+            else if (
+                !writeTextfile(
+                    root,
+                    write.file,
+                    write.data.toString("utf8"),
+                    write.base.toString("utf8"),
+                )
+            )
+                throw new Error(`File changed: ${write.file}`);
+            completed.push(write);
+        }
+        for (const [file, base] of originals) {
+            if (fileSig(textfilePath(root, file)) !== base.signature)
+                throw new Error(`File changed: ${file}`);
+        }
+        for (const file of originals.keys()) {
+            unlinkSync(textfilePath(root, file));
+            removed.push(file);
+        }
+    } catch (error) {
+        for (const file of removed) {
+            const original = originals.get(file);
+            if (original?.data)
+                writeFileSync(textfilePath(root, file), original.data, {
+                    flag: "wx",
+                    mode: originalModes.get(file),
+                });
+            else linkSync(textfilePath(root, moves.get(file) as string), textfilePath(root, file));
+        }
+        for (const write of completed.reverse()) {
+            const path = textfilePath(root, write.file);
+            if (!readFileSync(path).equals(write.data)) continue;
+            if (write.base === null) unlinkSync(path);
+            else writeFileSync(path, write.base);
+        }
+        for (const [source, target] of linked) {
+            const src = textfilePath(root, source);
+            const dest = textfilePath(root, target);
+            if (existsSync(dest) && statSync(src).ino === statSync(dest).ino) unlinkSync(dest);
+        }
+        throw error;
+    }
+    for (const file of moves.keys()) {
+        let dir = posix.dirname(file);
+        while (dir !== ".") {
+            try {
+                rmdirSync(join(root, dir));
+            } catch {
+                break;
+            }
+            dir = posix.dirname(dir);
+        }
+    }
+    return filesSnapshot(root);
+};

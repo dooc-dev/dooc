@@ -2,6 +2,7 @@ import { cpSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { docFile, readManifest } from "./compiler/manifest.js";
 import { createTools, handleRpc } from "./mcp.js";
 
 const fixture = (): string => {
@@ -45,6 +46,7 @@ describe("mcp", () => {
         );
         expect(call(tools, "add_doc", { id: "new", title: "dup" }).isError).toBe(true);
         expect(call(tools, "add_doc", { id: "target", title: "Target" }).isError).toBe(false);
+        const targetFile = docFile("target", readManifest(root).files);
         const w = call(tools, "write_doc", {
             id: "new",
             content: '---\ntitle: "New"\n---\n\nmcp-search-fixture [target](doc:target)',
@@ -56,11 +58,13 @@ describe("mcp", () => {
         expect(call(tools, "move_doc", { id: "new" }).isError).toBe(false);
         expect(call(tools, "list_docs", {}).docs.at(-1)).toMatchObject({ id: "new", depth: 0 });
         expect(call(tools, "rename_doc", { id: "target", new_id: "b" }).updatedRefs).toBe(1);
-        expect(readFileSync(join(root, "content/new.md"), "utf8")).toContain("doc:b");
+        expect(
+            readFileSync(join(root, docFile("new", readManifest(root).files)), "utf8"),
+        ).toContain("doc:b");
         const blocked = call(tools, "delete_doc", { id: "b" });
         expect(blocked).toMatchObject({ isError: true, referencedBy: ["new.md"] });
         expect(call(tools, "delete_doc", { id: "b", force: true }).isError).toBe(false);
-        expect(existsSync(join(root, "content/b.md"))).toBe(false);
+        expect(existsSync(join(root, targetFile))).toBe(false);
         expect(call(tools, "check", {}).errors.length).toBeGreaterThan(0);
     });
 
@@ -69,11 +73,16 @@ describe("mcp", () => {
         const tools = createTools(root);
         const svg =
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><title>Fig.x</title></svg>';
-        expect(call(tools, "add_figure", { file: "X Fig.svg", text: svg }).file).toBe("x-fig.svg");
+        const added = call(tools, "add_figure", { file: "X Fig.svg", text: svg });
+        expect(added.file).toBe("x-fig.svg");
         expect(call(tools, "add_figure", { file: "x-fig.svg", text: svg }).file).toBe("x-fig.svg");
-        expect(call(tools, "read_figure", { name: "x-fig" }).kind).toBe("svg");
+        const path = added.path ?? `figures/${added.file}`;
+        const { name } = call(tools, "list_docs", {}).figures.find(
+            (figure: { file: string }) => figure.file === path,
+        );
+        expect(call(tools, "read_figure", { name }).kind).toBe("svg");
         expect(call(tools, "add_figure", { file: "y.svg" }).isError).toBe(true);
-        expect(call(tools, "delete_figure", { name: "x-fig" }).isError).toBe(false);
-        expect(existsSync(join(root, "figures/x-fig.svg"))).toBe(false);
+        expect(call(tools, "delete_figure", { name }).isError).toBe(false);
+        expect(existsSync(join(root, path))).toBe(false);
     });
 });

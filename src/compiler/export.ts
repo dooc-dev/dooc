@@ -7,6 +7,7 @@ import { isRemoteTextfile } from "../core/textfile.js";
 import { CODE_LANGUAGES_DIR } from "./code-languages.js";
 import { CONFIG_FILE } from "./config.js";
 import { collectRefs, parseDoc } from "./dialect.js";
+import { projectFiles } from "./files.js";
 import { catalogLanguages, readCatalog } from "./locales.js";
 import { readManifest } from "./manifest.js";
 import { readTextfile } from "./textfile.js";
@@ -48,23 +49,30 @@ export const exportEntries = (root: string): ZipEntry[] => {
                 .map((name) => ({ name, data: readFileSync(join(root, name)) })),
         ),
     ];
+    const known = new Set(entries.map((entry) => entry.name));
+    const layout = readManifest(root).files;
+    const mapped = new Set([...(layout?.order ?? []), ...Object.values(layout?.documents ?? {})]);
+    for (const file of projectFiles(root))
+        if ((file.path.startsWith("files/") || mapped.has(file.path)) && !known.has(file.path))
+            entries.push({ name: file.path, data: readFileSync(join(root, file.path)) });
     const bodies = [
         ...entries
-            .filter((entry) => entry.name.startsWith("content/") && entry.name.endsWith(".md"))
+            .filter((entry) => entry.name.endsWith(".md"))
             .map((entry) => entry.data.toString("utf8")),
         ...catalogLanguages(root).flatMap((lang) =>
             Object.values(readCatalog(root, lang)).map((entry) => entry.body),
         ),
     ];
     const included = new Set(entries.map((entry) => entry.name));
-    const icon = readManifest(root).icon;
+    const { icon, previews } = readManifest(root);
     if (icon && !included.has(posix.normalize(icon))) {
         const name = posix.normalize(icon);
         entries.push({ name, data: Buffer.from(readTextfile(root, icon), "utf8") });
         included.add(name);
     }
     for (const body of bodies) {
-        for (const file of collectRefs(parseDoc(body).root).textfiles) {
+        const refs = collectRefs(parseDoc(body, previews).root, previews);
+        for (const file of [...refs.textfiles, ...refs.terms]) {
             if (isRemoteTextfile(file)) continue;
             let text: string;
             try {

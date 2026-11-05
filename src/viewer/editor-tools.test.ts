@@ -252,7 +252,7 @@ describe("registered tools across page blocks", () => {
             "require('node:fs').writeSync(1,JSON.stringify([{message:'check',line:1,column:1}]))",
         );
         const original =
-            ":::figure(a.svg)\n\n- Item\n\n  ```js\n  x()\n  ```\n\n> ```js\n> x()\n> ```\n";
+            "![](figures/a.svg)\n\n- Item\n\n  ```js\n  x()\n  ```\n\n> ```js\n> x()\n> ```\n";
         const result = await validateCodeTools(root, original);
         let updated = original;
         for (const change of [...result.changes].reverse())

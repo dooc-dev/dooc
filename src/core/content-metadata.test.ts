@@ -34,7 +34,7 @@ describe("manifest", () => {
     it("round-trips a site title with nested or empty docs", () => {
         const title = '資料: "API" & <Guide>';
         for (const docs of [tree, []]) {
-            expect(parseManifestText(serializeManifest(docs, title))).toEqual({
+            expect(parseManifestText(serializeManifest(docs, { title }))).toEqual({
                 tree: docs,
                 title,
                 errors: [],
@@ -54,6 +54,10 @@ describe("manifest", () => {
         { icon: "https://example.com/logo.svg", docs: [] },
         { icon: "logo.png", docs: [] },
         { icon: 42, docs: [] },
+        { defaultLang: "日本語", docs: [] },
+        { defaultLang: "", docs: [] },
+        { defaultLang: 42, docs: [] },
+        { defaultLang: null, docs: [] },
         { title: " ", docs: [] },
         { title: 42, docs: [] },
         { title: null, docs: [] },
@@ -66,10 +70,29 @@ describe("manifest", () => {
 
     it("round-trips a file-based site icon with or without a title", () => {
         for (const title of [undefined, "Guide"]) {
-            expect(parseManifestText(serializeManifest(tree, title, "assets/logo.svg"))).toEqual({
+            expect(
+                parseManifestText(serializeManifest(tree, { title, icon: "icons/logo.svg" })),
+            ).toEqual({
                 tree,
                 ...(title ? { title } : {}),
-                icon: "assets/logo.svg",
+                icon: "icons/logo.svg",
+                errors: [],
+            });
+        }
+    });
+
+    it.each([
+        "logo.svg",
+        "files/svg/logo.svg",
+    ])("accepts icons in any project folder: %s", (icon) => {
+        expect(parseManifest({ icon, docs: [] }).errors).toEqual([]);
+    });
+
+    it("round-trips defaultLang without other site metadata", () => {
+        for (const defaultLang of ["jpn", "en", "pt-BR"]) {
+            expect(parseManifestText(serializeManifest(tree, { defaultLang }))).toEqual({
+                tree,
+                defaultLang,
                 errors: [],
             });
         }

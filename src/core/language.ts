@@ -5,7 +5,7 @@ import { iso6393To1 } from "iso-639-3";
 // they are always ASCII (blocks.ts slugify), whatever the language.
 //
 // The doc language is a BCP 47 tag: front-matter `lang`, else the site default
-// (docs.config.mjs `defaultLang`, else DEFAULT_LANG).
+// (manifest.yaml `defaultLang`, else DEFAULT_LANG).
 import type { TermEntry } from "./artifact-types.js";
 
 export const DEFAULT_LANG = "en";
@@ -40,8 +40,6 @@ export interface LanguageAdapter {
 
 /** Shape of `<docs root>/docs.config.mjs` (its default export). */
 export interface DocsConfig {
-    /** Language of docs without front-matter `lang`. Default: DEFAULT_LANG. */
-    defaultLang?: string;
     /** Extra adapters. They take precedence over the built-in ones with the same code. */
     languages?: LanguageAdapter[];
 }

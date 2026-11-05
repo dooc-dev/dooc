@@ -29,7 +29,7 @@ const blocks: Record<Block["type"], Block> = {
         lines: ["custom code"],
         lang: "custom-language",
         filename: "examples/sample.tdl",
-        range: "[1,3]",
+        range: "#L1-L3",
         unavailable: "missing",
     },
     table: { type: "table", headers: ["A"], rows: [["B"]], caption: "Table", collapsible: true },
@@ -98,6 +98,9 @@ describe("docs.json schema registry", () => {
         expect(canRenderGeneration(11, 10)).toBe(false);
         expect(canRenderGeneration(10, 11)).toBe(false);
         expect(canRenderGeneration(11, 11)).toBe(true);
+        expect(canRenderGeneration(17, 16)).toBe(false);
+        expect(canRenderGeneration(16, 17)).toBe(false);
+        expect(canRenderGeneration(18, 17)).toBe(true);
     });
     it("registers every versioned file, pins latest to GENERATION and rejects unknown versions", () => {
         const versions = listDocsJsonSchemas();
@@ -136,6 +139,22 @@ describe("docs.json schema registry", () => {
 });
 
 describe("validateDocsArtifact", () => {
+    it("validates new embed labels and line fragments while preserving the released range format", () => {
+        const current = { ...blocks.code, alt: "Example", range: "#L1-L3" };
+        expect(validateDocsArtifact(artifact([{ ...doc(), blocks: [current] }]))).toEqual([]);
+        expect(
+            validateDocsArtifact(artifact([{ ...doc(), blocks: [{ ...current, range: "[1,3]" }] }]))
+                .length,
+        ).toBeGreaterThan(0);
+        expect(
+            validateDocsArtifact({
+                generation: 14,
+                docs: [{ ...doc(), blocks: [{ ...blocks.code, range: "[1,3]" }] }],
+                terms: [],
+                figures: [],
+            }),
+        ).toEqual([]);
+    });
     it("rejects document descriptions in the current format while retaining released schemas", () => {
         const legacyDoc = { ...doc(), description: "Legacy description" };
         expect(validateDocsArtifact(artifact([legacyDoc])).join()).toContain("docs.json/docs/0");
