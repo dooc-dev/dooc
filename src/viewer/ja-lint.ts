@@ -18,8 +18,8 @@ const markdownPlugin = moduleInterop(markdownPluginModule) as unknown as Textlin
 // Style rules (sentence length, number of commas, consecutive kanji length, desu/masu
 // consistency, etc.) are excluded (this tool is for typo highlighting, not style checking).
 const TYPO_RULE_IDS = [
-    "no-doubled-joshi", // duplicated particles (e.g. 「私は彼は」)
-    "no-doubled-conjunctive-particle-ga", // repeated adversative 「が」
+    "no-doubled-joshi", // duplicated particles
+    "no-doubled-conjunctive-particle-ga", // repeated adversative particles
     "no-doubled-conjunction", // repeated identical conjunctions
     "no-dropping-the-ra", // ra-dropping in potential verb forms (ra-nuki kotoba)
     "no-double-negative-ja", // double negatives
