@@ -1,6 +1,6 @@
 {
     "name": "@sasaki-s-sci/dooc",
-    "version": "0.0.16",
+    "version": "0.0.17",
     "description": "A docs toolkit that compiles an md / svg / html layout convention into docs.json and renders / edits it. The package export is core (docs.json types + routing / HTML rendering / interactive schema graph UI)",
     "type": "module",
     "files": [
