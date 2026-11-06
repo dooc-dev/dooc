@@ -2,27 +2,27 @@
 class Dooc < Formula
   desc "Compile, preview, and edit documentation"
   homepage "https://github.com/sasaki-s-sci/dooc"
-  version "0.0.18"
+  version "0.0.19"
 
   on_macos do
     on_arm do
-      url "https://github.com/sasaki-s-sci/dooc/releases/download/v0.0.18/dooc-darwin-arm64.tar.gz"
-      sha256 "d44bf9a0ea06c4ed2268ec5543d925c5c33e440fbc5495a11abc561f9111530f"
+      url "https://github.com/sasaki-s-sci/dooc/releases/download/v0.0.19/dooc-darwin-arm64.tar.gz"
+      sha256 "77238ebe76a62d73149b4c5aae90faa3dc920abf19d2cc4230a603d90dbed3a0"
     end
     on_intel do
-      url "https://github.com/sasaki-s-sci/dooc/releases/download/v0.0.18/dooc-darwin-x64.tar.gz"
-      sha256 "e6559a8f872331d95959441010b00291c4edacbeb6a471592e491024cb6ebe6f"
+      url "https://github.com/sasaki-s-sci/dooc/releases/download/v0.0.19/dooc-darwin-x64.tar.gz"
+      sha256 "5f565a55c164b2d989c40759793f37aa75a9d53fbea28d5c01ae315350699035"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/sasaki-s-sci/dooc/releases/download/v0.0.18/dooc-linux-arm64.tar.gz"
-      sha256 "00514e4eaa0716de48aab16be6b691378e27deee6888d486b1965dcd2c57d619"
+      url "https://github.com/sasaki-s-sci/dooc/releases/download/v0.0.19/dooc-linux-arm64.tar.gz"
+      sha256 "f009e9afaf8f5b9a35785b6ce62bd80ddd02cdf32dd8be2302fcfb4bfd9c285a"
     end
     on_intel do
-      url "https://github.com/sasaki-s-sci/dooc/releases/download/v0.0.18/dooc-linux-x64.tar.gz"
-      sha256 "3efa75a54f9ca312e388902f876abbaf415e225157eb3f1d51ac01166864cf11"
+      url "https://github.com/sasaki-s-sci/dooc/releases/download/v0.0.19/dooc-linux-x64.tar.gz"
+      sha256 "90374b13e5eb7df8ca9163a1e6e19086ea2c1f5c7d4837dd02e687d54c82aa95"
     end
   end
 
