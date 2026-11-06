@@ -13,34 +13,28 @@ import { SCHEMA_SCALAR_TYPES } from "../core/schema-graph.js";
 export const schemaCompletion = (ctx: CompletionContext): CompletionResult | null | undefined => {
     const { doc } = ctx.state;
     const line = doc.lineAt(ctx.pos);
-    let container: string | undefined;
     let start = 0;
-    let fence: { char: string; length: number } | undefined;
+    let fence: { char: string; length: number; language: string } | undefined;
     for (let n = 1; n < line.number; n++) {
-        const text = doc.line(n).text;
-        if (container) {
-            if (/^\s*:{3,}\s*$/.test(text)) container = undefined;
-            continue;
-        }
-        const code = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(text);
-        if (code) {
-            const marker = code[1] ?? "";
-            if (!fence) fence = { char: marker.charAt(0), length: marker.length };
-            else if (marker[0] === fence.char && marker.length >= fence.length && !code[2]?.trim())
-                fence = undefined;
-            continue;
-        }
-        if (fence) continue;
-        const open = /^\s*:{3,}([\w-]+)\b/.exec(text);
-        if (open) {
-            container = open[1];
+        const code = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(doc.line(n).text);
+        if (!code) continue;
+        const marker = code[1] ?? "";
+        if (!fence) {
+            fence = {
+                char: marker[0] ?? "",
+                length: marker.length,
+                language: code[2]?.trim().split(/\s/)[0] ?? "",
+            };
             start = n + 1;
+        } else if (marker[0] === fence.char && marker.length >= fence.length && !code[2]?.trim()) {
+            fence = undefined;
         }
     }
-    if (container !== "schema") return undefined;
+    if (fence?.language !== "schemath") return undefined;
     let end = doc.length;
     for (let n = start; n <= doc.lines; n++) {
-        if (/^\s*:{3,}\s*$/.test(doc.line(n).text)) {
+        const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(doc.line(n).text)?.[1];
+        if (close && close[0] === fence.char && close.length >= fence.length) {
             end = doc.line(n).from;
             break;
         }

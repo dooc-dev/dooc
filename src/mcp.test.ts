@@ -49,7 +49,7 @@ describe("mcp", () => {
         const targetFile = docFile("target", readManifest(root).files);
         const w = call(tools, "write_doc", {
             id: "new",
-            content: '---\ntitle: "New"\n---\n\nmcp-search-fixture [target](doc:target)',
+            content: `---\ntitle: "New"\n---\n\nmcp-search-fixture [target](${targetFile})`,
         });
         expect(w.errors).toEqual([]);
         expect(call(tools, "search_docs", { query: "mcp-search-fixture" })).toMatchObject({
@@ -57,12 +57,15 @@ describe("mcp", () => {
         });
         expect(call(tools, "move_doc", { id: "new" }).isError).toBe(false);
         expect(call(tools, "list_docs", {}).docs.at(-1)).toMatchObject({ id: "new", depth: 0 });
-        expect(call(tools, "rename_doc", { id: "target", new_id: "b" }).updatedRefs).toBe(1);
+        expect(call(tools, "rename_doc", { id: "target", new_id: "b" }).updatedRefs).toBe(0);
         expect(
             readFileSync(join(root, docFile("new", readManifest(root).files)), "utf8"),
-        ).toContain("doc:b");
+        ).toContain(targetFile);
         const blocked = call(tools, "delete_doc", { id: "b" });
-        expect(blocked).toMatchObject({ isError: true, referencedBy: ["new.md"] });
+        expect(blocked).toMatchObject({
+            isError: true,
+            referencedBy: [docFile("new", readManifest(root).files)],
+        });
         expect(call(tools, "delete_doc", { id: "b", force: true }).isError).toBe(false);
         expect(existsSync(join(root, targetFile))).toBe(false);
         expect(call(tools, "check", {}).errors.length).toBeGreaterThan(0);

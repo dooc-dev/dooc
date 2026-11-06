@@ -26,7 +26,9 @@ export const searchIndex = (site: Site): SearchSection[] => {
             .map((item) =>
                 typeof item === "string"
                     ? plain(item)
-                    : `${plain(item.text)} ${list(item.children)}`,
+                    : "blocks" in item
+                      ? item.blocks.map(text).join(" ")
+                      : `${plain(item.text)} ${list(item.children)}`,
             )
             .join(" ");
     const text = (block: Block): string => {
@@ -34,6 +36,8 @@ export const searchIndex = (site: Site): SearchSection[] => {
             case "h":
             case "p":
                 return plain(block.text);
+            case "quote":
+                return block.blocks.map(text).join(" ");
             case "list":
                 return list(block.items);
             case "code":

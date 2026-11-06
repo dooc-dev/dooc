@@ -53,6 +53,51 @@ export const remoteTextfileSource = (
 
 // shortcut: cache remote reads for one minute; use explicit reload for immediate branch updates.
 const cache = new Map<string, { expires: number; result: Buffer | TextfileUnavailable }>();
+const pending = new Map<string, Promise<Buffer>>();
+
+/** The viewer fetches in the background; the compiler reuses the completed cache entry. */
+export const readRemoteTextfileAsync = async (
+    file: string,
+    domains: readonly string[],
+    refresh = false,
+): Promise<Buffer> => {
+    allowedPreviewUrl(file, domains);
+    const source = remoteTextfileSource(file);
+    if (source.ref)
+        throw new Error(
+            "Git repositories require a dedicated preview protocol; use a public HTTPS file URL",
+        );
+    allowedPreviewUrl(source.url, domains);
+    const cached = cache.get(file);
+    if (!refresh && cached && cached.expires > Date.now()) {
+        if (cached.result instanceof Error) throw cached.result;
+        return cached.result;
+    }
+    const active = pending.get(file);
+    if (active) return active;
+    const task = (async () => {
+        let result: Buffer | TextfileUnavailable;
+        try {
+            result = await fetchPublicFile(source.url);
+        } catch (error) {
+            if ((error as Error).message === "BLOCKED")
+                throw new Error("External previews require a public network address");
+            result = new TextfileUnavailable(
+                (error as Error).message === "NOT_FOUND" ? "missing" : "unreachable",
+            );
+        }
+        if (cache.size >= 64) cache.clear();
+        cache.set(file, { result, expires: Date.now() + 60000 });
+        if (result instanceof Error) throw result;
+        return result;
+    })();
+    pending.set(file, task);
+    try {
+        return await task;
+    } finally {
+        pending.delete(file);
+    }
+};
 
 export const readRemoteTextfile = (
     file: string,

@@ -1,13 +1,22 @@
+import * as fs from "node:fs";
 import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { classifyChange, createHmrHub, hmrClientScript, sseFrame, watchProject } from "./hmr.js";
+
+const assets = vi.hoisted(() => ({ prebuilt: false }));
+vi.mock("./assets.js", () => assets);
+vi.mock("node:fs", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("node:fs")>();
+    return { ...actual, watch: vi.fn(actual.watch) };
+});
 
 describe("classifyChange", () => {
     it("content bodies / manifest and figures count as content", () => {
         expect(classifyChange("content/setup.md")).toBe("content");
-        expect(classifyChange("manifest.yaml")).toBe("content");
+        expect(classifyChange("dooc.yaml")).toBe("content");
+        expect(classifyChange("locales/eng/content/setup.md")).toBe("content");
         expect(classifyChange("figures/shot.png")).toBe("content");
         expect(classifyChange("figures/system-overview.svg")).toBe("content");
         expect(classifyChange("figures/anim.html")).toBe("content");
@@ -30,7 +39,6 @@ describe("classifyChange", () => {
         expect(classifyChange("src/core/schema-graph.ts")).toBeUndefined();
         // Editor temp files / generated output.
         expect(classifyChange("content/guide/setup.md.swp")).toBeUndefined();
-        expect(classifyChange("artifact/docs.json")).toBeUndefined();
         expect(classifyChange("dist/index.js")).toBeUndefined();
     });
 
@@ -113,6 +121,27 @@ describe("hmrClientScript", () => {
 });
 
 describe("watchProject", () => {
+    it.each([
+        true,
+        false,
+    ])("watches application sources only in development (prebuilt=%s)", (prebuilt) => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-watch-mode-"));
+        mkdirSync(join(root, "src"));
+        assets.prebuilt = prebuilt;
+        const watch = vi.mocked(fs.watch);
+        watch.mockClear();
+        const watcher = watchProject(root, root, () => {});
+        try {
+            const paths = watch.mock.calls.map(([path]) => path);
+            expect(paths).toContain(root);
+            expect(paths.includes(join(root, "src"))).toBe(!prebuilt);
+        } finally {
+            watcher.close();
+            assets.prebuilt = false;
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("watches referenced files through edits, atomic replacement, deletion and creation", async () => {
         const root = mkdtempSync(join(tmpdir(), "docs-hmr-files-"));
         mkdirSync(join(root, "examples"));
@@ -154,11 +183,11 @@ describe("watchProject", () => {
             writeFileSync(join(root, "figures/x.svg"), "<svg/>");
             writeFileSync(join(root, "src/serve.ts"), "// ignored");
             writeFileSync(join(root, "manifest.tmp"), "- a\n");
-            renameSync(join(root, "manifest.tmp"), join(root, "manifest.yaml"));
+            renameSync(join(root, "manifest.tmp"), join(root, "dooc.yaml"));
             await new Promise((r) => setTimeout(r, 400));
             const content = seen.filter((e) => e.kind === "content").flatMap((e) => e.files);
             expect(new Set(content)).toEqual(
-                new Set(["content/dev/10-a.md", "figures/x.svg", "manifest.yaml"]),
+                new Set(["content/dev/10-a.md", "figures/x.svg", "dooc.yaml"]),
             );
             expect(seen.some((e) => e.files.some((f) => f.endsWith("serve.ts")))).toBe(false);
         } finally {

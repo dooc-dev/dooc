@@ -24,6 +24,20 @@ afterEach(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
+it("yields while reading a large local file and returns the complete source", async () => {
+    const root = fixture();
+    const source = "large file\n".repeat(200_000);
+    writeFileSync(join(root, "large.txt"), source);
+    let completed = false;
+    const loading = textfileResponse(root, { action: "read", file: "large.txt" }).then((result) => {
+        completed = true;
+        return result;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(completed).toBe(false);
+    expect((await loading).body.content).toBe(source);
+});
+
 it("accepts only local UTF-8 draft overrides without writing them", () => {
     const root = fixture();
     expect(previewTextfiles(root, { "./new.rs": "draft 🦀" })).toEqual(
@@ -43,44 +57,46 @@ it("accepts only local UTF-8 draft overrides without writing them", () => {
     }
 });
 
-it("reads, creates nested UTF-8 files and saves edits without changing line endings or permissions", () => {
+it("reads, creates nested UTF-8 files and saves edits without changing line endings or permissions", async () => {
     const root = fixture();
     const file = "examples/日本語/hello.rs";
     const source = "// 日本語 🦀\r\nfn main() {}\r\n";
-    expect(textfileResponse(root, { action: "read", file })).toEqual({
+    expect(await textfileResponse(root, { action: "read", file })).toEqual({
         status: 200,
         body: { content: null },
     });
     expect(
-        textfileResponse(root, { action: "save", file, content: source, base: null }).status,
+        (await textfileResponse(root, { action: "save", file, content: source, base: null }))
+            .status,
     ).toBe(200);
-    expect(textfileResponse(root, { action: "read", file }).body.content).toBe(source);
+    expect((await textfileResponse(root, { action: "read", file })).body.content).toBe(source);
     chmodSync(join(root, file), 0o640);
-    expect(textfileResponse(root, { action: "save", file, content: "", base: source }).status).toBe(
-        200,
-    );
+    expect(
+        (await textfileResponse(root, { action: "save", file, content: "", base: source })).status,
+    ).toBe(200);
     expect(readFileSync(join(root, file), "utf8")).toBe("");
     expect(statSync(join(root, file)).mode & 0o777).toBe(0o640);
 });
 
-it("does not overwrite files created, edited or deleted after they were opened", () => {
+it("does not overwrite files created, edited or deleted after they were opened", async () => {
     const root = fixture();
     const file = "hello.rs";
     writeFileSync(join(root, file), "external");
     for (const base of [null, "old"]) {
-        expect(textfileResponse(root, { action: "save", file, content: "mine", base }).status).toBe(
-            409,
-        );
+        expect(
+            (await textfileResponse(root, { action: "save", file, content: "mine", base })).status,
+        ).toBe(409);
         expect(readFileSync(join(root, file), "utf8")).toBe("external");
     }
     rmSync(join(root, file));
     expect(
-        textfileResponse(root, { action: "save", file, content: "mine", base: "external" }).status,
+        (await textfileResponse(root, { action: "save", file, content: "mine", base: "external" }))
+            .status,
     ).toBe(409);
     expect(existsSync(join(root, file))).toBe(false);
 });
 
-it("rejects outside paths, outside symlinks, broken symlinks, binary files and invalid requests", () => {
+it("rejects outside paths, outside symlinks, broken symlinks, binary files and invalid requests", async () => {
     const root = fixture();
     const outside = fixture();
     writeFileSync(join(outside, "secret"), "outside");
@@ -102,7 +118,8 @@ it("rejects outside paths, outside symlinks, broken symlinks, binary files and i
     ]) {
         for (const action of ["read", "save"]) {
             expect(
-                textfileResponse(root, { action, file, content: "overwrite", base: null }).status,
+                (await textfileResponse(root, { action, file, content: "overwrite", base: null }))
+                    .status,
                 `${action} ${file}`,
             ).toBe(400);
         }
@@ -119,18 +136,26 @@ it("rejects outside paths, outside symlinks, broken symlinks, binary files and i
         { file: "a", action: "save", content: "\0", base: null },
         { file: "a", action: "save", content: "\ud800", base: null },
     ])
-        expect(textfileResponse(root, input).status).toBe(400);
+        expect((await textfileResponse(root, input)).status).toBe(400);
     expect(existsSync(join(root, "a"))).toBe(false);
 });
 
-it("allows symlinks within the root while preserving the link itself", () => {
+it("allows symlinks within the root while preserving the link itself", async () => {
     const root = fixture();
     writeFileSync(join(root, "actual.rs"), "old");
     symlinkSync(join(root, "actual.rs"), join(root, "alias.rs"));
     expect(
-        textfileResponse(root, { action: "save", file: "alias.rs", content: "new", base: "old" })
-            .status,
+        (
+            await textfileResponse(root, {
+                action: "save",
+                file: "alias.rs",
+                content: "new",
+                base: "old",
+            })
+        ).status,
     ).toBe(200);
     expect(readFileSync(join(root, "actual.rs"), "utf8")).toBe("new");
-    expect(textfileResponse(root, { action: "read", file: "alias.rs" }).body.content).toBe("new");
+    expect((await textfileResponse(root, { action: "read", file: "alias.rs" })).body.content).toBe(
+        "new",
+    );
 });

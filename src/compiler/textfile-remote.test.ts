@@ -6,19 +6,21 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { blocksHtml } from "../core/html.js";
 import { textfileName } from "../core/textfile.js";
 import { textfileResponse } from "../viewer/textfile.js";
-import { compileSite, writeArtifact } from "./compile.js";
+import { compileSite } from "./compile.js";
 import { collectRefs, parseDoc } from "./dialect.js";
 import { exportEntries } from "./export.js";
 import { formatMarkdown } from "./format.js";
+import { fetchPublicFile } from "./public-file.js";
 import { readTextfile } from "./textfile.js";
 import { remoteTextfileSource } from "./textfile-remote.js";
 
 vi.mock("node:child_process", () => ({ execFileSync: vi.fn() }));
+vi.mock("./public-file.js", () => ({ fetchPublicFile: vi.fn() }));
 let root: string;
 const rust = 'fn main() {\n    println!("hello");\n}\n';
 const manifest = (domains: string[]) =>
     writeFileSync(
-        join(root, "manifest.yaml"),
+        join(root, "dooc.yaml"),
         `docs: [sample]\npreviews:\n  domains: ${JSON.stringify(domains)}\n`,
     );
 
@@ -27,6 +29,7 @@ beforeEach(() => {
     mkdirSync(join(root, "content"));
     manifest(["example.com"]);
     vi.mocked(execFileSync).mockReset().mockReturnValue(Buffer.from(rust));
+    vi.mocked(fetchPublicFile).mockReset().mockResolvedValue(Buffer.from(rust));
 });
 afterEach(() => {
     rmSync(root, { recursive: true, force: true });
@@ -134,7 +137,7 @@ it("bakes permitted remote excerpts into exports while preserving source URLs", 
     expect(collectRefs(parseDoc(formatMarkdown(body)).root).textfiles).toEqual([url]);
     const compiled = compileSite(root);
     expect(compiled.errors).toEqual([]);
-    expect(compiled.artifact.docs[0]?.blocks).toMatchObject([
+    expect(compiled.docs[0]?.blocks).toMatchObject([
         {
             type: "code",
             filename: url,
@@ -143,24 +146,63 @@ it("bakes permitted remote excerpts into exports while preserving source URLs", 
             lines: ['    println!("hello");'],
         },
     ]);
-    expect(blocksHtml(compiled.artifact.docs[0]?.blocks ?? [])).toContain(
+    expect(blocksHtml(compiled.docs[0]?.blocks ?? [])).toContain(
         'class="codeblk-filename">export.rs</span>',
     );
-    expect(writeArtifact(compiled, join(root, "artifact"))).toBe(true);
     expect(exportEntries(root).map((entry) => entry.name)).toEqual([
-        "manifest.yaml",
+        "dooc.yaml",
         "content/sample.md",
     ]);
     manifest([]);
     expect(compileSite(root).errors.join()).toContain("Domain is not allowed");
 });
 
-it("enforces the same policy in the editor and keeps remote content read-only", () => {
+it("enforces the same policy in the editor and keeps remote content read-only", async () => {
     const file = "https://example.com/editor.rs";
-    expect(textfileResponse(root, { action: "read", file }).body.content).toBe(rust);
+    expect((await textfileResponse(root, { action: "read", file })).body.content).toBe(rust);
     manifest([]);
-    expect(textfileResponse(root, { action: "read", file }).status).toBe(400);
+    expect((await textfileResponse(root, { action: "read", file })).status).toBe(400);
     expect(
-        textfileResponse(root, { action: "save", file, content: "overwrite", base: rust }),
+        await textfileResponse(root, { action: "save", file, content: "overwrite", base: rust }),
     ).toEqual({ status: 400, body: { error: "Remote files are read-only" } });
+});
+
+it("shares an asynchronous reload and lets the compiler reuse the completed download", async () => {
+    const file = "https://example.com/slow-reload.rs";
+    let finish!: (data: Buffer) => void;
+    vi.mocked(fetchPublicFile).mockImplementationOnce(
+        () =>
+            new Promise((resolve) => {
+                finish = resolve;
+            }),
+    );
+    const first = textfileResponse(root, { action: "read", file });
+    const second = textfileResponse(root, { action: "read", file });
+    expect(fetchPublicFile).toHaveBeenCalledTimes(1);
+    expect(execFileSync).not.toHaveBeenCalled();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    finish(Buffer.from(rust));
+    expect((await first).body.content).toBe(rust);
+    expect((await second).body.content).toBe(rust);
+    expect(readTextfile(root, file)).toBe(rust);
+    expect(execFileSync).not.toHaveBeenCalled();
+});
+
+it("preserves missing-file and blocked-address handling during asynchronous reloads", async () => {
+    vi.mocked(fetchPublicFile).mockRejectedValueOnce(new Error("NOT_FOUND"));
+    expect(
+        await textfileResponse(root, {
+            action: "read",
+            file: "https://example.com/async-missing.rs",
+        }),
+    ).toEqual({ status: 200, body: { content: null } });
+    vi.mocked(fetchPublicFile).mockRejectedValueOnce(new Error("BLOCKED"));
+    expect(
+        (
+            await textfileResponse(root, {
+                action: "read",
+                file: "https://example.com/async-blocked.rs",
+            })
+        ).body.error,
+    ).toContain("public network address");
 });

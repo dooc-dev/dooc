@@ -10,11 +10,12 @@ import {
     statSync,
     writeFileSync,
 } from "node:fs";
+import { open, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isRemoteTextfile, parseTextfileRange } from "../core/textfile.js";
 
 import { readManifest } from "./manifest.js";
-import { readRemoteTextfile } from "./textfile-remote.js";
+import { readRemoteTextfile, readRemoteTextfileAsync } from "./textfile-remote.js";
 
 export { parseTextfileRange } from "../core/textfile.js";
 
@@ -72,9 +73,36 @@ export const readTextfile = (root: string, file: string, refresh = false): strin
         if (!statSync(path).isFile()) throw new Error("expected a regular UTF-8 text file");
         data = readFileSync(path);
     }
+    return decodeTextfile(data);
+};
+
+const decodeTextfile = (data: Uint8Array): string => {
     const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(data);
     if (text.includes("\0")) throw new Error("expected a UTF-8 text file, not binary data");
     return text;
+};
+
+export const readTextfileAsync = async (
+    root: string,
+    file: string,
+    refresh = false,
+): Promise<string> => {
+    if (isRemoteTextfile(file)) {
+        const manifest = readManifest(root);
+        if (manifest.errors.length) throw new Error(manifest.errors.join("\n"));
+        return decodeTextfile(
+            await readRemoteTextfileAsync(file, manifest.previews?.domains ?? [], refresh),
+        );
+    }
+    const path = textfilePath(root, file);
+    if (!(await stat(path)).isFile()) throw new Error("expected a regular UTF-8 text file");
+    const handle = await open(path, "r");
+    try {
+        if (!(await handle.stat()).isFile()) throw new Error("expected a regular UTF-8 text file");
+        return decodeTextfile(await handle.readFile());
+    } finally {
+        await handle.close();
+    }
 };
 
 /** Compare before writing; null means create only, never overwrite an existing file. */

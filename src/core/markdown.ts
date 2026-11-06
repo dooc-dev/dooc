@@ -1,17 +1,17 @@
-import type { Image, Root, RootContent } from "mdast";
-import remarkDirective from "remark-directive";
+import type { Image, Link, List as MdList, PhrasingContent, Root, RootContent } from "mdast";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
+import remarkStringify from "remark-stringify";
 import { unified } from "unified";
-import { SKIP, visit } from "unist-util-visit";
-import { findDirective } from "./taxonomy.js";
+import { visit } from "unist-util-visit";
+import type { Block, ListItem } from "./blocks.js";
+import { parseFigureLink } from "./file-embed.js";
+import { parseDocLink } from "./routing.js";
+import { parseTermReference, termFileUrl } from "./term-reference.js";
 
-const processor = unified()
-    .use(remarkParse)
-    .use(remarkFrontmatter)
-    .use(remarkGfm)
-    .use(remarkDirective);
+const processor = unified().use(remarkParse).use(remarkFrontmatter).use(remarkGfm);
+const inlinePrinter = unified().use(remarkGfm).use(remarkStringify);
 
 export const parseMdast = (raw: string): Root => processor.parse(raw);
 
@@ -23,6 +23,15 @@ export const standaloneImages = (node: RootContent): Image[] =>
     )
         ? node.children.filter((child): child is Image => child.type === "image")
         : [];
+
+export const embeddedImages = (root: Root): Image[] => {
+    const images: Image[] = [];
+    visit(root, "paragraph", (node, _index, parent) => {
+        if (parent?.type === "root" || parent?.type === "blockquote")
+            images.push(...standaloneImages(node));
+    });
+    return images;
+};
 
 export const offsetAt = (body: string, line: number, column: number): number =>
     body
@@ -55,8 +64,6 @@ export function codeBlockAt(body: string, position: number) {
           }
         | undefined;
     visit(tree, (node, _index, parent) => {
-        if (node.type === "containerDirective" && findDirective("container", node.name)?.raw)
-            return SKIP;
         if (node.type !== "code") return;
         const start = node.position
             ? offsetAt(body, node.position.start.line, node.position.start.column)
@@ -109,3 +116,62 @@ export function codeBlockAt(body: string, position: number) {
     if (!block) throw new Error("Place the cursor inside a fenced code block");
     return block;
 }
+
+/** Keep inline content as standard Markdown, including escapes and nested emphasis. */
+export const inlineToText = (nodes: PhrasingContent[]): string => {
+    const root: Root = {
+        type: "root",
+        children: [{ type: "paragraph", children: structuredClone(nodes) }],
+    };
+    visit(root, "link", (node) => {
+        try {
+            const file = parseTermReference(node.url);
+            if (file) node.url = termFileUrl(file);
+            const ref = parseDocLink(node.url) ?? parseFigureLink(node.url);
+            if (ref)
+                node.url =
+                    termFileUrl(ref.file) +
+                    (ref.fragment ? `#${encodeURIComponent(ref.fragment)}` : "");
+        } catch {
+            /* Reported by validation. */
+        }
+    });
+    return inlinePrinter.stringify(root).replace(/\n$/, "");
+};
+
+export const listItems = (n: MdList, convert?: (nodes: RootContent[]) => Block[]): ListItem[] =>
+    n.children.map((li) => {
+        if (convert && li.children.some((child) => child.type === "blockquote"))
+            return { blocks: convert(li.children) };
+        const text = li.children
+            .filter((c) => c.type === "paragraph")
+            .map((c) => inlineToText(c.children))
+            .join("");
+        const nested = li.children.filter((c) => c.type === "list") as MdList[];
+        if (nested.length === 0) {
+            return text;
+        }
+        return {
+            text,
+            children: nested.flatMap((c) => listItems(c, convert)),
+            ...(nested[0]?.ordered ? { ordered: true } : {}),
+        };
+    });
+
+/** Links inside callouts are authored Markdown; other code fences remain opaque. */
+export const contentLinks = (root: Root): Link[] => {
+    const links: Link[] = [];
+    visit(root, (node) => {
+        if (node.type === "link") links.push(node);
+        if (node.type === "code" && node.lang === "callouth") {
+            for (const link of contentLinks(parseMdast(node.value))) {
+                if (link.position) {
+                    link.position.start.line += node.position?.start.line ?? 0;
+                    link.position.end.line += node.position?.start.line ?? 0;
+                }
+                links.push(link);
+            }
+        }
+    });
+    return links;
+};

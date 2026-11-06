@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { TermEntry } from "./artifact-types.js";
 import { slugify } from "./blocks.js";
+import type { TermEntry } from "./content-types.js";
 import { type LanguageAdapter, resolveLanguage, termComparator } from "./language.js";
 import { ja } from "./languages/ja.js";
 

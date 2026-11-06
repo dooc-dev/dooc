@@ -80,7 +80,7 @@ export const parseFileLayout = (value: unknown): FileLayout => {
     )
         throw new Error("Invalid file paths or order");
     return {
-        defaultLayout: v.defaultLayout === true,
+        defaultLayout: v.defaultLayout !== false,
         documents: documents as Record<string, string>,
         order,
         ...(icons ? { icons: icons as Record<string, string> } : {}),

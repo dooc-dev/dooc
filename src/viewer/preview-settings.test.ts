@@ -19,7 +19,7 @@ it.each([
     "- guide\n",
     "# Site\ntitle: Docs\ndocs:\n  - guide # Keep\n",
 ])("edits registrations without losing the document tree: %s", (raw) => {
-    if (raw) writeFileSync(join(root, "manifest.yaml"), raw);
+    if (raw) writeFileSync(join(root, "dooc.yaml"), raw);
     expect(previewSettingsResponse(root, { action: "read" })).toEqual({
         status: 200,
         body: { base: raw, settings: defaultPreviewSettings() },
@@ -28,7 +28,7 @@ it.each([
     settings.domains = ["data.example.com"];
     const saved = previewSettingsResponse(root, { action: "save", base: raw, settings });
     expect(saved.status).toBe(200);
-    const text = readFileSync(join(root, "manifest.yaml"), "utf8");
+    const text = readFileSync(join(root, "dooc.yaml"), "utf8");
     expect(parse(text)).toMatchObject({ docs: raw ? ["guide"] : [], previews: settings });
     if (raw?.startsWith("#")) {
         expect(text).toContain("# Site");
@@ -56,7 +56,7 @@ it("preserves registrations through add, move, rename and delete", () => {
 });
 
 it("refuses stale writes, invalid registrations and malformed manifests without touching disk", () => {
-    const path = join(root, "manifest.yaml");
+    const path = join(root, "dooc.yaml");
     const raw = "title: Docs\ndocs: []\n";
     writeFileSync(path, raw);
     expect(previewSettingsResponse(root, { action: "save", base: null, settings: {} }).status).toBe(

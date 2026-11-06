@@ -21,7 +21,7 @@ const fixture = (manifest = "- one\n"): string => {
     roots.push(root);
     mkdirSync(join(root, "content"));
     writeFileSync(join(root, "content/one.md"), "---\ntitle: One\n---\n");
-    writeFileSync(join(root, "manifest.yaml"), manifest);
+    writeFileSync(join(root, "dooc.yaml"), manifest);
     return root;
 };
 const data = Buffer.from('<svg viewBox="0 0 20 10"><path d="M0 0h20"/></svg>').toString("base64");
@@ -34,38 +34,47 @@ it("saves a square site SVG while preserving title, docs, comments and preview s
         "# Keep this\ntitle: Guide\ndefaultLang: jpn\ndocs: [one]\npreviews:\n  domains: [example.com]\n",
     );
     expect(siteIconResponse(root, { data }).status).toBe(200);
-    const raw = readFileSync(join(root, "manifest.yaml"), "utf8");
+    const raw = readFileSync(join(root, "dooc.yaml"), "utf8");
     expect(raw).toContain("# Keep this");
     expect(parse(raw)).toEqual({
         title: "Guide",
         defaultLang: "jpn",
         docs: ["one"],
         previews: { domains: ["example.com"] },
-        icon: "icons/_site.svg",
+        icon: "files/svg/_site.svg",
     });
     const compiled = compileSite(root);
     expect(compiled.errors).toEqual([]);
-    expect(compiled.artifact.icon).toContain('viewBox="0 -5 20 20"');
-    expect(exportEntries(root).filter((entry) => entry.name === "icons/_site.svg")).toHaveLength(1);
+    expect(compiled.icon).toContain('viewBox="0 -5 20 20"');
+    expect(
+        exportEntries(root).filter((entry) => entry.name === "files/svg/_site.svg"),
+    ).toHaveLength(1);
     const next = Buffer.from('<svg viewBox="0 0 8 8"><circle r="3"/></svg>').toString("base64");
     expect(siteIconResponse(root, { data: next }).status).toBe(200);
-    expect(readFileSync(join(root, "icons/_site.svg"), "utf8")).toContain('<circle r="3"/>');
-    expect(readFileSync(join(root, "manifest.yaml"), "utf8")).toBe(raw);
+    expect(readFileSync(join(root, "files/svg/_site.svg"), "utf8")).toContain('<circle r="3"/>');
+    expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toBe(raw);
 });
 
 it("upgrades a list manifest and refuses to overwrite an unregistered icon", () => {
     const root = fixture();
-    mkdirSync(join(root, "icons"));
-    writeFileSync(join(root, "icons/_site.svg"), "unrelated");
+    mkdirSync(join(root, "files/svg"), { recursive: true });
+    writeFileSync(join(root, "files/svg/_site.svg"), "unrelated");
     expect(siteIconResponse(root, { data }).status).toBe(409);
-    expect(readFileSync(join(root, "icons/_site.svg"), "utf8")).toBe("unrelated");
-    expect(readFileSync(join(root, "manifest.yaml"), "utf8")).toBe("- one\n");
-    rmSync(join(root, "icons/_site.svg"));
+    expect(readFileSync(join(root, "files/svg/_site.svg"), "utf8")).toBe("unrelated");
+    expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toBe("- one\n");
+    rmSync(join(root, "files/svg/_site.svg"));
     expect(siteIconResponse(root, { data }).status).toBe(200);
-    expect(parse(readFileSync(join(root, "manifest.yaml"), "utf8"))).toEqual({
+    expect(parse(readFileSync(join(root, "dooc.yaml"), "utf8"))).toEqual({
         docs: ["one"],
-        icon: "icons/_site.svg",
+        icon: "files/svg/_site.svg",
     });
+});
+
+it("keeps the explicit choice to disable format placement", () => {
+    const root = fixture("files: {defaultLayout: false}\ndocs: [one]\n");
+    expect(siteIconResponse(root, { data }).status).toBe(200);
+    expect(existsSync(join(root, "icons/_site.svg"))).toBe(true);
+    expect(compileSite(root).errors).toEqual([]);
 });
 
 it("rejects invalid uploads and broken manifests without changing files", () => {
@@ -78,11 +87,11 @@ it("rejects invalid uploads and broken manifests without changing files", () => 
     ]) {
         expect(siteIconResponse(root, input).status).toBe(400);
     }
-    expect(existsSync(join(root, "icons/_site.svg"))).toBe(false);
-    writeFileSync(join(root, "manifest.yaml"), "title: [bad]\ndocs: [one]\n");
+    expect(existsSync(join(root, "files/svg/_site.svg"))).toBe(false);
+    writeFileSync(join(root, "dooc.yaml"), "title: [bad]\ndocs: [one]\n");
     expect(siteIconResponse(root, { data }).status).toBe(409);
-    expect(existsSync(join(root, "icons/_site.svg"))).toBe(false);
-    expect(readFileSync(join(root, "manifest.yaml"), "utf8")).toBe("title: [bad]\ndocs: [one]\n");
+    expect(existsSync(join(root, "files/svg/_site.svg"))).toBe(false);
+    expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toBe("title: [bad]\ndocs: [one]\n");
 });
 
 it("rejects site icons and manifests pointing outside the docs root", () => {
@@ -93,8 +102,8 @@ it("rejects site icons and manifests pointing outside the docs root", () => {
     symlinkSync(join(outside, "logo.svg"), join(root, "icons/logo.svg"));
     expect(siteIconResponse(root, { data }).status).toBe(400);
     expect(readFileSync(join(outside, "logo.svg"), "utf8")).toBe("outside");
-    rmSync(join(root, "manifest.yaml"));
-    symlinkSync(join(outside, "manifest.yaml"), join(root, "manifest.yaml"));
+    rmSync(join(root, "dooc.yaml"));
+    symlinkSync(join(outside, "dooc.yaml"), join(root, "dooc.yaml"));
     expect(siteIconResponse(root, { data }).status).toBe(400);
-    expect(readFileSync(join(outside, "manifest.yaml"), "utf8")).toBe("- one\n");
+    expect(readFileSync(join(outside, "dooc.yaml"), "utf8")).toBe("- one\n");
 });

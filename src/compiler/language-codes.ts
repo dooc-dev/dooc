@@ -9,7 +9,7 @@ const from1 = new Map(Object.entries(iso6393To1).map(([three, two]) => [two, thr
 
 export const isContentLanguage = (code: string): boolean => codes.has(code);
 
-/** Accept legacy source-language tags while storing all translation catalogs under ISO 639-3. */
+/** Accept legacy source-language tags while storing translation directories under ISO 639-3. */
 export const contentLanguageCode = (tag: string): string => {
     const primary = tag.toLowerCase().split("-")[0] ?? "";
     const code = from1.get(primary) ?? primary;

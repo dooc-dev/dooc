@@ -1,13 +1,12 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { SKIP, visit } from "unist-util-visit";
+import { visit } from "unist-util-visit";
 import { codeBlockAt, offsetAt, parseMdast } from "../core/markdown.js";
 
 export { codeBlockAt } from "../core/markdown.js";
 
 import { formatMarkdown } from "../compiler/format.js";
-import { findDirective } from "../core/taxonomy.js";
 
 export function isLocalToolRequest(
     host: string,
@@ -149,8 +148,6 @@ export async function validateCodeTools(root: string, body: string) {
         const blocks: number[] = [];
         const nodes: import("mdast").Code[] = [];
         visit(parseMdast(text), (node) => {
-            if (node.type === "containerDirective" && findDirective("container", node.name)?.raw)
-                return SKIP;
             if (node.type === "code") nodes.push(node);
         });
         for (const node of nodes) {

@@ -28,13 +28,13 @@ export const siteIconResponse = (
             return { status: 409, body: { error: manifest.errors.join("\n") } };
         const file =
             manifest.icon ??
-            (manifest.files?.defaultLayout
+            (manifest.files?.defaultLayout !== false
                 ? defaultFilePath("_site.svg")
                 : `${ICONS_DIR}/_site.svg`);
         if (!manifest.icon && existsSync(textfilePath(root, file)))
             return {
                 status: 409,
-                body: { error: `${file} already exists; set manifest.yaml's icon to use it` },
+                body: { error: `${file} already exists; set dooc.yaml's icon to use it` },
             };
         const base = existsSync(textfilePath(root, file)) ? readTextfile(root, file) : null;
         if (!writeTextfile(root, file, svg, base))

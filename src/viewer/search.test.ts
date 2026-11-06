@@ -38,6 +38,28 @@ const site: Site = {
 };
 
 describe("document search", () => {
+    it("indexes visible text inside quotes and nested emphasis", () => {
+        const source = {
+            ...site,
+            entries: [
+                entry("quoted", "Quoted", [
+                    {
+                        type: "quote",
+                        blocks: [
+                            {
+                                type: "p",
+                                text: "**Bold** and *italic* [**label**](https://example.com)",
+                            },
+                        ],
+                    },
+                ]),
+            ],
+        };
+        const hits = searchSections(searchIndex(source), "bold italic label");
+        expect(hits[0]?.snippet).toBe("Bold and italic label");
+        expect(searchSections(searchIndex(source), "https://example.com")).toEqual([]);
+    });
+
     const index = searchIndex(site);
     it("searches rendered text across pages and links to the matching heading", () => {
         expect(searchSections(index, "接続設定 TOKEN")).toMatchObject([

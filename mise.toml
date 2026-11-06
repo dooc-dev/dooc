@@ -7,7 +7,7 @@ node = "22"
 pnpm = "10.28.2"
 bun = "1.4.4"
 
-# docs root = a folder following the layout convention (content/<id>.md + manifest.yaml,
+# docs root = a folder following the layout convention (content/<id>.md + dooc.yaml,
 # figures/<name>.{svg,drawio.svg,png,webp,jpg,html}).
 # Defaults to the bundled sample-content/; a relative path is resolved against the cwd mise was
 # invoked from. Each task just runs src/cli.ts (same as the npx bin) via tsx.
@@ -20,15 +20,15 @@ usage = '''
 arg "[root]" default=""
 arg "[port]" default="5179"
 '''
-run = '{{vars.resolve_root}} && pnpm exec tsx watch --clear-screen=false src/cli.ts dev "$r" "$usage_port"'
+run = '{{vars.resolve_root}} && pnpm exec tsx watch --clear-screen=false src/cli.ts edit "$r" "$usage_port"'
 
-[tasks.preview]
+[tasks.view]
 description = "Read-only docs viewer with document hot reload"
 usage = '''
 arg "[root]" default=""
 arg "[port]" default="5179"
 '''
-run = '{{vars.resolve_root}} && pnpm exec tsx src/cli.ts preview "$r" "$usage_port"'
+run = '{{vars.resolve_root}} && pnpm exec tsx watch --clear-screen=false src/cli.ts view "$r" "$usage_port"'
 
 [tasks.edit]
 description = "For editing content: start the viewer with live preview and external change detection. e.g. mise run edit ../my-docs"
@@ -36,13 +36,13 @@ usage = '''
 arg "[root]" default=""
 arg "[port]" default="5179"
 '''
-run = '{{vars.resolve_root}} && pnpm exec tsx src/cli.ts edit "$r" "$usage_port"'
+run = '{{vars.resolve_root}} && pnpm exec tsx watch --clear-screen=false src/cli.ts edit "$r" "$usage_port"'
 
 [tasks.export]
-description = "Export a docs root. json = full docs.json set (<root>/dist/artifact/) / zip = zip of the content (<root>/dist/<root name>.zip) / html = single HTML file with everything embedded (<root>/dist/index.html). json / html are not written if there are validation errors"
+description = "Export sources as ZIP (<root>/dist/<root name>.zip) or standalone HTML (<root>/dist/index.html). HTML is not written if there are validation errors"
 usage = '''
 arg "<format>" {
-  choices "json" "zip" "html"
+  choices "zip" "html"
 }
 arg "[root]" default=""
 arg "[out]" default=""

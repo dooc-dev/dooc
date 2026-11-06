@@ -11,7 +11,7 @@ export const codeFileResponse = (root: string, input: Record<string, unknown> | 
     try {
         const manifest = readManifest(root);
         if (manifest.errors.length) throw new Error(manifest.errors.join("\n"));
-        const automatic = input.file === undefined && manifest.files?.defaultLayout;
+        const automatic = input.file === undefined && manifest.files?.defaultLayout !== false;
         if (automatic && (typeof input.documentId !== "string" || !isDocId(input.documentId)))
             throw new Error("Invalid document id");
         if (!automatic && typeof input.file !== "string") throw new Error("File path is required");

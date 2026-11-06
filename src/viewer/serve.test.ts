@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { compileSite } from "../compiler/compile.js";
 import { parseDoc } from "../compiler/dialect.js";
 import { contentLanguages } from "../compiler/language-codes.js";
-import { writeCatalog } from "../compiler/locales.js";
+import { writeTextfile } from "../compiler/textfile.js";
 import { docPath } from "../core/routing.js";
 import { CODE_LANGS } from "../core/taxonomy.js";
 import { BUILTIN_LANGUAGES } from "./languages.js";
@@ -15,12 +15,14 @@ import {
     docQueryResponse,
     type Entry,
     editorBoot,
+    filePreviewResults,
     isExternallyModified,
     languageFieldHtml,
     navGroupsHtml,
     pageDataResponse,
     publishHtml,
     renderDocFile,
+    renderEntryHtml,
     resolveContentFile,
     resourcesMain,
     type Site,
@@ -34,6 +36,122 @@ const emptySite = (): Site => ({
     errors: [],
     languages: BUILTIN_LANGUAGES,
     defaultLang: "en",
+});
+
+it("keeps quoted source files, emphasis and references through compilation and publication", () => {
+    const root = mkdtempSync(join(tmpdir(), "dooc-quotes-"));
+    try {
+        mkdirSync(join(root, "content"));
+        mkdirSync(join(root, "figures"));
+        writeFileSync(join(root, "dooc.yaml"), "docs: [guide]\n");
+        writeFileSync(join(root, "source.ts"), "const one = 1;\nconst two = 2;\n");
+        writeFileSync(join(root, "api.termth"), "name: API\ndefinition: Interface\n");
+        writeFileSync(
+            join(root, "figures/chart.svg"),
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><title>Chart</title></svg>',
+        );
+        const body =
+            "> ## **Quoted** *heading*\n>\n> [**API**](api.termth) and [*chart*](figures/chart.svg)\n>\n> ![](source.ts#L2)\n>\n> ![](figures/chart.svg)\n\n- > ![](source.ts#L2)\n\n## Quoted heading\n";
+        writeFileSync(join(root, "content/guide.md"), `---\ntitle: Guide\n---\n\n${body}`);
+        const compiled = compileSite(root);
+        expect(compiled.errors).toEqual([]);
+        expect(compiled.docs[0]?.body).toBe(body);
+        expect(compiled.docs[0]?.refs).toEqual({
+            figures: ["chart"],
+            terms: ["api.termth"],
+        });
+        expect(compiled.docs[0]?.toc.map((heading) => heading.slug)).toEqual([
+            "quoted-heading",
+            "quoted-heading-1",
+        ]);
+        const site = siteFrom(compiled);
+        const entry = site.entries[0];
+        if (!entry) throw new Error("Missing document");
+        expect(filePreviewResults(entry, site)).toEqual({
+            "source.ts": [],
+            "figures/chart.svg": [],
+            "api.termth": [],
+        });
+        const rendered = renderEntryHtml(site, entry).html;
+        expect(rendered).toContain("<blockquote>");
+        expect(rendered).toContain("<strong>API</strong>");
+        expect(rendered).toContain("const two = 2;");
+        expect(rendered.match(/const two = 2;/g)).toHaveLength(2);
+        expect(rendered).not.toContain("const one = 1;");
+        expect(publishHtml(site, "")).toContain(
+            '<h2 id="quoted-heading"><strong>Quoted</strong> <em>heading</em>',
+        );
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+it("resolves source-file links and heading fragments in the viewer, exported HTML, and completion data", () => {
+    const root = mkdtempSync(join(tmpdir(), "dooc-file-links-"));
+    try {
+        mkdirSync(join(root, "content"));
+        mkdirSync(join(root, "files/md"), { recursive: true });
+        const file = "files/md/A (guide).md";
+        writeFileSync(
+            join(root, "dooc.yaml"),
+            `files:\n  documents:\n    child: ${file}\ndocs:\n  - guide:\n    - child\n`,
+        );
+        writeFileSync(
+            join(root, "content/guide.md"),
+            `---\ntitle: Guide\n---\n\n[Child](<${file}#details>)\n\n~~~callouth More\n[Child](<${file}#details>)\n~~~\n\n~~~md\n[Example](content/missing.md)\n~~~\n`,
+        );
+        writeFileSync(join(root, file), "---\ntitle: Child\n---\n\n## Details\n");
+        const compiled = compileSite(root);
+        expect(compiled.errors).toEqual([]);
+        const site = siteFrom(compiled);
+        const guide = site.entries[0];
+        if (!guide) throw new Error("Missing guide");
+        expect(
+            renderEntryHtml(site, guide).html.match(/href="\/guide\/child#details"/g),
+        ).toHaveLength(2);
+        expect(publishHtml(site, "")).toContain('href="#/guide/child#details"');
+        expect(editorBoot(guide, site).docs).toContainEqual({ ref: file, title: "Child" });
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+it("opens linked SVG files in the viewer and standalone HTML, including extracted callouts", () => {
+    const root = mkdtempSync(join(tmpdir(), "dooc-figure-links-"));
+    try {
+        mkdirSync(join(root, "content"));
+        mkdirSync(join(root, "assets"));
+        const file = "assets/My (chart).svg";
+        writeFileSync(join(root, "dooc.yaml"), "docs: [guide]\n");
+        writeFileSync(
+            join(root, file),
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><title>Chart</title></svg>',
+        );
+        writeFileSync(join(root, "note.callouth"), `[Chart](<${file}>)\n`);
+        writeFileSync(
+            join(root, "content/guide.md"),
+            `---\ntitle: Guide\n---\n\n[Chart](<${file}>)\n\n![](note.callouth)\n\nFig.chart\n`,
+        );
+        const compiled = compileSite(root);
+        expect(compiled.errors).toEqual([]);
+        const site = siteFrom(compiled);
+        const guide = site.entries[0];
+        if (!guide) throw new Error("Missing guide");
+        const route = `_files/file/${encodeURIComponent(file)}`;
+        const rendered = renderEntryHtml(site, guide).html;
+        expect(rendered.match(/class="figref"/g)).toHaveLength(2);
+        expect(rendered).toContain(`href="/${route}"`);
+        expect(rendered).toContain("<p>Fig.chart</p>");
+        expect(resourcesMain(site, route.slice("_files/".length))?.main).toContain(
+            '<iframe class="fig-frame',
+        );
+        const published = publishHtml(site, "");
+        expect(published).toContain(`href="#/${route}"`);
+        expect(published).toContain(`<template data-route="${route}"`);
+        expect(published).toContain('sandbox=""');
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
 });
 
 describe("assembleDoc", () => {
@@ -394,7 +512,7 @@ describe("editorBoot / pageDataResponse (backing `GET /api/page`)", () => {
             body: "Body\n",
             figures: ["fig-x.svg"],
             codeLanguages: CODE_LANGS,
-            docs: [{ ref: "a", title: "A" }],
+            docs: [{ ref: "content/a.md", title: "A" }],
             terms: [{ id: "term-id", name: "Term", definition: "Definition" }],
             blockLines: [0],
             baseRaw: '---\ntitle: "A"\n---\nBody\n',
@@ -533,13 +651,18 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
         try {
             const body = "## First\n\nText.\n\n## Second\n\nText.\n";
             mkdirSync(join(root, "content"));
-            writeFileSync(join(root, "manifest.yaml"), "- article\n");
+            writeFileSync(join(root, "dooc.yaml"), "- article\n");
             writeFileSync(
                 join(root, "content/article.md"),
                 assembleDoc({ title: "Article" }, body),
             );
             if (locale !== "jpn") {
-                writeCatalog(root, locale, { article: { title: "Article", body } });
+                writeTextfile(
+                    root,
+                    `locales/${locale}/content/article.md`,
+                    assembleDoc({ title: "Article" }, body),
+                    null,
+                );
             }
             const compiled = compileSite(root, { defaultLang: "jpn", locale });
             expect(compiled.errors).toEqual([]);

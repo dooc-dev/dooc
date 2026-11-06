@@ -18,23 +18,26 @@ mise run edit
 
 ```text
 sample-content/
-  manifest.yaml         # 既定言語・目次・サイト設定
-  content/              # 本文
+  dooc.yaml             # Default language, navigation and site settings
+  content/              # Documents
     guide.md
     writing.md
     media.md
     publishing.md
-  icons/                # サイト・ページのアイコン
-  figures/              # SVG・HTML
-  examples/             # 掲載するコード
-  terms/                # 用語ファイル
-  files/                # 拡張子ごとの配置
+  locales/eng/content/  # English translations
+  icons/                # Site and page icons
+  figures/              # SVG and HTML
+  examples/             # Source code
+  terms/                # Terms
+  files/                # Files grouped by extension
     csv/review.csv
 ```
 
-このサンプルの本文は `content/` にあります。Filesで移動・名前変更しても、文書のURLとリンクは維持されます。ページの親子関係は `manifest.yaml` で指定します。
+このサンプルの本文は `content/` にあります。Filesで移動・名前変更しても、文書のURLとリンクは維持されます。ページの親子関係は `dooc.yaml` で指定します。
 
-![](manifest.yaml)
+翻訳も通常のMarkdownファイルです。例えば `content/guide.md` の英語版は `locales/eng/content/guide.md` に置きます。翻訳がない文書は原文を表示し、目次と設定は `dooc.yaml` を共有します。
+
+![](dooc.yaml)
 
 ## Filesから追加する
 
@@ -46,6 +49,6 @@ Filesを開くと、拡張子による絞り込み、パスのコピー、複数
 
 ## 次に読む
 
-- [書き方](doc:writing)：Markdown・ファイル参照・用語。
-- [図とデータ](doc:media)：関係図・スキーマ・SVG・HTML。
-- [書き出し](doc:publishing)：HTML・JSON・ZIPで共有。
+- [書き方](content/writing.md)：Markdown・ファイル参照・用語。
+- [図とデータ](content/media.md)：関係図・スキーマ・SVG・HTML。
+- [書き出し](content/publishing.md)：HTML・ZIPで共有。

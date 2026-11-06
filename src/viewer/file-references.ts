@@ -1,9 +1,8 @@
 import type { Image } from "mdast";
-import { SKIP, visit } from "unist-util-visit";
+import { visit } from "unist-util-visit";
 import { parseFileEmbed } from "../core/file-embed.js";
-import { parseMdast, standaloneImages } from "../core/markdown.js";
+import { contentLinks, embeddedImages, parseMdast } from "../core/markdown.js";
 import type { PreviewSettings } from "../core/previewers.js";
-import { findDirective } from "../core/taxonomy.js";
 import { parseTermReference } from "../core/term-reference.js";
 
 export interface FileReference {
@@ -15,20 +14,17 @@ export interface FileReference {
 /** Use the compiler's Markdown grammar so examples, escapes and URL encodings agree. */
 export const fileReferences = (body: string, settings?: PreviewSettings): FileReference[] => {
     const root = parseMdast(body);
-    const images = new Set(root.children.flatMap(standaloneImages));
+    const images = new Set(embeddedImages(root));
     const references: FileReference[] = [];
-    visit(root, (node) => {
-        if (node.type === "containerDirective" && findDirective("container", node.name)?.raw)
-            return SKIP;
-        if (node.type === "link") {
-            try {
-                const file = parseTermReference(node.url);
-                if (file)
-                    references.push({ line: node.position?.start.line ?? 1, file, kind: "term" });
-            } catch {
-                /* The compiler reports invalid paths. */
-            }
+    for (const node of contentLinks(root)) {
+        try {
+            const file = parseTermReference(node.url);
+            if (file) references.push({ line: node.position?.start.line ?? 1, file, kind: "term" });
+        } catch {
+            /* The compiler reports invalid paths. */
         }
+    }
+    visit(root, (node) => {
         if (node.type === "image" && images.has(node as Image)) {
             try {
                 const { file, kind } = parseFileEmbed(node.url, settings);
@@ -42,7 +38,7 @@ export const fileReferences = (body: string, settings?: PreviewSettings): FileRe
             }
         }
     });
-    return references;
+    return references.sort((a, b) => a.line - b.line);
 };
 
 export interface FilePreview {

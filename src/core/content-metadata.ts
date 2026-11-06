@@ -1,6 +1,6 @@
-// The content/ contract. Doc bodies sit flat in content/<id>.md, and only manifest.yaml
+// The content/ contract. Doc bodies sit flat in content/<id>.md, and only dooc.yaml
 // holds the hierarchy and order (docs themselves have no root / child distinction; any doc can
-// have children). id = the file name stem is the resolution key for URLs / doc: links and is
+// have children). id = the file name stem is the resolution key for URLs / file links and is
 // unique site-wide. YAML reading/writing lives in compiler/manifest.ts; this file only does
 // browser-safe tree validation and manipulation.
 
@@ -8,7 +8,7 @@ import { docFile, type FileLayout, localFile, parseFileLayout } from "./files.js
 import { isLangTag } from "./language.js";
 import { type PreviewSettings, parsePreviewSettings } from "./previewers.js";
 
-export const MANIFEST_FILE = "manifest.yaml";
+export const MANIFEST_FILE = "dooc.yaml";
 
 export interface DocNode {
     id: string;
@@ -36,7 +36,7 @@ export const docIdOfFile = (name: string): string | undefined => {
 };
 
 /**
- * Turn the parsed manifest.yaml (YAML → JS value) into a tree. Each element is `id` (no
+ * Turn the parsed dooc.yaml (YAML → JS value) into a tree. Each element is `id` (no
  * children) or `{ id: [children...] }` (a single-key map; a null value also means no children).
  * Validates id shape and duplicates.
  */
@@ -157,7 +157,7 @@ export const parseManifest = (value: unknown): ParsedManifest => {
     };
 };
 
-/** Tree → manifest.yaml text (serialized in the hand-written shape, keeping git diffs clean). */
+/** Tree → dooc.yaml text (serialized in the hand-written shape, keeping git diffs clean). */
 export const serializeManifest = (
     tree: readonly DocNode[],
     { title, icon, defaultLang, previews, files }: Omit<ParsedManifest, "tree" | "errors"> = {},

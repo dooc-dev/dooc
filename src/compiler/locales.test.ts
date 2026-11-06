@@ -1,41 +1,59 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    rmSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { compileSite } from "./compile.js";
+import { afterEach, describe, expect, it } from "vitest";
+import { compileSite, createCompiler } from "./compile.js";
 import { exportEntries } from "./export.js";
 import { contentLanguageCode, isContentLanguage, webLanguage } from "./language-codes.js";
-import { catalogLanguages, readCatalog, setDocTranslation, writeCatalog } from "./locales.js";
+import {
+    setDocTranslation,
+    translationFile,
+    translationFiles,
+    translationLanguages,
+} from "./locales.js";
 import { createDocOps } from "./ops.js";
+import { readTextfile, writeTextfile } from "./textfile.js";
 
+const roots: string[] = [];
 const fixture = (): string => {
     const root = mkdtempSync(join(tmpdir(), "docs-locales-"));
+    roots.push(root);
     mkdirSync(join(root, "content"));
-    writeFileSync(join(root, "manifest.yaml"), "- guide:\n    - child\n");
+    writeFileSync(join(root, "dooc.yaml"), "defaultLang: jpn\ndocs:\n  - guide:\n      - child\n");
     writeFileSync(join(root, "content/guide.md"), '---\ntitle: "ガイド"\n---\n\n原文\n');
     writeFileSync(join(root, "content/child.md"), '---\ntitle: "詳細"\n---\n\n詳細の原文\n');
     return root;
 };
+afterEach(() => {
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
 
-describe("ISO 639-3 content catalogs", () => {
-    it("adds and removes only the chosen translation, preserving existing text and source", () => {
+describe("parallel Markdown translations", () => {
+    it("adds and removes only the chosen file, preserving edited translations and source", () => {
         const root = fixture();
-        const source = readFileSync(join(root, "content/guide.md"), "utf8");
-        writeCatalog(root, "eng", { child: { title: "Child", body: "Translated child\n" } });
+        const source = readTextfile(root, "content/guide.md");
+        const guide = translationFile("content/guide.md", "eng");
+        const child = translationFile("content/child.md", "eng");
+        writeTextfile(root, child, "---\ntitle: Child\n---\nTranslated child\n", null);
         setDocTranslation(root, "jpn", "guide", "eng", true);
-        expect(readCatalog(root, "eng")).toEqual({
-            guide: { title: "ガイド", body: "原文\n" },
-            child: { title: "Child", body: "Translated child\n" },
-        });
-        const edited = { title: "Guide", body: "Edited translation\n" };
-        writeCatalog(root, "eng", { ...readCatalog(root, "eng"), guide: edited });
+        expect(readTextfile(root, guide)).toContain('lang: "eng"');
+        expect(readTextfile(root, guide)).toContain("原文\n");
+        const edited = "---\n# Keep this comment\ntitle: Guide\n---\n\nEdited translation\n";
+        writeTextfile(root, guide, edited, readTextfile(root, guide));
         setDocTranslation(root, "jpn", "guide", "eng", true);
-        expect(readCatalog(root, "eng").guide).toEqual(edited);
+        expect(readTextfile(root, guide)).toBe(edited);
         setDocTranslation(root, "jpn", "guide", "eng", false);
         setDocTranslation(root, "jpn", "guide", "eng", false);
-        expect(readCatalog(root, "eng")).toEqual({
-            child: { title: "Child", body: "Translated child\n" },
-        });
+        expect(translationFiles(root)).toEqual([child]);
+        expect(readTextfile(root, child)).toContain("Translated child");
         expect(() => setDocTranslation(root, "jpn", "guide", "jpn", false)).toThrow(
             "Source language",
         );
@@ -44,79 +62,105 @@ describe("ISO 639-3 content catalogs", () => {
         );
         expect(() => setDocTranslation(root, "jpn", "guide", "../eng", true)).toThrow("ISO 639-3");
         expect(() => setDocTranslation(root, "jpn", "missing", "eng", true)).toThrow();
-        expect(readFileSync(join(root, "content/guide.md"), "utf8")).toBe(source);
+        expect(readTextfile(root, "content/guide.md")).toBe(source);
     });
-    it("uses the dedicated package for validation and Web language mapping", () => {
+
+    it("uses ISO 639-3 codes with Web language mapping", () => {
         expect(contentLanguageCode("ja-JP")).toBe("jpn");
         expect(contentLanguageCode("en")).toBe("eng");
         expect(webLanguage("zho")).toBe("zh");
         expect(isContentLanguage("jpn")).toBe(true);
-        expect(isContentLanguage("zzz")).toBe(false);
-        expect(isContentLanguage("jp")).toBe(false);
-        expect(isContentLanguage("ja")).toBe(false);
+        for (const code of ["zzz", "jp", "ja"]) expect(isContentLanguage(code)).toBe(false);
     });
 
-    it("overlays one language, preserves shared IDs/tree and falls back without changing the source", () => {
+    it("loads Markdown verbatim, shares the tree, and falls back to the source language", () => {
         const root = fixture();
-        const source = readFileSync(join(root, "content/guide.md"), "utf8");
-        writeCatalog(root, "eng", { guide: { title: "Guide", body: "[Details](doc:child)\n" } });
-        const result = compileSite(root, { defaultLang: "jpn", locale: "eng" });
+        const source = readTextfile(root, "content/guide.md");
+        const file = translationFile("content/guide.md", "eng");
+        const raw = "---\n# Translator note\ntitle: Guide\n---\n\n[Details](content/child.md)\n";
+        writeTextfile(root, file, raw, null);
+        const compiler = createCompiler(root, { locale: "eng" });
+        const result = compiler.compile();
         expect(result.errors).toEqual([]);
-        expect(result.artifact.docs[0]).toMatchObject({ id: "guide", title: "Guide", lang: "eng" });
-        expect(result.artifact.docs[1]).toMatchObject({
+        expect(result.docs[0]).toMatchObject({ id: "guide", title: "Guide", lang: "eng" });
+        expect(result.sources.get("content/guide.md")?.raw).toBe(raw);
+        expect(result.docs[1]).toMatchObject({
             id: "child",
             parent: "guide",
             title: "詳細",
-            lang: "eng",
+            lang: "jpn",
         });
+        expect(compileSite(root, { locale: "jpn" }).docs[0]?.title).toBe("ガイド");
+        expect(readTextfile(root, "content/guide.md")).toBe(source);
+        expect(translationLanguages(root)).toEqual(["eng"]);
         expect(
-            compileSite(root, { defaultLang: "jpn", locale: "jpn" }).artifact.docs[0]?.title,
-        ).toBe("ガイド");
-        expect(readFileSync(join(root, "content/guide.md"), "utf8")).toBe(source);
-        expect(catalogLanguages(root)).toEqual(["eng"]);
-        expect(exportEntries(root).map((entry) => entry.name)).toContain("locales/eng.json");
+            exportEntries(root)
+                .find((entry) => entry.name === file)
+                ?.data.toString(),
+        ).toBe(raw);
+        writeTextfile(root, file, `${raw}External edit\n`, raw);
+        expect(compiler.compile().docs[0]?.body).toContain("External edit");
+        rmSync(join(root, file));
+        expect(compiler.compile().docs[0]).toMatchObject({ title: "ガイド", lang: "jpn" });
     });
 
-    it("rejects traversal, unknown codes and malformed catalog entries", () => {
+    it("validates translations as Markdown with YAML front-matter and keeps broken text editable", () => {
         const root = fixture();
-        expect(() => readCatalog(root, "../eng")).toThrow();
-        expect(() => readCatalog(root, "zzz")).toThrow();
+        const raw = "---\ntitle: []\n---\nBroken title\n";
+        writeTextfile(root, translationFile("content/guide.md", "eng"), raw, null);
+        const result = compileSite(root, { locale: "eng" });
+        expect(result.errors.join()).toContain("title");
+        expect(result.sources.get("content/guide.md")?.raw).toBe(raw);
+        expect(compileSite(root).errors).toEqual([]);
+    });
+
+    it("rejects unsafe language codes, paths and symlinks outside the project", () => {
+        const root = fixture();
+        const outside = fixture();
+        for (const code of ["../eng", "zzz"])
+            expect(() => translationFile("content/guide.md", code)).toThrow();
+        expect(() => translationFile("../guide.md", "eng")).toThrow();
         expect(() => compileSite(root, { locale: "en" })).toThrow();
-        mkdirSync(join(root, "locales"));
-        writeFileSync(join(root, "locales/eng.json"), '{"guide":{"title":"Guide","body":42}}');
-        expect(() => readCatalog(root, "eng")).toThrow("invalid translation");
-        expect(compileSite(root, { defaultLang: "jpn", locale: "eng" }).errors.join()).toContain(
-            "invalid translation",
+        mkdirSync(join(root, "locales/eng"), { recursive: true });
+        symlinkSync(join(outside, "content"), join(root, "locales/eng/content"));
+        expect(() => setDocTranslation(root, "jpn", "guide", "eng", true)).toThrow(
+            "outside the docs root",
         );
-        expect(createDocOps(root).rename("guide", "renamed")).toMatchObject({ status: 409 });
-        expect(readFileSync(join(root, "content/guide.md"), "utf8")).toContain("ガイド");
+        expect(compileSite(root, { locale: "eng" }).errors.join()).toContain(
+            "outside the docs root",
+        );
+        expect(readTextfile(outside, "content/guide.md")).toContain("ガイド");
+        rmSync(join(root, "locales/eng/content"));
+        mkdirSync(join(root, "locales/eng/content"));
+        symlinkSync(join(outside, "content/guide.md"), join(root, "locales/eng/content/guide.md"));
+        expect(() => exportEntries(root)).toThrow("outside the docs root");
     });
 
-    it("renames translated IDs and links, and protects references before deleting every version", () => {
+    it("renames translated files and links, and protects references before deleting every version", () => {
         const root = fixture();
-        writeCatalog(root, "eng", {
-            guide: { title: "Guide", body: "[Child](doc:child)" },
-            child: { title: "Child", body: "Translation" },
-        });
+        const guide = translationFile("content/guide.md", "eng");
+        writeTextfile(root, guide, "---\ntitle: Guide\n---\n[Child](content/child.md)\n", null);
+        const child = translationFile("content/child.md", "eng");
+        const childRaw = "---\n# Keep this comment\ntitle: Child\n---\nTranslation\n";
+        writeTextfile(root, child, childRaw, null);
         const ops = createDocOps(root);
         expect(ops.rename("child", "detail")).toMatchObject({ id: "detail", updatedRefs: 1 });
-        expect(readCatalog(root, "eng").guide?.body).toContain("doc:detail");
-        expect(readCatalog(root, "eng").detail?.title).toBe("Child");
-        expect(ops.remove("detail")).toMatchObject({
-            status: 409,
-            referencedBy: ["locales/eng.json:guide"],
-        });
+        expect(readTextfile(root, guide)).toContain("content/detail.md");
+        const detail = translationFile("content/detail.md", "eng");
+        expect(readTextfile(root, detail)).toBe(childRaw);
+        expect(existsSync(join(root, child))).toBe(false);
+        expect(ops.remove("detail")).toMatchObject({ status: 409, referencedBy: [guide] });
         expect(ops.remove("detail", true)).toMatchObject({ danglingRefs: 1 });
-        expect(readCatalog(root, "eng").detail).toBeUndefined();
+        expect(existsSync(join(root, detail))).toBe(false);
     });
 
-    it("rejects removed document descriptions in translation catalogs", () => {
+    it("refuses translated destination collisions before renaming any source", () => {
         const root = fixture();
-        mkdirSync(join(root, "locales"));
-        writeFileSync(
-            join(root, "locales/eng.json"),
-            JSON.stringify({ guide: { title: "Guide", body: "Text", description: "Removed" } }),
-        );
-        expect(() => readCatalog(root, "eng")).toThrow("invalid translation");
+        const target = translationFile("content/detail.md", "eng");
+        writeTextfile(root, target, "Existing translation", null);
+        expect(createDocOps(root).rename("child", "detail")).toMatchObject({ status: 409 });
+        expect(existsSync(join(root, "content/child.md"))).toBe(true);
+        expect(existsSync(join(root, "content/detail.md"))).toBe(false);
+        expect(readFileSync(join(root, target), "utf8")).toBe("Existing translation");
     });
 });

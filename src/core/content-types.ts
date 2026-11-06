@@ -1,8 +1,4 @@
-// Type contract for the distributed data (artifact/) (browser-safe, no node dependencies). The
-// compiler generates it; consumers read what is served via runtime fetch.
-//   - artifact/docs.json = DocsArtifact (body AST, terms, figure index; generation-stamped)
-//   - artifact/figures/<name>.json = FigureEntry (one figure incl. markup, for lazy fetch)
-// Runtime contract: docs-json-schema/<generation>.json; validate via the ./docs-json-schema export.
+// In-memory content used by the compiler and renderers (browser-safe).
 import type { Block, TocEntry } from "./blocks.js";
 import type { Frontmatter } from "./taxonomy.js";
 
@@ -30,13 +26,10 @@ export interface FigureEntry {
     desc?: string;
 }
 
-/** Figure index in docs.json (no markup). The content is lazy-fetched from figures/<name>.json. */
-export type FigureIndexEntry = Omit<FigureEntry, "markup">;
-
 // The display name is resolved via docDisplayName (taxonomy.ts).
-export type ArtifactDoc = Frontmatter & {
+export type CompiledDoc = Frontmatter & {
     id: string;
-    /** Parent doc id (SoT: manifest.yaml). Omitted = top level. docs[] is in pre-order. */
+    /** Parent doc id (SoT: dooc.yaml). Omitted = top level. docs[] is in pre-order. */
     parent?: string;
     /** `content/<id>.md`. */
     file: string;
@@ -49,25 +42,6 @@ export type ArtifactDoc = Frontmatter & {
     /** Normalized Block AST (the blocks.ts contract). Consumers just map it to rendering. */
     blocks: Block[];
     toc: TocEntry[];
-    /** Names of referenced figures (the set to lazy-fetch). */
+    /** Referenced figures and terms. */
     refs: { figures: string[]; terms: string[] };
 };
-
-export interface DocsArtifact {
-    /** Site title declared in manifest.yaml. */
-    title?: string;
-    /** Site icon as SVG markup, rendered as an image. */
-    icon?: string;
-    /**
-     * Dialect / contract generation (generation.ts). Consumers check it directionally with
-     * canRenderGeneration.
-     */
-    generation: number;
-    /** Display order (manifest pre-order). The hierarchy is expressed by each doc's parent. */
-    docs: ArtifactDoc[];
-    /**
-     * Terms loaded from local .termth links and inline termth code blocks.
-     */
-    terms: TermEntry[];
-    figures: FigureIndexEntry[];
-}

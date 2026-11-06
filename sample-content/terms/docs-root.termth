@@ -1,3 +1,3 @@
 name: "docs root"
-definition: "manifest.yaml と content/ を置く、文書一式のルートフォルダー。"
+definition: "dooc.yaml と content/ を置く、文書一式のルートフォルダー。"
 description: "資料の入力フォルダー。"

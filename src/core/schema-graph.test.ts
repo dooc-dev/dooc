@@ -12,7 +12,6 @@ import {
     schemaGraphClientData,
     schemaGraphUid,
 } from "./schema-graph.js";
-import { directiveRawBody } from "./taxonomy.js";
 
 const SRC = [
     "### catalog",
@@ -713,25 +712,6 @@ describe("unique(...)", () => {
             const row = node?.rows.find((r) => r.label === "display_name");
             expect(row?.type).toBe("uq string");
         });
-    });
-});
-
-describe("directiveRawBody", () => {
-    it("drops the opening / closing lines and strips the common indent (keeping line indices)", () => {
-        const slice = [':::schema{caption="c"}', "  ### g", "  a:", "    id: pk", "", "  :::"].join(
-            "\n",
-        );
-        expect(directiveRawBody(slice)).toBe(["### g", "a:", "  id: pk", ""].join("\n"));
-        // Readable as-is without indentation
-        expect(directiveRawBody(":::schema\na:\n  id: pk\n:::")).toBe("a:\n  id: pk");
-        // Empty body
-        expect(directiveRawBody(":::schema\n:::").trim()).toBe("");
-    });
-
-    it("reports an error for a fence (the body is raw DSL)", () => {
-        expect(errorsOf(directiveRawBody(":::schema\n```\na:\n  id: pk\n```\n:::"))[0]).toContain(
-            "``` is not allowed",
-        );
     });
 });
 

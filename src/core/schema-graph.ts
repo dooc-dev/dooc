@@ -1,9 +1,8 @@
-// SoT for the content dialect `:::schema` (table DSL) — DSL parse / graph model / deterministic
+// SoT for the content dialect `schemath` (table DSL) — DSL parse / graph model / deterministic
 // layout. Browser-safe (no dependencies). html.ts owns the markup (SVG); this module returns only
 // semantics and geometry (= every consumer gets the same picture via docHtml).
 //
-// DSL (written directly between `:::schema` and `:::`; the body isn't parsed as markdown = no
-// fence needed):
+// DSL inside a `schemath` code fence or a .schemath file:
 //     ### <label>                group boundary (labeled = frame + heading on the graph;
 //                                unlabeled only splits columns)
 //     <table>:                   table declaration (the following indented lines are its body)
@@ -267,7 +266,7 @@ export const parseSchemaSource = (source: string): SchemaParseResult => {
             return;
         }
         if (body.startsWith("```")) {
-            err(i, "``` is not allowed (write the table DSL directly inside :::schema)");
+            err(i, "``` is not allowed (write the table DSL directly inside schemath)");
             return;
         }
         if (!/^\s/.test(raw)) {
@@ -697,7 +696,7 @@ export interface SchemaGraphClientData {
     /** Group frames (labeled only). members = member table names (to refit frames after drag). */
     groups: { label: string; x: number; y: number; w: number; h: number; members: string[] }[];
     /**
-     * Source text of the table DSL as written (the `:::schema` body itself). The interactive UI's
+     * Source text of the table DSL as written (the `schemath` body itself). The interactive UI's
      * source viewer shows it as-is. Not derived from the model, since rebuilding it from the model
      * would lose notes / blank lines / ordering. When absent, the viewer button isn't shown.
      */

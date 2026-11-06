@@ -1,5 +1,5 @@
 // Collects the zip entries for the layout-convention part of the docs root
-// (content/ figures/ icons/, plus manifest.yaml and docs.config.mjs if present).
+// (content/ figures/ icons/, plus dooc.yaml and docs.config.mjs if present).
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, posix } from "node:path";
 import { MANIFEST_FILE } from "../core/content-metadata.js";
@@ -8,9 +8,8 @@ import { CODE_LANGUAGES_DIR } from "./code-languages.js";
 import { CONFIG_FILE } from "./config.js";
 import { collectRefs, parseDoc } from "./dialect.js";
 import { projectFiles } from "./files.js";
-import { catalogLanguages, readCatalog } from "./locales.js";
 import { readManifest } from "./manifest.js";
-import { readTextfile } from "./textfile.js";
+import { readTextfile, textfilePath } from "./textfile.js";
 import type { ZipEntry } from "./zip.js";
 
 const LAYOUT_DIRS = ["content", "figures", "icons", "locales", ".dooc/editor-tools"];
@@ -46,7 +45,7 @@ export const exportEntries = (root: string): ZipEntry[] => {
                 .map((rel) => `${dir}/${rel.replaceAll("\\", "/")}`)
                 .filter((name) => statSync(join(root, name)).isFile())
                 .sort()
-                .map((name) => ({ name, data: readFileSync(join(root, name)) })),
+                .map((name) => ({ name, data: readFileSync(textfilePath(root, name)) })),
         ),
     ];
     const known = new Set(entries.map((entry) => entry.name));
@@ -55,14 +54,9 @@ export const exportEntries = (root: string): ZipEntry[] => {
     for (const file of projectFiles(root))
         if ((file.path.startsWith("files/") || mapped.has(file.path)) && !known.has(file.path))
             entries.push({ name: file.path, data: readFileSync(join(root, file.path)) });
-    const bodies = [
-        ...entries
-            .filter((entry) => entry.name.endsWith(".md"))
-            .map((entry) => entry.data.toString("utf8")),
-        ...catalogLanguages(root).flatMap((lang) =>
-            Object.values(readCatalog(root, lang)).map((entry) => entry.body),
-        ),
-    ];
+    const bodies = entries
+        .filter((entry) => /\.(md|callouth)$/.test(entry.name))
+        .map((entry) => entry.data.toString("utf8"));
     const included = new Set(entries.map((entry) => entry.name));
     const { icon, previews } = readManifest(root);
     if (icon && !included.has(posix.normalize(icon))) {
@@ -72,6 +66,15 @@ export const exportEntries = (root: string): ZipEntry[] => {
     }
     for (const body of bodies) {
         const refs = collectRefs(parseDoc(body, previews).root, previews);
+        for (const file of refs.figures) {
+            if (included.has(file)) continue;
+            try {
+                entries.push({ name: file, data: readFileSync(textfilePath(root, file)) });
+                included.add(file);
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            }
+        }
         for (const file of [...refs.textfiles, ...refs.terms]) {
             if (isRemoteTextfile(file)) continue;
             let text: string;
@@ -85,6 +88,7 @@ export const exportEntries = (root: string): ZipEntry[] => {
             if (included.has(name)) continue;
             entries.push({ name, data: Buffer.from(text, "utf8") });
             included.add(name);
+            if (name.endsWith(".callouth")) bodies.push(text);
         }
     }
     return entries;

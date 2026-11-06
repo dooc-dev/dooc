@@ -12,7 +12,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { dirname, join, posix } from "node:path";
-import { SKIP, visit } from "unist-util-visit";
+import { visit } from "unist-util-visit";
 import { Document, isSeq, parseDocument } from "yaml";
 import { flattenTree, MANIFEST_FILE } from "../core/content-metadata.js";
 import {
@@ -24,25 +24,18 @@ import {
     isDocumentFileName,
     localFile,
     MAX_FILE_UPLOAD_BYTES,
+    parseFileLayout,
 } from "../core/files.js";
-import { parseMdast } from "../core/markdown.js";
-import { findDirective } from "../core/taxonomy.js";
+import { codeBlockAt, parseMdast } from "../core/markdown.js";
 import { termFileUrl } from "../core/term-reference.js";
 import { isRemoteTextfile, parseFileReference } from "../core/textfile.js";
 import { fileSig } from "./file-cache.js";
-import { catalogLanguages, readCatalog } from "./locales.js";
+import { translationFile, translationFiles, translationLanguages } from "./locales.js";
 import { readManifest } from "./manifest.js";
 import { textfilePath, writeTextfile } from "./textfile.js";
 
-// These files configure the project and are not authored content.
-const reserved = new Set([
-    MANIFEST_FILE,
-    "docs.config.mjs",
-    "node_modules",
-    "dist",
-    "artifact",
-    "locales",
-]);
+// Project settings and translations have their own layout, outside file restructuring.
+const reserved = new Set([MANIFEST_FILE, "docs.config.mjs", "node_modules", "dist", "locales"]);
 export const managedFile = (file: string): boolean =>
     localFile(file) && !reserved.has(file.split("/")[0] ?? "");
 
@@ -74,7 +67,7 @@ export const filesSnapshot = (root: string) => {
     const manifest = readManifest(root);
     if (manifest.errors.length) throw new Error(manifest.errors.join("\n"));
     const files = projectFiles(root);
-    const layout: FileLayout = manifest.files ?? { defaultLayout: false, documents: {}, order: [] };
+    const layout: FileLayout = manifest.files ?? parseFileLayout({});
     const rank = new Map(layout.order.map((path, index) => [path, index]));
     files.sort(
         (a, b) =>
@@ -89,6 +82,8 @@ export const filesSnapshot = (root: string) => {
         hash.update(file.path)
             .update(String(statSync(textfilePath(root, file.path)).mtimeMs))
             .update(String(file.size));
+    for (const file of translationFiles(root))
+        hash.update(file).update(fileSig(textfilePath(root, file)));
     return {
         files,
         layout,
@@ -108,7 +103,8 @@ export const uploadFile = (root: string, input: Record<string, unknown>): { file
     if (data.toString("base64") !== input.data) throw new Error("Invalid file content");
     const manifest = readManifest(root);
     if (manifest.errors.length) throw new Error(manifest.errors.join("\n"));
-    const initial = manifest.files?.defaultLayout ? defaultFilePath(input.name) : input.name;
+    const initial =
+        manifest.files?.defaultLayout !== false ? defaultFilePath(input.name) : input.name;
     const extension = posix.extname(initial);
     const stem = initial.slice(0, initial.length - extension.length);
     let file = initial;
@@ -150,10 +146,19 @@ const imageDestination = (source: string): number => {
 
 /** Rewrite destinations only: examples, labels, titles and code stay byte-for-byte intact. */
 export const rewriteFileLinks = (raw: string, moves: ReadonlyMap<string, string>): string => {
+    if (!moves.size) return raw;
     const changes: { from: number; to: number; text: string }[] = [];
     visit(parseMdast(raw), (node) => {
-        if (node.type === "containerDirective" && findDirective("container", node.name)?.raw)
-            return SKIP;
+        if (node.type === "code" && node.lang === "callouth" && node.position) {
+            const block = codeBlockAt(raw, node.position.start.offset ?? 0);
+            const before = block.code.split("\n");
+            const after = rewriteFileLinks(block.code, moves).split("\n");
+            for (const [index, text] of after.entries()) {
+                const from = block.offsets[index];
+                if (text !== before[index] && from !== undefined)
+                    changes.push({ from, to: from + (before[index]?.length ?? 0), text });
+            }
+        }
         if (node.type !== "image" && node.type !== "link" && node.type !== "definition") return;
         let file: string;
         try {
@@ -295,6 +300,14 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
         if (index < 0) throw new Error("Invalid drop position");
         order.splice(index, 0, ...picked);
     } else throw new Error("Unknown file action");
+    const translated = translationFiles(root);
+    for (const language of translationLanguages(root)) {
+        for (const [source, target] of [...moves]) {
+            if (!source.endsWith(".md") || source.startsWith("locales/")) continue;
+            const file = translationFile(source, language);
+            if (translated.includes(file)) moves.set(file, translationFile(target, language));
+        }
+    }
     if (new Set(moves.values()).size !== moves.size) throw new Error("Duplicate destination");
     for (const target of moves.values()) {
         const path = textfilePath(root, target);
@@ -319,7 +332,7 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
     if (manifest.icon && moves.has(manifest.icon)) yaml.set("icon", moves.get(manifest.icon));
     const writes: { file: string; data: Buffer; base: Buffer | null; mode?: number }[] = [];
     const links = new Map(moves);
-    for (const file of paths.filter((file) => file.endsWith(".md"))) {
+    for (const file of [...paths, ...translated].filter((file) => /\.(md|callouth)$/.test(file))) {
         const base = readFileSync(textfilePath(root, file));
         const next = rewriteFileLinks(
             new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(base),
@@ -335,19 +348,6 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
             base: target === file ? base : null,
             mode: statSync(textfilePath(root, file)).mode,
         });
-    }
-    for (const lang of catalogLanguages(root)) {
-        const file = `locales/${lang}.json`;
-        const base = readFileSync(join(root, file));
-        const catalog = readCatalog(root, lang);
-        let changed = false;
-        for (const entry of Object.values(catalog)) {
-            const body = rewriteFileLinks(entry.body, moves);
-            changed ||= body !== entry.body;
-            entry.body = body;
-        }
-        if (changed)
-            writes.push({ file, base, data: Buffer.from(`${JSON.stringify(catalog, null, 2)}\n`) });
     }
     writes.push({
         file: MANIFEST_FILE,

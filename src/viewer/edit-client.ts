@@ -26,11 +26,11 @@ import { EditorState, type Extension, StateEffect, StateField } from "@codemirro
 import { Decoration, type DecorationSet, EditorView, keymap } from "@codemirror/view";
 import type { SyntaxNode } from "@lezer/common";
 import { tags } from "@lezer/highlight";
-import type { TermEntry } from "../core/artifact-types.js";
 import type { TocEntry } from "../core/blocks.js";
+import type { TermEntry } from "../core/content-types.js";
 import { isDocumentFileName } from "../core/files.js";
 import type { PreviewSettings } from "../core/previewers.js";
-import { CODE_LANGS, CODE_TEMPLATES, DIRECTIVES, type Directive } from "../core/taxonomy.js";
+import { CODE_LANGS, CODE_TEMPLATES } from "../core/taxonomy.js";
 import { isTermFile, termFileUrl } from "../core/term-reference.js";
 import { codeFileButtons } from "./edit-code-file.js";
 import { editorCodeHighlight } from "./edit-code-highlight.js";
@@ -65,7 +65,7 @@ interface Boot {
     translatedLanguages?: string[];
     file: string;
     sourceFile?: string;
-    /** Stable resolution key for URLs / doc: links. */
+    /** Stable resolution key for URLs / file links. */
     docId: string;
     title: string;
     path: string;
@@ -551,36 +551,8 @@ const runLint = async (automatic = false): Promise<LintFinding[] | undefined> =>
 };
 
 // ── Insertion autocomplete ────────────────────────────────────────────────
-// `/` palette: `/` at line start / after whitespace lists templates, figures, docs and terms
-// (arrows + Enter to insert).
-// `:::` palette: `:` to `:::` at line start lists the custom syntax (directives); every directive
-// starts with `:::`.
-// Contextual completion: file paths inside Markdown embeds, doc refs inside `(doc:`.
-// All fully keyboard-driven.
-
-// Map the `<...>` placeholders in samples from the vocabulary SoT (taxonomy.DIRECTIVES) to
-// CodeMirror input fields (snippet fields).
+// The slash palette inserts code fences and file links from the shared vocabulary.
 const toSnippet = (sample: string): string => sample.replace(/<([^<>\n]+)>/g, "${$1}");
-
-// Completion info panel: sample + whether a caption is allowed (so usage can be read in place).
-const directiveInfo = (d: Directive): string =>
-    `${d.sample}\n\n${d.caption ? "[caption] optional" : "no caption"}`;
-
-const directiveLabel = (d: Directive): string => `:::${d.name}`;
-
-// The `:::` and `/` palettes are built from the same catalog (no duplicate template declarations).
-// They differ only in the inserted form: `:::` replaces the typed colons with the template (no
-// surrounding newlines added); `/` can be typed mid-text, so it adds newlines around it to place
-// it as a block.
-const directiveOpt = (d: Directive): Completion =>
-    snippetCompletion(toSnippet(d.sample), {
-        label: directiveLabel(d),
-        detail: d.summary,
-        info: directiveInfo(d),
-        type: "keyword",
-        section: t("Custom syntax"),
-    });
-const DIRECTIVE_OPTS: Completion[] = DIRECTIVES.map(directiveOpt);
 
 const buildSlash = (): Completion[] => {
     const o: Completion[] = [
@@ -603,23 +575,12 @@ const buildSlash = (): Completion[] => {
             section: t("Templates"),
         }),
     ];
-    for (const d of DIRECTIVES) {
-        o.push(
-            snippetCompletion(`\n${toSnippet(d.sample)}\n`, {
-                label: `/${d.name}`,
-                detail: d.summary,
-                info: directiveInfo(d),
-                type: "keyword",
-                section: t("Templates"),
-            }),
-        );
-    }
     for (const l of boot.codeLanguages ?? CODE_LANGS) {
         o.push(
             snippetCompletion(
                 `\n${toSnippet(CODE_TEMPLATES[l] ?? `\`\`\`${l}\n<code>\n\`\`\``)}\n`,
                 {
-                    label: `/code-${l}`,
+                    label: CODE_TEMPLATES[l] ? `/${l}` : `/code-${l}`,
                     detail: t("code fence"),
                     type: "keyword",
                     section: t("Templates"),
@@ -639,11 +600,11 @@ const buildSlash = (): Completion[] => {
     }
     for (const d of boot.docs) {
         o.push({
-            label: `/doc:${d.ref}`,
+            label: `/link:${d.ref}`,
             detail: d.title,
             type: "variable",
             section: t("Doc links"),
-            apply: `[${d.title}](doc:${d.ref})`,
+            apply: `[${d.title}](${termFileUrl(d.ref)})`,
         });
     }
     for (const term of boot.terms) {
@@ -667,7 +628,11 @@ let DOC_REF_OPTS: Completion[] = [];
 const rebuildCompletions = (): void => {
     SLASH = buildSlash();
     FIG_OPTS = boot.figures.map((f) => ({ label: f, type: "class" }));
-    DOC_REF_OPTS = boot.docs.map((d) => ({ label: d.ref, detail: d.title, type: "variable" }));
+    DOC_REF_OPTS = boot.docs.map((d) => ({
+        label: termFileUrl(d.ref),
+        detail: d.title,
+        type: "variable",
+    }));
 };
 rebuildCompletions();
 document.addEventListener("docs:ui-language", rebuildCompletions);
@@ -690,26 +655,9 @@ const inCodeContext = (ctx: CompletionContext): boolean => {
     return false;
 };
 
-// Directives can only be written at block positions (line start, preceded only by whitespace).
+// File embeds occupy standalone paragraphs.
 const atLineStart = (state: EditorState, from: number): boolean =>
     /^\s*$/.test(state.sliceDoc(state.doc.lineAt(from).from, from));
-
-// Whether pos is inside an unclosed container directive (`:::name` ... `:::`). Directives can't
-// be nested there, and if the palette opens when typing the closing `:::`, Enter misfires
-// (inserting a template instead of a newline), so no candidates are offered in that case. The
-// dialect has no nesting, so alternating open/close is enough.
-const insideContainer = (state: EditorState, pos: number): boolean => {
-    const current = state.doc.lineAt(pos).number;
-    let open = false;
-    const lines = state.doc.toString().split("\n");
-    for (let i = 1; i < current; i++) {
-        const text = lines[i - 1] ?? "";
-        if (text.startsWith(":::")) {
-            open = text.slice(3).trim() !== "";
-        }
-    }
-    return open;
-};
 
 const docsComplete = (ctx: CompletionContext): CompletionResult | null => {
     const schema = schemaCompletion(ctx);
@@ -717,22 +665,21 @@ const docsComplete = (ctx: CompletionContext): CompletionResult | null => {
     if (inCodeContext(ctx)) {
         return null;
     }
-    const docM = ctx.matchBefore(/\(doc:[\w/-]*/);
-    if (docM) {
-        return { from: docM.from + 5, options: DOC_REF_OPTS, validFor: /[\w/-]*/ };
-    }
     const termM = ctx.matchBefore(/\[[^\]\n]*\]\([^()\n]*/);
     if (termM && ctx.state.sliceDoc(Math.max(0, termM.from - 1), termM.from) !== "!")
         return {
             from: termM.from + termM.text.lastIndexOf("(") + 1,
-            options: boot.terms
-                .filter((term) => isTermFile(term.id))
-                .map((term) => ({
-                    label: termFileUrl(term.id),
-                    detail: term.name,
-                    info: term.definition,
-                    type: "text",
-                })),
+            options: [
+                ...DOC_REF_OPTS,
+                ...boot.terms
+                    .filter((term) => isTermFile(term.id))
+                    .map((term) => ({
+                        label: termFileUrl(term.id),
+                        detail: term.name,
+                        info: term.definition,
+                        type: "text",
+                    })),
+            ],
             validFor: /[^()\s]*/,
         };
     const figM = ctx.matchBefore(/!\[[^\]\n]*\]\([\w./-]*/);
@@ -742,19 +689,6 @@ const docsComplete = (ctx: CompletionContext): CompletionResult | null => {
             options: FIG_OPTS,
             validFor: /[\w./-]*/,
         };
-    // `:` to `:::` = list of custom syntax (directives). The typed colons are replaced with the
-    // template. No validFor (the candidate set itself depends on the colon count, so re-query on
-    // every keystroke).
-    const dirM = ctx.matchBefore(/:{1,3}[\w-]*/);
-    if (dirM && atLineStart(ctx.state, dirM.from)) {
-        // Offer nothing at a `:::` that closes a container (and don't fall through to the
-        // explicit fallback below either, so Enter isn't captured by the palette to insert a
-        // template).
-        if (insideContainer(ctx.state, dirM.from)) {
-            return null;
-        }
-        return { from: dirM.from, options: DIRECTIVE_OPTS };
-    }
     const slashM = ctx.matchBefore(/\/[^\s/]*/);
     if (
         slashM &&
@@ -925,12 +859,8 @@ const editorExtensions: Extension[] = [
                 });
             }
             const head = u.state.selection.main.head;
-            const lineBefore = u.state.sliceDoc(u.state.doc.lineAt(head).from, head);
-            // For `:`, open only on `:` to `:::` at line start (= where a directive can go). A
-            // palette popping up on mid-text colons (e.g. "Example:") would get in the way of typing.
             if (
                 typed === "/" ||
-                (typed === ":" && /^\s*:{1,3}$/.test(lineBefore)) ||
                 (/^[:(| ]$/.test(typed) &&
                     schemaCompletion(new CompletionContext(u.state, head, false)) != null)
             ) {
@@ -1309,11 +1239,7 @@ const handleContentChange = async (files: string[]): Promise<void> => {
     if (saveTask) await saveTask;
     await textfiles.reloadChanged(files);
     const currentBoot = boot;
-    if (
-        files.includes("manifest.yaml") ||
-        files.some((file) => file.endsWith(".md")) ||
-        files.includes(`locales/${boot.contentLanguage}.json`)
-    ) {
+    if (files.includes("dooc.yaml") || files.some((file) => file.endsWith(".md"))) {
         try {
             const res = await localeFetch(`/api/doc?file=${encodeURIComponent(boot.file)}`);
             if (!res.ok) {
@@ -1339,7 +1265,7 @@ const handleContentChange = async (files: string[]): Promise<void> => {
             return;
         }
     }
-    // Other docs / figures / manifest.yaml: reflect changes to figures, doc: links and the
+    // Other docs / figures / dooc.yaml: reflect changes to figures, file links and the
     // terms in the main content using the current edits, and swap the nav (list, order).
     await render();
     await refreshNav();
@@ -1364,7 +1290,8 @@ const flushContent = debounce(120, () => {
         setPreviewState(
             "loading",
             "",
-            files.includes(ownWatchPath()) || files.includes(`locales/${boot.contentLanguage}.json`)
+            files.includes(ownWatchPath()) ||
+                files.includes(`locales/${boot.contentLanguage}/${ownWatchPath()}`)
                 ? undefined
                 : files,
         );
@@ -1799,7 +1726,7 @@ workspace.addEventListener("drop", (ev) => {
 });
 
 // ── Deleting a doc ─────────────────────────────────────────────────────
-// If other docs reference it via doc: links, 409 + referencedBy is
+// If other docs reference it via file links, 409 + referencedBy is
 // returned; show the list, re-confirm deletion anyway, then resend with force.
 const deleteDoc = async (): Promise<void> => {
     const file = boot.file;

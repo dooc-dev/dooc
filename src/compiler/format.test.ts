@@ -15,10 +15,10 @@ describe("Markdown formatting", () => {
     });
     it("preserves custom directives, code, and significant inline code spaces", () => {
         const body =
-            "# Title\n\n![caption](figures/overview.svg)\n\n:::schema[Model]\na:\n  id: pk\n:::\n\n```tdl\n  field\n```\n\n`     field`\n";
+            "# Title\n\n![caption](figures/overview.svg)\n\n~~~schemath Model\na:\n  id: pk\n~~~\n\n```tdl\n  field\n```\n\n`     field`\n";
         const formatted = formatMarkdown(body);
         expect(formatted).toContain("![caption](figures/overview.svg)");
-        expect(formatted).toContain(":::schema[Model]\na:\n  id: pk\n:::");
+        expect(formatted).toContain("~~~schemath Model\na:\n  id: pk\n~~~");
         expect(formatted).toContain("```tdl\n  field\n```");
         expect(formatted).toContain("`     field`");
         expect(formatMarkdown(formatted)).toBe(formatted);
@@ -36,10 +36,10 @@ describe("Markdown formatting", () => {
         const table = [
             "| 表現 | 適した内容 | サンプル |",
             "| --- | --- | --- |",
-            "| 箇条書き | 条件や確認項目 | [公開前チェック](doc:a) |",
-            "| 図・HTML | 構成や処理の流れ | [図とHTML](doc:media) |",
-            "| 関係図 | コンポーネントの依存 | [処理フロー](doc:flow) |",
-            "| スキーマ | テーブル間の関連 | [データモデル](doc:data-model) |",
+            "| 箇条書き | 条件や確認項目 | [公開前チェック](content/a.md) |",
+            "| 図・HTML | 構成や処理の流れ | [図とHTML](content/media.md) |",
+            "| 関係図 | コンポーネントの依存 | [処理フロー](content/flow.md) |",
+            "| スキーマ | テーブル間の関連 | [データモデル](content/data-model.md) |",
             "| 👩‍💻 | é | English |",
         ].join("\n");
         const formatted = formatMarkdown(table);

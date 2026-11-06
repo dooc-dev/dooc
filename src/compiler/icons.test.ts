@@ -29,10 +29,10 @@ describe("compileSite icons/", () => {
         const root = mkdtempSync(join(tmpdir(), "docs-icons-"));
         mkdirSync(join(root, "content"));
         mkdirSync(join(root, "icons"));
-        writeFileSync(join(root, "manifest.yaml"), "- a\n");
+        writeFileSync(join(root, "dooc.yaml"), "- a\n");
         writeFileSync(join(root, "content", "a.md"), '---\ntitle: "A"\n---\n');
         writeFileSync(join(root, "icons", "a.svg"), '<svg viewBox="0 0 1 1"/>');
-        expect(compileSite(root).artifact.docs[0]?.icon).toBe('<svg viewBox="0 0 1 1"/>');
+        expect(compileSite(root).docs[0]?.icon).toBe('<svg viewBox="0 0 1 1"/>');
         writeFileSync(join(root, "icons", "ghost.svg"), '<svg viewBox="0 0 1 1"/>');
         expect(compileSite(root).errors).toContain(
             "icons/ghost.svg: no matching doc (content/ghost.md)",

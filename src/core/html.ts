@@ -2,9 +2,11 @@
 // "just map blocks + inline segments to output" pipeline as consumers (= prevents rendering
 // semantics from drifting). Headings and body text share the same weight (headings are also
 // font-weight 400).
-import type { FigureEntry, TermEntry } from "./artifact-types.js";
+
 import type { Block, ListItem, TocEntry } from "./blocks.js";
+import type { FigureEntry, TermEntry } from "./content-types.js";
 import { figureFrameHtml } from "./figure-frame.js";
+import { parseFigureLink } from "./file-embed.js";
 import {
     GRAPH_LAYOUT_MARGIN,
     GRAPH_LEGEND,
@@ -12,7 +14,7 @@ import {
     graphUid,
     layoutGraph,
 } from "./graph.js";
-import { inlineSegmenter, termMap } from "./inline.js";
+import { type InlineSegment, inlineSegmenter, termMap } from "./inline.js";
 import { type LanguageAdapter, termComparator } from "./language.js";
 import { parseDocLink } from "./routing.js";
 import {
@@ -27,15 +29,12 @@ import { termAnchor } from "./term-reference.js";
 import { textfileName } from "./textfile.js";
 
 export interface RenderCtx {
+    /** Source file to published document route. */
+    docLinks?: ReadonlyMap<string, string>;
     /** Figures including their markup (name → entry). */
     figures: ReadonlyMap<string, FigureEntry>;
     terms: readonly TermEntry[];
     termLinks?: ReadonlyMap<string, string>;
-    /**
-     * Link target for `Fig. <name>` references = the doc holding the `::figures` list
-     * (figureIndexRoute). If absent, references aren't linked.
-     */
-    figureIndex?: string;
     /** The doc's language tag (BCP 47), emitted as `<article lang>`. */
     lang?: string;
     /** Localized in-page table of contents title. Default: Contents. */
@@ -49,11 +48,6 @@ export interface RenderCtx {
     language?: LanguageAdapter;
 }
 
-/** Route of the first doc containing `::figures` (the figure list); Fig. references link here. */
-export const figureIndexRoute = (
-    docs: readonly { id: string; blocks: readonly Block[] }[],
-): string | undefined => docs.find((d) => d.blocks.some((b) => b.type === "figures"))?.id;
-
 export const emptyCtx: RenderCtx = { figures: new Map(), terms: [] };
 
 export const escapeHtml = (s: string): string =>
@@ -61,42 +55,61 @@ export const escapeHtml = (s: string): string =>
 
 type Segmenter = (text: string) => ReturnType<ReturnType<typeof inlineSegmenter>>;
 
-// inline segment → html. Figure reference = link to the anchor on the figure page + the figure
-// itself on hover (popup only for svg; html fragments get just the link to avoid duplicate ids).
-// Term reference = definition tooltip on hover.
+// File links open their resource page; SVGs and terms also have hover previews.
 const segmentsHtml = (text: string, ctx: RenderCtx, seg: Segmenter): string =>
-    seg(text)
+    inlineHtml(seg(text), ctx);
+
+const inlineHtml = (segments: InlineSegment[], ctx: RenderCtx): string =>
+    segments
         .map((s) => {
             switch (s.kind) {
                 case "text":
                     return escapeHtml(s.text);
                 case "code":
                     return `<code>${escapeHtml(s.text)}</code>`;
+                case "strong":
+                    return `<strong>${inlineHtml(s.children, ctx)}</strong>`;
+                case "emphasis":
+                    return `<em>${inlineHtml(s.children, ctx)}</em>`;
                 case "link": {
-                    // doc: links are resolved to `/<docId>` via routing.
-                    const id = parseDocLink(s.url);
-                    const href = id ? `/${id}` : s.url;
-                    return `<a href="${escapeHtml(href)}">${escapeHtml(s.text)}</a>`;
-                }
-                case "figref": {
-                    const fig = ctx.figures.get(s.name);
-                    const pop =
-                        fig && fig.kind === "svg"
-                            ? `<span class="figpop">${figureFrameHtml(fig, "fig-frame figpop-frame")}</span>`
-                            : "";
-                    if (!ctx.figureIndex) {
-                        return `<span class="figref">${escapeHtml(s.text)}${pop}</span>`;
+                    const label = s.children ? inlineHtml(s.children, ctx) : escapeHtml(s.text);
+                    let href = s.url;
+                    try {
+                        const ref = parseDocLink(s.url);
+                        const target = ref && ctx.docLinks?.get(ref.file);
+                        if (target && ref)
+                            href =
+                                target +
+                                (ref.fragment ? `#${encodeURIComponent(ref.fragment)}` : "");
+                        const figureRef = parseFigureLink(s.url);
+                        const fig =
+                            figureRef &&
+                            [...ctx.figures.values()].find((fig) => fig.file === figureRef.file);
+                        if (fig && figureRef) {
+                            href =
+                                `/_files/file/${encodeURIComponent(fig.file)}` +
+                                (figureRef.fragment
+                                    ? `#${encodeURIComponent(figureRef.fragment)}`
+                                    : "");
+                            const pop =
+                                fig.kind === "svg"
+                                    ? `<span class="figpop">${figureFrameHtml(fig, "fig-frame figpop-frame")}</span>`
+                                    : "";
+                            return `<a class="figref" href="${escapeHtml(href)}">${label}${pop}</a>`;
+                        }
+                    } catch {
+                        /* Invalid drafts retain their source link; validation reports the error. */
                     }
-                    const href = `/${ctx.figureIndex}#${s.name}`;
-                    return `<a class="figref" href="${href}">${escapeHtml(s.text)}${pop}</a>`;
+                    return `<a href="${escapeHtml(href)}">${label}</a>`;
                 }
                 case "term": {
+                    const label = s.children ? inlineHtml(s.children, ctx) : escapeHtml(s.text);
                     const entry = termMap(ctx.terms).get(s.id);
-                    if (!entry) return escapeHtml(s.text);
+                    if (!entry) return label;
                     const href =
                         ctx.termLinks?.get(s.id) ??
                         `/_files/terms#${encodeURIComponent(termAnchor(s.id))}`;
-                    return `<a class="dictref" href="${escapeHtml(href)}">${escapeHtml(s.text)}<span class="dictpop">${escapeHtml(entry.definition)}${entry.description ? `<span class="dictpop-description">${escapeHtml(entry.description)}</span>` : ""}</span></a>`;
+                    return `<a class="dictref" href="${escapeHtml(href)}">${label}<span class="dictpop">${escapeHtml(entry.definition)}${entry.description ? `<span class="dictpop-description">${escapeHtml(entry.description)}</span>` : ""}</span></a>`;
                 }
                 default:
                     return "";
@@ -108,6 +121,8 @@ const listHtml = (items: ListItem[], ctx: RenderCtx, seg: Segmenter, ordered = f
     const tag = ordered ? "ol" : "ul";
     const lis = items
         .map((it) => {
+            if (typeof it !== "string" && "blocks" in it)
+                return `<li>${it.blocks.map((block) => blockHtml(block, ctx, seg)).join("\n")}</li>`;
             const text = typeof it === "string" ? it : it.text;
             const children =
                 typeof it === "string" || it.children.length === 0
@@ -196,7 +211,7 @@ const schemaBoxHtml = (t: SchemaLayoutTable): string => {
     ].join("");
 };
 
-// schema graph (`:::schema`) → self-contained SVG. Geometry comes from schema-graph.ts
+// schema graph (`schemath`) → self-contained SVG. Geometry comes from schema-graph.ts
 // (deterministic layout); this is markup only. Colors reference `var(--doc-*, fallback)` like
 // figures, and linked hover (highlighting related edges) is done entirely with CSS :has() (no JS =
 // same behavior on every consumer). Classes / marker ids are namespaced by the model hash, so
@@ -407,6 +422,8 @@ const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
             return `<h${b.level} id="${escapeHtml(b.slug)}">${segmentsHtml(b.text, ctx, seg)}${ctx.sectionUrl === undefined ? "" : `<button class="section-copy" type="button" data-section-url="${escapeHtml(ctx.sectionUrl)}#${encodeURIComponent(b.slug)}" title="Copy section URL" aria-label="Copy section URL" data-i18n-title="Copy section URL" data-i18n-aria-label="Copy section URL"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m8 12 4-4m-5 2-2 2a3 3 0 0 0 4 4l2-2m-2-8 2-2a3 3 0 0 1 4 4l-2 2"/></svg></button>`}</h${b.level}>`;
         case "p":
             return `<p>${segmentsHtml(b.text, ctx, seg)}</p>`;
+        case "quote":
+            return `<blockquote>${b.blocks.map((block) => blockHtml(block, ctx, seg)).join("\n")}</blockquote>`;
         case "list":
             return listHtml(b.items, ctx, seg, b.ordered === true);
         case "code": {
@@ -459,7 +476,7 @@ const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
                 )
                 .join("\n");
         case "schemaGraph":
-            // table DSL → ER diagram. The model baked into the artifact is turned into SVG with a
+            // table DSL → ER diagram. The parsed model is turned into SVG with a
             // deterministic layout, so every consumer gets the same picture (no references outside
             // the data).
             return schemaGraphHtml(b);
@@ -468,7 +485,7 @@ const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
             // → SVG.
             return graphHtml(b);
         default:
-            // Unknown block (= data generation newer than this logic) — degrade to a placeholder
+            // Unknown block — degrade to a placeholder
             // instead of emitting "undefined".
             return `<div class="ph">${escapeHtml(`Unknown block (${(b as { type: string }).type})`)}<span> — docs viewer needs an update</span></div>`;
     }
@@ -476,7 +493,6 @@ const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
 
 export const blocksHtml = (blocks: Block[], ctx: RenderCtx = emptyCtx): string => {
     const seg = inlineSegmenter({
-        figureNames: [...ctx.figures.keys()],
         terms: ctx.terms,
     });
     return blocks

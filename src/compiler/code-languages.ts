@@ -3,10 +3,14 @@ import { join, relative, resolve } from "node:path";
 import { languageAliasNames, languageNames } from "@shikijs/langs";
 import type { LanguageRegistration } from "shiki/core";
 import { bundledLanguages } from "shiki/langs";
-import { CODE_LANGS } from "../core/taxonomy.js";
+import { CODE_LANGS, CODE_TEMPLATES } from "../core/taxonomy.js";
 
 export const CODE_LANGUAGES_DIR = ".dooc/code-languages";
-const supported = new Set<string>([...languageNames, ...languageAliasNames, "grapth", "termth"]);
+const supported = new Set<string>([
+    ...languageNames,
+    ...languageAliasNames,
+    ...Object.keys(CODE_TEMPLATES),
+]);
 const safeName = /^[a-z0-9][a-z0-9_-]*$/;
 
 const parseGrammars = (value: unknown, source: string): LanguageRegistration[] => {
@@ -59,10 +63,17 @@ export const loadCodeGrammars = async (
                         ],
                     },
                 ] as LanguageRegistration[];
-            if (name === "termth")
+            if (name === "termth" || name === "schemath" || name === "callouth")
                 return [
-                    ...(await bundledLanguages.yaml()).default,
-                    { name, scopeName: "source.termth", patterns: [{ include: "source.yaml" }] },
+                    ...(await bundledLanguages[name === "callouth" ? "markdown" : "yaml"]())
+                        .default,
+                    {
+                        name,
+                        scopeName: `source.${name}`,
+                        patterns: [
+                            { include: name === "callouth" ? "text.html.markdown" : "source.yaml" },
+                        ],
+                    },
                 ] as LanguageRegistration[];
             if (!supported.has(name)) throw new Error(`Unsupported Shiki language: ${name}`);
             return (await bundledLanguages[name as keyof typeof bundledLanguages]()).default;

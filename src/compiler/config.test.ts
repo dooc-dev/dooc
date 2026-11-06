@@ -37,7 +37,7 @@ describe("loadDocsConfig (docs.config.mjs)", () => {
             );
         expect(await bad("export default 1;\n")).toContain("default export must be an object");
         expect(await bad('export default { defaultLang: "ja" };\n')).toContain(
-            "move defaultLang to manifest.yaml",
+            "move defaultLang to dooc.yaml",
         );
         expect(await bad("export default { languages: {} };\n")).toContain(
             "languages must be an array",

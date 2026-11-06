@@ -17,25 +17,25 @@ describe("schemaCompletion", () => {
             "  /* comment\n  refs: fk(¦)\n  */",
             "  /* unfinished\n  refs: ¦",
         ])
-            expect(complete(`:::schema\na:\n${body}`)).toBeNull();
+            expect(complete(`~~~schemath\na:\n${body}`)).toBeNull();
     });
 
     it("excludes commented declarations and supports comments after real declarations", () => {
         const result = complete(
-            ":::schema\na: // table\n  refs: fk(/* target */ ¦)\n/*\nhidden:\n*/\n// ignored:\nb: /* table */\n  id: pk\n:::",
+            "~~~schemath\na: // table\n  refs: fk(/* target */ ¦)\n/*\nhidden:\n*/\n// ignored:\nb: /* table */\n  id: pk\n~~~",
         );
         expect(result?.options.map((o) => o.label)).toEqual(["a", "b"]);
     });
 
     it("offers self and forward references only from the current schema", () => {
         const result = complete(
-            `:::schema\nother:\n:::\n:::schema\nsample_items:\n  refs: fk[](¦)\n  unfinished:\nsample_tags:\n:::\n:::schema\nelsewhere:\n:::`,
+            `~~~schemath\nother:\n~~~\n~~~schemath\nsample_items:\n  refs: fk[](¦)\n  unfinished:\nsample_tags:\n~~~\n~~~schemath\nelsewhere:\n~~~`,
         );
         expect(result?.options.map((o) => o.label)).toEqual(["sample_items", "sample_tags"]);
     });
 
     it("replaces the whole target at the cursor and supports union references", () => {
-        const source = ":::schema\na:\n  refs: fk(a | mo¦dule)\nmodule:\n:::";
+        const source = "~~~schemath\na:\n  refs: fk(a | mo¦dule)\nmodule:\n~~~";
         const result = complete(source);
         expect(result?.from).toBe(source.indexOf("mo¦"));
         expect(result?.to).toBe(source.indexOf(")") - 1);
@@ -43,7 +43,7 @@ describe("schemaCompletion", () => {
     });
 
     it("offers schema types even with incomplete syntax and an unclosed container", () => {
-        const result = complete(":::schema\na:\n  refs: ¦");
+        const result = complete("~~~schemath\na:\n  refs: ¦");
         expect(result?.options.map((o) => o.label)).toEqual([
             "pk",
             "string",
@@ -58,23 +58,23 @@ describe("schemaCompletion", () => {
     });
 
     it("supports a commonly indented schema and deduplicates declarations", () => {
-        const result = complete("  :::schema\n  a:\n    refs: fk(¦)\n  a:\n  b:\n  :::");
+        const result = complete("  ~~~schemath\n  a:\n    refs: fk(¦)\n  a:\n  b:\n  ~~~");
         expect(result?.options.map((o) => o.label)).toEqual(["a", "b"]);
     });
 
     it("does not suggest in headings, notes, enum values or closing markers", () => {
-        for (const line of ["### ¦", "  note¦", '  kind: enum("¦")', ":::¦"]) {
-            expect(complete(`:::schema\na:\n${line}`)).toBeNull();
+        for (const line of ["### ¦", "  note¦", '  kind: enum("¦")', "~~~¦"]) {
+            expect(complete(`~~~schemath\na:\n${line}`)).toBeNull();
         }
     });
 
     it("does not treat Markdown examples or other directives as schema", () => {
         for (const source of [
             "a:\n  refs: fk(¦)",
-            "```md\n:::schema\na:\n  refs: fk(¦)\n```",
-            "~~~md\n:::schema\na:\n  refs: fk(¦)\n~~~",
-            ":::schema\na:\n:::\n  refs: fk(¦)",
-            ":::graph\na:\n  refs: fk(¦)",
+            "```md\n~~~schemath\na:\n  refs: fk(¦)\n```",
+            "~~~md\n~~~schemath\na:\n  refs: fk(¦)\n~~~",
+            "~~~schemath\na:\n~~~\n  refs: fk(¦)",
+            "~~~graph\na:\n  refs: fk(¦)",
         ])
             expect(complete(source)).toBeUndefined();
     });

@@ -4,6 +4,7 @@ import { once } from "node:events";
 import {
     chmodSync,
     copyFileSync,
+    existsSync,
     mkdirSync,
     mkdtempSync,
     readFileSync,
@@ -27,23 +28,17 @@ try {
     };
     const run = (...args) => execFileSync(binary, args, options);
     assert.match(run("--help"), /usage: dooc/);
-    assert.ok(JSON.parse(run("json-schema", "latest")).properties.generation);
     mkdirSync(join(root, "content"));
-    writeFileSync(join(root, "manifest.yaml"), "defaultLang: ja\ndocs:\n  - guide\n");
+    writeFileSync(join(root, "dooc.yaml"), "defaultLang: ja\ndocs:\n  - guide\n");
     writeFileSync(
         join(root, "content/guide.md"),
         "---\ntitle: Guide\n---\n# Hello\n\n```js\nconst x = 1;\n```\n\n```grapth\n[a]: 書く\n[b]: 共有する\n[a] -> [b]\n```\n",
     );
-    run("code-language", "add", "python");
-    assert.ok(JSON.parse(readFileSync(join(root, ".dooc/code-languages/python.json"))).length);
-    run("export", "json");
-    assert.equal(JSON.parse(readFileSync(join(root, "dist/artifact/docs.json"))).docs.length, 1);
     run("export", "html");
     const html = readFileSync(join(root, "dist/index.html"), "utf8");
     assert.match(html, /data:font\/woff2;base64,/);
     assert.match(html, /Hello/);
     run("export", "zip");
-    assert.match(run("doc", "ls"), /guide/);
     const rpc = execFileSync(binary, ["mcp"], {
         ...options,
         input: `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })}\n`,
@@ -87,6 +82,53 @@ try {
         assert.equal(response.status, 200, path);
         assert.ok((await response.arrayBuffer()).byteLength > 0, path);
     }
+    const request = async (path, body) => {
+        const response = await fetch(new URL(path, url), {
+            signal: AbortSignal.timeout(30_000),
+            ...(body === undefined
+                ? {}
+                : {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", Origin: url.slice(0, -1) },
+                      body: JSON.stringify(body),
+                  }),
+        });
+        assert.equal(response.status, 200, await response.clone().text());
+        return response.json();
+    };
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><circle r="4"/></svg>';
+    await request("api/icon", { file: "guide.md", data: Buffer.from(svg).toString("base64") });
+    assert.ok(existsSync(join(root, "files/svg/guide-icon.svg")));
+    assert.match(readFileSync(join(root, "dooc.yaml"), "utf8"), /files\/svg\/guide-icon\.svg/);
+    assert.match(
+        (await request("api/page?route=/guide")).boot.icon,
+        /^data:image\/svg\+xml;base64,/,
+    );
+    const source = readFileSync(join(root, "content/guide.md"), "utf8");
+    const translated = join(root, "locales/eng/content/guide.md");
+    await request("api/translation", { file: "guide.md", language: "eng", added: true });
+    assert.ok(existsSync(translated));
+    const english = await request("api/doc?file=guide.md&lang=eng");
+    assert.equal(english.raw, readFileSync(translated, "utf8"));
+    const change = {
+        file: "guide.md",
+        frontmatter: { title: "English guide" },
+        body: "Translated **content**.\n",
+        baseRaw: english.raw,
+    };
+    const saved = await request("api/save?lang=eng", change);
+    assert.equal(saved.saved, true);
+    assert.equal(readFileSync(translated, "utf8"), saved.raw);
+    assert.equal(readFileSync(join(root, "content/guide.md"), "utf8"), source);
+    const external = "---\ntitle: External edit\nlang: eng\n---\n\nChanged outside the editor.\n";
+    writeFileSync(translated, external);
+    const conflict = await request("api/save?lang=eng", { ...change, baseRaw: saved.raw });
+    assert.equal(conflict.conflict, true);
+    assert.equal(conflict.saved, false);
+    assert.equal(readFileSync(translated, "utf8"), external);
+    await request("api/translation", { file: "guide.md", language: "eng", added: false });
+    assert.equal(existsSync(translated), false);
+    assert.equal((await request("api/doc?file=guide.md&lang=eng")).raw, source);
     const lint = await fetch(new URL("api/lint", url), {
         signal: AbortSignal.timeout(30_000),
         method: "POST",
@@ -98,7 +140,7 @@ try {
         (await lint.json()).findings.some((finding) => finding.ruleId === "no-doubled-joshi"),
     );
     console.log(
-        "Standalone CLI, MCP, exports, syntax grammars, editor assets, and Japanese lint passed (empty PATH).",
+        "Standalone CLI, MCP, exports, Markdown translations, editor assets, and Japanese lint passed (empty PATH).",
     );
 } finally {
     if (server && server.exitCode === null && server.signalCode === null) {

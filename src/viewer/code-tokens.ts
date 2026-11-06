@@ -15,6 +15,9 @@ export const codeTheme = (): string => {
 
 /** Preview and both editors use the same registered grammars and colors. */
 export const codeTokens = async (source: string, language: string) => {
+    // Large sources remain plain text so tokenization cannot stall either editor or the preview.
+    if (source.length > 100_000 || source.split("\n").some((line) => line.length > 10_000))
+        return [];
     const grammar = codeGrammars().find(
         (entry) => entry.name === language || entry.aliases?.includes(language),
     );

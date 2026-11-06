@@ -23,7 +23,7 @@
 // Only four things happen here:
 //   1. Drop the XML prolog / DOCTYPE (figures.ts requires a single root <svg>; if left in, the
 //      theme injection breaks the prolog)
-//   2. Drop the content attribute (the mxfile copy) from the artifact — it's editing data, not
+//   2. Drop the content attribute (the mxfile copy) from rendered output — it's editing data, not
 //      needed for distribution. Works whether "include a copy of the diagram" is ON or OFF at
 //      export
 //   3. Drop the trailing "Text is not SVG - cannot display" fallback — it embeds an external
@@ -171,7 +171,7 @@ export const normalizeDrawioSvg = (name: string, raw: string): DrawioNormalized 
     const mxfile = extractMxfile(raw);
 
     let markup = stripProlog(raw);
-    // Drop the content attribute — editing data doesn't go into the shipped artifact.
+    // Drop the content attribute — editing data doesn't go into the rendered output.
     const headEnd = markup.indexOf(">");
     if (headEnd >= 0) {
         markup = markup.slice(0, headEnd).replace(CONTENT_ATTR, "") + markup.slice(headEnd);

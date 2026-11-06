@@ -1,5 +1,5 @@
 import { parseDocument } from "yaml";
-import type { TermEntry } from "../core/artifact-types.js";
+import type { TermEntry } from "../core/content-types.js";
 
 /** The internal identity is a file path, or a document position for an inline definition. */
 export function parseTermSource(

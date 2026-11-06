@@ -89,26 +89,26 @@ describe("termth definitions and file links", () => {
         try {
             mkdirSync(join(root, "content"));
             mkdirSync(join(root, "terms"));
-            writeFileSync(join(root, "manifest.yaml"), "- a\n- b\n");
+            writeFileSync(join(root, "dooc.yaml"), "- a\n- b\n");
             writeFileSync(join(root, "terms/api.termth"), yaml);
             const body = source("[](terms/api.termth)\n\n[Interface](./terms/api.termth)");
             for (const id of ["a", "b"]) writeFileSync(join(root, "content", `${id}.md`), body);
             const compiler = createCompiler(root);
             const built = compiler.compile();
             expect(built.errors).toEqual([]);
-            expect(built.artifact.terms).toHaveLength(1);
-            expect(built.artifact.docs[0]?.refs.terms).toEqual(["terms/api.termth"]);
+            expect(built.terms).toHaveLength(1);
+            expect(built.docs[0]?.refs.terms).toEqual(["terms/api.termth"]);
             expect(
                 exportEntries(root)
                     .find((entry) => entry.name === "terms/api.termth")
                     ?.data.toString(),
             ).toBe(yaml);
             writeFileSync(join(root, "terms/api.termth"), "name: Updated\ndefinition: Changed\n");
-            expect(compiler.compile().artifact.terms[0]?.name).toBe("Updated");
+            expect(compiler.compile().terms[0]?.name).toBe("Updated");
             const draft = compileDraft(
                 {
                     root,
-                    docs: built.artifact.docs,
+                    docs: built.docs,
                     figures: new Map(),
                     textfiles: new Map([
                         ["terms/api.termth", "name: Draft\ndefinition: Unsaved\n"],
@@ -119,10 +119,10 @@ describe("termth definitions and file links", () => {
             );
             expect(draft.source.errors).toEqual([]);
             expect(draft.source.terms[0]?.name).toBe("Draft");
-            expect(compiler.compile().artifact.terms[0]?.name).toBe("Updated");
+            expect(compiler.compile().terms[0]?.name).toBe("Updated");
             rmSync(join(root, "terms/api.termth"));
             expect(compiler.compile().errors.join()).toContain("terms/api.termth:");
-            expect(compiler.compile().artifact.terms).toEqual([]);
+            expect(compiler.compile().terms).toEqual([]);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
@@ -142,7 +142,7 @@ describe("termth definitions and file links", () => {
         const outside = mkdtempSync(join(tmpdir(), "docs-private-term-"));
         try {
             mkdirSync(join(root, "content"));
-            writeFileSync(join(root, "manifest.yaml"), "- a\n");
+            writeFileSync(join(root, "dooc.yaml"), "- a\n");
             const file = "日本語 (#1).termth";
             writeFileSync(join(root, file), yaml);
             writeFileSync(
@@ -153,11 +153,11 @@ describe("termth definitions and file links", () => {
             );
             const built = compileSite(root);
             expect(built.errors).toEqual([]);
-            expect(built.artifact.terms[0]?.id).toBe(file);
+            expect(built.terms[0]?.id).toBe(file);
             expect(
-                blocksHtml(built.artifact.docs[0]?.blocks ?? [], {
+                blocksHtml(built.docs[0]?.blocks ?? [], {
                     figures: new Map(),
-                    terms: built.artifact.terms,
+                    terms: built.terms,
                 }),
             ).toContain('class="dictref"');
             writeFileSync(join(outside, "secret.termth"), yaml);

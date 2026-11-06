@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { parseDoc } from "../compiler/dialect.js";
 import { toBlocks } from "../compiler/from-mdast.js";
-import type { FigureEntry } from "./artifact-types.js";
 import type { Block } from "./blocks.js";
-import { blocksHtml, docHtml, figureIndexRoute, type RenderCtx, termsHtml } from "./html.js";
+import type { FigureEntry } from "./content-types.js";
+import { blocksHtml, docHtml, type RenderCtx, termsHtml } from "./html.js";
 import type { SchemaGraphClientData } from "./schema-graph.js";
 
 const fm = (body: string): string => `---\ntitle: "t"\n---\n\n${body}\n`;
@@ -29,6 +29,67 @@ const html = (body: string, ctx?: RenderCtx): string =>
     blocksHtml(toBlocks(parseDoc(fm(body)).root, parseDoc(fm(body)).source).blocks, ctx);
 
 describe("blocksHtml", () => {
+    it("renders Markdown emphasis, nested formatting, links and literal escapes", () => {
+        const source =
+            "**Bold** and _italic_ and ***both***.\n\n[**Linked** *label*](https://example.com)\n\n\\*literal\\* and \\_literal\\_ and a_b_c and ``a ` b``.";
+        const output = html(source);
+        expect(output).toContain(
+            "<strong>Bold</strong> and <em>italic</em> and <em><strong>both</strong></em>",
+        );
+        expect(output).toContain(
+            '<a href="https://example.com"><strong>Linked</strong> <em>label</em></a>',
+        );
+        expect(output).toContain("*literal* and _literal_ and a_b_c and <code>a ` b</code>");
+        expect(html("**\\<script>**")).toContain("<strong>&lt;script&gt;</strong>");
+    });
+
+    it("renders emphasis in headings, tables, lists, and callouts without formatting markers in the TOC", () => {
+        const source = fm(
+            "## **Important** *details*\n\n- **Item**\n\n| *Header* |\n| --- |\n| **Cell** |\n\n~~~callouth Note\n**Bold** and *italic*\n~~~",
+        );
+        const parsed = parseDoc(source);
+        expect(parsed.errors).toEqual([]);
+        const converted = toBlocks(parsed.root, source);
+        expect(converted.toc).toEqual([
+            { depth: 2, text: "Important details", slug: "important-details" },
+        ]);
+        const output = blocksHtml(converted.blocks);
+        expect(output).toContain(
+            '<h2 id="important-details"><strong>Important</strong> <em>details</em></h2>',
+        );
+        expect(output).toContain("<li><strong>Item</strong></li>");
+        expect(output).toContain("<th><em>Header</em></th>");
+        expect(output).toContain("<td><strong>Cell</strong></td>");
+        expect(output).toContain("<p><strong>Bold</strong> and <em>italic</em></p></aside>");
+    });
+
+    it("preserves nested quotes, paragraphs, lists and literal fenced code", () => {
+        const source = fm(
+            "> **Quoted** *text*\n>\n> - A **list**\n>\n> > Nested\n>\n> ```js\n> const text = '**literal**';\n> ```\n\nAfter",
+        );
+        const parsed = parseDoc(source);
+        expect(parsed.errors).toEqual([]);
+        const converted = toBlocks(parsed.root, source);
+        expect(converted.blocks.map((block) => block.type)).toEqual(["quote", "p"]);
+        expect(converted.lines).toHaveLength(2);
+        const output = blocksHtml(converted.blocks);
+        expect(output).toContain("<blockquote><p><strong>Quoted</strong> <em>text</em></p>");
+        expect(output).toContain("<ul><li>A <strong>list</strong></li></ul>");
+        expect(output).toContain("<blockquote><p>Nested</p></blockquote>");
+        expect(output).toContain("const text = '**literal**';");
+        expect(output).toContain("</blockquote>\n<p>After</p>");
+        const listed = fm(
+            "- Before\n\n  > **Quoted** item\n\n  After\n\n  - Nested\n    > *Nested quote*",
+        );
+        const parsedList = parseDoc(listed);
+        expect(parsedList.errors).toEqual([]);
+        const listOutput = blocksHtml(toBlocks(parsedList.root, listed).blocks);
+        expect(listOutput).toContain(
+            "<li><p>Before</p>\n<blockquote><p><strong>Quoted</strong> item</p></blockquote>\n<p>After</p>",
+        );
+        expect(listOutput).toContain("<blockquote><p><em>Nested quote</em></p></blockquote>");
+    });
+
     it("ignores legacy document descriptions and keeps figure descriptions", () => {
         const legacy = { title: "Guide", description: "Removed document description" };
         const output = docHtml(legacy, [{ type: "figureRef", name: MODEL_FIG.name }], [], CTX);
@@ -76,8 +137,13 @@ describe("blocksHtml", () => {
         expect(output.match(/class="section-copy"/g)).toHaveLength(2);
     });
 
-    it("resolves doc: links to the route path via routing", () => {
-        expect(html("[For developers](doc:dev)")).toContain('<a href="/dev">For developers</a>');
+    it("resolves file links to the published route via routing", () => {
+        expect(
+            html("[For developers](content/dev.md)", {
+                ...CTX,
+                docLinks: new Map([["content/dev.md", "/dev"]]),
+            }),
+        ).toContain('<a href="/dev">For developers</a>');
     });
 
     it("renders nested lists as nested <ul>", () => {
@@ -114,21 +180,21 @@ describe("blocksHtml", () => {
     });
 
     it("callout renders title + list; a figure with no file becomes a placeholder", () => {
-        const out = html(":::callout[Key points]\n- Item\n:::\n\n![](figures/unknown_fig.svg)");
+        const out = html("~~~callouth Key points\n- Item\n~~~\n\n![](figures/unknown_fig.svg)");
         expect(out).toContain('<aside class="callout"><div class="cap">Key points</div><ul>');
         expect(out).toContain("Fig. unknown_fig");
         expect(out).toContain("not found in figures/");
     });
 
     it("renders numbered lists inside a callout as <ol> too", () => {
-        const out = html(":::callout[Steps]\n1. One\n2. Two\n:::");
+        const out = html("~~~callouth Steps\n1. One\n2. Two\n~~~");
         expect(out).toBe(
             '<aside class="callout"><div class="cap">Steps</div><ol><li>One</li><li>Two</li></ol></aside>',
         );
     });
 
     it("callout renders a mix of paragraphs / bullets in order", () => {
-        const out = html(":::callout[Terms]\nAn explanatory paragraph.\n\n- Note 1\n- Note 2\n:::");
+        const out = html("~~~callouth Terms\nAn explanatory paragraph.\n\n- Note 1\n- Note 2\n~~~");
         expect(out).toBe(
             '<aside class="callout"><div class="cap">Terms</div><p>An explanatory paragraph.</p><ul><li>Note 1</li><li>Note 2</li></ul></aside>',
         );
@@ -164,7 +230,7 @@ describe("blocksHtml", () => {
         );
     });
 
-    it(":::schema draws the table DSL as a self-contained SVG (ER diagram)", () => {
+    it("~~~schemath draws the table DSL as a self-contained SVG (ER diagram)", () => {
         const dsl = [
             "/* source-only description */",
             "### catalog",
@@ -178,7 +244,7 @@ describe("blocksHtml", () => {
             "  categories: fk(categories)",
             "  deps: fk[](categories)",
         ].join("\n");
-        const out = html(`:::schema[sample schema]\n${dsl}\n:::`);
+        const out = html(`~~~schemath sample schema\n${dsl}\n~~~`);
         expect(out).toContain('<figure class="fig"><svg xmlns=');
         expect(out).toContain('<figcaption class="cap">sample schema</figcaption>');
         // boxes (table name / field / type / note) and group frame labels
@@ -221,14 +287,14 @@ describe("blocksHtml", () => {
         // lines and note order are preserved character for character.
         expect(parsed.source).toBe(dsl);
         // a schema without tables degrades to a placeholder
-        expect(html(":::schema\n:::")).toContain('<div class="ph">schema graph');
+        expect(html("~~~schemath\n~~~")).toContain('<div class="ph">schema graph');
         // same result with the content indented by 2 spaces (the common indent is stripped)
-        const indented = html(":::schema[c]\n  ### g\n  a:\n    id: pk\n    b: fk(a)\n:::");
+        const indented = html("~~~schemath c\n  ### g\n  a:\n    id: pk\n    b: fk(a)\n~~~");
         expect(indented).toContain(">a<");
         expect(indented).toContain('class="sg-e ');
     });
 
-    it(":::graph draws the node / edge DSL as a self-contained SVG (relationship diagram)", () => {
+    it("~~~graph draws the node / edge DSL as a self-contained SVG (relationship diagram)", () => {
         const dsl = [
             "[input]: Input @Ingest",
             "[pre-process]: Preprocessor @Ingest",
@@ -265,7 +331,7 @@ describe("blocksHtml", () => {
         expect(html("~~~grapth\n  [a]: A\n  [b]: B\n  [a] -- [b]\n~~~")).toContain('class="gr-e ');
     });
 
-    it(":::graph draws no arrowhead on undirected edges", () => {
+    it("~~~graph draws no arrowhead on undirected edges", () => {
         const out = html("~~~grapth\n[a]: A\n[b]: B\n[a] -- [b]\n~~~");
         expect(out).toContain('class="gr-e ');
         expect(out).not.toContain("marker-end");
@@ -282,7 +348,7 @@ describe("blocksHtml", () => {
             "tags:",
             "  id: pk",
         ].join("\n");
-        const out = html(`:::schema\n${dsl}\n:::`);
+        const out = html(`~~~schemath\n${dsl}\n~~~`);
         expect(out.match(/>pk fk</g)).toHaveLength(2);
         // the fk-derived class (sg-ref) is still applied (by design, the kind itself is unchanged).
         expect(out).toContain('class="sg-ftype sg-ref"');
@@ -296,12 +362,12 @@ describe("blocksHtml", () => {
             "  display_name: string",
             "unique(categories.display_name)",
         ].join("\n");
-        const out = html(`:::schema\n${dsl}\n:::`);
+        const out = html(`~~~schemath\n${dsl}\n~~~`);
         expect(out).toContain(">uq string<");
     });
 
     it("enum(...) stays scalar and renders the values joined with | as its label", () => {
-        const out = html(':::schema\na:\n  kind: enum("plain"|"draft"|"final")\n:::');
+        const out = html('~~~schemath\na:\n  kind: enum("plain"|"draft"|"final")\n~~~');
         // kind isn't treated as fk (no sg-ref class) = stays scalar.
         expect(out).toContain(">kind<");
         expect(out).toContain(">&quot;plain&quot;|&quot;draft&quot;|&quot;final&quot;<");
@@ -309,7 +375,7 @@ describe("blocksHtml", () => {
     });
 
     it("unknown blocks degrade to a placeholder", () => {
-        // block outside the type (e.g. data from a newer generation than the renderer) — no
+        // block outside the type — no
         // "undefined" leaks into the output.
         const unknown = blocksHtml([{ type: "future-thing" } as never]);
         expect(unknown).toContain("Unknown block (future-thing)");
@@ -318,25 +384,32 @@ describe("blocksHtml", () => {
 });
 
 describe("inline references (figures / dictionary)", () => {
-    it("Fig. <name> in body text links to the figure page anchor + hover figure (popup for svg only)", () => {
-        const out = html("See Fig. data_model for the classification.", {
-            ...CTX,
-            figureIndex: "figures",
-        });
-        expect(out).toContain('<a class="figref" href="/figures#data_model">Fig. data_model');
-        // without a figure page (a doc with ::figures) there's no link, only the hover
-        expect(html("Fig. data_model", CTX)).toContain('<span class="figref">Fig. data_model');
+    it("ordinary SVG links open a file page and preview in a sandboxed iframe", () => {
+        const out = html("See [Data model](./figures/data_model.svg).", CTX);
+        expect(out).toContain(
+            '<a class="figref" href="/_files/file/figures%2Fdata_model.svg">Data model',
+        );
         expect(out).toContain('<span class="figpop"><iframe class="fig-frame figpop-frame"');
-        // unregistered names pass through (not linked)
-        expect(html("Fig. unknown stays as is", CTX)).not.toContain("figref");
+        expect(out).toContain('sandbox=""');
+        expect(html("Fig.data_model / Fig. data_model / `Fig.data_model`", CTX)).not.toContain(
+            "figref",
+        );
+        for (const url of [
+            "https://example.com/data_model.svg",
+            "other/data_model.svg",
+            "figures/missing.svg",
+        ])
+            expect(html(`[Model](${url})`, CTX)).toBe(`<p><a href="${url}">Model</a></p>`);
     });
 
-    it("figureIndexRoute: returns the first doc that has ::figures", () => {
-        const doc = (id: string, blocks: Block[]) => ({ id, blocks });
-        expect(
-            figureIndexRoute([doc("a", []), doc("figs", [{ type: "figures" }]), doc("b", [])]),
-        ).toBe("figs");
-        expect(figureIndexRoute([doc("a", [])])).toBeUndefined();
+    it("matches encoded file paths and reserves hover previews for SVG", () => {
+        for (const kind of ["svg", "html", "image"] as const) {
+            const file = `files/My (model).${kind === "image" ? "png" : kind}`;
+            const fig = { ...MODEL_FIG, file, kind };
+            const out = html(`[Model](<${file}>)`, { ...CTX, figures: new Map([[fig.name, fig]]) });
+            expect(out).toContain(`href="/_files/file/${encodeURIComponent(file)}"`);
+            expect(out.includes('class="figpop"')).toBe(kind === "svg");
+        }
     });
 
     it("links only explicit term file links, including when the same name is plain text", () => {

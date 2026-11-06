@@ -3,12 +3,15 @@
 // package owns routing.
 //
 // Page URLs follow the manifest hierarchy; heading fragments stay separate.
-// Body-text `doc:` references use site-wide ids; page URLs use the full hierarchy.
-import type { ArtifactDoc } from "./artifact-types.js";
-import { isDocId } from "./content-metadata.js";
+// Body links reference source files; page URLs use the manifest hierarchy.
 
-/** The minimal doc reference routing needs (a shape ArtifactDoc satisfies). */
-export type DocRef = Pick<ArtifactDoc, "id" | "parent">;
+import { isDocId } from "./content-metadata.js";
+import type { CompiledDoc } from "./content-types.js";
+import { localFile } from "./files.js";
+import { parseFileReference } from "./textfile.js";
+
+/** The minimal doc reference routing needs (a shape CompiledDoc satisfies). */
+export type DocRef = Pick<CompiledDoc, "id" | "parent">;
 
 /** Parse `<docId>` (leading/trailing `/` are ignored). undefined if the shape differs. */
 export const parseRoutePath = (path: string): string | undefined => {
@@ -17,10 +20,22 @@ export const parseRoutePath = (path: string): string | undefined => {
     return id != null && seg.length === 1 && isDocId(id) ? id : undefined;
 };
 
-// Link scheme within body text: [label](doc:<docId>).
-export const DOC_LINK_SCHEME = "doc:";
-export const parseDocLink = (url: string): string | undefined =>
-    url.startsWith(DOC_LINK_SCHEME) ? parseRoutePath(url.slice(DOC_LINK_SCHEME.length)) : undefined;
+/** Document links use paths relative to the docs root and optional heading fragments. */
+export const parseDocLink = (url: string): { file: string; fragment: string } | undefined => {
+    if (/^(?:[a-z][a-z\d+.-]*:|\/)/i.test(url)) return undefined;
+    const path = url.split(/[?#]/)[0] ?? "";
+    let decoded: string;
+    try {
+        decoded = decodeURIComponent(path);
+    } catch {
+        throw new Error("Invalid file link encoding");
+    }
+    if (!decoded.toLowerCase().endsWith(".md")) return undefined;
+    const ref = parseFileReference(url);
+    const file = ref.file.replace(/^(\.\/)+/, "");
+    if (!localFile(file)) throw new Error("Document links require a file inside the docs root");
+    return { file, fragment: ref.range?.slice(1) ?? "" };
+};
 
 /** Docs directly under parent (keeps input order = manifest order). parent omitted = top level. */
 export const childrenOf = <D extends DocRef>(docs: readonly D[], parent?: string): D[] =>

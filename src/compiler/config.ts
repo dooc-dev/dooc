@@ -48,8 +48,7 @@ export const loadDocsConfig = async (root: string): Promise<ResolvedConfig> => {
     if (typeof config !== "object" || config == null || Array.isArray(config)) {
         throw new Error(`${CONFIG_FILE}: the default export must be an object`);
     }
-    if ("defaultLang" in config)
-        throw new Error(`${CONFIG_FILE}: move defaultLang to manifest.yaml`);
+    if ("defaultLang" in config) throw new Error(`${CONFIG_FILE}: move defaultLang to dooc.yaml`);
     const { languages } = config as Record<string, unknown>;
     if (languages !== undefined && !Array.isArray(languages)) {
         throw new Error(`${CONFIG_FILE}: languages must be an array`);

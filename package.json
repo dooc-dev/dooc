@@ -1,7 +1,7 @@
 {
     "name": "@sasaki-s-sci/dooc",
     "version": "0.0.18",
-    "description": "A docs toolkit that compiles an md / svg / html layout convention into docs.json and renders / edits it. The package export is core (docs.json types + routing / HTML rendering / interactive schema graph UI)",
+    "description": "View and edit source files with dooc.yaml configuration, and share them as source ZIPs or standalone HTML.",
     "type": "module",
     "files": [
         "dist"
@@ -18,12 +18,7 @@
             "types": "./dist/core/schema-graph-mount.d.ts",
             "default": "./dist/core/schema-graph-mount.js"
         },
-        "./flow.global.js": "./dist/flow.global.js",
-        "./docs-json-schema": {
-            "types": "./dist/core/docs-json-schema.d.ts",
-            "default": "./dist/core/docs-json-schema.js"
-        },
-        "./docs-json-schema/*.json": "./dist/core/docs-json-schema/*.json"
+        "./flow.global.js": "./dist/flow.global.js"
     },
     "peerDependencies": {
         "@xyflow/react": ">=12",
@@ -46,7 +41,7 @@
         "node": ">=22"
     },
     "scripts": {
-        "build": "pnpm run build:css && pnpm run build:fonts && tsc -p tsconfig.build.json && pnpm run build:flow && pnpm run build:edit",
+        "build": "node -e \"require('node:fs').rmSync('dist', {recursive:true, force:true})\" && pnpm run build:css && pnpm run build:fonts && tsc -p tsconfig.build.json && pnpm run build:flow && pnpm run build:edit",
         "build:binary": "bun scripts/build-binary.mjs",
         "build:css": "node --import tsx src/core/build-flow-css.ts",
         "build:flow": "esbuild src/core/schema-graph-global.tsx --bundle --format=iife --target=es2022 --minify --outfile=dist/flow.global.js",
@@ -77,7 +72,6 @@
         "@types/react-dom": "^19.2.3",
         "@xyflow/react": "^12.11.2",
         "esbuild": "^0.28.1",
-        "mdast-util-directive": "^3.1.0",
         "react": "^19.2.8",
         "react-dom": "^19.2.8",
         "textlint": "^15.8.0",
@@ -91,9 +85,7 @@
         "@textlint/kernel": "^15.8.0",
         "@textlint/module-interop": "^15.8.0",
         "@textlint/textlint-plugin-markdown": "^15.8.0",
-        "ajv": "^8.20.0",
         "iso-639-3": "^3.0.1",
-        "remark-directive": "^4.0.0",
         "remark-frontmatter": "^5.0.0",
         "remark-gfm": "^4.0.1",
         "remark-parse": "^11.0.0",

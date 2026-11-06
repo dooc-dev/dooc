@@ -5,8 +5,8 @@ import { iso6393To1 } from "iso-639-3";
 // they are always ASCII (blocks.ts slugify), whatever the language.
 //
 // The doc language is a BCP 47 tag: front-matter `lang`, else the site default
-// (manifest.yaml `defaultLang`, else DEFAULT_LANG).
-import type { TermEntry } from "./artifact-types.js";
+// (dooc.yaml `defaultLang`, else DEFAULT_LANG).
+import type { TermEntry } from "./content-types.js";
 
 export const DEFAULT_LANG = "en";
 

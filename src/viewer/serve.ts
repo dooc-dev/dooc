@@ -1,10 +1,11 @@
 import { filesSnapshot, updateFiles, uploadFile } from "../compiler/files.js";
-import { textfilePath } from "../compiler/textfile.js";
+import { textfilePath, writeTextfile } from "../compiler/textfile.js";
 import {
     defaultFilePath,
     docIconFile,
     localFile,
     MAX_FILE_UPLOAD_BYTES,
+    parseFileLayout,
     docFile as sourceDocFile,
     suggestDocFileName,
 } from "../core/files.js";
@@ -18,7 +19,7 @@ import {
 //   edit    = left = live render of the body / right = front-matter form + insert palette +
 //             CodeMirror (`dooc edit`). The save API rewrites content/<id>.md directly,
 //             and hierarchy changes (create / move / rename / delete) rewrite
-//             manifest.yaml.
+//             dooc.yaml.
 //             The client (src/viewer/edit-client.ts) is bundled in memory with esbuild on
 //             first request (cached) and served.
 
@@ -44,18 +45,18 @@ import {
     webLanguage,
 } from "../compiler/language-codes.js";
 import {
-    catalogLanguages,
-    readCatalog,
     setDocTranslation,
-    writeCatalog,
+    translationFile,
+    translationFiles,
+    translationLanguages,
 } from "../compiler/locales.js";
 import { readManifest, writeManifest } from "../compiler/manifest.js";
 import { assembleDoc, createDocOps, isOpError, type OpResult } from "../compiler/ops.js";
-import type { ArtifactDoc, TermEntry } from "../core/artifact-types.js";
-import type { Block, TocEntry } from "../core/blocks.js";
+import { type Block, type TocEntry, walkBlocks } from "../core/blocks.js";
 import { docIdOfFile } from "../core/content-metadata.js";
+import type { CompiledDoc, FigureEntry, TermEntry } from "../core/content-types.js";
 import { figureFrameHtml, mountFigureFrames } from "../core/figure-frame.js";
-import { docHtml, escapeHtml, figureIndexRoute, type RenderCtx, termsHtml } from "../core/html.js";
+import { docHtml, escapeHtml, type RenderCtx, termsHtml } from "../core/html.js";
 import {
     DEFAULT_LANG,
     isLangTag,
@@ -96,9 +97,9 @@ const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const root = resolve(process.env.DOCS_ROOT ?? process.cwd());
 
 /**
- * One doc in the viewer = a view model combining the compiler's ArtifactDoc (rendering) and
+ * One doc in the viewer = a view model combining the compiler's CompiledDoc (rendering) and
  * DocSource (extra info for editing).
- * file is `<id>.md` (= same shape as the save API's file parameter; ArtifactDoc.file minus the
+ * file is `<id>.md` (= same shape as the save API's file parameter; CompiledDoc.file minus the
  * content/ prefix).
  */
 export interface Entry {
@@ -157,7 +158,7 @@ export interface Site {
 
 const CONTENT_PREFIX = "content/";
 
-const toEntry = (doc: ArtifactDoc, source: DocSource): Entry => ({
+const toEntry = (doc: CompiledDoc, source: DocSource): Entry => ({
     id: doc.id,
     ...(doc.parent == null ? {} : { parent: doc.parent }),
     file: `${doc.id}.md`,
@@ -176,7 +177,7 @@ const toEntry = (doc: ArtifactDoc, source: DocSource): Entry => ({
     terms: source.terms,
 });
 
-// Recompile on every request (= read the docs.json equivalent in real time). The compiler's cache
+// Recompile source files on every request. The compiler's cache
 // skips re-parsing files unchanged on disk, so it stays cheap even when called on every keystroke
 // (POST /api/render). Replaced in startServer once docs.config.mjs (language adapters)
 // has been loaded.
@@ -186,29 +187,30 @@ const ops = createDocOps(root);
 
 /** Compile result → viewer Site (shared by the server's per-request path and one-off publish). */
 export const siteFrom = (
-    { artifact, figures, sources, siteErrors, defaultLang, previews }: Compiled,
+    { title, icon, docs, terms, figures, sources, siteErrors, defaultLang, previews }: Compiled,
     languages: readonly LanguageAdapter[] = DEFAULT_SITE_LANGUAGES.languages,
 ): Site => {
     return {
         previews,
-        ...(artifact.title === undefined ? {} : { title: artifact.title }),
-        ...(artifact.icon === undefined ? {} : { icon: artifact.icon }),
-        entries: artifact.docs.flatMap((doc) => {
+        ...(title === undefined ? {} : { title }),
+        ...(icon === undefined ? {} : { icon }),
+        entries: docs.flatMap((doc) => {
             const source = sources.get(doc.file);
             return source ? [toEntry(doc, source)] : [];
         }),
         ctx: {
+            docLinks: new Map(docs.map((doc) => [doc.file, docPath(docs, doc.id)])),
             figures: new Map(figures.map((f) => [f.name, f])),
-            terms: artifact.terms,
+            terms,
             termLinks: new Map([
-                ...artifact.terms.map(
+                ...terms.map(
                     (term) =>
                         [
                             term.id,
                             `/_files/terms#${encodeURIComponent(termAnchor(term.id))}`,
                         ] as const,
                 ),
-                ...artifact.docs.flatMap((doc) =>
+                ...docs.flatMap((doc) =>
                     doc.blocks.flatMap((block) =>
                         block.type === "term"
                             ? [
@@ -221,7 +223,6 @@ export const siteFrom = (
                     ),
                 ),
             ]),
-            figureIndex: figureIndexRoute(artifact.docs),
         },
         errors: siteErrors,
         languages,
@@ -254,15 +255,20 @@ const loadSite = (locale?: string): Site => {
         entry.translatedLanguages = [sourceLanguage];
         entry.iconFile = docIconFile(entry.id, manifest.files);
     }
-    for (const language of catalogLanguages(root)) {
-        try {
-            const catalog = readCatalog(root, language);
+    try {
+        const translated = new Set(translationFiles(root));
+        for (const language of translationLanguages(root)) {
             for (const entry of site.entries) {
-                if (Object.hasOwn(catalog, entry.id)) entry.translatedLanguages?.push(language);
+                if (
+                    translated.has(
+                        translationFile(sourceDocFile(entry.id, manifest.files), language),
+                    )
+                )
+                    entry.translatedLanguages?.push(language);
             }
-        } catch (error) {
-            site.errors.push(String(error));
         }
+    } catch (error) {
+        site.errors.push(String(error));
     }
     watchEntryTextfiles(site.entries);
     const siteIconFile = manifest.icon;
@@ -325,9 +331,10 @@ const draftEntry = (
     raw: string,
     textfiles?: ReadonlyMap<string, string>,
 ): Entry => {
+    const known = site.entries.find((entry) => entry.file === file);
     const { doc, source } = compileDraft(
-        { ...draftContext(site), textfiles },
-        site.entries.find((e) => e.file === file)?.sourceFile ?? CONTENT_PREFIX + file,
+        { ...draftContext(site), defaultLang: known?.lang ?? site.defaultLang, textfiles },
+        known?.sourceFile ?? CONTENT_PREFIX + file,
         raw,
     );
     const entry = toEntry(doc, source);
@@ -341,14 +348,12 @@ export const filePreviewResults = (entry: Entry, site: Site): FilePreviewResults
         entry.raw.slice(0, entry.raw.length - entry.body.length).split("\n").length - 1;
     for (const { line, file, kind } of fileReferences(entry.body, site.previews)) {
         const errors = results.get(file) ?? [];
-        if (kind !== "term" && !entry.blockLines.includes(line))
-            errors.push("Preview could not be updated");
         errors.push(...entry.errors.filter((error) => error.startsWith(`L${bodyOffset + line}:`)));
         if (kind === "term") {
             errors.push(...entry.errors.filter((error) => error.startsWith(`${file}:`)));
         } else if (kind === "textfile") {
             errors.push(...entry.errors.filter((error) => error.startsWith(`${file}:`)));
-            for (const block of entry.blocks) {
+            for (const block of walkBlocks(entry.blocks)) {
                 if (block.type !== "code" || block.filename?.replace(/^(\.\/)+/, "") !== file)
                     continue;
                 if (block.unavailable)
@@ -402,12 +407,12 @@ const renderDraft = (
 
 // Render result cache — opening the same doc repeatedly (page GET / nav switch) doesn't re-render.
 // The compiler's cache returns the same blocks reference while disk is unchanged, so check that,
-// plus that the id list (affects doc: link resolution) / terms / figures / errors haven't
+// plus that the id list (affects document file link resolution) / terms / figures / errors haven't
 // changed. Rebuild if any of them did.
 const renderSignature = (site: Site, entry: Entry): string =>
     JSON.stringify([site.ctx.terms, site.errors, entry.errors, entry.frontmatter, entry.lang]) +
     site.entries
-        .map((e) => docPath(site.entries, e.id))
+        .map((e) => [e.sourceFile ?? CONTENT_PREFIX + e.file, docPath(site.entries, e.id)])
         .sort()
         .join("\n");
 
@@ -924,11 +929,15 @@ article a { color: var(--doc-accent); }
 .in-toc li.lvl3 { padding-left: 26px; opacity: .7; font-size: .95em; }
 .in-toc a { text-decoration: none; color: inherit; }
 .in-toc a:hover { color: var(--doc-accent); }
+article strong { font-weight: 700; }
+article em { font-style: italic; }
+article blockquote { margin: 16px 0; padding: 4px 16px; border-left: 3px solid var(--doc-border-2); color: var(--doc-fg-2); }
+article blockquote > :first-child { margin-top: 0; }
+article blockquote > :last-child { margin-bottom: 0; }
 ul.idx { list-style: none; padding: 0; }
 ul.idx li { margin: 10px 0; }
 details summary { cursor: pointer; opacity: .8; }
-/* Figure refs (Fig. <name>) / term references in the body: link-like, rendering the figure /
-   definition on hover */
+/* Figure and term file links show previews on hover. */
 .figref, .dictref { color: var(--doc-accent-2); text-decoration: none;
   border-bottom: 1px dotted currentColor; position: relative; cursor: pointer; }
 .figref .figpop, .dictref .dictpop { display: none; position: absolute; left: 50%;
@@ -937,7 +946,7 @@ details summary { cursor: pointer; opacity: .8; }
   background: var(--doc-panel); border: 1px solid var(--doc-border);
   border-radius: 8px; box-shadow: 0 4px 16px color-mix(in srgb, var(--doc-fg) 18%, transparent);
   color: var(--doc-fg); font-size: 13px; line-height: 1.7; }
-.figref:hover .figpop, .dictref:hover .dictpop { display: block; }
+.figref:hover .figpop, .figref:focus-visible .figpop, .dictref:hover .dictpop { display: block; }
 .figpop svg { max-width: 100%; height: auto; display: block; }
 .figpop .fig-frame { width: 100% !important; }
 .dictref .dictpop { width: min(420px, 70vw); }
@@ -1116,7 +1125,8 @@ main.editor-workspace { padding: 0; height: 100vh; display: flex; flex-direction
 .cm-code-diagnostic { text-decoration:underline wavy var(--c-warn); text-underline-offset:3px; }
 #validate[data-state="error"], .cm-textfile-validate[data-state="error"] { color:var(--c-danger); }
 #validate[data-state="valid"], .cm-textfile-validate[data-state="valid"] { color:var(--c-ok); }
-#validate[data-state="pending"], .cm-textfile-validate[data-state="pending"] { color:var(--c-accent); }
+#validate[data-state="pending"], .cm-textfile-validate[data-state="pending"], .cm-textfile-save[data-state="unknown"] { color:var(--c-fg-faint); }
+#validate[data-state="checking"], .cm-textfile-validate[data-state="checking"] { color:var(--c-info); }
 #save[data-state="error"], .cm-textfile-save[data-state="error"] { color:var(--c-danger); }
 #save[data-state="saved"], .cm-textfile-save[data-state="saved"] { color:var(--c-ok); }
 #save[data-state="pending"], .cm-textfile-save[data-state="pending"] { color:var(--c-accent); }
@@ -1342,7 +1352,7 @@ export const navGroupsHtml = (
     return docLinks(site, site.contentLanguage ? languageLinks(html, site.contentLanguage) : html);
 };
 
-// ── Resources (shown in edit mode only; asset list of the docs root) ──────────────────────
+// ── Resources (file management in edit mode; linked figures and terms also in preview) ──
 // Structure: Resources (list page of everything) › kind (list pages for figures / html / icons) › individual file.
 // Route is `/_files[/<kind>[/<file>]]` (doc ids can't start with `_`, so no collision).
 const RESOURCE_KINDS = ["markdown", "figures", "html", "icons", "terms"] as const;
@@ -1600,6 +1610,14 @@ export const resourcesMain = (
     };
 };
 
+const figurePage = (site: Site, fig: FigureEntry): { title: string; main: string } => {
+    const title = fig.title ?? fig.file;
+    return {
+        title,
+        main: docHtml({ title }, [{ type: "figureRef", name: fig.name }], [], site.ctx),
+    };
+};
+
 // Browser tab title — shared by page() and `/api/page` (doc switching via client-side navigation).
 const pageTitle = (mode: ServeMode, title: string, siteTitle?: string): string =>
     title === siteTitle ? title : `${title} — ${siteTitle ?? `dooc ${mode}`}`;
@@ -1738,7 +1756,7 @@ ${
   //   drag: top 1/4 of a row = before, bottom 1/4 = after, middle = move into that doc's children
   //         (at the end). The DOM isn't moved, only a marker is shown; on drop, POST /api/move →
   //         re-fetch the nav regardless of the outcome (= the display is always a copy of
-  //         manifest.yaml; no rollback logic).
+  //         dooc.yaml; no rollback logic).
   // The root placeholder and row buttons open the create form.
   const status = document.getElementById("nav-status");
   const setStatus = (message, error) => {
@@ -1757,7 +1775,7 @@ ${
     document.dispatchEvent(new Event("docs:ui-refresh"));
   };
   const post = async (path, body) => {
-    // Tell HMR, so the watch notification for our own write (manifest.yaml etc.) doesn't reload.
+    // Tell HMR, so the watch notification for our own write (dooc.yaml etc.) doesn't reload.
     const res = await localeFetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || String(res.status));
@@ -2100,6 +2118,13 @@ export const publishHtml = (
         const terms = resourcesMain(site, "terms");
         if (terms) pages.push({ route: "_files/terms", ...terms });
     }
+    const figureRefs = new Set(site.entries.flatMap((entry) => entry.figureRefs ?? []));
+    for (const name of figureRefs) {
+        const fig = site.ctx.figures.get(name);
+        if (!fig) continue;
+        const route = `_files/file/${encodeURIComponent(fig.file)}`;
+        pages.push({ route, ...figurePage(site, fig) });
+    }
     const templates = pages
         .map(
             (p) =>
@@ -2155,7 +2180,7 @@ export interface EditorBoot {
     /** `<id>.md` (the save API's key). */
     file: string;
     sourceFile?: string;
-    /** Resolution key for URLs / doc: links. */
+    /** Resolution key for published URLs. */
     docId: string;
     title: string;
     path: string;
@@ -2197,7 +2222,7 @@ export const editorBoot = (entry: Entry, site: Site): EditorBoot => {
     // Completion candidates are files in the figures/ catalog.
     const figures = [...site.ctx.figures.values()].map((f) => f.file);
     const docs = site.entries.map((e) => ({
-        ref: e.id,
+        ref: e.sourceFile ?? CONTENT_PREFIX + e.file,
         title: docDisplayName(e.frontmatter, e.id),
     }));
     return {
@@ -2403,10 +2428,15 @@ const handleDraft = async (
     if (save) {
         if (locale === contentLanguageCode(site.defaultLang)) writeFileSync(target.abs, raw);
         else {
-            const catalog = readCatalog(root, locale);
-            const { lang: _lang, ...fields } = fm;
-            catalog[target.id] = { ...fields, body: text.replace(/\n+$/, "") + (text ? "\n" : "") };
-            writeCatalog(root, locale, catalog);
+            const file = translationFile(
+                sourceDocFile(target.id, readManifest(root).files),
+                locale,
+            );
+            const base = existsSync(textfilePath(root, file)) ? (currentRaw ?? null) : null;
+            if (!writeTextfile(root, file, raw, base)) {
+                sendJson(res, 409, { error: "Translation changed. Reload before saving." });
+                return;
+            }
         }
     }
     const draft = renderDraft(loadSite(locale), target.name, raw, fileDrafts);
@@ -2478,8 +2508,8 @@ const handleIcon = async (req: IncomingMessage, res: ServerResponse): Promise<vo
     }
     const previous = docIconFile(target.id, manifest.files);
     const file =
-        manifest.files?.defaultLayout &&
-        !Object.hasOwn(manifest.files.icons ?? {}, target.id) &&
+        manifest.files?.defaultLayout !== false &&
+        !Object.hasOwn(manifest.files?.icons ?? {}, target.id) &&
         !existsSync(textfilePath(root, previous))
             ? defaultFilePath(`${target.id}-icon.svg`)
             : previous;
@@ -2505,7 +2535,8 @@ const handleIcon = async (req: IncomingMessage, res: ServerResponse): Promise<vo
     }
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, svg);
-    if (file !== previous && manifest.files) {
+    if (file !== previous) {
+        manifest.files ??= parseFileLayout({});
         manifest.files.icons ??= {};
         manifest.files.icons[target.id] = file;
         writeManifest(root, manifest.tree, manifest);
@@ -2513,7 +2544,7 @@ const handleIcon = async (req: IncomingMessage, res: ServerResponse): Promise<vo
     sendJson(res, 200, { ok: true, icon: svgDataUri(svg) });
 };
 
-// Sidebar DnD move (reorder + reparent). Rewrites only manifest.yaml (file / id unchanged).
+// Sidebar DnD move (reorder + reparent). Rewrites only dooc.yaml (file / id unchanged).
 const handleMove = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const body = await readJson(req);
     const { id, parent, index } = body ?? {};
@@ -2528,7 +2559,7 @@ const handleMove = async (req: IncomingMessage, res: ServerResponse): Promise<vo
     sendOp(res, ops.move(id, parent, index));
 };
 
-// Rename the source file while preserving the document's URL and doc: links.
+// Rename the source file, update its references, and preserve the document's URL.
 const handleRename = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const body = await readJson(req);
     const target = resolveContentFile(body?.file);
@@ -2836,7 +2867,7 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
                     }
                     return;
                 }
-                const result = textfileResponse(root, input);
+                const result = await textfileResponse(root, input);
                 sendJson(res, result.status, result.body);
                 return;
             }
@@ -3037,6 +3068,15 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
             return;
         }
 
+        const linkedFigure = path.startsWith("/_files/file/")
+            ? [...site.ctx.figures.values()].find(
+                  (fig) => fig.file === path.slice("/_files/file/".length),
+              )
+            : undefined;
+        if (mode === "preview" && linkedFigure) {
+            sendPage(res, mode, site, figurePage(site, linkedFigure));
+            return;
+        }
         if (
             (mode === "edit" && (path === "/_files" || path.startsWith("/_files/"))) ||
             path === "/_files/terms"

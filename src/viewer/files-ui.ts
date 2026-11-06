@@ -105,7 +105,7 @@ export const mountFiles = () => {
             button.disabled ||=
                 !picked.length ||
                 picked.some((row) => parent(row.path) !== parent(picked[0]?.path ?? ""));
-        toggle.setAttribute("aria-pressed", String(snapshot?.layout.defaultLayout ?? false));
+        toggle.setAttribute("aria-pressed", String(snapshot?.layout.defaultLayout ?? true));
     };
     const perform = async (button: HTMLButtonElement, input: Record<string, unknown>) => {
         if (busy) return;

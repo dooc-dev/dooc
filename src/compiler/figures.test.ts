@@ -127,7 +127,7 @@ describe("loadFigures (draw.io exports placed in figures/)", () => {
         expect(flow?.file).toBe("figures/flow.svg");
         expect(flow?.title).toBe("Fig.flow");
         expect(flow?.desc).toBe("Authentication flow");
-        // No mxfile copy or external domains left in the shipped artifact. Colors stay draw.io's.
+        // No mxfile copy or external domains left in the rendered output. Colors stay draw.io's.
         expect(flow?.markup).not.toContain("mxfile");
         expect(flow?.markup).not.toContain("drawio.com");
         expect(flow?.markup).toContain("data-doc-figure");

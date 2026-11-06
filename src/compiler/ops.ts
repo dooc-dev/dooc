@@ -20,11 +20,17 @@ import {
     removeDoc,
     renameDoc,
 } from "../core/content-metadata.js";
-import { defaultFilePath, docIconFile, isDocumentFileName } from "../core/files.js";
+import {
+    defaultFilePath,
+    docIconFile,
+    isDocumentFileName,
+    parseFileLayout,
+} from "../core/files.js";
 import { parseDocLink } from "../core/routing.js";
-import { collectDocLinks, compileSite, rewriteDocLinks } from "./compile.js";
+import { collectDocLinks, compileSite } from "./compile.js";
 import { figureName, figureUploadName } from "./figures.js";
-import { catalogLanguages, readCatalog, writeCatalog } from "./locales.js";
+import { projectFiles, rewriteFileLinks } from "./files.js";
+import { translationFile, translationFiles, translationLanguages } from "./locales.js";
 import { docFile, readManifest, writeManifest } from "./manifest.js";
 import { assembleDoc } from "./serialize.js";
 import { textfilePath } from "./textfile.js";
@@ -49,22 +55,7 @@ export const createDocOps = (root: string) => {
     const iconPath = (id: string): string =>
         textfilePath(root, docIconFile(id, readManifest(root).files));
 
-    const loadCatalogs = (): OpResult<{
-        catalogs: { lang: string; catalog: ReturnType<typeof readCatalog> }[];
-    }> => {
-        try {
-            return {
-                catalogs: catalogLanguages(root).map((lang) => ({
-                    lang,
-                    catalog: readCatalog(root, lang),
-                })),
-            };
-        } catch (error) {
-            return { error: String(error), status: 409 };
-        }
-    };
-
-    // Read before rewriting manifest.yaml. If it's broken, don't write (= don't clobber
+    // Read before rewriting dooc.yaml. If it's broken, don't write (= don't clobber
     // hand-written content).
     const loadTree = (): OpResult<ParsedManifest> => {
         const manifest = readManifest(root);
@@ -78,17 +69,23 @@ export const createDocOps = (root: string) => {
             ? { id }
             : { error: `doc "${String(id)}" not found`, status: 404 };
 
-    // Files whose body text references id via a doc: link (<id>.md directly under content/,
-    // excluding the doc itself).
-    const referencingFiles = (id: string): string[] =>
-        flattenTree(readManifest(root).tree)
-            .filter((doc) => doc.id !== id)
-            .filter((doc) =>
-                collectDocLinks(readFileSync(docPath(doc.id), "utf8")).some(
-                    (url) => parseDocLink(url) === id,
-                ),
+    // Include extracted callout sources and unregistered Markdown files in reference checks.
+    const referenceFiles = (): string[] =>
+        [...projectFiles(root).map((file) => file.path), ...translationFiles(root)].filter((file) =>
+            /\.(md|callouth)$/.test(file),
+        );
+    const referencingFiles = (id: string, removed: readonly string[]): string[] => {
+        const target = docFile(id, readManifest(root).files);
+        return referenceFiles()
+            .filter(
+                (file) =>
+                    !removed.includes(file) &&
+                    collectDocLinks(readFileSync(textfilePath(root, file), "utf8")).some(
+                        (url) => parseDocLink(url)?.file === target,
+                    ),
             )
-            .map((doc) => `${doc.id}.md`);
+            .map((file) => file.replace(/^content\//, ""));
+    };
 
     /** Creates a document and appends it as the last child of parent. */
     const add = (
@@ -116,8 +113,8 @@ export const createDocOps = (root: string) => {
         if (!tree) {
             return { error: `duplicate id "${id}" or missing parent "${parent}"`, status: 409 };
         }
-        if (filename !== undefined || loaded.files?.defaultLayout) {
-            loaded.files ??= { defaultLayout: false, documents: {}, order: [] };
+        if (filename !== undefined || loaded.files?.defaultLayout !== false) {
+            loaded.files ??= parseFileLayout({});
             loaded.files.documents[id] = loaded.files.defaultLayout
                 ? defaultFilePath(filename ?? `${id}.md`)
                 : `content/${filename}`;
@@ -150,7 +147,7 @@ export const createDocOps = (root: string) => {
     };
 
     /**
-     * Reorders and reparents. Rewrites only manifest.yaml. Omitted index = after the last child
+     * Reorders and reparents. Rewrites only dooc.yaml. Omitted index = after the last child
      * of parent.
      */
     const move = (id: string, parent?: string, index?: number): OpResult<{ id: string }> => {
@@ -173,7 +170,7 @@ export const createDocOps = (root: string) => {
     };
 
     /**
-     * Renames content/<old>.md and updates the manifest id and the doc: links (exact match) in
+     * Renames content/<old>.md and updates the manifest id and the file links (exact match) in
      * every doc's body text to follow.
      */
     const rename = (
@@ -199,12 +196,38 @@ export const createDocOps = (root: string) => {
         }
         const tree = renameDoc(loaded.tree, oldId, newId);
         if (!tree) {
-            return { error: "doc is not in manifest.yaml", status: 404 };
+            return { error: "doc is not in dooc.yaml", status: 404 };
         }
-        const translations = loadCatalogs();
-        if (isOpError(translations)) return translations;
-        if (translations.catalogs.some(({ catalog }) => Object.hasOwn(catalog, newId))) {
-            return { error: `translation id "${newId}" is already in use`, status: 409 };
+        const oldFile = docFile(oldId, loaded.files);
+        const mapped = loaded.files && Object.hasOwn(loaded.files.documents, oldId);
+        const newFile = mapped ? oldFile : docFile(newId, loaded.files);
+        const moves = new Map(oldFile === newFile ? [] : [[oldFile, newFile]]);
+        try {
+            for (const language of translationLanguages(root)) {
+                const from = translationFile(oldFile, language);
+                const to = translationFile(newFile, language);
+                if (from === to) continue;
+                if (existsSync(textfilePath(root, to)))
+                    return { error: `translation file "${to}" already exists`, status: 409 };
+                if (existsSync(textfilePath(root, from))) moves.set(from, to);
+            }
+        } catch (error) {
+            return { error: String(error), status: 409 };
+        }
+        const writes: { file: string; body: string }[] = [];
+        let updatedRefs = 0;
+        // Validate every rewrite before renaming files or changing the manifest.
+        try {
+            for (const file of referenceFiles()) {
+                const raw = readFileSync(textfilePath(root, file), "utf8");
+                const body = rewriteFileLinks(raw, moves);
+                if (body !== raw) {
+                    writes.push({ file: moves.get(file) ?? file, body });
+                    updatedRefs++;
+                }
+            }
+        } catch (error) {
+            return { error: error instanceof Error ? error.message : String(error), status: 409 };
         }
         if (loaded.files && Object.hasOwn(loaded.files.documents, oldId)) {
             loaded.files.documents[newId] = docFile(oldId, loaded.files);
@@ -214,38 +237,20 @@ export const createDocOps = (root: string) => {
             loaded.files.icons[newId] = docIconFile(oldId, loaded.files);
             delete loaded.files.icons[oldId];
         } else if (existsSync(iconPath(oldId))) renameSync(iconPath(oldId), iconPath(newId));
+        for (const [from, to] of moves) {
+            if (from === oldFile) continue;
+            const path = textfilePath(root, to);
+            mkdirSync(dirname(path), { recursive: true });
+            renameSync(textfilePath(root, from), path);
+        }
         writeManifest(root, tree, loaded);
-        let updatedRefs = 0;
-        for (const { id } of flattenTree(tree)) {
-            const p = docPath(id);
-            const raw = readFileSync(p, "utf8");
-            const next = rewriteDocLinks(raw, oldId, newId);
-            if (next !== raw) {
-                writeFileSync(p, next);
-                updatedRefs += 1;
-            }
-        }
-        for (const { lang, catalog } of translations.catalogs) {
-            const translated = Object.hasOwn(catalog, oldId) ? catalog[oldId] : undefined;
-            if (translated) {
-                catalog[newId] = translated;
-                delete catalog[oldId];
-            }
-            for (const entry of Object.values(catalog)) {
-                const next = rewriteDocLinks(entry.body, oldId, newId);
-                if (next !== entry.body) {
-                    entry.body = next;
-                    updatedRefs += 1;
-                }
-            }
-            writeCatalog(root, lang, catalog);
-        }
+        for (const { file, body } of writes) writeFileSync(textfilePath(root, file), body);
         return { id: newId, updatedRefs };
     };
 
     /**
      * Removes the doc from the manifest and deletes the .md (and icon). Docs with children are
-     * not deleted. If other docs reference it via doc: links, refuses without force and returns
+     * not deleted. If other docs reference it via file links, refuses without force and returns
      * referencedBy. parent = the deleted doc's parent.
      */
     const remove = (
@@ -264,23 +269,22 @@ export const createDocOps = (root: string) => {
         if (!tree) {
             return { error: "doc has children (move / delete them first)", status: 409 };
         }
-        const translations = loadCatalogs();
-        if (isOpError(translations)) return translations;
-        const referencedBy = [
-            ...referencingFiles(id),
-            ...translations.catalogs.flatMap(({ lang, catalog }) =>
-                Object.entries(catalog)
-                    .filter(
-                        ([key, entry]) =>
-                            key !== id &&
-                            collectDocLinks(entry.body).some((url) => parseDocLink(url) === id),
-                    )
-                    .map(([key]) => `locales/${lang}.json:${key}`),
-            ),
-        ];
+        const file = docFile(id, loaded.files);
+        let removed: string[];
+        let referencedBy: string[];
+        try {
+            removed = [
+                file,
+                ...translationLanguages(root).map((lang) => translationFile(file, lang)),
+            ];
+            for (const file of removed) textfilePath(root, file);
+            referencedBy = referencingFiles(id, removed);
+        } catch (error) {
+            return { error: String(error), status: 409 };
+        }
         if (referencedBy.length > 0 && !force) {
             return {
-                error: `${referencedBy.length} doc(s) reference it via doc: links`,
+                error: `${referencedBy.length} doc(s) reference it via file links`,
                 status: 409,
                 referencedBy,
             };
@@ -300,11 +304,9 @@ export const createDocOps = (root: string) => {
         if (existsSync(removedIcon)) {
             unlinkSync(removedIcon);
         }
-        for (const { lang, catalog } of translations.catalogs) {
-            if (Object.hasOwn(catalog, id)) {
-                delete catalog[id];
-                writeCatalog(root, lang, catalog);
-            }
+        for (const file of removed.slice(1)) {
+            const path = textfilePath(root, file);
+            if (existsSync(path)) unlinkSync(path);
         }
         return { parent, danglingRefs: referencedBy.length };
     };
@@ -338,7 +340,7 @@ export const createDocOps = (root: string) => {
         }
         const manifest = loadTree();
         if (isOpError(manifest)) return manifest;
-        if (manifest.files?.defaultLayout) {
+        if (manifest.files?.defaultLayout !== false) {
             const initial = defaultFilePath(upload);
             let path = initial;
             const ext = upload.slice(figureName(upload).length);
@@ -380,7 +382,7 @@ export const createDocOps = (root: string) => {
         );
 
     /**
-     * Deletes a figure. If a doc references it via a Markdown embed, refuses without force and returns
+     * Deletes a figure. If a doc references it via a Markdown link or embed, refuses without force and returns
      * referencedBy.
      */
     const removeFigure = (name: string, force = false): OpResult<{ file: string }> => {
@@ -388,13 +390,11 @@ export const createDocOps = (root: string) => {
         if (!file) {
             return { error: `figure "${name}" not found`, status: 404 };
         }
-        const translations = loadCatalogs();
-        if (isOpError(translations)) return translations;
         const referencedBy = [
             ...new Set(
-                [undefined, ...translations.catalogs.map(({ lang }) => lang)].flatMap((locale) =>
+                [undefined, ...translationLanguages(root)].flatMap((locale) =>
                     compileSite(root, { locale, defaultLang: "und" })
-                        .artifact.docs.filter((d) => d.refs.figures.includes(name))
+                        .docs.filter((d) => d.refs.figures.includes(name))
                         .map((d) => d.id),
                 ),
             ),

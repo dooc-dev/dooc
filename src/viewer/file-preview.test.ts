@@ -37,7 +37,7 @@ describe("file preview indicators", () => {
         const root = mkdtempSync(join(tmpdir(), "dooc-file-preview-"));
         mkdirSync(join(root, "content"));
         mkdirSync(join(root, "figures"));
-        writeFileSync(join(root, "manifest.yaml"), "- page\n");
+        writeFileSync(join(root, "dooc.yaml"), "- page\n");
         writeFileSync(join(root, "ok.txt"), "Original text\n");
         writeFileSync(join(root, "range.txt"), "Only one line");
         writeFileSync(join(root, "figures/good.html"), "<!--fig\ntitle: Good\n-->\n<p>Good</p>");

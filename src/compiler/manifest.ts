@@ -1,4 +1,4 @@
-// Reads/writes manifest.yaml (node-dependent). Tree validation and manipulation live in
+// Reads/writes dooc.yaml (node-dependent). Tree validation and manipulation live in
 // core/content-metadata.ts.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

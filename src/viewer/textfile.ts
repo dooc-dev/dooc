@@ -1,4 +1,4 @@
-import { readTextfile, textfilePath, writeTextfile } from "../compiler/textfile.js";
+import { readTextfileAsync, textfilePath, writeTextfile } from "../compiler/textfile.js";
 import { TextfileUnavailable } from "../compiler/textfile-remote.js";
 import { isRemoteTextfile } from "../core/textfile.js";
 
@@ -16,13 +16,13 @@ export const previewTextfiles = (root: string, input: unknown): ReadonlyMap<stri
     return files;
 };
 
-export const textfileResponse = (
+export const textfileResponse = async (
     root: string,
     input: Record<string, unknown> | undefined,
-): {
+): Promise<{
     status: number;
     body: { content?: string | null; error?: string };
-} => {
+}> => {
     if (typeof input?.file !== "string" || !["read", "save"].includes(String(input.action)))
         return { status: 400, body: { error: "Invalid text file request" } };
     try {
@@ -41,7 +41,7 @@ export const textfileResponse = (
                 };
             return { status: 200, body: { content: input.content } };
         }
-        return { status: 200, body: { content: readTextfile(root, input.file, true) } };
+        return { status: 200, body: { content: await readTextfileAsync(root, input.file, true) } };
     } catch (error) {
         if (
             input.action === "read" &&

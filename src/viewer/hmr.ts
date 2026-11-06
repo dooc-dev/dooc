@@ -1,6 +1,6 @@
 // HMR for the dev server (shared by preview / edit). Funnels changes into a single SSE stream
 // (`/api/hmr`), by source:
-//   data side (content/*.md, manifest.yaml, figures/*) = picked up by this module's watcher;
+//   data side (content/*.md, dooc.yaml, figures/*) = picked up by this module's watcher;
 //           preview swaps only the main body + nav (keeping scroll). edit likewise does a partial
 //           update of just the body + nav (no reload; keeps CodeMirror cursor/scroll/undo and
 //           unsaved content) — only on pages where edit-client.ts registered `onContent`
@@ -20,6 +20,7 @@ import { managedFile } from "../compiler/files.js";
 import { textfilePath } from "../compiler/textfile.js";
 import { MANIFEST_FILE } from "../core/content-metadata.js";
 import { isRemoteTextfile } from "../core/textfile.js";
+import { prebuilt } from "./assets.js";
 import type { ServeMode } from "./serve.js";
 
 /** SSE endpoint. SoT for the server route and the client script's connection target. */
@@ -30,7 +31,7 @@ export type HmrKind = "content" | "client";
 
 /**
  * Changed path (repo-root relative) → HMR kind. undefined for out-of-scope files
- * (dist/artifact/temp files etc.).
+ * (dist output, temp files etc.).
  */
 export const classifyChange = (rel: string): HmrKind | undefined => {
     const p = rel.replace(/\\/g, "/");
@@ -69,11 +70,11 @@ export const classifyChange = (rel: string): HmrKind | undefined => {
     ) {
         return "client";
     }
-    // content = body text (.md) and manifest.yaml (= SoT for hierarchy and ordering).
+    // content = body text (.md) and dooc.yaml (= SoT for hierarchy and ordering).
     if (p === MANIFEST_FILE || (p.startsWith("content/") && p.endsWith(".md"))) {
         return "content";
     }
-    if (p.startsWith("locales/") && p.endsWith(".json")) return "content";
+    if (p.startsWith("locales/") && p.endsWith(".md")) return "content";
     if (p.startsWith("figures/") && /\.(svg|html|png|webp|jpe?g)$/.test(p)) {
         return "content";
     }
@@ -179,7 +180,7 @@ export const watchProject = (
     // Skip missing folders (checkouts / test fixtures without optional asset folders) to avoid ENOENT.
     const dirs: [string, string][] = [["src", join(pkgRoot, "src")]];
     const watchers = dirs
-        .filter(([, abs]) => existsSync(abs))
+        .filter(([, abs]) => !prebuilt && existsSync(abs))
         .map(([dir, abs]) =>
             watch(abs, { recursive: true }, (_event, name) => {
                 if (name) {

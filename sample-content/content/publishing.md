@@ -8,10 +8,9 @@ lang: "jpn"
 | 用途 | コマンド | 出力先（sample-content/ 内） |
 | --- | --- | --- |
 | 閲覧用に共有 | `mise run export html` | `dist/index.html` |
-| 他のアプリで利用 | `mise run export json` | `dist/artifact/` |
 | 編集用の元資料を共有 | `mise run export zip` | `dist/sample-content.zip` |
 
-HTMLは1ファイルで開けます。JSONとHTMLは、文書の検証エラーを解消してから書き出します。
+HTMLは1ファイルで開けます。文書の検証エラーを解消してから書き出します。ZIPには `dooc.yaml` と元のソースファイルを含めます。
 
 ## 共有前の確認
 

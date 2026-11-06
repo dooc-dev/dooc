@@ -131,6 +131,7 @@ export const createTextfileEditors = (
         if (draft.busy) return;
         const previousDoc = draft.state?.doc;
         draft.busy = true;
+        draft.validation = "pending";
         draft.error = "";
         notify(draft);
         try {
@@ -278,13 +279,15 @@ export const createTextfileEditors = (
                     expand.dataset.i18nTitle = expand.dataset.i18nAriaLabel = foldLabel;
                     expand.title = t(foldLabel);
                     expand.setAttribute("aria-label", expand.title);
-                    const saveState = current.error
-                        ? "error"
-                        : current.busy
-                          ? "saving"
-                          : dirty(current) || current.base === null
-                            ? "pending"
-                            : "saved";
+                    const saveState = !current.state
+                        ? "unknown"
+                        : current.error
+                          ? "error"
+                          : current.busy
+                            ? "saving"
+                            : dirty(current) || current.base === null
+                              ? "pending"
+                              : "saved";
                     saveButton.dataset.state = saveState;
                     saveButton.title =
                         current.error ||
@@ -296,6 +299,7 @@ export const createTextfileEditors = (
                                       saving: "Saving",
                                       saved: "Saved",
                                       error: "Save failed",
+                                      unknown: "File has not been loaded",
                                   }[saveState],
                         );
                     saveButton.setAttribute(

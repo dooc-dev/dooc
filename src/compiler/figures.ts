@@ -22,7 +22,7 @@ import { createHash } from "node:crypto";
 // scheme (see the top of drawio.ts).
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { FigureEntry } from "../core/artifact-types.js";
+import type { FigureEntry } from "../core/content-types.js";
 import { extractMxfile, isDrawioSvg, normalizeDrawioSvg } from "./drawio.js";
 import { textfilePath } from "./textfile.js";
 
@@ -59,7 +59,7 @@ export const figureUploadName = (raw: string): string | undefined => {
     return `${stem || "figure"}.${ext}`;
 };
 
-export type { FigureEntry } from "../core/artifact-types.js";
+export type { FigureEntry } from "../core/content-types.js";
 
 const LIGHT_VARS =
     "--doc-bg:#ffffff;--doc-bg-2:#f6f8fb;--doc-bg-3:#eef2f7;--doc-panel:#ffffff;--doc-panel-2:#f1f5fa;--doc-rail:#f3f6fa;--doc-border:#dde3eb;--doc-border-2:#c4ccd8;--doc-fg:#000000;--doc-fg-2:#2a3140;--doc-fg-3:#5b6271;--doc-fg-4:#9099a8;--doc-accent:#1b4994;--doc-accent-2:#0277bd;--doc-accent-fg:#ffffff;--doc-ok:#1f7a32;--doc-ok-2:#2ea043;--doc-warn:#b97600;--doc-warn-2:#f59f00;--doc-danger:#b53030;--doc-danger-2:#f04848;--doc-info:#0277bd;--doc-info-2:#4a8bff;";
@@ -189,7 +189,7 @@ export const loadFigures = (
         }
         const mime = IMAGE_MIME[file.slice(file.lastIndexOf(".") + 1)];
         if (mime != null) {
-            // Rasters are inlined as data URIs (= the artifact is self-contained). The caption
+            // Rasters are inlined as data URIs (= HTML exports are self-contained). The caption
             // comes from [caption] on the content side.
             const data = readFileSync(
                 file.startsWith("figures/")

@@ -20,6 +20,7 @@ import { filesSnapshot, rewriteFileLinks, updateFiles, uploadFile } from "./file
 import { setDocTranslation } from "./locales.js";
 import { readManifest } from "./manifest.js";
 import { createDocOps, isOpError } from "./ops.js";
+import { writeTextfile } from "./textfile.js";
 
 const roots: string[] = [];
 const fixture = () => {
@@ -28,12 +29,12 @@ const fixture = () => {
     for (const dir of ["content", "terms", "figures", "examples", "icons", "locales"])
         mkdirSync(join(root, dir));
     writeFileSync(
-        join(root, "manifest.yaml"),
+        join(root, "dooc.yaml"),
         "# Preserve this comment\ntitle: Test\ndefaultLang: jpn\ndocs: [a, b]\n",
     );
     writeFileSync(
         join(root, "content/a.md"),
-        "---\ntitle: A\n---\n\n[Other](doc:b)\n\n![](figures/picture.svg)\n\n![](examples/a.ts#L1)\n\n[](terms/a.termth)\n",
+        "---\ntitle: A\n---\n\n[Other](content/b.md)\n\n![](figures/picture.svg)\n\n![](examples/a.ts#L1)\n\n[](terms/a.termth)\n",
     );
     writeFileSync(join(root, "content/b.md"), "---\ntitle: B\n---\n\nB\n");
     writeFileSync(join(root, "examples/a.ts"), "const x = 1;\n");
@@ -43,18 +44,153 @@ const fixture = () => {
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><title>Picture</title></svg>';
     writeFileSync(join(root, "figures/picture.svg"), svg);
     writeFileSync(join(root, "icons/a.svg"), svg);
-    writeFileSync(
-        join(root, "locales/eng.json"),
-        JSON.stringify({ a: { title: "A", body: "![](examples/a.ts#L1)\n\n[](terms/a.termth)" } }),
+    writeTextfile(
+        root,
+        "locales/eng/content/a.md",
+        "---\ntitle: A\n---\n![](examples/a.ts#L1)\n\n[](terms/a.termth)\n",
+        null,
     );
     return root;
 };
 afterEach(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
-it.each([false, true])("uploads files with default layout %s without overwriting", (enabled) => {
+
+it.each([
+    undefined,
+    "docs: []\n",
+    "files: {}\ndocs: []\n",
+])("defaults new documents, figures and translations to format folders: %s", (manifest) => {
+    const root = mkdtempSync(join(tmpdir(), "dooc-default-layout-"));
+    roots.push(root);
+    if (manifest !== undefined) writeFileSync(join(root, "dooc.yaml"), manifest);
+    expect(filesSnapshot(root).layout.defaultLayout).toBe(true);
+    const ops = createDocOps(root);
+    expect(ops.add("guide", "Guide")).toEqual({ id: "guide" });
+    expect(readManifest(root).files?.documents.guide).toBe("files/md/guide.md");
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"></svg>';
+    expect(ops.addFigure("diagram.svg", Buffer.from(svg))).toEqual({
+        file: "diagram.svg",
+        path: "files/svg/diagram.svg",
+    });
+    expect(ops.write("guide", "---\ntitle: Guide\n---\n\n![](files/svg/diagram.svg)\n")).toEqual({
+        id: "guide",
+    });
+    setDocTranslation(root, "eng", "guide", "jpn", true);
+    expect(existsSync(join(root, "locales/jpn/files/md/guide.md"))).toBe(true);
+    expect(compileSite(root).errors).toEqual([]);
+    expect(compileSite(root, { locale: "jpn" }).errors).toEqual([]);
+    expect(exportEntries(root).map((entry) => entry.name)).toEqual(
+        expect.arrayContaining([
+            "dooc.yaml",
+            "files/md/guide.md",
+            "files/svg/diagram.svg",
+            "locales/jpn/files/md/guide.md",
+        ]),
+    );
+});
+
+it("tracks, exports, and rewrites linked figures, including links in external callouts", () => {
     const root = fixture();
-    if (enabled)
+    mkdirSync(join(root, "assets"));
+    const image = Buffer.from([0xff, 0xd8, 0xff]);
+    writeFileSync(join(root, "assets/photo.jpg"), image);
+    writeFileSync(
+        join(root, "note.callouth"),
+        "[Picture](figures/picture.svg) and [Photo](assets/photo.jpg)\n",
+    );
+    writeFileSync(join(root, "content/a.md"), "---\ntitle: A\n---\n\n![](note.callouth)\n");
+    writeFileSync(
+        join(root, "content/b.md"),
+        "---\ntitle: B\n---\n\n[Picture](figures/picture.svg)\n",
+    );
+    const compiled = compileSite(root);
+    expect(compiled.errors).toEqual([]);
+    expect(compiled.docs[0]?.refs.figures).toContain("picture");
+    expect(createDocOps(root).removeFigure("picture")).toMatchObject({
+        status: 409,
+        referencedBy: ["a", "b"],
+    });
+    expect(exportEntries(root).find((entry) => entry.name === "assets/photo.jpg")?.data).toEqual(
+        image,
+    );
+    updateFiles(root, {
+        action: "rename",
+        file: "figures/picture.svg",
+        name: "diagram.svg",
+        revision: filesSnapshot(root).revision,
+    });
+    expect(readFileSync(join(root, "note.callouth"), "utf8")).toContain(
+        "[Picture](figures/diagram.svg)",
+    );
+    expect(readFileSync(join(root, "content/b.md"), "utf8")).toContain(
+        "[Picture](figures/diagram.svg)",
+    );
+    expect(compileSite(root).errors).toEqual([]);
+    writeFileSync(join(root, "note.callouth"), "[Missing](figures/missing.svg)\n");
+    expect(compileSite(root).errors.join()).toContain('"missing.svg" is not in figures/');
+});
+
+it("updates links inside fenced and extracted callouts while preserving examples and exports", () => {
+    const root = fixture();
+    const body =
+        "  ~~~callouth Read next\r\n  [B](content/b.md#details)\r\n  `example: [B](content/b.md)`\r\n  ~~~\r\n\r\n![](notes.callouth)\r\n";
+    writeFileSync(join(root, "content/a.md"), `---\r\ntitle: A\r\n---\r\n\r\n${body}`);
+    writeFileSync(
+        join(root, "notes.callouth"),
+        "[B](content/b.md#details) and [](terms/a.termth)\n",
+    );
+    expect(compileSite(root).errors).toEqual([]);
+    expect(exportEntries(root).map((entry) => entry.name)).toEqual(
+        expect.arrayContaining(["notes.callouth", "terms/a.termth"]),
+    );
+    updateFiles(root, {
+        action: "rename",
+        file: "content/b.md",
+        name: "next (page).md",
+        revision: filesSnapshot(root).revision,
+    });
+    const updated = readFileSync(join(root, "content/a.md"), "utf8");
+    expect(updated).toContain("  [B](content/next%20%28page%29.md#details)\r\n");
+    expect(updated).toContain("`example: [B](content/b.md)`");
+    expect(readFileSync(join(root, "notes.callouth"), "utf8")).toContain(
+        "content/next%20%28page%29.md#details",
+    );
+    const compiled = compileSite(root);
+    expect(compiled.errors).toEqual([]);
+    expect(compiled.docs[0]?.refs.terms).toContain("terms/a.termth");
+    expect(createDocOps(root).rename("b", "next")).toEqual({ id: "next", updatedRefs: 0 });
+    expect(createDocOps(root).remove("next")).toMatchObject({
+        status: 409,
+        referencedBy: ["a.md", "notes.callouth"],
+    });
+    writeFileSync(join(root, "notes.callouth"), "[Missing](content/missing.md)\n");
+    expect(compileSite(root).errors.join()).toContain(
+        'Document link "content/missing.md" is unresolved',
+    );
+});
+
+it("rejects a rename with an unclosed callout before changing files, translations, or the manifest", () => {
+    const root = fixture();
+    writeFileSync(
+        join(root, "content/a.md"),
+        "---\ntitle: A\n---\n\n~~~callouth\n[B](content/b.md)\n",
+    );
+    const manifest = readFileSync(join(root, "dooc.yaml"), "utf8");
+    const translated = readFileSync(join(root, "locales/eng/content/a.md"), "utf8");
+    expect(createDocOps(root).rename("b", "next")).toMatchObject({ status: 409 });
+    expect(existsSync(join(root, "content/b.md"))).toBe(true);
+    expect(existsSync(join(root, "content/next.md"))).toBe(false);
+    expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toBe(manifest);
+    expect(readFileSync(join(root, "locales/eng/content/a.md"), "utf8")).toBe(translated);
+});
+it.each([
+    false,
+    true,
+    undefined,
+])("uploads files with default layout %s without overwriting", (enabled) => {
+    const root = fixture();
+    if (enabled !== undefined)
         updateFiles(root, { action: "layout", enabled, revision: filesSnapshot(root).revision });
     for (const [name, bytes] of [
         ["表.csv", Buffer.from("名前,件数\nA,3\n")],
@@ -62,12 +198,12 @@ it.each([false, true])("uploads files with default layout %s without overwriting
         ["clip.mp4", Buffer.from([0, 255, 17, 128])],
         ["empty.txt", Buffer.alloc(0)],
     ] as const) {
-        const file = enabled ? `files/${name.split(".").pop()}/${name}` : name;
+        const file = enabled !== false ? `files/${name.split(".").pop()}/${name}` : name;
         expect(uploadFile(root, { name, data: bytes.toString("base64") })).toEqual({ file });
         expect(readFileSync(join(root, file))).toEqual(bytes);
         expect(filesSnapshot(root).files.map((file) => file.path)).toContain(file);
     }
-    const directory = enabled ? "files/csv/" : "";
+    const directory = enabled !== false ? "files/csv/" : "";
     expect(
         uploadFile(root, { name: "表.csv", data: Buffer.from("second").toString("base64") }),
     ).toEqual({ file: `${directory}表-2.csv` });
@@ -84,7 +220,7 @@ it("rejects upload traversal, configuration files, malformed data and symlink es
         "/tmp/escape.txt",
         "nested/file.txt",
         ".env",
-        "manifest.yaml",
+        "dooc.yaml",
         "docs.config.mjs",
         "a\\b.txt",
     ])
@@ -97,9 +233,13 @@ it("rejects upload traversal, configuration files, malformed data and symlink es
     expect(() => uploadFile(root, { name: "escape.txt", data: "YQ==" })).toThrow("outside");
 });
 
-it.each([false, true])("creates documents by file name with default layout %s", (enabled) => {
+it.each([
+    false,
+    true,
+    undefined,
+])("creates documents by file name with default layout %s", (enabled) => {
     const root = fixture();
-    if (enabled)
+    if (enabled !== undefined)
         updateFiles(root, { action: "layout", enabled, revision: filesSnapshot(root).revision });
     const ops = createDocOps(root);
     expect(suggestDocFileName("日本語の資料")).toBe("日本語の資料.md");
@@ -108,29 +248,27 @@ it.each([false, true])("creates documents by file name with default layout %s", 
     expect(ops.addFile("日本語の資料.md", "資料")).toEqual({ id: "doc" });
     expect(ops.addFile("Second doc.md", "Second", "a")).toEqual({ id: "second-doc" });
     expect(ops.addFile("Second-doc.md", "Another")).toEqual({ id: "second-doc-2" });
-    const directory = enabled ? "files/md" : "content";
+    const directory = enabled !== false ? "files/md" : "content";
     expect(readManifest(root).files?.documents.doc).toBe(`${directory}/日本語の資料.md`);
     expect(readFileSync(join(root, directory, "日本語の資料.md"), "utf8")).toContain("資料");
     expect(compileSite(root).errors).toEqual([]);
-    expect(docPath(compileSite(root).artifact.docs, "second-doc")).toBe("/a/second-doc");
-    const before = readFileSync(join(root, "manifest.yaml"), "utf8");
+    expect(docPath(compileSite(root).docs, "second-doc")).toBe("/a/second-doc");
+    const before = readFileSync(join(root, "dooc.yaml"), "utf8");
     expect(ops.addFile("日本語の資料.md", "Duplicate")).toMatchObject({ status: 409 });
     for (const name of ["../escape.md", "folder/file.md", ".hidden.md", "file.txt", "file"])
         expect(ops.addFile(name, "Invalid")).toMatchObject({ status: 400 });
-    expect(readFileSync(join(root, "manifest.yaml"), "utf8")).toBe(before);
+    expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toBe(before);
 });
 
 it("renames physical documents and their references while keeping URLs and translations", () => {
     const root = fixture();
     writeFileSync(
         join(root, "content/b.md"),
-        "---\ntitle: B\n---\n\n[A](doc:a)\n\n![](content/a.md#L1)\n",
+        "---\ntitle: B\n---\n\n[A](content/a.md)\n\n![](content/a.md#L1)\n",
     );
     writeFileSync(
-        join(root, "locales/eng.json"),
-        JSON.stringify({
-            a: { title: "Translated", body: "[A](doc:a)\n\n![](content/a.md#L1)" },
-        }),
+        join(root, "locales/eng/content/a.md"),
+        "---\ntitle: Translated\n---\n[A](content/a.md)\n\n![](content/a.md#L1)\n",
     );
     let source = "content/a.md";
     for (const name of ["intro.md", "日本語の資料.md"]) {
@@ -143,17 +281,20 @@ it("renames physical documents and their references while keeping URLs and trans
         const target = `content/${name}`;
         expect(snapshot.layout.documents.a).toBe(target);
         expect(existsSync(join(root, source))).toBe(false);
-        expect(readFileSync(join(root, target), "utf8")).toContain("[Other](doc:b)");
+        expect(readFileSync(join(root, target), "utf8")).toContain("[Other](content/b.md)");
         const link = `![](content/${encodeURIComponent(name)}#L1)`;
         expect(readFileSync(join(root, "content/b.md"), "utf8")).toContain(link);
-        const catalog = JSON.parse(readFileSync(join(root, "locales/eng.json"), "utf8"));
-        expect(catalog.a.body).toContain(link);
-        expect(catalog.a.body).toContain("[A](doc:a)");
+        const translated = readFileSync(join(root, `locales/eng/${target}`), "utf8");
+        expect(existsSync(join(root, `locales/eng/${source}`))).toBe(false);
+        expect(translated).toContain(link);
+        expect(translated).toContain(`[A](content/${encodeURIComponent(name)})`);
         const compiled = compileSite(root);
         expect(compiled.errors).toEqual([]);
-        expect(docPath(compiled.artifact.docs, "a")).toBe("/a");
-        expect(compileSite(root, { locale: "eng" }).artifact.docs[0]?.title).toBe("Translated");
-        expect(createDocOps(root).write("a", "---\ntitle: A\n---\n\n[Other](doc:b)\n")).toEqual({
+        expect(docPath(compiled.docs, "a")).toBe("/a");
+        expect(compileSite(root, { locale: "eng" }).docs[0]?.title).toBe("Translated");
+        expect(
+            createDocOps(root).write("a", "---\ntitle: A\n---\n\n[Other](content/b.md)\n"),
+        ).toEqual({
             id: "a",
         });
         source = target;
@@ -190,14 +331,14 @@ it("restructures documents and assets, keeping IDs, translations, icons and sour
     expect(readFileSync(join(root, "files/md/a.md"), "utf8")).toContain(
         "[](files/termth/a.termth)",
     );
-    expect(readFileSync(join(root, "manifest.yaml"), "utf8")).toContain("# Preserve this comment");
-    expect(JSON.parse(readFileSync(join(root, "locales/eng.json"), "utf8")).a.body).toContain(
+    expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toContain("# Preserve this comment");
+    expect(readFileSync(join(root, "locales/eng/files/md/a.md"), "utf8")).toContain(
         "files/ts/a.ts#L1",
     );
     expect(compileSite(root).errors).toEqual([]);
     expect(compileSite(root, { locale: "eng" }).errors).toEqual([]);
-    expect(compileSite(root).artifact.docs[0]?.icon).toContain("<svg");
-    expect(compileSite(root).artifact.docs.map((d) => [d.id, d.file])).toEqual([
+    expect(compileSite(root).docs[0]?.icon).toContain("<svg");
+    expect(compileSite(root).docs.map((d) => [d.id, d.file])).toEqual([
         ["a", "files/md/a.md"],
         ["b", "files/md/b.md"],
     ]);
@@ -261,12 +402,12 @@ it("moves a selection with folders, preserves order, and blocks stale and unsafe
             revision: snap.revision,
         }),
     ).toThrow("Invalid move");
-    const before = readFileSync(join(root, "manifest.yaml"), "utf8");
+    const before = readFileSync(join(root, "dooc.yaml"), "utf8");
     writeFileSync(join(root, "custom/examples/a.ts"), "external");
     expect(() => updateFiles(root, { action: "restructure", revision: snap.revision })).toThrow(
         "Files changed",
     );
-    expect(readFileSync(join(root, "manifest.yaml"), "utf8")).toBe(before);
+    expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toBe(before);
     snap = filesSnapshot(root);
     symlinkSync(tmpdir(), join(root, "outside"));
     expect(() =>
@@ -306,14 +447,14 @@ it("keeps nested image labels and destination-like titles unchanged", () => {
 it("rolls back references and the manifest when a source cannot be removed", () => {
     const root = fixture();
     const original = filesSnapshot(root);
-    const manifest = readFileSync(join(root, "manifest.yaml"), "utf8");
+    const manifest = readFileSync(join(root, "dooc.yaml"), "utf8");
     const body = readFileSync(join(root, "content/a.md"), "utf8");
     chmodSync(join(root, "content"), 0o555);
     try {
         expect(() =>
             updateFiles(root, { action: "restructure", revision: original.revision }),
         ).toThrow();
-        expect(readFileSync(join(root, "manifest.yaml"), "utf8")).toBe(manifest);
+        expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toBe(manifest);
         expect(readFileSync(join(root, "content/a.md"), "utf8")).toBe(body);
         expect(filesSnapshot(root).files).toEqual(original.files);
     } finally {
@@ -331,5 +472,6 @@ it("keeps ordinary document IDs that match object properties", () => {
         id: "new-constructor",
         updatedRefs: 0,
     });
-    expect(existsSync(join(root, "content/new-constructor.md"))).toBe(true);
+    expect(readManifest(root).files?.documents["new-constructor"]).toBe("files/md/constructor.md");
+    expect(existsSync(join(root, "files/md/constructor.md"))).toBe(true);
 });

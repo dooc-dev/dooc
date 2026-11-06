@@ -23,10 +23,7 @@ it.each([
     const root = mkdtempSync(join(tmpdir(), "docs-root-manifest-"));
     try {
         if (title !== undefined)
-            writeFileSync(
-                join(root, "manifest.yaml"),
-                `title: ${JSON.stringify(title)}\ndocs: []\n`,
-            );
+            writeFileSync(join(root, "dooc.yaml"), `title: ${JSON.stringify(title)}\ndocs: []\n`);
         const ops = createDocOps(root);
         expect(ops.add("guide", "Guide")).toEqual({ id: "guide" });
         expect(ops.add("child", "Child")).toEqual({ id: "child" });
@@ -34,19 +31,22 @@ it.each([
         expect(ops.rename("child", "detail")).toMatchObject({ id: "detail" });
         const compiled = compileSite(root);
         expect(compiled.errors).toEqual([]);
-        expect(compiled.artifact.title).toBe(title);
-        expect(compiled.artifact.docs.map(({ id, parent }) => ({ id, parent }))).toEqual([
+        expect(compiled.title).toBe(title);
+        expect(exportEntries(root).map((entry) => entry.name)).toContain("dooc.yaml");
+        expect(compiled.docs.map(({ id, parent }) => ({ id, parent }))).toEqual([
             { id: "guide", parent: undefined },
             { id: "detail", parent: "guide" },
         ]);
         expect(ops.remove("detail")).toMatchObject({ parent: "guide" });
-        expect(parse(readFileSync(join(root, "manifest.yaml"), "utf8"))).toEqual(
-            title === undefined ? ["guide"] : { title, docs: ["guide"] },
-        );
-        expect(existsSync(join(root, "content", "manifest.yaml"))).toBe(false);
+        expect(parse(readFileSync(join(root, "dooc.yaml"), "utf8"))).toEqual({
+            ...(title === undefined ? {} : { title }),
+            docs: ["guide"],
+            files: { defaultLayout: true, documents: { guide: "files/md/guide.md" }, order: [] },
+        });
+        expect(existsSync(join(root, "content", "dooc.yaml"))).toBe(false);
         expect(compileSite(root).errors).toEqual([]);
         expect(ops.remove("guide")).not.toHaveProperty("error");
-        expect(compileSite(root).artifact.title).toBe(title);
+        expect(compileSite(root).title).toBe(title);
     } finally {
         rmSync(root, { recursive: true, force: true });
     }
@@ -56,9 +56,9 @@ it("does not overwrite malformed site metadata when adding a document", () => {
     const root = mkdtempSync(join(tmpdir(), "docs-title-"));
     try {
         const raw = "title: 42\ndocs: []\n";
-        writeFileSync(join(root, "manifest.yaml"), raw);
+        writeFileSync(join(root, "dooc.yaml"), raw);
         expect(createDocOps(root).add("guide", "Guide")).toMatchObject({ status: 409 });
-        expect(readFileSync(join(root, "manifest.yaml"), "utf8")).toBe(raw);
+        expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toBe(raw);
         expect(existsSync(join(root, "content", "guide.md"))).toBe(false);
     } finally {
         rmSync(root, { recursive: true, force: true });
@@ -74,7 +74,7 @@ it("keeps the site SVG file through document operations, compilation and export"
             '<svg viewBox="0 0 20 10"><path d="M0 0h20"/></svg>',
         );
         writeFileSync(
-            join(root, "manifest.yaml"),
+            join(root, "dooc.yaml"),
             "title: Guide\nicon: icons/logo.svg\ndefaultLang: jpn\ndocs: []\n",
         );
         const ops = createDocOps(root);
@@ -83,7 +83,7 @@ it("keeps the site SVG file through document operations, compilation and export"
         expect(ops.move("child", "guide")).not.toHaveProperty("error");
         expect(ops.rename("child", "detail")).not.toHaveProperty("error");
         expect(ops.remove("detail")).not.toHaveProperty("error");
-        expect(parse(readFileSync(join(root, "manifest.yaml"), "utf8"))).toMatchObject({
+        expect(parse(readFileSync(join(root, "dooc.yaml"), "utf8"))).toMatchObject({
             title: "Guide",
             icon: "icons/logo.svg",
             defaultLang: "jpn",
@@ -91,8 +91,8 @@ it("keeps the site SVG file through document operations, compilation and export"
         const compiled = compileSite(root);
         expect(compiled.errors).toEqual([]);
         expect(compiled.defaultLang).toBe("jpn");
-        expect(compiled.artifact.docs[0]?.lang).toBe("jpn");
-        expect(compiled.artifact.icon).toContain('viewBox="0 -5 20 20"');
+        expect(compiled.docs[0]?.lang).toBe("jpn");
+        expect(compiled.icon).toContain('viewBox="0 -5 20 20"');
         const html = publishHtml(siteFrom(compiled), "");
         expect(html).toContain('<img id="site-icon" alt="" src="data:image/svg+xml;base64,');
         expect(html).not.toContain('id="nav-search"');

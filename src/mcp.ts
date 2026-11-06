@@ -27,7 +27,7 @@ export const createTools = (root: string, options: CompileOptions = {}): Record<
         typeof v === "string" && v !== "" ? v : undefined;
     const docErrors = (id: string): string[] => {
         const compiled = compiler.compile();
-        const file = compiled.artifact.docs.find((doc) => doc.id === id)?.file;
+        const file = compiled.docs.find((doc) => doc.id === id)?.file;
         return file ? (compiled.sources.get(file)?.errors ?? []) : [];
     };
 
@@ -37,10 +37,10 @@ export const createTools = (root: string, options: CompileOptions = {}): Record<
                 "The doc tree (in manifest display order) and the list of figures. Each doc has id / title / parent / depth.",
             props: {},
             run: () => {
-                const { artifact } = compiler.compile();
+                const { docs, figures } = compiler.compile();
                 const depth = new Map<string, number>();
                 return {
-                    docs: artifact.docs.map((d) => {
+                    docs: docs.map((d) => {
                         const dep = d.parent == null ? 0 : (depth.get(d.parent) ?? 0) + 1;
                         depth.set(d.id, dep);
                         return {
@@ -50,7 +50,7 @@ export const createTools = (root: string, options: CompileOptions = {}): Record<
                             depth: dep,
                         };
                     }),
-                    figures: artifact.figures.map((f) => ({
+                    figures: figures.map((f) => ({
                         name: f.name,
                         file: f.file,
                         title: f.title,
@@ -65,7 +65,7 @@ export const createTools = (root: string, options: CompileOptions = {}): Record<
             required: ["query"],
             run: (a) => {
                 const q = String(a.query ?? "").toLowerCase();
-                return compiler.compile().artifact.docs.flatMap((d) => {
+                return compiler.compile().docs.flatMap((d) => {
                     const title = docDisplayName(d, d.id);
                     const i = d.body.toLowerCase().indexOf(q);
                     if (i === -1 && !`${d.id}\n${title}`.toLowerCase().includes(q)) {
@@ -79,12 +79,12 @@ export const createTools = (root: string, options: CompileOptions = {}): Record<
         },
         read_doc: {
             description:
-                "A doc's raw md (including front-matter) and its validation errors. Fig.<name> references in the body can be read with read_figure.",
+                "A doc's raw md (including front-matter) and its validation errors. Figure links use file paths; list_docs maps each file to its read_figure name.",
             props: { id: { ...str, description: "doc id" } },
             required: ["id"],
             run: (a) => {
                 const id = String(a.id);
-                const doc = compiler.compile().artifact.docs.find((d) => d.id === id);
+                const doc = compiler.compile().docs.find((d) => d.id === id);
                 return doc
                     ? {
                           raw: readFileSync(`${ops.contentDir}/${id}.md`, "utf8"),
@@ -150,7 +150,7 @@ export const createTools = (root: string, options: CompileOptions = {}): Record<
         },
         rename_doc: {
             description:
-                "Change a doc id (the file name / manifest / doc: links in all docs follow).",
+                "Change a doc id (the file name / manifest / file links in all docs follow).",
             props: {
                 id: { ...str, description: "Current id" },
                 new_id: { ...str, description: "New id" },
@@ -160,7 +160,7 @@ export const createTools = (root: string, options: CompileOptions = {}): Record<
         },
         delete_doc: {
             description:
-                "Delete a doc. Docs with children cannot be deleted. Requires force if other docs reference it via doc: links.",
+                "Delete a doc. Docs with children cannot be deleted. Requires force if other docs reference it via file links.",
             props: {
                 id: { ...str, description: "doc id" },
                 force: { ...bool, description: "Delete even if referenced" },

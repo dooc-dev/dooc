@@ -11,7 +11,7 @@ const fixture = () => {
     const root = mkdtempSync(join(tmpdir(), "dooc-code-file-"));
     roots.push(root);
     mkdirSync(join(root, "content"));
-    writeFileSync(join(root, "manifest.yaml"), "files: {defaultLayout: true}\ndocs: [a]\n");
+    writeFileSync(join(root, "dooc.yaml"), "docs: [a]\n");
     return root;
 };
 afterEach(() => {
@@ -21,11 +21,13 @@ it.each([
     ["ts", "const x = 1;"],
     ["termth", "name: API\ndefinition: Contract"],
     ["grapth", "[A]: A\n[B]: B\n[A] -> [B]"],
+    ["schemath", "items:\n  id: pk"],
+    ["callouth", "Read [this document](content/a.md).\n\n- First\n  - Nested"],
 ])("extracts %s to the default folder and keeps its rendered block", (lang, source) => {
     const root = fixture();
     const body = `\`\`\`${lang}\n${source}\n\`\`\``;
     writeFileSync(join(root, "content/a.md"), `---\ntitle: A\n---\n\n${body}\n`);
-    const before = compileSite(root).artifact.docs[0]?.blocks[0];
+    const before = compileSite(root).docs[0]?.blocks[0];
     const result = codeFileResponse(root, { body, position: 2, documentId: "a" });
     expect(result.status).toBe(200);
     if (!("file" in result.body) || !result.body.file || !("change" in result.body))
@@ -39,11 +41,25 @@ it.each([
     );
     const built = compileSite(root);
     expect(built.errors).toEqual([]);
-    expect(built.artifact.docs[0]?.blocks[0]?.type).toBe(before?.type);
+    expect(built.docs[0]?.blocks[0]?.type).toBe(before?.type);
     const again = codeFileResponse(root, { body, position: 2, documentId: "a" });
     expect(again.status).toBe(200);
     expect(again.body).toMatchObject({ file: `files/${lang}/a-1-2.${lang}` });
 });
+it("requires a chosen path when format placement is explicitly disabled", () => {
+    const root = fixture();
+    writeFileSync(join(root, "dooc.yaml"), "files: {defaultLayout: false}\ndocs: [a]\n");
+    const input = { body: "```ts\nconst x = 1;\n```", position: 2, documentId: "a" };
+    expect(codeFileResponse(root, input)).toMatchObject({
+        status: 400,
+        body: { error: "File path is required" },
+    });
+    expect(codeFileResponse(root, { ...input, file: "snippets/example.ts" })).toMatchObject({
+        status: 200,
+        body: { file: "snippets/example.ts" },
+    });
+});
+
 it("preserves CRLF content and isolates HTML source with a line fragment", () => {
     const plan = codeFilePlan(
         "before\r\n```html\r\n<p>x</p>\r\n```\r\nafter",

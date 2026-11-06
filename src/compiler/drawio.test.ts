@@ -6,7 +6,7 @@ import { extractMxfile, isDrawioSvg, mxfilePageName, normalizeDrawioSvg } from "
 // link.
 const drawioSvg = (opts: { page?: string; fill?: string; withContent?: boolean } = {}): string => {
     const { page = "auth route", fill = "#dae8fc", withContent = true } = opts;
-    // The content attribute (mxfile) is what gets dropped from the artifact. Give it real content
+    // The content attribute (mxfile) is what gets dropped from rendered output. Give it real content
     // so a failure to drop it is detectable.
     const mxfile = `<mxfile host="app.diagrams.net"><diagram name="${page}" id="a"><mxGraphModel><root><mxCell style="fillColor=#ff00ff;strokeColor=#123456"/></root></mxGraphModel></diagram></mxfile>`;
     const content = withContent
@@ -36,7 +36,7 @@ describe("normalizeDrawioSvg", () => {
         expect(markup.endsWith("</svg>")).toBe(true);
         expect(markup).not.toContain("<?xml");
         expect(markup).not.toContain("<!DOCTYPE");
-        // No editing data or external domains left in the shipped artifact.
+        // No editing data or external domains left in the rendered output.
         expect(markup).not.toContain("mxfile");
         expect(markup).not.toContain("drawio.com");
         expect(markup).not.toContain("Text is not SVG");

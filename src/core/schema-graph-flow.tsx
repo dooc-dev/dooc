@@ -1,4 +1,4 @@
-// Interactive UI for the schema graph (`:::schema`), built on React Flow. Handles zoom / pan /
+// Interactive UI for the schema graph (`schemath`), built on React Flow. Handles zoom / pan /
 // box drag & drop / expanded view / minimap. It starts from the same model and the same initial
 // layout as the static SVG (html.ts), so the picture stays continuous; without JS / before
 // mounting, the static SVG stays readable as-is (fallback).

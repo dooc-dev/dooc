@@ -21,7 +21,7 @@ lang: "jpn"
 
 架空の執筆者と文書のモデルです。`pk` は主キー、`fk(authors)` は執筆者への参照を表します。
 
-:::schema[執筆者と文書]
+~~~schemath 執筆者と文書
 authors:
   id: pk
   name: string
@@ -30,7 +30,7 @@ documents:
   id: pk
   author_id: fk(authors)
   title: string
-:::
+~~~
 
 ## CSV
 
@@ -39,6 +39,8 @@ CSVもFilesから取り込めます。ファイルのパスをコピーし、`![
 ![](files/csv/review.csv)
 
 ## SVG
+
+`[入力と出力](figures/overview.svg)` で図を参照します。[入力と出力](figures/overview.svg)にポインターを合わせるとプレビューが開き、クリックすると図のページを表示します。
 
 `![入力と出力](figures/overview.svg)` で図と説明を表示します。
 

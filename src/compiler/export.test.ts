@@ -36,13 +36,13 @@ describe("export / zip", () => {
         mkdirSync(join(root, "content"));
         writeFileSync(join(root, "content", "a.md"), "Body\n");
         writeFileSync(join(root, "docs.config.mjs"), "export default { languages: [] };\n");
-        writeFileSync(join(root, "manifest.yaml"), "- a\n");
+        writeFileSync(join(root, "dooc.yaml"), "- a\n");
         const entries = exportEntries(root);
         expect(entries.map((e) => e.name)).toEqual([
             "docs.config.mjs",
-            "manifest.yaml",
+            "dooc.yaml",
             "content/a.md",
         ]);
-        expect(entries.find((e) => e.name === "manifest.yaml")?.data.toString()).toBe("- a\n");
+        expect(entries.find((e) => e.name === "dooc.yaml")?.data.toString()).toBe("- a\n");
     });
 });

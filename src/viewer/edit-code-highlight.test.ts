@@ -1,7 +1,13 @@
 import { markdown } from "@codemirror/lang-markdown";
 import { EditorState } from "@codemirror/state";
 import { expect, it } from "vitest";
+import { codeTokens } from "./code-tokens.js";
 import { editorCodeBlocks } from "./edit-code-highlight.js";
+
+it("leaves large files and very long lines as plain text without initializing a highlighter", async () => {
+    expect(await codeTokens("const x = 1;\n".repeat(10_000), "js")).toEqual([]);
+    expect(await codeTokens("x".repeat(10_001), "js")).toEqual([]);
+});
 
 it("collects fenced languages without coloring prose or losing empty lines", () => {
     const doc = "# Heading\n\n```rust\nfn main() {\n\n\n}\n```\n\nAfter\n\n~~~unknown\na\n~~~";

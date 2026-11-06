@@ -25,11 +25,19 @@ describe("routing", () => {
         expect(parseRoutePath("/")).toBeUndefined();
     });
 
-    it("resolves doc: links to a docId", () => {
-        expect(parseDocLink("doc:setup")).toBe("setup");
-        expect(parseDocLink("doc:guide/setup")).toBeUndefined();
-        expect(parseDocLink("https://example.com")).toBeUndefined();
-        expect(parseDocLink("doc:")).toBeUndefined();
+    it("parses document files and heading fragments, excluding other URLs", () => {
+        expect(parseDocLink("./content/setup.md#details")).toEqual({
+            file: "content/setup.md",
+            fragment: "details",
+        });
+        expect(parseDocLink("files/md/%E6%97%A5%E6%9C%AC%E8%AA%9E.md")).toEqual({
+            file: "files/md/日本語.md",
+            fragment: "",
+        });
+        expect(parseDocLink("https://example.com/setup.md")).toBeUndefined();
+        expect(parseDocLink("doc:setup")).toBeUndefined();
+        expect(() => parseDocLink("../private.md")).toThrow("inside the docs root");
+        expect(() => parseDocLink("content/setup.md?x=1")).toThrow("query");
     });
 
     it("walks the tree with childrenOf / ancestorsOf (keeping input order)", () => {

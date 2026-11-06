@@ -11,7 +11,7 @@
 //     only postMessages the height to the parent is added (sandbox="allow-scripts" only; no
 //     allow-same-origin = treated as a separate origin, so it can't reach the parent's DOM /
 //     cookies. The figure's own <script> is forbidden by the compiler).
-import type { FigureEntry } from "./artifact-types.js";
+import type { FigureEntry } from "./content-types.js";
 
 const esc = (s: string): string =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
