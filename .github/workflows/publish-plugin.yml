@@ -38,11 +38,3 @@ jobs:
           npm publish "build/packages/sasaki-s-sci-dooc-plugin-${version}.tgz" --ignore-scripts --access restricted --tag latest --registry https://npm.pkg.github.com
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Remove the superseded 0.1.0 after verifying 0.0.2
-        run: |
-          test "$(npm view @sasaki-s-sci/dooc-plugin@latest version --registry https://npm.pkg.github.com)" = '0.0.2'
-          test "$(gh api users/sasaki-s-sci/packages/npm/dooc-plugin/versions/1520185328 --jq '.name')" = '0.1.0'
-          gh api --method DELETE users/sasaki-s-sci/packages/npm/dooc-plugin/versions/1520185328
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
