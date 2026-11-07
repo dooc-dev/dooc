@@ -1,0 +1,40 @@
+name: Publish dooc-plugin
+
+on:
+  push:
+    branches: [main]
+    paths: [packages/dooc-plugin/package.json]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-dooc-plugin
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'sasaki-s-sci/dooc' && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          registry-url: https://npm.pkg.github.com
+      - run: pnpm install --frozen-lockfile
+      - name: Test plugin runtime
+        run: pnpm exec vitest run src/plugins src/viewer/plugins.test.ts src/viewer/plugin-config.test.ts src/viewer/plugin-view.test.ts
+      - name: Verify the packed SDK in a separate consumer
+        run: pnpm run test:plugin-package
+      - name: Publish the verified archive privately
+        run: |
+          version=$(node -p 'require("./packages/dooc-plugin/package.json").version')
+          npm publish "build/packages/sasaki-s-sci-dooc-plugin-${version}.tgz" --ignore-scripts --access restricted --registry https://npm.pkg.github.com
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
