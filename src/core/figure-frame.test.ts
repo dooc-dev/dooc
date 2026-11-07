@@ -39,5 +39,22 @@ describe("figureFrameHtml (figure isolation)", () => {
             markup: '<img src="data:x" alt="c">',
         };
         expect(figureFrameHtml(img)).toBe('<img src="data:x" alt="c">');
+        expect(figureFrameHtml(img, "fig-frame", "")).toBe('<img src="data:x" alt="">');
+        expect(figureFrameHtml(img, "fig-frame", 'A & "B"')).toBe(
+            '<img src="data:x" alt="A &amp; &quot;B&quot;">',
+        );
+    });
+
+    it("uses video descriptions as accessible labels", () => {
+        const video = {
+            name: "demo",
+            file: "demo.mp4",
+            kind: "video" as const,
+            markup: '<video controls aria-label="Video preview" src="data:video/mp4;base64,"></video>',
+        };
+        expect(figureFrameHtml(video, "fig-frame", 'Demo & "intro"')).toContain(
+            'aria-label="Demo &amp; &quot;intro&quot;"',
+        );
+        expect(figureFrameHtml(video, "fig-frame", "")).toBe(video.markup);
     });
 });

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
     chmodSync,
     existsSync,
@@ -14,8 +15,8 @@ import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { suggestDocFileName } from "../core/files.js";
 import { docPath } from "../core/routing.js";
+import { bundleEntries } from "./bundle.js";
 import { compileSite } from "./compile.js";
-import { exportEntries } from "./export.js";
 import { filesSnapshot, rewriteFileLinks, updateFiles, uploadFile } from "./files.js";
 import { setDocTranslation } from "./locales.js";
 import { readManifest } from "./manifest.js";
@@ -56,6 +57,59 @@ afterEach(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
+it("hides Git-ignored files while keeping tracked files and explicit re-inclusions", () => {
+    const root = fixture();
+    const git = (...args: string[]) =>
+        execFileSync("git", ["-C", root, ...args], { stdio: "pipe" });
+    git("init");
+    writeFileSync(join(root, "tracked.log"), "tracked");
+    git("add", "tracked.log");
+    writeFileSync(join(root, ".gitignore"), "*.log\ncache/\n!keep.log\n");
+    mkdirSync(join(root, "cache"));
+    mkdirSync(join(root, "files"));
+    writeFileSync(join(root, "files/.gitignore"), "private.txt\n");
+    writeFileSync(join(root, ".git/info/exclude"), "local.txt\n");
+    writeFileSync(join(root, ".global-ignore"), "global.txt\n");
+    git("config", "core.excludesFile", join(root, ".global-ignore"));
+    for (const file of [
+        "debug.log",
+        "keep.log",
+        "cache/generated.txt",
+        "files/private.txt",
+        "files/日本語 note.log",
+        "local.txt",
+        "global.txt",
+        "visible.txt",
+    ])
+        writeFileSync(join(root, file), file);
+    const paths = () => filesSnapshot(root).files.map((file) => file.path);
+    const visible = paths();
+    expect(visible).toEqual(expect.arrayContaining(["tracked.log", "keep.log", "visible.txt"]));
+    for (const file of [
+        "debug.log",
+        "cache/generated.txt",
+        "files/private.txt",
+        "files/日本語 note.log",
+        "local.txt",
+        "global.txt",
+    ])
+        expect(visible).not.toContain(file);
+    writeFileSync(join(root, "files/.gitignore"), "");
+    expect(paths()).toContain("files/private.txt");
+});
+
+it("uses repository ignore rules when the document root is a subdirectory", () => {
+    const root = fixture();
+    execFileSync("git", ["-C", root, "init"], { stdio: "pipe" });
+    writeFileSync(join(root, ".gitignore"), "nested/private.txt\n");
+    const docs = join(root, "nested");
+    mkdirSync(docs);
+    writeFileSync(join(docs, "dooc.yaml"), "docs: []\n");
+    writeFileSync(join(docs, "private.txt"), "ignored");
+    writeFileSync(join(docs, "public.txt"), "visible");
+    expect(filesSnapshot(docs).files.map((file) => file.path)).toEqual(["public.txt"]);
+});
+
 it.each([
     undefined,
     "docs: []\n",
@@ -80,7 +134,7 @@ it.each([
     expect(existsSync(join(root, "locales/jpn/files/md/guide.md"))).toBe(true);
     expect(compileSite(root).errors).toEqual([]);
     expect(compileSite(root, { locale: "jpn" }).errors).toEqual([]);
-    expect(exportEntries(root).map((entry) => entry.name)).toEqual(
+    expect(bundleEntries(root).map((entry) => entry.name)).toEqual(
         expect.arrayContaining([
             "dooc.yaml",
             "files/md/guide.md",
@@ -111,7 +165,7 @@ it("tracks, exports, and rewrites linked figures, including links in external ca
         status: 409,
         referencedBy: ["a", "b"],
     });
-    expect(exportEntries(root).find((entry) => entry.name === "assets/photo.jpg")?.data).toEqual(
+    expect(bundleEntries(root).find((entry) => entry.name === "assets/photo.jpg")?.data).toEqual(
         image,
     );
     updateFiles(root, {
@@ -133,6 +187,7 @@ it("tracks, exports, and rewrites linked figures, including links in external ca
 
 it("updates links inside fenced and extracted callouts while preserving examples and exports", () => {
     const root = fixture();
+    writeFileSync(join(root, "content/b.md"), "---\ntitle: B\n---\n\n# Details\n\nB\n");
     const body =
         "  ~~~callouth Read next\r\n  [B](content/b.md#details)\r\n  `example: [B](content/b.md)`\r\n  ~~~\r\n\r\n![](notes.callouth)\r\n";
     writeFileSync(join(root, "content/a.md"), `---\r\ntitle: A\r\n---\r\n\r\n${body}`);
@@ -141,7 +196,7 @@ it("updates links inside fenced and extracted callouts while preserving examples
         "[B](content/b.md#details) and [](terms/a.termth)\n",
     );
     expect(compileSite(root).errors).toEqual([]);
-    expect(exportEntries(root).map((entry) => entry.name)).toEqual(
+    expect(bundleEntries(root).map((entry) => entry.name)).toEqual(
         expect.arrayContaining(["notes.callouth", "terms/a.termth"]),
     );
     updateFiles(root, {
@@ -351,11 +406,27 @@ it("restructures documents and assets, keeping IDs, translations, icons and sour
     expect(ops.rename("a", "alpha")).toEqual({ id: "alpha", updatedRefs: 0 });
     expect(readManifest(root).files?.documents.alpha).toBe("files/md/a.md");
     expect(compileSite(root).errors).toEqual([]);
-    const exported = exportEntries(root).map((e) => e.name);
+    const exported = bundleEntries(root).map((e) => e.name);
     expect(exported).toContain("files/md/a.md");
     expect(exported).toContain("files/svg/a.svg");
     expect(exported).toContain("files/termth/a.termth");
 });
+it("keeps file-list document URLs valid across restructuring and hierarchy changes", () => {
+    const root = fixture();
+    const ops = createDocOps(root);
+    expect(ops.move("b", "a")).toEqual({ id: "b" });
+    const before = filesSnapshot(root);
+    expect(before.documents).toEqual({ "content/a.md": "/a", "content/b.md": "/a/b" });
+
+    const after = updateFiles(root, { action: "restructure", revision: before.revision });
+    expect(after.documents).toEqual({ "files/md/a.md": "/a", "files/md/b.md": "/a/b" });
+    expect(compileSite(root).errors).toEqual([]);
+    expect(ops.rename("a", "renamed")).toMatchObject({ id: "renamed" });
+    expect(filesSnapshot(root).documents["files/md/b.md"]).toBe("/renamed/b");
+    expect(ops.move("b")).toEqual({ id: "b" });
+    expect(filesSnapshot(root).documents["files/md/b.md"]).toBe("/b");
+});
+
 it("rewrites Markdown destinations and definitions without touching literal examples", () => {
     const raw =
         '[x](./a%20b.ts#L2-L3 "a b.ts")\n\n![x][ref]\n\n[ref]: <a%20b.ts> "title"\n\n`[x](a%20b.ts)`\n\n```md\n![](a%20b.ts)\n```\n';

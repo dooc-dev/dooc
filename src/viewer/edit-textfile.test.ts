@@ -1,6 +1,18 @@
 import { EditorState } from "@codemirror/state";
 import { expect, it } from "vitest";
-import { createTextfileEditors, textfileLines } from "./edit-textfile.js";
+import { createTextfileEditors, fileValidationState, textfileLines } from "./edit-textfile.js";
+
+it("only reports validation success when preview generation has also succeeded", () => {
+    expect(fileValidationState("valid", { state: "error", message: "Invalid range" })).toBe(
+        "error",
+    );
+    expect(fileValidationState("valid", { state: "loading" })).toBe("checking");
+    expect(fileValidationState("valid", { state: "pending" })).toBe("pending");
+    expect(fileValidationState("error", { state: "valid" })).toBe("error");
+    expect(fileValidationState("pending", { state: "valid" })).toBe("pending");
+    expect(fileValidationState("valid", { state: "valid" })).toBe("valid");
+    expect(fileValidationState("valid")).toBe("valid");
+});
 
 it("adds editors only to actual single-line references, preserving spaces and ignoring code/DSL examples", () => {
     const source = [

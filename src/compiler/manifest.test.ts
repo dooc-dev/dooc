@@ -12,8 +12,8 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 import { parse } from "yaml";
 import { publishHtml, siteFrom } from "../viewer/serve.js";
+import { bundleEntries } from "./bundle.js";
 import { compileSite } from "./compile.js";
-import { exportEntries } from "./export.js";
 import { createDocOps } from "./ops.js";
 
 it.each([
@@ -32,7 +32,7 @@ it.each([
         const compiled = compileSite(root);
         expect(compiled.errors).toEqual([]);
         expect(compiled.title).toBe(title);
-        expect(exportEntries(root).map((entry) => entry.name)).toContain("dooc.yaml");
+        expect(bundleEntries(root).map((entry) => entry.name)).toContain("dooc.yaml");
         expect(compiled.docs.map(({ id, parent }) => ({ id, parent }))).toEqual([
             { id: "guide", parent: undefined },
             { id: "detail", parent: "guide" },
@@ -97,7 +97,7 @@ it("keeps the site SVG file through document operations, compilation and export"
         expect(html).toContain('<img id="site-icon" alt="" src="data:image/svg+xml;base64,');
         expect(html).not.toContain('id="nav-search"');
         expect(html).toContain("doc-search");
-        expect(exportEntries(root).filter((entry) => entry.name === "icons/logo.svg")).toHaveLength(
+        expect(bundleEntries(root).filter((entry) => entry.name === "icons/logo.svg")).toHaveLength(
             1,
         );
         writeFileSync(join(root, "icons/logo.svg"), "not SVG");

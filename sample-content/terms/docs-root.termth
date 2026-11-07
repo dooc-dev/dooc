@@ -1,3 +1,0 @@
-name: "docs root"
-definition: "dooc.yaml と content/ を置く、文書一式のルートフォルダー。"
-description: "資料の入力フォルダー。"

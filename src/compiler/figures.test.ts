@@ -92,6 +92,19 @@ describe("loadFigures", () => {
         ]);
     });
 
+    it.each([
+        "mp4",
+        "webm",
+    ])("marks %s for shared playback controls while keeping the native fallback", (extension) => {
+        const dir = mkdtempSync(join(tmpdir(), "docs-figs-video-"));
+        writeFileSync(join(dir, `clip.${extension}`), "video");
+        const { figures, errors } = loadFigures(dir);
+        expect(errors).toEqual([]);
+        expect(figures[0]?.kind).toBe("video");
+        expect(figures[0]?.markup).toContain("<video data-dooc-video controls playsinline");
+        expect(figures[0]?.markup).toContain(`src="data:video/${extension};base64,dmlkZW8="`);
+    });
+
     it("yields zero figures without figures/ (no error)", () => {
         const { figures, errors } = loadFigures("/nonexistent-figures-dir");
         expect(figures).toEqual([]);

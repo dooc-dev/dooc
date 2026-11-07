@@ -14,7 +14,7 @@ export interface TermEntry {
 export interface FigureEntry {
     name: string;
     file: string;
-    kind: "svg" | "html" | "image";
+    kind: "svg" | "html" | "image" | "video";
     /**
      * Full figure content (SVG / HTML fragment / <img> data URI for rasters). Consumers render it
      * inline; MCP can pass it as text.

@@ -11,6 +11,7 @@
     // cli.ts = bin (includes compiler / viewer).
     "files": [
         "src/index.ts",
+        "src/plugins/index.ts",
         "src/core/schema-graph-mount.tsx",
         "src/cli.ts",
         "src/viewer/textlint-rule-preset-ja-technical-writing.d.ts"

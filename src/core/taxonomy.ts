@@ -2,10 +2,14 @@
 // Both compiler validation and viewer insert-completion read this.
 
 export const CODE_TEMPLATES: Readonly<Record<string, string>> = {
+    csv: "```csv\n<value>,<value>\n```",
+    tsv: "```tsv\n<value>\t<value>\n```",
+    mermaid: "```mermaid\nflowchart LR\n  A[<start>] --> B[<end>]\n```",
     callouth: "```callouth <caption>\n- <item>\n```",
     schemath:
         "```schemath <caption>\n### <group>\n<table>:\n  id: pk\n  <field>: fk(<ref_table>)\n\n<ref_table>:\n  id: pk\n```",
-    grapth: "```grapth <caption>\n[<id>]: <label>\n[<ref_id>]: <ref_label>\n\n[<id>] -> [<ref_id>]\n```",
+    graphth:
+        "```graphth <caption>\n[<id>]: <label>\n[<ref_id>]: <ref_label>\n\n[<id>] -> [<ref_id>]\n```",
     termth: '```termth\nname: "<name>"\ndefinition: "<definition>"\n```',
 };
 

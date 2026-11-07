@@ -1,5 +1,8 @@
 /** Self-contained: the synchronous compiler also runs this function in a bounded child process. */
-export async function fetchPublicFile(source: string): Promise<Buffer> {
+export async function fetchPublicFile(
+    source: string,
+    contentType?: (type: string) => void,
+): Promise<Buffer> {
     const { request } = await import("node:https");
     const { lookup } = await import("node:dns/promises");
     const { BlockList, isIP } = await import("node:net");
@@ -77,6 +80,7 @@ export async function fetchPublicFile(source: string): Promise<Buffer> {
                     reject(new Error("UNAVAILABLE"));
                     return;
                 }
+                contentType?.(response.headers["content-type"] ?? "");
                 const chunks: Buffer[] = [];
                 let size = 0;
                 response.on("data", (chunk: Buffer) => {

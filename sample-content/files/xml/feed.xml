@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<release version="0.1">
+  <title>Preview cards</title>
+  <item status="ready">Local file embeds</item>
+  <item status="review">Service previews</item>
+</release>

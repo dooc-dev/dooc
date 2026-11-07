@@ -10,12 +10,80 @@ import { CODE_TEMPLATES } from "../core/taxonomy.js";
 import { parseTermReference } from "../core/term-reference.js";
 import { parseTermSource } from "./terms.js";
 
+const delimitedRows = (source: string, separator: string): string[][] => {
+    const rows: string[][] = [];
+    let row: string[] = [];
+    let cell = "";
+    let quoted = false;
+    let closed = false;
+    let rowStart = 0;
+    const text = source.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+    for (let i = 0; i <= text.length; i++) {
+        const char = text[i];
+        if (quoted) {
+            if (char === undefined) throw new Error("Unclosed quoted field");
+            if (char === '"' && text[i + 1] === '"') {
+                cell += '"';
+                i++;
+            } else if (char === '"') {
+                quoted = false;
+                closed = true;
+            } else cell += char;
+        } else if (char === '"' && !cell && !closed) quoted = true;
+        else if (char === separator || char === "\n" || char === undefined) {
+            row.push(cell);
+            cell = "";
+            closed = false;
+            if (char !== separator) {
+                if (i > rowStart) rows.push(row);
+                row = [];
+                rowStart = i + 1;
+            }
+        } else {
+            if (closed || char === '"') throw new Error("Unexpected text after a quoted field");
+            cell += char;
+        }
+    }
+    if (!rows.length || rows.some((row) => row.length !== rows[0]?.length))
+        throw new Error("Expected equally sized rows");
+    return rows;
+};
+
 export const parseContentSource = (
     language: string,
     source: string,
     id: string,
     caption?: string,
 ) => {
+    if (language === "csv" || language === "tsv") {
+        try {
+            const [headers, ...rows] = delimitedRows(source, language === "csv" ? "," : "\t");
+            return {
+                blocks: [
+                    {
+                        type: "table",
+                        dataSource: id,
+                        headers: headers ?? [],
+                        rows,
+                        ...(caption ? { caption } : {}),
+                    },
+                ] as Block[],
+                errors: [],
+            };
+        } catch (error) {
+            return {
+                blocks: [] as Block[],
+                errors: [
+                    { line: 0, message: error instanceof Error ? error.message : String(error) },
+                ],
+            };
+        }
+    }
+    if (language === "mermaid")
+        return {
+            blocks: [{ type: "code", lang: language, lines: source.split("\n") }] as Block[],
+            errors: [],
+        };
     if (language === "callouth") {
         const root = parseMdast(source);
         const errors: { line: number; message: string }[] = [];
@@ -95,7 +163,7 @@ export const parseContentSource = (
             errors: parsed.errors,
         };
     }
-    if (language === "grapth") {
+    if (language === "graphth") {
         const parsed = parseGraphSource(source);
         if (!source.trim()) parsed.errors.push({ line: 0, message: "graph is empty" });
         return {

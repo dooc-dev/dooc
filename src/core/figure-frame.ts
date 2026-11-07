@@ -58,6 +58,10 @@ const svgBox = (markup: string): { width: number; w: number; h: number } | undef
 
 /** One figure → an isolated iframe (rasters stay as <img>). */
 export const figureFrameHtml = (fig: FigureEntry, cls = "fig-frame", label?: string): string => {
+    if (fig.kind === "video")
+        return label
+            ? fig.markup.replace(/\baria-label="[^"]*"/, () => `aria-label="${esc(label)}"`)
+            : fig.markup;
     if (fig.kind === "image") {
         return label === undefined
             ? fig.markup
@@ -69,7 +73,7 @@ export const figureFrameHtml = (fig: FigureEntry, cls = "fig-frame", label?: str
         : fig.kind === "svg"
           ? "width:100%;height:240px"
           : "width:100%;height:120px";
-    return `<iframe class="${cls}" data-doc-figure-frame="${fig.kind}" sandbox="${fig.kind === "html" ? "allow-scripts" : ""}" scrolling="no" loading="lazy" title="${esc(label ?? fig.title ?? `Fig.${fig.name}`)}" style="${style}" srcdoc="${esc(figureSrcdoc(fig))}"></iframe>`;
+    return `<iframe class="${cls}" data-doc-figure-frame="${fig.kind}" sandbox="${fig.kind === "html" ? "allow-scripts" : ""}" scrolling="no" loading="lazy" title="${esc(label || fig.title || `Fig.${fig.name}`)}" style="${style}" srcdoc="${esc(figureSrcdoc(fig))}"></iframe>`;
 };
 
 /**
@@ -81,15 +85,17 @@ export const figureFrameHtml = (fig: FigureEntry, cls = "fig-frame", label?: str
 export function mountFigureFrames(doc: Document): void {
     const SEL = "iframe[data-doc-figure-frame]";
     const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const theme = (): string => {
-        const t = doc.documentElement.dataset.theme;
+    const theme = (element: Element): string => {
+        const t =
+            element.closest<HTMLElement>("[data-theme]")?.dataset.theme ??
+            doc.documentElement.dataset.theme;
         return t === "light" || t === "dark" ? t : media.matches ? "dark" : "light";
     };
     const apply = (f: Element): void => {
         const src = f.getAttribute("srcdoc") ?? "";
         const next = src.replace(
             /^(<!doctype html><html data-doc-theme=")[a-z]+"/,
-            `$1${theme()}"`,
+            `$1${theme(f)}"`,
         );
         if (next !== src) {
             f.setAttribute("srcdoc", next);

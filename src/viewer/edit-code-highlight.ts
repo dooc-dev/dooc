@@ -46,7 +46,7 @@ export const editorCodeHighlight = (language?: string) =>
             constructor(private view: EditorView) {
                 this.observer = new MutationObserver(this.repaint);
                 this.observer.observe(document.documentElement, {
-                    attributeFilter: ["data-theme"],
+                    attributeFilter: ["data-editor-theme"],
                 });
                 this.media.addEventListener("change", this.repaint);
                 this.schedule();
@@ -65,11 +65,11 @@ export const editorCodeHighlight = (language?: string) =>
             }
             private async paint(version: number): Promise<void> {
                 const doc = this.view.state.doc;
-                const theme = codeTheme();
+                const theme = codeTheme(this.view.dom);
                 try {
                     const marks: ReturnType<Decoration["range"]>[] = [];
                     for (const block of editorCodeBlocks(this.view.state, language)) {
-                        const tokens = await codeTokens(block.source, block.language);
+                        const tokens = await codeTokens(block.source, block.language, theme);
                         let sourceOffset = 0;
                         let chunkIndex = 0;
                         let chunkOffset = 0;
@@ -105,7 +105,7 @@ export const editorCodeHighlight = (language?: string) =>
                     if (
                         version !== this.version ||
                         doc !== this.view.state.doc ||
-                        theme !== codeTheme()
+                        theme !== codeTheme(this.view.dom)
                     )
                         return;
                     // Tokens stay within individual lines, so empty lines retain CodeMirror's layout.

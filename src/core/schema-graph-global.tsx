@@ -5,10 +5,13 @@
 // exposed on window for manual mounting.
 // The mount layer (`flow-css.ts`) injects the React Flow stylesheet, so this entry doesn't carry
 // it (so the script-tag path and the React-embed path load the same CSS = a single SoT).
+import { watchMermaid } from "./mermaid-mount.js";
 import { mountSchemaGraphs, watchSchemaGraphs } from "./schema-graph-mount.js";
 
 const start = (): void => {
-    watchSchemaGraphs(document.querySelector("main") ?? document);
+    const root = document.querySelector("main") ?? document;
+    watchSchemaGraphs(root);
+    watchMermaid(root);
 };
 
 if (document.readyState === "loading") {

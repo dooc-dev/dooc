@@ -3,10 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { blocksHtml } from "../core/html.js";
-import { defaultPreviewSettings } from "../core/previewers.js";
 import { docDisplayName } from "../core/taxonomy.js";
+import { bundleEntries } from "./bundle.js";
 import { compileDraft, compileSite, createCompiler } from "./compile.js";
-import { exportEntries } from "./export.js";
 import { translationLanguages } from "./locales.js";
 import { writeTextfile } from "./textfile.js";
 
@@ -117,9 +116,9 @@ describe("createCompiler (incremental compile for the viewer)", () => {
         const doc = first.docs[0];
         if (!doc) throw new Error("Missing document");
         expect(doc.blocks).toEqual([
-            { type: "figureRef", name: "shape", caption: "Shape label" },
-            { type: "figureRef", name: "pixel", caption: "Pixel & label" },
-            { type: "figureRef", name: "card" },
+            { type: "figureRef", name: "shape", alt: "Shape label" },
+            { type: "figureRef", name: "pixel", alt: "Pixel & label" },
+            { type: "figureRef", name: "card", alt: "" },
             {
                 type: "code",
                 filename: "figures/shape.svg",
@@ -134,26 +133,14 @@ describe("createCompiler (incremental compile for the viewer)", () => {
         const html = blocksHtml(doc.blocks, { figures, terms: [] });
         expect(html).toContain('title="Shape label"');
         expect(html).toContain('alt="Pixel &amp; label"');
+        expect(html).not.toContain("<figcaption");
         expect(html).toContain('data-doc-figure-frame="html" sandbox="allow-scripts"');
         expect(html).not.toContain("allow-same-origin");
         expect(
-            exportEntries(root).find((entry) => entry.name === "figures/pixel.png")?.data,
+            bundleEntries(root).find((entry) => entry.name === "figures/pixel.png")?.data,
         ).toEqual(png);
 
-        const previews = defaultPreviewSettings();
-        previews.formats.image = previews.formats.image.filter((ext) => ext !== "svg");
-        previews.formats.code.push("svg");
-        writeFileSync(join(root, "dooc.yaml"), JSON.stringify({ docs: ["a", "b"], previews }));
         const second = compiler.compile();
-        expect(second.errors).toEqual([]);
-        expect(second.docs[0]?.blocks[0]).toEqual({
-            type: "code",
-            filename: "figures/shape.svg",
-            alt: "Shape label",
-            lang: "svg",
-            lines: [svg],
-        });
-        expect(second.docs[0]?.refs.figures).toEqual(["pixel", "card"]);
         const draft = compileDraft({ root, docs: second.docs, figures }, "content/a.md", body);
         expect(draft.source.errors).toEqual([]);
         expect(draft.doc.blocks).toEqual(second.docs[0]?.blocks);

@@ -13,6 +13,7 @@ bun = "1.4.4"
 # invoked from. Each task just runs src/cli.ts (same as the npx bin) via tsx.
 [vars]
 resolve_root = 'r="$(if [ -n "$usage_root" ]; then cd "$MISE_ORIGINAL_CWD" && realpath -e "$usage_root"; else realpath -e sample-content; fi)"'
+viewer_plugins = 'if [ -z "$usage_root" ]; then export DOOC_VIEWER_PLUGINS="${DOOC_VIEWER_PLUGINS:-$PWD/examples/viewer-plugins/index.mjs}"; fi'
 
 [tasks.dev]
 description = "For front-end development: start the viewer with hot reload (src / content). e.g. mise run dev ../my-docs 5179"
@@ -20,7 +21,7 @@ usage = '''
 arg "[root]" default=""
 arg "[port]" default="5179"
 '''
-run = '{{vars.resolve_root}} && pnpm exec tsx watch --clear-screen=false src/cli.ts edit "$r" "$usage_port"'
+run = '{{vars.resolve_root}} && {{vars.viewer_plugins}} && pnpm exec tsx watch --clear-screen=false src/cli.ts edit "$r" "$usage_port"'
 
 [tasks.view]
 description = "Read-only docs viewer with document hot reload"
@@ -28,7 +29,7 @@ usage = '''
 arg "[root]" default=""
 arg "[port]" default="5179"
 '''
-run = '{{vars.resolve_root}} && pnpm exec tsx watch --clear-screen=false src/cli.ts view "$r" "$usage_port"'
+run = '{{vars.resolve_root}} && {{vars.viewer_plugins}} && pnpm exec tsx watch --clear-screen=false src/cli.ts view "$r" "$usage_port"'
 
 [tasks.edit]
 description = "For editing content: start the viewer with live preview and external change detection. e.g. mise run edit ../my-docs"
@@ -36,18 +37,21 @@ usage = '''
 arg "[root]" default=""
 arg "[port]" default="5179"
 '''
-run = '{{vars.resolve_root}} && pnpm exec tsx watch --clear-screen=false src/cli.ts edit "$r" "$usage_port"'
+run = '{{vars.resolve_root}} && {{vars.viewer_plugins}} && pnpm exec tsx watch --clear-screen=false src/cli.ts edit "$r" "$usage_port"'
 
-[tasks.export]
-description = "Export sources as ZIP (<root>/dist/<root name>.zip) or standalone HTML (<root>/dist/index.html). HTML is not written if there are validation errors"
+[tasks.build]
+description = "Build bundle.html or bundle.zip from the manifest and its managed content"
 usage = '''
 arg "<format>" {
-  choices "zip" "html"
+  choices "html" "zip"
 }
 arg "[root]" default=""
 arg "[out]" default=""
+flag "--url_preview <preview>" default="embed" {
+  choices "embed" "network"
+}
 '''
-run = '{{vars.resolve_root}} && pnpm exec tsx src/cli.ts export "$usage_format" "$r" ${usage_out:+"$(cd "$MISE_ORIGINAL_CWD" && realpath -m "$usage_out")"}'
+run = '{{vars.resolve_root}} && pnpm exec tsx src/cli.ts build "$usage_format" "$r" ${usage_out:+"$(cd "$MISE_ORIGINAL_CWD" && realpath -m "$usage_out")"} --url_preview "$usage_url_preview"'
 
 [tasks.release]
 description = "Dispatch a release and wait until its binary downloads are published"

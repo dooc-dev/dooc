@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { parseManifestText } from "../compiler/manifest.js";
-import { serializeManifest } from "./content-metadata.js";
 import {
     allowedPreviewUrl,
     defaultPreviewSettings,
@@ -24,19 +23,20 @@ describe("preview registration", () => {
         expect(resolvePreviewer(file)).toBe(kind);
     });
 
-    it("keeps defaults independent and round-trips edited registrations", () => {
+    it("keeps default domains independent and normalizes application settings", () => {
         const settings = parsePreviewSettings({
             domains: [" EXAMPLE.COM "],
-            formats: { table: ["csv", "tsv", "schema.json"] },
         });
-        const manifest = parseManifestText(
-            serializeManifest([], { title: "Docs", previews: settings }),
-        );
-        expect(manifest).toEqual({ tree: [], title: "Docs", previews: settings, errors: [] });
-        expect(resolvePreviewer("a.schema.json", settings)).toBe("table");
-        settings.formats.image.length = 0;
-        expect(resolvePreviewer("a.png", settings)).toBeUndefined();
+        expect(settings.domains).toEqual(["example.com"]);
+        settings.domains.push("other.example.com");
+        expect(defaultPreviewSettings().domains).toEqual([]);
         expect(resolvePreviewer("a.png", defaultPreviewSettings())).toBe("image");
+    });
+
+    it("rejects network policy in document metadata", () => {
+        const manifest = parseManifestText("docs: []\npreviews: { domains: [example.com] }\n");
+        expect(manifest.errors).toContain('dooc.yaml: unknown field "previews"');
+        expect(manifest).not.toHaveProperty("previews");
     });
 
     it("denies external access by default and matches exact HTTPS hosts", () => {
@@ -80,8 +80,5 @@ describe("preview registration", () => {
         { typo: [] },
     ])("rejects ambiguous or invalid registrations: %j", (settings) => {
         expect(() => parsePreviewSettings(settings)).toThrow();
-        expect(
-            parseManifestText(`docs: []\npreviews: ${JSON.stringify(settings)}\n`).errors.length,
-        ).toBeGreaterThan(0);
     });
 });

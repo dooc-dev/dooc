@@ -1,28 +1,65 @@
 // stdio MCP server that reads and writes the docs root (`dooc mcp [root]`). MCP is
 // newline-delimited JSON-RPC 2.0 and we only use initialize / tools/list / tools/call, so we
 // speak it directly without the SDK. stdout is for the protocol only; logs go to stderr.
-import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { createInterface } from "node:readline";
+import { checkSite } from "./compiler/check.js";
+import { CHECK_KINDS, type CheckKind } from "./compiler/check-types.js";
 import { type CompileOptions, createCompiler } from "./compiler/compile.js";
+import { filesSnapshot, updateFiles, uploadFile } from "./compiler/files.js";
+import { addProjectFont, listProjectFonts, removeProjectFont } from "./compiler/fonts.js";
 import { createDocOps, isOpError } from "./compiler/ops.js";
+import { readTextfile, textfilePath, writeTextfile } from "./compiler/textfile.js";
+import { localFile } from "./core/files.js";
 import { docDisplayName } from "./core/taxonomy.js";
+import { buildBundle } from "./viewer/build.js";
+import { createGitHandler, validateGitOrigin } from "./viewer/git.js";
+import type { GitOrigin } from "./viewer/git-types.js";
+import { resourceIndex } from "./viewer/resource-library.js";
 
 type Args = Record<string, unknown>;
 
+interface Property {
+    type: string | string[];
+    description?: string;
+    enum?: readonly string[];
+    items?: Property;
+    minimum?: number;
+}
+
 interface Tool {
     description: string;
-    props: Record<string, { type: string; description: string }>;
+    props: Record<string, Property>;
     required?: string[];
     run: (a: Args) => unknown;
 }
 
 const str = { type: "string" } as const;
-const num = { type: "number" } as const;
+const num = { type: "integer", minimum: 0 } as const;
 const bool = { type: "boolean" } as const;
+const strings = { type: "array", items: str } as const;
 
-export const createTools = (root: string, options: CompileOptions = {}): Record<string, Tool> => {
+export interface McpOptions extends CompileOptions {
+    gitOrigin?: GitOrigin;
+}
+
+export const createTools = (root: string, options: McpOptions = {}): Record<string, Tool> => {
     const compiler = createCompiler(root, options);
     const ops = createDocOps(root);
+    const origin = options.gitOrigin && validateGitOrigin(options.gitOrigin);
+    const git = createGitHandler(root, () => origin);
+    const fileArg = (value: unknown): string => {
+        if (!localFile(value)) throw new Error("Expected a local bundle file path");
+        if (
+            !localFile(
+                relative(realpathSync(root), textfilePath(root, value)).split("\\").join("/"),
+            )
+        )
+            throw new Error("Expected a local bundle file path");
+        return value;
+    };
     const optStr = (v: unknown): string | undefined =>
         typeof v === "string" && v !== "" ? v : undefined;
     const docErrors = (id: string): string[] => {
@@ -32,9 +69,161 @@ export const createTools = (root: string, options: CompileOptions = {}): Record<
     };
 
     return {
+        build: {
+            description:
+                "Build dist/bundle.html or dist/bundle.zip. url_preview=embed snapshots embedded URL content; network preserves URL references. Defaults to embed. Returns the output path, byte count and document count.",
+            props: {
+                format: { ...str, enum: ["html", "zip"] },
+                url_preview: { ...str, enum: ["embed", "network"] },
+            },
+            required: ["format"],
+            run: async (a) => {
+                const file = `dist/bundle.${a.format}`;
+                textfilePath(root, file);
+                const bundle = await buildBundle(root, {
+                    format: a.format as "html" | "zip",
+                    urlPreview: (a.url_preview ?? "embed") as "embed" | "network",
+                });
+                const path = textfilePath(root, file);
+                mkdirSync(dirname(path), { recursive: true });
+                const temp = join(dirname(path), `.bundle-${randomUUID()}.tmp`);
+                try {
+                    writeFileSync(temp, bundle.data, { flag: "wx" });
+                    renameSync(temp, path);
+                } finally {
+                    rmSync(temp, { force: true });
+                }
+                return {
+                    file,
+                    path,
+                    bytes: Buffer.byteLength(bundle.data),
+                    docs: bundle.docs,
+                    url_preview: a.url_preview ?? "embed",
+                };
+            },
+        },
+        list_files: {
+            description:
+                "List bundle files, sizes, layout and document mappings. Save revision for update_files.",
+            props: {},
+            run: () => filesSnapshot(root),
+        },
+        read_file: {
+            description:
+                "Read a local UTF-8 bundle file, including dooc.yaml, translations and theme variants. Save content as the base for write_file.",
+            props: { file: str },
+            required: ["file"],
+            run: (a) => ({ file: fileArg(a.file), content: readTextfile(root, fileArg(a.file)) }),
+        },
+        write_file: {
+            description:
+                "Create or update a local UTF-8 bundle file. base must equal the content from read_file, or null to create a new file. Conflicting edits are never overwritten.",
+            props: { file: str, content: str, base: { type: ["string", "null"] } },
+            required: ["file", "content", "base"],
+            run: (a) =>
+                writeTextfile(root, fileArg(a.file), a.content as string, a.base as string | null)
+                    ? { file: a.file, ok: true }
+                    : { error: "File changed. Read it again before writing.", status: 409 },
+        },
+        upload_file: {
+            description:
+                "Import a binary or text file from base64 data using the bundle file layout. Existing files are preserved with a unique name. Maximum 64 MiB.",
+            props: { name: str, data: { ...str, description: "Canonical base64 file bytes" } },
+            required: ["name", "data"],
+            run: (a) => uploadFile(root, a),
+        },
+        update_files: {
+            description:
+                "Rename a file (file, name), move files/folders (paths, directory, optional before), change automatic layout (enabled), or restructure by extension. Updates document references and variants. Requires revision from list_files.",
+            props: {
+                action: { ...str, enum: ["rename", "move", "layout", "restructure"] },
+                revision: str,
+                file: str,
+                name: str,
+                paths: strings,
+                directory: str,
+                before: str,
+                enabled: bool,
+            },
+            required: ["action", "revision"],
+            run: (a) => updateFiles(root, a),
+        },
+        list_resources: {
+            description:
+                "List Statics: dictionary terms, code blocks and external URLs with their source files and line numbers.",
+            props: {},
+            run: () =>
+                resourceIndex(
+                    root,
+                    filesSnapshot(root).files.map((file) => file.path),
+                ),
+        },
+        list_fonts: {
+            description:
+                "List registered project fonts. Editor and viewer font selection remains a browser display preference.",
+            props: {},
+            run: () => ({ fonts: listProjectFonts(root) }),
+        },
+        add_font: {
+            description:
+                "Copy a local TTF, OTF, WOFF or WOFF2 font into .dooc/fonts. Existing names are never overwritten.",
+            props: { path: { ...str, description: "Local source font path" } },
+            required: ["path"],
+            run: (a) => ({ file: addProjectFont(root, a.path as string) }),
+        },
+        delete_font: {
+            description: "Remove a registered project font by the name returned by list_fonts.",
+            props: { name: str },
+            required: ["name"],
+            run: (a) => {
+                removeProjectFont(root, a.name as string);
+                return { ok: true };
+            },
+        },
+        git: {
+            description:
+                "Git workflow in the repository containing this bundle. Read first; every other action except branches requires that state's version. diff/stage/unstage use path; commit uses message; branch creates and switches to branch; switch accepts stash=true to save dirty work in the single stash slot. Origin operations require an externally injected provider. createPr needs title/body/base/draft; updatePr needs number/title/body/revision; mergePr needs number/method/revision. PR revision must be JSON.stringify of the PR returned by read. Read again after each action.",
+            props: {
+                action: {
+                    ...str,
+                    enum: [
+                        "read",
+                        "branches",
+                        "diff",
+                        "stage",
+                        "unstage",
+                        "commit",
+                        "branch",
+                        "switch",
+                        "stash",
+                        "restoreStash",
+                        "fetch",
+                        "pull",
+                        "push",
+                        "createPr",
+                        "updatePr",
+                        "mergePr",
+                    ],
+                },
+                version: str,
+                path: str,
+                message: str,
+                branch: str,
+                stash: bool,
+                title: str,
+                body: str,
+                base: str,
+                draft: bool,
+                number: { ...num, minimum: 1 },
+                revision: str,
+                method: { ...str, enum: ["merge", "squash", "rebase"] },
+            },
+            required: ["action"],
+            run: git,
+        },
         list_docs: {
             description:
-                "The doc tree (in manifest display order) and the list of figures. Each doc has id / title / parent / depth.",
+                "The doc tree (in manifest display order) and figures. Each doc has id / file / title / parent / depth.",
             props: {},
             run: () => {
                 const { docs, figures } = compiler.compile();
@@ -45,6 +234,7 @@ export const createTools = (root: string, options: CompileOptions = {}): Record<
                         depth.set(d.id, dep);
                         return {
                             id: d.id,
+                            file: d.file,
                             title: docDisplayName(d, d.id),
                             parent: d.parent,
                             depth: dep,
@@ -84,11 +274,13 @@ export const createTools = (root: string, options: CompileOptions = {}): Record<
             required: ["id"],
             run: (a) => {
                 const id = String(a.id);
-                const doc = compiler.compile().docs.find((d) => d.id === id);
+                const compiled = compiler.compile();
+                const doc = compiled.docs.find((d) => d.id === id);
                 return doc
                     ? {
-                          raw: readFileSync(`${ops.contentDir}/${id}.md`, "utf8"),
-                          errors: docErrors(id),
+                          file: doc.file,
+                          raw: readTextfile(root, doc.file),
+                          errors: compiled.sources.get(doc.file)?.errors ?? [],
                       }
                     : { error: `doc "${id}" not found`, status: 404 };
             },
@@ -105,9 +297,25 @@ export const createTools = (root: string, options: CompileOptions = {}): Record<
         },
         check: {
             description:
-                "List the validation errors across the whole docs root (check before export).",
-            props: {},
-            run: () => ({ errors: compiler.compile().errors }),
+                "Check rendering, translations and theme variants before building. Returns the CLI CheckReport plus the legacy errors list.",
+            props: {
+                only: { type: "array", items: { ...str, enum: CHECK_KINDS } },
+                allow_shared_svg: bool,
+                warnings_as_errors: bool,
+            },
+            run: (a) => {
+                const report = checkSite(root, {
+                    only: a.only as CheckKind[] | undefined,
+                    allowSharedSvg: a.allow_shared_svg === true,
+                    warningsAsErrors: a.warnings_as_errors === true,
+                });
+                return {
+                    ...report,
+                    errors: report.diagnostics
+                        .filter((d) => d.severity === "error")
+                        .map((d) => `${d.file}: ${d.message}`),
+                };
+            },
         },
         add_doc: {
             description:
@@ -205,18 +413,52 @@ export const createTools = (root: string, options: CompileOptions = {}): Record<
     };
 };
 
-type Rpc = { jsonrpc: "2.0"; id?: number | string; method: string; params?: Args };
+const record = (value: unknown): value is Args =>
+    value !== null && typeof value === "object" && !Array.isArray(value);
+
+const validateProperty = (name: string, value: unknown, schema: Property): void => {
+    const type = value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+    const types = Array.isArray(schema.type) ? schema.type : [schema.type];
+    if (
+        !types.some((t) => (t === "integer" ? Number.isSafeInteger(value) : t === type)) ||
+        (schema.enum && !schema.enum.includes(value as string)) ||
+        (schema.minimum !== undefined && Number(value) < schema.minimum)
+    )
+        throw new Error(`Invalid argument: ${name}`);
+    if (schema.items && Array.isArray(value))
+        for (const item of value) validateProperty(name, item, schema.items);
+};
 
 /** One request → response (undefined for notifications). */
-export const handleRpc = (tools: Record<string, Tool>, msg: Rpc): object | undefined => {
+export const handleRpc = async (
+    tools: Record<string, Tool>,
+    msg: unknown,
+): Promise<object | undefined> => {
+    const error = (code: number, message: string) => ({
+        jsonrpc: "2.0",
+        id:
+            record(msg) && (typeof msg.id === "string" || typeof msg.id === "number")
+                ? msg.id
+                : null,
+        error: { code, message },
+    });
+    if (
+        !record(msg) ||
+        msg.jsonrpc !== "2.0" ||
+        typeof msg.method !== "string" ||
+        (msg.id !== undefined && typeof msg.id !== "string" && typeof msg.id !== "number")
+    )
+        return error(-32600, "invalid request");
     if (msg.id === undefined) {
         return undefined;
     }
+    if (msg.params !== undefined && !record(msg.params)) return error(-32602, "invalid params");
+    const params = (msg.params ?? {}) as Args;
     const reply = (result: unknown) => ({ jsonrpc: "2.0", id: msg.id, result });
     switch (msg.method) {
         case "initialize":
             return reply({
-                protocolVersion: msg.params?.protocolVersion ?? "2025-06-18",
+                protocolVersion: params.protocolVersion ?? "2025-06-18",
                 capabilities: { tools: {} },
                 serverInfo: { name: "dooc", version: "0" },
             });
@@ -231,21 +473,28 @@ export const handleRpc = (tools: Record<string, Tool>, msg: Rpc): object | undef
                         type: "object",
                         properties: t.props,
                         required: t.required ?? [],
+                        additionalProperties: false,
                     },
                 })),
             });
         case "tools/call": {
-            const tool = tools[String(msg.params?.name)];
-            if (!tool) {
-                return {
-                    jsonrpc: "2.0",
-                    id: msg.id,
-                    error: { code: -32602, message: "unknown tool" },
-                };
-            }
+            if (typeof params.name !== "string" || !Object.hasOwn(tools, params.name))
+                return error(-32602, "unknown tool");
+            const tool = tools[params.name];
+            if (!tool) return error(-32602, "unknown tool");
             let result: unknown;
             try {
-                result = tool.run((msg.params?.arguments ?? {}) as Args);
+                const args = params.arguments === undefined ? {} : params.arguments;
+                if (!record(args)) throw new Error("Tool arguments must be an object");
+                for (const name of tool.required ?? [])
+                    if (!Object.hasOwn(args, name)) throw new Error(`Missing argument: ${name}`);
+                for (const [name, value] of Object.entries(args)) {
+                    if (!Object.hasOwn(tool.props, name))
+                        throw new Error(`Unknown argument: ${name}`);
+                    const schema = tool.props[name];
+                    if (schema) validateProperty(name, value, schema);
+                }
+                result = await tool.run(args);
             } catch (e) {
                 result = { error: e instanceof Error ? e.message : String(e) };
             }
@@ -263,25 +512,26 @@ export const handleRpc = (tools: Record<string, Tool>, msg: Rpc): object | undef
     }
 };
 
-export const startMcp = async (root: string): Promise<void> => {
-    const tools = createTools(root);
+export const startMcp = async (root: string, options: McpOptions = {}): Promise<void> => {
+    const tools = createTools(root, options);
     console.error(`dooc mcp: ${root}`);
-    createInterface({ input: process.stdin }).on("line", (line) => {
+    // Process requests in order so asynchronous builds and Git mutations cannot race edits.
+    for await (const line of createInterface({ input: process.stdin })) {
         if (line.trim() === "") {
-            return;
+            continue;
         }
-        let msg: Rpc;
+        let msg: unknown;
         try {
             msg = JSON.parse(line);
         } catch {
             process.stdout.write(
                 `${JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "parse error" } })}\n`,
             );
-            return;
+            continue;
         }
-        const res = handleRpc(tools, msg);
+        const res = await handleRpc(tools, msg);
         if (res) {
             process.stdout.write(`${JSON.stringify(res)}\n`);
         }
-    });
+    }
 };

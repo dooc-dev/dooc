@@ -28,6 +28,8 @@ import {
     type Site,
     sanitizeFrontmatter,
     siteFrom,
+    textfilePreviewErrors,
+    textfilePreviewHtml,
 } from "./serve.js";
 
 const emptySite = (): Site => ({
@@ -36,6 +38,54 @@ const emptySite = (): Site => ({
     errors: [],
     languages: BUILTIN_LANGUAGES,
     defaultLang: "en",
+});
+
+it("starts each resource library view with tabs without repeating the Git branch heading", () => {
+    const site: Site = {
+        ...emptySite(),
+        workspace: { protocol: "git", branch: "main" },
+        filePaths: [],
+    };
+    expect(resourcesMain(site, "")?.main).not.toContain("resource-tabs");
+    for (const view of ["dictionary", "code", "urls"]) {
+        const html = resourcesMain(site, view)?.main ?? "";
+        expect(html).toMatch(/^<article[^>]+><nav class="resource-tabs"/);
+        expect(html).not.toContain("<h1");
+    }
+    expect(navGroupsHtml("edit", site)).toContain('data-workspace-protocol="git"');
+});
+
+it("checks the same table and semantic parsers used to generate file previews", () => {
+    const site = emptySite();
+    expect(textfilePreviewErrors(site, "ok.csv", "Name,Value\nA,1\n")).toEqual([]);
+    expect(textfilePreviewErrors(site, "bad.csv", 'Name,Value\n"broken')).toEqual([
+        "Unclosed quoted field",
+    ]);
+    expect(textfilePreviewErrors(site, "bad.termth", "name: Incomplete\n").join()).toContain(
+        "definition",
+    );
+    expect(textfilePreviewErrors(site, "source.ts", "const x = 1;\n")).toEqual([]);
+});
+
+it("previews CSV as literal sortable data without assuming a header", () => {
+    const html = textfilePreviewHtml(
+        emptySite(),
+        "data.csv",
+        '\uFEFFName,Value\n"**raw**",2\n"<script>bad</script>",10\n',
+    );
+    expect(html).toContain('data-table-source="data.csv"');
+    expect(html).toContain('data-table-mode="data"');
+    expect(html).toContain('<th scope="row">1</th><td>Name</td><td>Value</td>');
+    expect(html).not.toContain("data-table-header");
+    expect(html).not.toContain("data-table-toolbar");
+    expect(html).toContain("<template data-table-rows>[[&quot;Name&quot;,&quot;Value&quot;]");
+    expect(html).toContain("[&quot;**raw**&quot;,&quot;2&quot;]");
+    expect(html).not.toContain("<strong>raw</strong>");
+    expect(html).not.toContain("<script>bad</script>");
+    expect(textfilePreviewHtml(emptySite(), "bad.csv", 'a,b\n"broken')).toContain('role="status"');
+    expect(textfilePreviewHtml(emptySite(), "code.ts", 'const value = "<tag>";')).toContain(
+        "&lt;tag&gt;",
+    );
 });
 
 it("keeps quoted source files, emphasis and references through compilation and publication", () => {
@@ -289,7 +339,7 @@ describe("navGroupsHtml", () => {
         expect(edit.match(/class="nav-create"/g)).toHaveLength(1);
         expect(edit).toContain('class="nav-item nav-placeholder nav-add-hover"');
         expect(edit).toContain('class="nav-create" type="button" data-parent=""');
-        expect(edit.match(/class="nav-tree-toggle"/g)).toHaveLength(4);
+        expect(edit.match(/class="nav-tree-toggle"/g)).toHaveLength(2);
         expect(edit).not.toContain('class="nav-rename"');
         expect(edit.match(/aria-keyshortcuts="F2"/g)).toHaveLength(4);
         expect(edit.match(/data-doc-action="delete"/g)).toHaveLength(4);
@@ -319,7 +369,7 @@ describe("navGroupsHtml", () => {
         const edit = navGroupsHtml("edit", emptySite());
         expect(edit.match(/class="nav-create"/g)).toHaveLength(1);
         expect(edit).toContain('class="nav-create" type="button" data-parent=""');
-        expect(edit).toContain('<span class="nav-label">...</span>');
+        expect(edit).not.toContain('<span class="nav-label">...</span>');
         expect(edit).not.toContain("nav-doc-id");
         expect(edit).not.toContain("nav-add-hover");
         expect(edit.indexOf('class="nav-create"')).toBeLessThan(edit.indexOf("nav-resources"));
@@ -354,40 +404,112 @@ describe("navGroupsHtml", () => {
         };
         expect(navGroupsHtml("preview", site)).not.toContain("nav-resources");
         const html = navGroupsHtml("edit", site, undefined, "figures/x.svg");
-        expect(html).toContain('class="nav-tree-link cur" href="/_files/file/figures%2Fx.svg"');
+        expect(html).toContain('id="nav-docs"');
+        expect(html).not.toContain('id="nav-docs-resize"');
+        expect(html).not.toContain('id="files-resize"');
+        expect(html).toContain('data-node-id="_files"');
+        expect(html).not.toContain('class="nav-files-actions"');
+        expect(html).toContain('class="files-upload"');
+        expect(html).toContain('id="files-upload-input"');
+        expect(html).toContain('class="nav-link cur" href="/_files"');
         expect(html).toContain('data-i18n="Files">Files');
         expect(resourcesMain(site, "")?.main).toContain('id="files-manager"');
         expect(resourcesMain(site, "figures/x.svg")?.main).toContain("<iframe");
         expect(resourcesMain(site, "html/widget.html")?.main).toContain("Widget");
     });
 
-    it("shows the physical file tree in saved order, including unreferenced files", () => {
+    it("groups Files and Statics below the workspace location in one resizable area", () => {
         const site = fixtureSite();
-        site.entries[1] = { ...entry("b", "a"), sourceFile: "files/md/b.md" };
-        site.filePaths = [
-            "files/ts/z.ts",
-            "files/ts/a%20.ts",
-            "files/md/b.md",
-            'notes/<tag> & "name".txt',
-            "files/ts/z.ts",
-            "../outside.txt",
-        ];
-        const html = navGroupsHtml("edit", site, undefined, "file/files%2Fts%2Fa%2520.ts");
-        expect(html).toContain('class="nav-item open" data-node-id="_files:files"');
-        expect(html).toContain('class="nav-item open" data-node-id="_files:files/ts"');
-        expect(html).toContain('class="nav-item" data-node-id="_files:files/md"');
-        expect(html).toContain('data-file-folder aria-expanded="true" title="files/ts"');
-        expect(html).toContain(
-            'href="/_files/file/files%2Fts%2Fa%2520.ts" title="files/ts/a%20.ts" aria-current="page"',
+        site.filePaths = ["files/ts/a.ts", "notes/draft.txt"];
+        const html = navGroupsHtml("edit", site, undefined, "file/files%2Fts%2Fa.ts");
+        const card = html.slice(html.indexOf('<section id="nav-tools"'));
+        expect(card.match(/href="\/_files"/g)).toHaveLength(1);
+        expect(card).toContain('class="nav-link cur"');
+        expect(card).not.toContain('class="nav-list');
+        expect(card).not.toContain("nav-tree-toggle");
+        expect(card).not.toContain("files/ts");
+        expect(card).not.toContain("notes/draft.txt");
+        expect(card).toContain('class="files-upload"');
+        expect(html).not.toContain("nav-docs-resize");
+        expect(card).toContain('id="tools-resize" role="separator"');
+        expect(card).toContain('id="nav-storage"');
+        expect(card).toContain('id="nav-statics"');
+        expect(card.indexOf('id="nav-storage"')).toBeLessThan(card.indexOf('id="nav-files"'));
+        expect(resourcesMain(site, "")?.main).toContain('id="files-manager"');
+    });
+
+    it("shows a passive repository address and Git controls below Files and Statics", () => {
+        const site = fixtureSite();
+        site.workspace = { protocol: "git", repo: "my<repo>", branch: 'docs/<topic>&"' };
+        const label = "docs/&lt;topic&gt;&amp;&quot;";
+        const nav = navGroupsHtml("edit", site);
+        expect(nav).toContain('data-workspace-protocol="git"');
+        expect(nav).toContain('<span class="git-repo-name">my&lt;repo&gt;</span>');
+        expect(nav).toContain(`<span class="git-branch-caption">[${label}]</span>`);
+        const address = nav.match(/<div class="workspace-location"[^>]*>.*?<\/div>/)?.[0];
+        expect(address).toBeDefined();
+        expect(address).not.toMatch(/<button|<a |tabindex|aria-haspopup/);
+        expect(nav).not.toContain("data-git-branch");
+        expect(nav.indexOf('id="nav-files"')).toBeLessThan(nav.indexOf('id="nav-statics"'));
+        expect(nav.indexOf('id="nav-statics"')).toBeLessThan(nav.indexOf('id="nav-git"'));
+        expect(nav).toContain('data-i18n="Files"');
+        expect(resourcesMain(site, "")?.title).toBe("Files");
+        expect(resourcesMain(site, "")?.main).not.toContain(label);
+        expect(resourcesMain(site, "markdown/b.md")?.main).not.toContain(label);
+        expect(resourcesMain(site, "_git")?.main).toContain('id="git-manager"');
+        expect(pageDataResponse(site, "/_git").status).toBe(200);
+        expect(navGroupsHtml("edit", site, undefined, "_git")).toContain(
+            'class="nav-link cur" href="/_git"',
         );
-        expect(html.indexOf('title="files/ts/z.ts"')).toBeLessThan(
-            html.indexOf('title="files/ts/a%20.ts"'),
+        expect(navGroupsHtml("edit", site, undefined, "_git")).not.toContain(
+            'class="nav-link cur" href="/_files"',
         );
-        expect(html.match(/title="files\/ts\/z.ts"/g)).toHaveLength(1);
-        expect(html).toContain('href="/a/b" title="files/md/b.md"');
-        expect(html).toContain("&lt;tag&gt; &amp; &quot;name&quot;.txt");
-        expect(html).not.toContain("../outside.txt");
-        expect(navGroupsHtml("preview", site)).not.toContain("_files:");
+        site.workspace.branch = "Files";
+        expect(navGroupsHtml("edit", site)).toContain("[Files]</span>");
+        site.workspace = { protocol: "storage", folder: "docs", service: "Local" };
+        expect(resourcesMain(site, "_git")).toBeUndefined();
+        expect(navGroupsHtml("edit", site)).not.toContain('id="nav-git"');
+        expect(navGroupsHtml("edit", site)).not.toContain('href="/_git"');
+    });
+
+    it("uses the injected storage folder, service and an isolated SVG image", () => {
+        const site = fixtureSite();
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>';
+        site.workspace = {
+            protocol: "storage",
+            folder: "team/<docs>",
+            service: "Object & store",
+            icon: svg,
+        };
+        const nav = navGroupsHtml("edit", site);
+        expect(nav).toContain('data-workspace-protocol="storage"');
+        expect(nav).toContain("team/&lt;docs&gt; / Object &amp; store");
+        expect(nav).toContain(
+            'class="nav-icon workspace-icon" alt="" src="data:image/svg+xml;base64,',
+        );
+        expect(nav).toContain(Buffer.from(svg).toString("base64"));
+        expect(nav).not.toContain("<script>alert(1)</script>");
+        expect(resourcesMain(site, "")?.title).toBe("team/<docs> / Object & store");
+    });
+
+    it("keeps statics routes and navigation separate from the file manager", () => {
+        const site = fixtureSite();
+        site.filePaths = [];
+        expect(resourcesMain(site, "")?.main).not.toContain("Dictionary");
+        for (const path of ["/_statics", "/_statics/code", "/_statics/urls"]) {
+            const page = pageDataResponse(site, path);
+            expect(page.status).toBe(200);
+            expect(page.body).toMatchObject({
+                resource: true,
+                path,
+                html: expect.stringContaining("resource-tabs"),
+            });
+            expect(JSON.stringify(page.body)).not.toContain("files-manager");
+        }
+        const nav = navGroupsHtml("edit", site, undefined, "_statics/code");
+        expect(nav).toContain('class="nav-link cur" href="/_statics"');
+        expect(nav).not.toContain('class="nav-link cur" href="/_files"');
+        expect(resourcesMain(site, "_statics/file/anything")).toBeUndefined();
     });
 
     it("a doc icon replaces the book icon at top level and precedes the label below it (wrapped in an img)", () => {
@@ -505,6 +627,7 @@ describe("editorBoot / pageDataResponse (backing `GET /api/page`)", () => {
         const site = docSite();
         const entry = site.entries[0] as Entry;
         expect(editorBoot(entry, site)).toEqual({
+            gitBase: null,
             file: "a.md",
             docId: "a",
             title: "A",
@@ -531,10 +654,19 @@ describe("editorBoot / pageDataResponse (backing `GET /api/page`)", () => {
             'value="deu" data-name="German" data-added="false" selected>German (deu)',
         );
         expect(html).toContain('data-source="jpn"');
+        expect(html).toContain("data-language-open");
+        expect(html).toContain('aria-controls="fm-lang-options"');
         const existing = languageFieldHtml("jpn", "eng", ["jpn", "eng"]);
         expect(existing).toContain(
             'value="eng" data-name="English" data-added="true" selected>English (eng)',
         );
+    });
+
+    it("offers only declared site languages while keeping missing translations available to create", () => {
+        const html = languageFieldHtml("jpn", "jpn", ["jpn"], ["jpn", "eng"]);
+        expect(html.match(/<option /g)).toHaveLength(2);
+        expect(html).toContain('value="eng" data-name="English" data-added="false"');
+        expect(html).not.toContain('value="fra"');
     });
 
     it("editorBoot: spellcheck language comes from the doc language's adapter, else the tag", () => {
@@ -564,6 +696,22 @@ describe("editorBoot / pageDataResponse (backing `GET /api/page`)", () => {
         const site = docSite();
         expect(pageDataResponse(site, "/missing").status).toBe(404);
         expect(pageDataResponse(site, "/dev/a").status).toBe(404);
+    });
+
+    it("returns file views without replacing the document editor's boot state", () => {
+        const result = pageDataResponse(docSite(), "/_files");
+        expect(result).toMatchObject({
+            status: 200,
+            body: { resource: true, path: "/_files" },
+        });
+        expect(result.body).not.toHaveProperty("boot");
+        expect(result.body).toHaveProperty("html", expect.stringContaining('id="files-manager"'));
+        expect(pageDataResponse(docSite(), "/_files/markdown/a.md")).toMatchObject({
+            status: 200,
+            body: { resource: true, path: "/_files/markdown/a.md", sourceFile: "content/a.md" },
+        });
+        expect(pageDataResponse(docSite(), "/_files/missing").status).toBe(404);
+        expect(pageDataResponse(docSite(), "/_files/file/%ZZ").status).toBe(400);
     });
 
     it("pageDataResponse: 400 when the route shape is invalid", () => {
@@ -618,6 +766,16 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
     const site = siteFrom(compileSite(new URL("../../sample-content", import.meta.url).pathname));
     const html = publishHtml(site, "window.graph = '</script>';");
 
+    it("includes font selection without font registration in standalone viewers", () => {
+        expect(html).toContain('data-font-picker="viewer"');
+        expect(html).not.toContain('data-font-picker="editor"');
+        expect(html).not.toContain("indexedDB.open");
+        expect(html).not.toContain("Add font file");
+        expect(html).toContain("--viewer-font");
+        expect(html).toContain('<button class="pbtn font-control"');
+        expect(html).not.toContain('class="font-select"');
+    });
+
     it("uses the compiled manifest title for the site header and browser tab", () => {
         expect(site.title).toBe("dooc");
         expect(html).toContain("<title>dooc</title>");
@@ -631,14 +789,16 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
         for (const term of site.ctx.terms)
             expect(list).toContain(`id="term-${encodeURIComponent(term.id)}"`);
         expect(list).toContain("data-dict-sort");
-        const detail = resourcesMain(site, "terms/terms%2Fdocs-root.termth")?.main ?? "";
-        expect(detail).toContain("[](terms/docs-root.termth)");
-        expect(detail).toContain("資料の入力フォルダー。");
+        const detail = resourcesMain(site, "terms/files%2Ftermth%2Fworkspace.termth")?.main ?? "";
+        expect(detail).toContain("[](files/termth/workspace.termth)");
+        expect(detail).toContain(
+            "A folder containing Markdown documents, supporting files, and a navigation manifest.",
+        );
         expect(detail).not.toContain("data-dict-sort");
         expect(html.match(/<select data-dict-sort/g)).toHaveLength(1);
         expect(html).toContain('<template data-route="_files/terms"');
-        expect(html).toContain('href="#/_files/terms#term-terms%252Fdocs-root.termth"');
-        expect(list).toContain('href="/_files/terms#term-terms%252Fdocs-root.termth"');
+        expect(html).toContain('href="#/_files/terms#term-files%252Ftermth%252Fworkspace.termth"');
+        expect(list).toContain('href="/_files/terms#term-files%252Ftermth%252Fworkspace.termth"');
         expect(resourcesMain(site, "terms/missing")).toBeUndefined();
     });
 
@@ -676,7 +836,7 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
                 `data-section-url="#/article?lang=${locale}#second"`,
             );
             for (const output of [rendered.html, publishHtml(localized, "")]) {
-                expect(output).toContain(`class="in-toc-title">${title}</div>`);
+                expect(output).not.toContain('class="in-toc-title"');
                 expect(output).toContain(`class="in-toc" aria-label="${title}"`);
             }
         } finally {
@@ -690,7 +850,7 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
                 `<template data-route="${docPath(site.entries, e.id).slice(1)}"`,
             );
         }
-        expect(html).toContain('href="#/guide/writing"');
+        expect(html).toContain('href="#/guide/previews"');
         expect(html).not.toMatch(/href="\/(?!\/)/);
     });
 
@@ -704,7 +864,9 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
         const output = publishHtml(emptyGuide, "");
         const guide =
             /<template data-route="guide"[^>]*>(.*?)<\/template>/s.exec(output)?.[1] ?? "";
-        expect(guide).toContain('<ul class="idx"><li><a href="#/guide/writing">書き方</a>');
+        expect(guide).toContain(
+            '<ul class="idx"><li><a href="#/guide/previews">File preview gallery</a>',
+        );
     });
 
     it("has no server-provided scripts (graph bundle is inlined, </script> is escaped)", () => {
@@ -712,4 +874,24 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
         expect(html).not.toContain("EventSource");
         expect(html).toContain("window.graph = '<\\/script>';");
     });
+});
+
+it("renders Mermaid sources safely in published HTML", () => {
+    const root = mkdtempSync(join(tmpdir(), "dooc-diagrams-"));
+    try {
+        mkdirSync(join(root, "content"));
+        writeFileSync(join(root, "dooc.yaml"), "docs: [guide]\n");
+        const source =
+            '---\ntitle: Diagrams\n---\n\n```mermaid\nflowchart LR\n A["<script>alert(1)</script>"] --> B\n```\n\nVisible text\n';
+        writeFileSync(join(root, "content/guide.md"), source);
+        const compiled = compileSite(root);
+        expect(compiled.errors).toEqual([]);
+        const html = publishHtml(siteFrom(compiled), "/* diagrams */");
+        expect(html).toContain('data-mermaid="pending"');
+        expect(html).toContain("&lt;script&gt;");
+        expect(html).not.toContain("<script>alert(1)</script>");
+        expect(html).toContain("Visible text");
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
 });

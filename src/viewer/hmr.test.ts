@@ -27,6 +27,7 @@ describe("classifyChange", () => {
         expect(classifyChange("src/viewer/nav-focus.ts")).toBe("client");
         expect(classifyChange("src/viewer/language-picker.ts")).toBe("client");
         expect(classifyChange("src/viewer/edit-schema-completion.ts")).toBe("client");
+        expect(classifyChange("src/viewer/edit-git-diff.ts")).toBe("client");
         expect(classifyChange("src/core/schema-graph-global.tsx")).toBe("client");
         expect(classifyChange("src/core/schema-graph-flow.tsx")).toBe("client");
         expect(classifyChange("src/core/schema-graph-mount.tsx")).toBe("client");
@@ -121,6 +122,29 @@ describe("hmrClientScript", () => {
 });
 
 describe("watchProject", () => {
+    it("refreshes the workspace when a branch changes outside the document root", async () => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-hmr-branch-"));
+        const docs = join(root, "docs");
+        mkdirSync(docs);
+        mkdirSync(join(root, ".git"));
+        const head = join(root, ".git/HEAD");
+        writeFileSync(head, "ref: refs/heads/main\n");
+        const seen: string[] = [];
+        const watcher = watchProject(docs, docs, (_kind, files) => seen.push(...files), 10);
+        try {
+            writeFileSync(`${head}.lock`, "ref: refs/heads/docs/update\n");
+            renameSync(`${head}.lock`, head);
+            await expect.poll(() => seen, { timeout: 2000 }).toContain(".git/HEAD");
+            seen.length = 0;
+            mkdirSync(join(root, ".git/refs/heads"), { recursive: true });
+            writeFileSync(join(root, ".git/refs/heads/main"), `${"a".repeat(40)}\n`);
+            await expect.poll(() => seen, { timeout: 2000 }).toContain(".git/HEAD");
+        } finally {
+            watcher.close();
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it.each([
         true,
         false,
@@ -171,6 +195,28 @@ describe("watchProject", () => {
         }
     });
 
+    it("refreshes Files when a parent repository's ignore rules change", async () => {
+        const root = mkdtempSync(join(tmpdir(), "docs-ignore-hmr-"));
+        mkdirSync(join(root, ".git"));
+        mkdirSync(join(root, "docs"));
+        writeFileSync(join(root, ".git/HEAD"), "ref: refs/heads/main\n");
+        writeFileSync(join(root, ".gitignore"), "");
+        const seen: string[] = [];
+        const watcher = watchProject(
+            join(root, "docs"),
+            root,
+            (_kind, files) => seen.push(...files),
+            20,
+        );
+        try {
+            writeFileSync(join(root, ".gitignore"), "docs/private.txt\n");
+            await expect.poll(() => seen, { timeout: 2000 }).toContain(".gitignore");
+        } finally {
+            watcher.close();
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("notifies batched per kind (out-of-scope files are not notified)", async () => {
         const root = mkdtempSync(join(tmpdir(), "docs-hmr-"));
         for (const dir of ["content/dev", "figures", "src"]) {
@@ -181,13 +227,21 @@ describe("watchProject", () => {
         try {
             writeFileSync(join(root, "content/dev/10-a.md"), '---\ntitle: "a"\n---\n');
             writeFileSync(join(root, "figures/x.svg"), "<svg/>");
+            writeFileSync(join(root, ".gitignore"), "cache/\n");
+            writeFileSync(join(root, "figures/.gitignore"), "generated.svg\n");
             writeFileSync(join(root, "src/serve.ts"), "// ignored");
             writeFileSync(join(root, "manifest.tmp"), "- a\n");
             renameSync(join(root, "manifest.tmp"), join(root, "dooc.yaml"));
             await new Promise((r) => setTimeout(r, 400));
             const content = seen.filter((e) => e.kind === "content").flatMap((e) => e.files);
             expect(new Set(content)).toEqual(
-                new Set(["content/dev/10-a.md", "figures/x.svg", "dooc.yaml"]),
+                new Set([
+                    "content/dev/10-a.md",
+                    "figures/x.svg",
+                    "dooc.yaml",
+                    ".gitignore",
+                    "figures/.gitignore",
+                ]),
             );
             expect(seen.some((e) => e.files.some((f) => f.endsWith("serve.ts")))).toBe(false);
         } finally {

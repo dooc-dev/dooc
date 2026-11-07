@@ -5,8 +5,7 @@
 // browser-safe tree validation and manipulation.
 
 import { docFile, type FileLayout, localFile, parseFileLayout } from "./files.js";
-import { isLangTag } from "./language.js";
-import { type PreviewSettings, parsePreviewSettings } from "./previewers.js";
+import { contentLanguageCode, DEFAULT_LANG, isLangTag } from "./language.js";
 
 export const MANIFEST_FILE = "dooc.yaml";
 
@@ -20,8 +19,11 @@ export interface ParsedManifest {
     title?: string;
     icon?: string;
     defaultLang?: string;
-    previews?: PreviewSettings;
     files?: FileLayout;
+    /** Content languages offered by the site, including defaultLang; normalized to ISO 639-3. */
+    languages?: string[];
+    /** Color themes offered by the site, with authored variants for embedded files. */
+    themes?: ("light" | "dark")[];
     errors: string[];
 }
 
@@ -45,8 +47,9 @@ export const parseManifest = (value: unknown): ParsedManifest => {
     let title: string | undefined;
     let icon: string | undefined;
     let defaultLang: string | undefined;
-    let previews: PreviewSettings | undefined;
     let files: FileLayout | undefined;
+    let languages: string[] | undefined;
+    let themes: ParsedManifest["themes"];
     if (value != null && typeof value === "object" && !Array.isArray(value)) {
         const manifest = value as Record<string, unknown>;
         for (const key of Object.keys(manifest))
@@ -55,8 +58,9 @@ export const parseManifest = (value: unknown): ParsedManifest => {
                 key !== "icon" &&
                 key !== "defaultLang" &&
                 key !== "docs" &&
-                key !== "previews" &&
-                key !== "files"
+                key !== "files" &&
+                key !== "languages" &&
+                key !== "themes"
             )
                 errors.push(`${MANIFEST_FILE}: unknown field "${key}"`);
         if (manifest.title !== undefined) {
@@ -78,19 +82,43 @@ export const parseManifest = (value: unknown): ParsedManifest => {
                 errors.push(`${MANIFEST_FILE}: defaultLang must be a BCP 47 language tag`);
             else defaultLang = manifest.defaultLang;
         }
-        if (manifest.previews !== undefined) {
-            try {
-                previews = parsePreviewSettings(manifest.previews);
-            } catch (error) {
-                errors.push(`${MANIFEST_FILE}: ${error instanceof Error ? error.message : error}`);
-            }
-        }
         if (manifest.files !== undefined) {
             try {
                 files = parseFileLayout(manifest.files);
             } catch (error) {
                 errors.push(`${MANIFEST_FILE}: ${error instanceof Error ? error.message : error}`);
             }
+        }
+        if (manifest.languages !== undefined) {
+            try {
+                if (
+                    !Array.isArray(manifest.languages) ||
+                    !manifest.languages.length ||
+                    manifest.languages.some((tag) => typeof tag !== "string" || !isLangTag(tag))
+                )
+                    throw new Error("languages must be a non-empty list of language tags");
+                languages = manifest.languages.map(contentLanguageCode);
+                if (new Set(languages).size !== languages.length)
+                    throw new Error(
+                        "languages must contain distinct languages after normalization",
+                    );
+                if (!languages.includes(contentLanguageCode(defaultLang ?? DEFAULT_LANG)))
+                    throw new Error("languages must include defaultLang");
+            } catch (error) {
+                errors.push(`${MANIFEST_FILE}: ${error instanceof Error ? error.message : error}`);
+            }
+        }
+        if (manifest.themes !== undefined) {
+            if (
+                !Array.isArray(manifest.themes) ||
+                !manifest.themes.length ||
+                manifest.themes.some((theme) => theme !== "light" && theme !== "dark") ||
+                new Set(manifest.themes).size !== manifest.themes.length
+            )
+                errors.push(
+                    `${MANIFEST_FILE}: themes must be a non-empty list of distinct light / dark themes supported by the viewer`,
+                );
+            else themes = manifest.themes;
         }
         if (!Array.isArray(manifest.docs)) errors.push(`${MANIFEST_FILE}: docs must be a list`);
         value = manifest.docs;
@@ -151,8 +179,9 @@ export const parseManifest = (value: unknown): ParsedManifest => {
         ...(title === undefined ? {} : { title }),
         ...(icon === undefined ? {} : { icon }),
         ...(defaultLang === undefined ? {} : { defaultLang }),
-        ...(previews === undefined ? {} : { previews }),
         ...(files === undefined ? {} : { files }),
+        ...(languages === undefined ? {} : { languages }),
+        ...(themes === undefined ? {} : { themes }),
         errors,
     };
 };
@@ -160,7 +189,14 @@ export const parseManifest = (value: unknown): ParsedManifest => {
 /** Tree → dooc.yaml text (serialized in the hand-written shape, keeping git diffs clean). */
 export const serializeManifest = (
     tree: readonly DocNode[],
-    { title, icon, defaultLang, previews, files }: Omit<ParsedManifest, "tree" | "errors"> = {},
+    {
+        title,
+        icon,
+        defaultLang,
+        files,
+        languages,
+        themes,
+    }: Omit<ParsedManifest, "tree" | "errors"> = {},
 ): string => {
     const write = (nodes: readonly DocNode[], indent: string): string[] =>
         nodes.flatMap((n) =>
@@ -172,20 +208,13 @@ export const serializeManifest = (
         title !== undefined ||
         icon !== undefined ||
         defaultLang !== undefined ||
-        previews !== undefined ||
-        files !== undefined
+        files !== undefined ||
+        languages !== undefined ||
+        themes !== undefined
     ) {
         const lines = write(tree, "  ");
         const metadata = `${title === undefined ? "" : `title: ${JSON.stringify(title)}\n`}${icon === undefined ? "" : `icon: ${JSON.stringify(icon)}\n`}${defaultLang === undefined ? "" : `defaultLang: ${JSON.stringify(defaultLang)}\n`}`;
-        const previewLines =
-            previews === undefined
-                ? ""
-                : `previews:\n  domains: ${JSON.stringify(previews.domains)}\n  formats:\n${Object.entries(
-                      previews.formats,
-                  )
-                      .map(([id, extensions]) => `    ${id}: ${JSON.stringify(extensions)}\n`)
-                      .join("")}`;
-        return `${metadata}${previewLines}${files ? `files: ${JSON.stringify(files)}\n` : ""}docs:${lines.length ? `\n${lines.join("\n")}\n` : " []\n"}`;
+        return `${metadata}${files ? `files: ${JSON.stringify(files)}\n` : ""}${languages ? `languages: ${JSON.stringify(languages)}\n` : ""}${themes ? `themes: ${JSON.stringify(themes)}\n` : ""}docs:${lines.length ? `\n${lines.join("\n")}\n` : " []\n"}`;
     }
     const lines = write(tree, "");
     return `# Doc hierarchy and order (each id = content/<id>.md)\n${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`;

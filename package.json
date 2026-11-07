@@ -10,6 +10,18 @@
         "dooc": "./dist/cli.js"
     },
     "exports": {
+        "./check": {
+            "types": "./dist/compiler/check.d.ts",
+            "default": "./dist/compiler/check.js"
+        },
+        "./viewer-plugins": {
+            "types": "./dist/viewer/plugins.d.ts",
+            "default": "./dist/viewer/plugins.js"
+        },
+        "./plugins": {
+            "types": "./dist/plugins/index.d.ts",
+            "default": "./dist/plugins/index.js"
+        },
         ".": {
             "types": "./dist/index.d.ts",
             "default": "./dist/index.js"
@@ -41,6 +53,8 @@
         "node": ">=22"
     },
     "scripts": {
+        "build:plugin": "node -e \"require('node:fs').rmSync('packages/dooc-plugin/dist', {recursive:true, force:true})\" && tsc -p tsconfig.plugin.json",
+        "test:plugin-package": "node --import tsx scripts/test-plugin-package.mjs",
         "build": "node -e \"require('node:fs').rmSync('dist', {recursive:true, force:true})\" && pnpm run build:css && pnpm run build:fonts && tsc -p tsconfig.build.json && pnpm run build:flow && pnpm run build:edit",
         "build:binary": "bun scripts/build-binary.mjs",
         "build:css": "node --import tsx src/core/build-flow-css.ts",
@@ -49,7 +63,7 @@
         "test": "vitest run",
         "test:binary": "node scripts/test-binary.mjs",
         "test:install": "node scripts/test-install.mjs",
-        "check": "biome check . && tsc --noEmit && pnpm run build && vitest run && pnpm run test:install",
+        "check": "biome check . && tsc --noEmit && pnpm run build && vitest run && pnpm run test:install && pnpm run test:plugin-package",
         "fix": "biome check --write .",
         "build:fonts": "node -e \"require('node:fs').cpSync('src/viewer/fonts', 'dist/viewer/fonts', {recursive:true})\""
     },
@@ -71,6 +85,7 @@
         "@types/react": "^19.2.17",
         "@types/react-dom": "^19.2.3",
         "@xyflow/react": "^12.11.2",
+        "diff": "8.0.4",
         "esbuild": "^0.28.1",
         "react": "^19.2.8",
         "react-dom": "^19.2.8",
@@ -85,7 +100,12 @@
         "@textlint/kernel": "^15.8.0",
         "@textlint/module-interop": "^15.8.0",
         "@textlint/textlint-plugin-markdown": "^15.8.0",
+        "franc": "^6.2.0",
         "iso-639-3": "^3.0.1",
+        "mermaid": "^12.3.0",
+        "parse5": "8.0.0",
+        "postcss": "8.5.32",
+        "postcss-value-parser": "4.2.0",
         "remark-frontmatter": "^5.0.0",
         "remark-gfm": "^4.0.1",
         "remark-parse": "^11.0.0",

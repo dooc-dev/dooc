@@ -50,31 +50,37 @@ export const loadCodeGrammars = async (
 ): Promise<LanguageRegistration[]> => {
     const grammars = await Promise.all(
         names.map(async (name) => {
-            if (name === "grapth")
+            if (name === "graphth")
                 return [
                     {
                         name,
-                        scopeName: "source.grapth",
+                        scopeName: "source.graphth",
                         patterns: [
-                            { match: "^\\s*#.*$", name: "comment.line.grapth" },
-                            { match: "\\[[^\\[\\]\\n]*\\]", name: "variable.other.grapth" },
-                            { match: "-->|->|--", name: "keyword.operator.grapth" },
-                            { match: "(?<=\\s)@\\S+", name: "entity.name.tag.grapth" },
+                            { match: "^\\s*#.*$", name: "comment.line.graphth" },
+                            { match: "\\[[^\\[\\]\\n]*\\]", name: "variable.other.graphth" },
+                            { match: "-->|->|--", name: "keyword.operator.graphth" },
+                            { match: "(?<=\\s)@\\S+", name: "entity.name.tag.graphth" },
                         ],
                     },
                 ] as LanguageRegistration[];
-            if (name === "termth" || name === "schemath" || name === "callouth")
+            if (name === "termth" || name === "schemath" || name === "callouth") {
+                const language = name === "callouth" ? "markdown" : "yaml";
                 return [
-                    ...(await bundledLanguages[name === "callouth" ? "markdown" : "yaml"]())
-                        .default,
+                    ...(await bundledLanguages[language]()).default,
                     {
                         name,
                         scopeName: `source.${name}`,
                         patterns: [
-                            { include: name === "callouth" ? "text.html.markdown" : "source.yaml" },
+                            {
+                                include:
+                                    language === "markdown"
+                                        ? "text.html.markdown"
+                                        : `source.${language}`,
+                            },
                         ],
                     },
                 ] as LanguageRegistration[];
+            }
             if (!supported.has(name)) throw new Error(`Unsupported Shiki language: ${name}`);
             return (await bundledLanguages[name as keyof typeof bundledLanguages]()).default;
         }),

@@ -76,12 +76,25 @@ export const toBlocks = (
                     if (!images.length) add({ type: "p", text: inlineToText(n.children) });
                     for (const image of images) {
                         try {
-                            const { file, range, kind } = parseFileEmbed(image.url, settings);
+                            const { file, range, tableMode, kind } = parseFileEmbed(
+                                image.url,
+                                settings,
+                            );
+                            if (kind === "external") {
+                                add({
+                                    type: "external",
+                                    url: file,
+                                    ...(image.alt ? { alt: image.alt } : {}),
+                                });
+                                if (topLevel)
+                                    lines[lines.length - 1] = image.position?.start.line ?? 1;
+                                continue;
+                            }
                             if (kind !== "textfile") {
                                 add({
                                     type: "figureRef",
                                     name: figureName(file),
-                                    ...(image.alt ? { caption: image.alt } : {}),
+                                    alt: image.alt ?? "",
                                 });
                                 if (topLevel)
                                     lines[lines.length - 1] = image.position?.start.line ?? 1;
@@ -91,6 +104,7 @@ export const toBlocks = (
                                 type: "code",
                                 filename: file,
                                 ...(range !== undefined ? { range } : {}),
+                                ...(tableMode ? { tableMode } : {}),
                                 ...(image.alt ? { alt: image.alt } : {}),
                                 lang: (
                                     extname(textfileName(file)).slice(1) ||

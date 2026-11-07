@@ -1,0 +1,6 @@
+A small review checklist
+
+1. Keep the source nearby.
+2. Check links and file references.
+3. Compare light and dark.
+4. Share the result.

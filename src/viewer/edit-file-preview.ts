@@ -1,6 +1,7 @@
 import { type EditorState, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import type { PreviewSettings } from "../core/previewers.js";
+import { isRemoteTextfile } from "../core/textfile.js";
 import { type FilePreview, fileReferences } from "./file-references.js";
 import { t } from "./i18n.js";
 
@@ -61,8 +62,12 @@ export const previewSettingsState = StateField.define<PreviewSettings | undefine
 
 const decorations = (state: EditorState, previews: Record<string, FilePreview>): DecorationSet =>
     Decoration.set(
-        fileReferences(state.doc.toString(), state.field(previewSettingsState, false)).map(
-            ({ line, file }) => {
+        fileReferences(state.doc.toString(), state.field(previewSettingsState, false))
+            .filter(
+                ({ kind, file }) =>
+                    isRemoteTextfile(file) || (kind !== "textfile" && kind !== "term"),
+            )
+            .map(({ line, file }) => {
                 const preview = Object.hasOwn(previews, file)
                     ? (previews[file] as FilePreview)
                     : { state: "pending" as const };
@@ -71,8 +76,7 @@ const decorations = (state: EditorState, previews: Record<string, FilePreview>):
                     widget: new FilePreviewWidget(file, preview, label),
                     side: 1,
                 }).range(state.doc.line(line).to);
-            },
-        ),
+            }),
     );
 
 export const filePreviewState = StateField.define<{

@@ -1,4 +1,4 @@
-import { iso6393To1 } from "iso-639-3";
+import { iso6393, iso6393To1 } from "iso-639-3";
 // Language socket (browser-safe). Every rule that depends on the document language lives behind
 // LanguageAdapter, so the rest of the core stays language-neutral; languages without an adapter
 // get the generic Unicode rules below. Slugs / anchors are deliberately NOT part of the socket:
@@ -9,6 +9,18 @@ import { iso6393To1 } from "iso-639-3";
 import type { TermEntry } from "./content-types.js";
 
 export const DEFAULT_LANG = "en";
+
+const contentCodes = new Set(iso6393.map((language) => language.iso6393));
+const from1 = new Map(Object.entries(iso6393To1).map(([three, two]) => [two, three]));
+export const isContentLanguage = (code: string): boolean => contentCodes.has(code);
+
+/** Normalize site language declarations and translation directory names consistently. */
+export const contentLanguageCode = (tag: string): string => {
+    const primary = tag.toLowerCase().split("-")[0] ?? "";
+    const code = from1.get(primary) ?? primary;
+    if (!isContentLanguage(code)) throw new Error(`Unknown ISO 639-3 language: ${tag}`);
+    return code;
+};
 
 /** BCP 47-shaped tag (`en`, `ja`, `pt-BR`, `zh-Hant-TW`). Not checked against a registry. */
 export const LANG_TAG_RE = /^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;

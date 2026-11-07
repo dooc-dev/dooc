@@ -1,0 +1,15 @@
+.compact { height: 56px; display: flex; align-items: center; gap: 9px; padding: 8px 12px; }
+.compact .text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.compact strong { font-size: 10px; font-weight: 600; }
+.compact .text > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--muted); }
+.compact .marker { flex: none; font-size: 18px; }
+.compact .badge { flex: none; padding: 2px 6px; border-radius: 4px; font-size: 9px; }
+.compact.ticket { color: #7463cd; }
+.compact.ticket .badge { background: #7463cd18; }
+.compact.pull { border-left: 3px solid #428b60; padding-left: 9px; }
+.compact.pull .marker, .compact.pull .badge { color: #428b60; }
+.compact.pull .badge { border: 1px solid #428b6050; border-radius: 10px; }
+.compact.chat .avatar { width: 27px; height: 27px; border-radius: 5px; background: #e2b483; color: #633e31; }
+.compact.chat small { margin-left: 6px; color: var(--muted); font-size: 9px; font-weight: 400; }
+.compact.chat .badge { color: #9b668f; border: 1px solid var(--line); border-radius: 12px; }
+@media (prefers-color-scheme: dark) { .compact.ticket { color: #b1a6ff; } .compact.pull .marker, .compact.pull .badge { color: #78ce99; } .compact.chat .badge { color: #d09cc7; } }

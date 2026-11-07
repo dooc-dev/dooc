@@ -24,7 +24,7 @@ describe("Markdown formatting", () => {
         expect(formatMarkdown(formatted)).toBe(formatted);
     });
     it("keeps all sample documents valid and is idempotent", () => {
-        const root = new URL("../../sample-content/content/", import.meta.url);
+        const root = new URL("../../sample-content/files/md/", import.meta.url);
         for (const file of readdirSync(root).filter((file) => file.endsWith(".md"))) {
             const original = readFileSync(new URL(file, root), "utf8");
             const formatted = formatMarkdown(original);

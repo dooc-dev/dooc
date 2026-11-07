@@ -137,7 +137,7 @@ export const parseDoc = (input: string, settings?: PreviewSettings, file?: strin
             )
         )
             errors.push(
-                `${line(node)}: removed directive; use Markdown file links or callouth / schemath / grapth / termth code fences`,
+                `${line(node)}: removed directive; use Markdown file links or callouth / schemath / graphth / termth code fences`,
             );
         if (!ALLOWED_TYPES.has(node.type)) {
             const hint =
@@ -205,7 +205,7 @@ export const collectRefs = (
         try {
             const { file, kind } = parseFileEmbed(image.url, settings);
             if (kind === "textfile") textfiles.push(file);
-            else figures.push(file);
+            else if (kind !== "external") figures.push(file);
         } catch {
             // Invalid references are reported by parseDoc and must not reach file I/O.
         }

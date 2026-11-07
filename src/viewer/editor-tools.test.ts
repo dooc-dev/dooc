@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { exportEntries } from "../compiler/export.js";
+import { bundleEntries } from "../compiler/bundle.js";
 import {
     codeBlockAt,
     isLocalToolRequest,
@@ -90,7 +90,7 @@ describe("code tool virtual blocks", () => {
 describe("external editor tools", () => {
     it("includes editor configuration and adapters in source exports", async () => {
         const root = await fixture("");
-        expect(exportEntries(root).map((entry) => entry.name)).toEqual([
+        expect(bundleEntries(root).map((entry) => entry.name)).toEqual([
             ".dooc/editor-tools/format.cjs",
             ".dooc/editor-tools/js.json",
             ".dooc/editor-tools/lint.cjs",

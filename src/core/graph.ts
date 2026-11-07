@@ -1,9 +1,9 @@
-// SoT for the content dialect `grapth` (node / edge DSL) — DSL parsing / graph model /
+// SoT for the content dialect `graphth` (node / edge DSL) — DSL parsing / graph model /
 // deterministic layout. Browser-safe. html.ts owns the markup (SVG); this module returns only the
 // semantics and the geometry computed with Dagre (= every consumer gets the same picture via
 // docHtml).
 //
-// DSL (written inside a grapth fenced code block):
+// DSL (written inside a graphth fenced code block):
 //     [<id>]: <label> @<region>   node declaration (label / region optional; one region per node)
 //     [<id>] @<region>            label omitted = the id is displayed as-is
 //     [a] -> [b]                  edge (solid, directed = dependency / flow)
@@ -152,7 +152,7 @@ export const parseGraphSource = (source: string): GraphParseResult => {
         if (text.startsWith("```")) {
             err(
                 line,
-                "``` is not allowed (write nodes / edges directly inside the grapth code block)",
+                "``` is not allowed (write nodes / edges directly inside the graphth code block)",
             );
             return;
         }

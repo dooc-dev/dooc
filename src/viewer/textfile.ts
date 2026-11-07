@@ -19,9 +19,10 @@ export const previewTextfiles = (root: string, input: unknown): ReadonlyMap<stri
 export const textfileResponse = async (
     root: string,
     input: Record<string, unknown> | undefined,
+    domains: readonly string[] = [],
 ): Promise<{
     status: number;
-    body: { content?: string | null; error?: string };
+    body: { content?: string | null; error?: string; gitBase?: string | null };
 }> => {
     if (typeof input?.file !== "string" || !["read", "save"].includes(String(input.action)))
         return { status: 400, body: { error: "Invalid text file request" } };
@@ -41,7 +42,10 @@ export const textfileResponse = async (
                 };
             return { status: 200, body: { content: input.content } };
         }
-        return { status: 200, body: { content: await readTextfileAsync(root, input.file, true) } };
+        return {
+            status: 200,
+            body: { content: await readTextfileAsync(root, input.file, true, domains) },
+        };
     } catch (error) {
         if (
             input.action === "read" &&

@@ -18,9 +18,12 @@ afterEach(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 it.each([
+    ["csv", "Name,Value\nFirst,10"],
+    ["tsv", "Name\tValue\nFirst\t10"],
     ["ts", "const x = 1;"],
     ["termth", "name: API\ndefinition: Contract"],
-    ["grapth", "[A]: A\n[B]: B\n[A] -> [B]"],
+    ["plugin", '{"plugin":"sample","resource":"card"}'],
+    ["graphth", "[A]: A\n[B]: B\n[A] -> [B]"],
     ["schemath", "items:\n  id: pk"],
     ["callouth", "Read [this document](content/a.md).\n\n- First\n  - Nested"],
 ])("extracts %s to the default folder and keeps its rendered block", (lang, source) => {

@@ -2,6 +2,9 @@
 export const mountLanguagePickers = (t: (key: string) => string): void => {
     for (const select of document.querySelectorAll<HTMLSelectElement>("#fm-lang, #ui-language")) {
         const translations = select.id === "fm-lang";
+        const trigger = select
+            .closest(".fm-language")
+            ?.querySelector<HTMLButtonElement>("[data-language-open]");
         const wrapper = document.createElement("div");
         wrapper.className = "language-select";
         const popup = document.createElement("div");
@@ -114,6 +117,7 @@ export const mountLanguagePickers = (t: (key: string) => string): void => {
         const sync = (): void => {
             input.title = selectedText();
             input.readOnly = select.disabled;
+            if (trigger) trigger.disabled = select.disabled;
             input.setAttribute("aria-disabled", String(select.disabled));
             input.placeholder = t("Search languages");
             input.setAttribute("aria-label", select.getAttribute("aria-label") ?? t("Language"));
@@ -128,6 +132,7 @@ export const mountLanguagePickers = (t: (key: string) => string): void => {
         popup.addEventListener("beforetoggle", (event) => {
             const open = (event as ToggleEvent).newState === "open";
             input.setAttribute("aria-expanded", String(open));
+            trigger?.setAttribute("aria-expanded", String(open));
             if (open) {
                 render();
                 position();
@@ -156,6 +161,10 @@ export const mountLanguagePickers = (t: (key: string) => string): void => {
             input.select();
         };
         input.addEventListener("focus", open);
+        trigger?.addEventListener("click", () => {
+            input.focus();
+            open();
+        });
         input.addEventListener("click", open);
         input.addEventListener("input", () => {
             query = input.value;

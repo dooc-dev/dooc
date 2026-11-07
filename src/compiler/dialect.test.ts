@@ -160,12 +160,12 @@ describe("parseDoc", () => {
         // `[id]: ...` has the same shape as a markdown link definition, so check it's read as raw
         // text
         const dsl = "[input]: Input @edge\n[worker]: Worker @compute\n\n[input] -> [worker]";
-        expect(parseDoc(fm(`~~~grapth Route\n${dsl}\n~~~`)).errors).toEqual([]);
+        expect(parseDoc(fm(`~~~graphth Route\n${dsl}\n~~~`)).errors).toEqual([]);
         // A leading # is a note (not taken as a heading); also accepted with a common indent
         expect(
-            parseDoc(fm("~~~grapth\n  # Note\n  [a]: A\n  [b]: B\n  [a] -> [b]\n~~~")).errors,
+            parseDoc(fm("~~~graphth\n  # Note\n  [a]: A\n  [b]: B\n  [a] -> [b]\n~~~")).errors,
         ).toEqual([]);
-        const empty = parseDoc(fm("~~~grapth\n~~~"));
+        const empty = parseDoc(fm("~~~graphth\n~~~"));
         expect(empty.errors.some((e) => e.includes("is empty"))).toBe(true);
         const attr = parseDoc(fm(':::graph{caption="x"}\n[a]: A\n:::'));
         expect(attr.errors.some((e) => e.includes("removed directive"))).toBe(true);
@@ -173,8 +173,8 @@ describe("parseDoc", () => {
 
     it(":::graph DSL errors are reported at the doc line number (= not publishable)", () => {
         // 1:--- 2:title 3:--- 4:empty 5=:::graph 6=[a]: A 7=[a] -> [nope]
-        const doc = parseDoc(fm("~~~grapth\n[a]: A\n[a] -> [nope]\n~~~"));
-        expect(doc.errors).toEqual(['L7: grapth edge node "nope" is not declared']);
+        const doc = parseDoc(fm("~~~graphth\n[a]: A\n[a] -> [nope]\n~~~"));
+        expect(doc.errors).toEqual(['L7: graphth edge node "nope" is not declared']);
     });
 
     it("code fences accept standard and custom language labels", () => {

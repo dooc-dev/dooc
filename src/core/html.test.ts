@@ -60,7 +60,7 @@ describe("blocksHtml", () => {
         expect(output).toContain("<li><strong>Item</strong></li>");
         expect(output).toContain("<th><em>Header</em></th>");
         expect(output).toContain("<td><strong>Cell</strong></td>");
-        expect(output).toContain("<p><strong>Bold</strong> and <em>italic</em></p></aside>");
+        expect(output).toContain("<p><strong>Bold</strong> and <em>italic</em></p></div></aside>");
     });
 
     it("preserves nested quotes, paragraphs, lists and literal fenced code", () => {
@@ -98,12 +98,16 @@ describe("blocksHtml", () => {
         expect(output).toContain(MODEL_FIG.desc);
     });
 
-    it("escapes a localized table of contents title in text and its accessible label", () => {
+    it("keeps the localized table of contents label accessible without visible title text", () => {
         const output = docHtml({ title: "Guide" }, [], [], { ...CTX, tocTitle: '<Contents "&">' }, [
             { depth: 2, text: "Section", slug: "section" },
         ]);
         expect(output).toContain('aria-label="&lt;Contents &quot;&amp;&quot;&gt;"');
-        expect(output).toContain('class="in-toc-title">&lt;Contents &quot;&amp;&quot;&gt;</div>');
+        expect(output).not.toContain('class="in-toc-title"');
+        expect(output).toContain('href="#section" data-toc-target="section"');
+        expect(output).toContain('title="Section">Section</a>');
+        expect(output).toContain('class="toc-seek" type="range"');
+        expect(docHtml({ title: "No headings" }, [], [])).not.toContain('class="in-toc"');
     });
 
     it("renders headings (ASCII slug ids) / paragraphs / inline (code, link, unescaping)", () => {
@@ -181,7 +185,9 @@ describe("blocksHtml", () => {
 
     it("callout renders title + list; a figure with no file becomes a placeholder", () => {
         const out = html("~~~callouth Key points\n- Item\n~~~\n\n![](figures/unknown_fig.svg)");
-        expect(out).toContain('<aside class="callout"><div class="cap">Key points</div><ul>');
+        expect(out).toContain(
+            '<aside class="callout"><div class="callout-title">Key points</div><div class="callout-body"><ul>',
+        );
         expect(out).toContain("Fig. unknown_fig");
         expect(out).toContain("not found in figures/");
     });
@@ -189,18 +195,27 @@ describe("blocksHtml", () => {
     it("renders numbered lists inside a callout as <ol> too", () => {
         const out = html("~~~callouth Steps\n1. One\n2. Two\n~~~");
         expect(out).toBe(
-            '<aside class="callout"><div class="cap">Steps</div><ol><li>One</li><li>Two</li></ol></aside>',
+            '<aside class="callout"><div class="callout-title">Steps</div><div class="callout-body"><ol><li>One</li><li>Two</li></ol></div></aside>',
         );
     });
 
     it("callout renders a mix of paragraphs / bullets in order", () => {
         const out = html("~~~callouth Terms\nAn explanatory paragraph.\n\n- Note 1\n- Note 2\n~~~");
         expect(out).toBe(
-            '<aside class="callout"><div class="cap">Terms</div><p>An explanatory paragraph.</p><ul><li>Note 1</li><li>Note 2</li></ul></aside>',
+            '<aside class="callout"><div class="callout-title">Terms</div><div class="callout-body"><p>An explanatory paragraph.</p><ul><li>Note 1</li><li>Note 2</li></ul></div></aside>',
         );
     });
 
-    it("figure is isolated in a sandboxed iframe; caption = label + newline + desc", () => {
+    it("renders an untitled summary without an empty heading or a generated label", () => {
+        expect(html("~~~callouth\nA short summary.\n~~~")).toBe(
+            '<aside class="callout"><div class="callout-body"><p>A short summary.</p></div></aside>',
+        );
+        expect(html('~~~callouth <Summary> & "notes"\nBody\n~~~')).toContain(
+            '<div class="callout-title">&lt;Summary&gt; &amp; &quot;notes&quot;</div>',
+        );
+    });
+
+    it("keeps Markdown image descriptions as alternative text without visible captions", () => {
         const out = html("![](figures/data_model.svg)", CTX);
         // svg gets everything forbidden, scripts included (sandbox=""); markup goes into srcdoc
         // escaped
@@ -211,13 +226,20 @@ describe("blocksHtml", () => {
             'srcdoc="&lt;!doctype html&gt;&lt;html data-doc-theme=&quot;auto&quot;&gt;',
         );
         expect(out).not.toContain("<svg xmlns=");
-        expect(out).toContain(
-            '<figcaption class="cap">Fig.data_model\nDescription text</figcaption>',
+        expect(out).not.toContain("<figcaption");
+        expect(out).toContain('title="Fig.data_model"');
+        const described = html('![Data & "model"](figures/data_model.svg)', CTX);
+        expect(described).toContain('title="Data &amp; &quot;model&quot;"');
+        expect(described).not.toContain("<figcaption");
+        expect(html('![Missing & "model"](figures/missing.svg)', CTX)).toContain(
+            '<div class="ph">Missing &amp; &quot;model&quot;<span>',
         );
-        // [caption], if given, takes precedence over the figure's title
-        expect(html("![Data model](figures/data_model.svg)", CTX)).toContain(
-            '<figcaption class="cap">Data model\nDescription text</figcaption>',
-        );
+        expect(
+            blocksHtml(
+                [{ type: "figureRef", name: "data_model", caption: "Explicit caption" }],
+                CTX,
+            ),
+        ).toContain('<figcaption class="cap">Explicit caption\nDescription text</figcaption>');
     });
 
     it("table block renders as <details> when collapsible, with a caption", () => {
@@ -304,7 +326,7 @@ describe("blocksHtml", () => {
             "[input] -> [pre-process] -> [worker]",
             "[worker] --> [validator]: input validation",
         ].join("\n");
-        const out = html(`~~~grapth Output processing flow\n${dsl}\n~~~`);
+        const out = html(`~~~graphth Output processing flow\n${dsl}\n~~~`);
         expect(out).toContain('<figure class="fig"><svg xmlns=');
         expect(out).toContain('<figcaption class="cap">Output processing flow</figcaption>');
         // node labels and region frame labels
@@ -326,13 +348,13 @@ describe("blocksHtml", () => {
         // colors always go through CSS variables (follow the theme)
         expect(out).toContain("var(--doc-panel, #ffffff)");
         // a graph without nodes degrades to a placeholder
-        expect(html("~~~grapth\n~~~")).toContain('<div class="ph">graph');
+        expect(html("~~~graphth\n~~~")).toContain('<div class="ph">graph');
         // same result with the content indented by 2 spaces (the common indent is stripped)
-        expect(html("~~~grapth\n  [a]: A\n  [b]: B\n  [a] -- [b]\n~~~")).toContain('class="gr-e ');
+        expect(html("~~~graphth\n  [a]: A\n  [b]: B\n  [a] -- [b]\n~~~")).toContain('class="gr-e ');
     });
 
     it("~~~graph draws no arrowhead on undirected edges", () => {
-        const out = html("~~~grapth\n[a]: A\n[b]: B\n[a] -- [b]\n~~~");
+        const out = html("~~~graphth\n[a]: A\n[b]: B\n[a] -- [b]\n~~~");
         expect(out).toContain('class="gr-e ');
         expect(out).not.toContain("marker-end");
     });

@@ -10,8 +10,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { bundleEntries } from "./bundle.js";
 import { compileSite, createCompiler } from "./compile.js";
-import { exportEntries } from "./export.js";
 import { contentLanguageCode, isContentLanguage, webLanguage } from "./language-codes.js";
 import {
     setDocTranslation,
@@ -94,7 +94,7 @@ describe("parallel Markdown translations", () => {
         expect(readTextfile(root, "content/guide.md")).toBe(source);
         expect(translationLanguages(root)).toEqual(["eng"]);
         expect(
-            exportEntries(root)
+            bundleEntries(root)
                 .find((entry) => entry.name === file)
                 ?.data.toString(),
         ).toBe(raw);
@@ -133,7 +133,7 @@ describe("parallel Markdown translations", () => {
         rmSync(join(root, "locales/eng/content"));
         mkdirSync(join(root, "locales/eng/content"));
         symlinkSync(join(outside, "content/guide.md"), join(root, "locales/eng/content/guide.md"));
-        expect(() => exportEntries(root)).toThrow("outside the docs root");
+        expect(() => bundleEntries(root)).toThrow("outside the docs root");
     });
 
     it("renames translated files and links, and protects references before deleting every version", () => {

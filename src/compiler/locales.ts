@@ -1,8 +1,9 @@
 // Translations mirror source paths under locales/<ISO 639-3>/ as ordinary Markdown files.
 import { existsSync, readdirSync, unlinkSync } from "node:fs";
 import { join, relative } from "node:path";
-import { isDocId } from "../core/content-metadata.js";
+import { isDocId, type ParsedManifest } from "../core/content-metadata.js";
 import { localFile } from "../core/files.js";
+import { contentLanguageCode, DEFAULT_LANG } from "../core/language.js";
 import { parseDoc } from "./dialect.js";
 import { isContentLanguage } from "./language-codes.js";
 import { docFile, readManifest } from "./manifest.js";
@@ -24,6 +25,18 @@ export const translationLanguages = (root: string): string[] => {
               .sort()
         : [];
 };
+
+/** Declared languages are authoritative; older sites retain directory discovery. */
+export const siteContentLanguages = (
+    root: string,
+    manifest: ParsedManifest = readManifest(root),
+): string[] =>
+    manifest.languages ?? [
+        ...new Set([
+            contentLanguageCode(manifest.defaultLang ?? DEFAULT_LANG),
+            ...translationLanguages(root),
+        ]),
+    ];
 
 export const translationFiles = (root: string): string[] =>
     translationLanguages(root).flatMap((language) => {
@@ -48,13 +61,15 @@ export const setDocTranslation = (
     if (language === sourceLanguage) throw new Error("Source language cannot be removed");
     const manifest = readManifest(root);
     if (manifest.errors.length) throw new Error(manifest.errors.join("\n"));
+    if (manifest.languages && !manifest.languages.includes(language))
+        throw new Error(`Language ${language} is not declared in dooc.yaml languages`);
     const file = docFile(id, manifest.files);
     const translated = translationFile(file, language);
     const path = textfilePath(root, translated);
     const source = readTextfile(root, file);
     if (added === existsSync(path)) return;
     if (added) {
-        const doc = parseDoc(source, manifest.previews);
+        const doc = parseDoc(source);
         if (!doc.frontmatter) throw new Error("Fix the source front-matter before translating");
         writeTextfile(
             root,

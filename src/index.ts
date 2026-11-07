@@ -6,7 +6,7 @@ export type * from "./core/content-types.js";
 // Isolated figure rendering (sandboxed iframe) and its parent-side mount (theme following /
 // html figure height).
 export * from "./core/figure-frame.js";
-// node / edge DSL (`grapth`): parse / graph model / deterministic layout via Dagre.
+// node / edge DSL (`graphth`): parse / graph model / deterministic layout via Dagre.
 // graph-common.js is the SoT for the geometry parts shared with the schema graph (text width
 // estimation / orthogonal routing / uid).
 export * from "./core/graph.js";
@@ -29,3 +29,5 @@ export * from "./core/schema-graph.js";
 // and, for script tags, `./flow.global.js`.
 export * from "./core/taxonomy.js";
 export * from "./core/terms-ui.js";
+export { mountThemeVariants, themeVariantFile } from "./core/theme-variants.js";
+export * from "./core/workspace.js";

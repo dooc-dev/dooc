@@ -32,18 +32,63 @@ try {
     writeFileSync(join(root, "dooc.yaml"), "defaultLang: ja\ndocs:\n  - guide\n");
     writeFileSync(
         join(root, "content/guide.md"),
-        "---\ntitle: Guide\n---\n# Hello\n\n```js\nconst x = 1;\n```\n\n```grapth\n[a]: 書く\n[b]: 共有する\n[a] -> [b]\n```\n",
+        "---\ntitle: Guide\n---\n# Hello\n\n```js\nconst x = 1;\n```\n\n```graphth\n[a]: 書く\n[b]: 共有する\n[a] -> [b]\n```\n\n```mermaid\nflowchart LR\n A --> B\n```\n",
     );
-    run("export", "html");
-    const html = readFileSync(join(root, "dist/index.html"), "utf8");
+    run("build", "html", "--url_preview=embed");
+    assert.ok(!existsSync(join(root, "dist/bundle.zip")));
+    const html = readFileSync(join(root, "dist/bundle.html"), "utf8");
     assert.match(html, /data:font\/woff2;base64,/);
     assert.match(html, /Hello/);
-    run("export", "zip");
+    assert.match(html, /data-mermaid="pending"/);
+    run("build", "zip", "--url_preview", "network");
+    assert.equal(readFileSync(join(root, "dist/bundle.html"), "utf8"), html);
+    assert.ok(readFileSync(join(root, "dist/bundle.zip")).subarray(0, 2).equals(Buffer.from("PK")));
     const rpc = execFileSync(binary, ["mcp"], {
         ...options,
-        input: `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })}\n`,
+        input: [
+            "{",
+            "null",
+            JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+            JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+            JSON.stringify({
+                jsonrpc: "2.0",
+                id: 2,
+                method: "tools/call",
+                params: { name: "build", arguments: { format: "zip", url_preview: "network" } },
+            }),
+            JSON.stringify({
+                jsonrpc: "2.0",
+                id: 3,
+                method: "tools/call",
+                params: {
+                    name: "write_file",
+                    arguments: { file: "mcp.txt", content: "Created after build", base: null },
+                },
+            }),
+            JSON.stringify({
+                jsonrpc: "2.0",
+                id: 4,
+                method: "tools/call",
+                params: { name: "read_file", arguments: { file: "mcp.txt" } },
+            }),
+            "",
+        ].join("\n"),
     });
-    assert.ok(JSON.parse(rpc).result.tools.some((tool) => tool.name === "list_docs"));
+    const replies = rpc
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+    assert.equal(replies[0].error.code, -32700);
+    assert.equal(replies[1].error.code, -32600);
+    assert.ok(replies[2].result.tools.some((tool) => tool.name === "git"));
+    assert.deepEqual(
+        replies.slice(2).map((reply) => reply.id),
+        [1, 2, 3, 4],
+    );
+    assert.equal(JSON.parse(replies[3].result.content[0].text).file, "dist/bundle.zip");
+    assert.equal(JSON.parse(replies[4].result.content[0].text).ok, true);
+    assert.equal(JSON.parse(replies[5].result.content[0].text).content, "Created after build");
+    assert.match(run("mcp", "--help"), /--git-origin/);
     server = spawn(binary, ["edit", root, "0"], options);
     let output = "";
     server.stderr.on("data", (data) => {
@@ -140,7 +185,7 @@ try {
         (await lint.json()).findings.some((finding) => finding.ruleId === "no-doubled-joshi"),
     );
     console.log(
-        "Standalone CLI, MCP, exports, Markdown translations, editor assets, and Japanese lint passed (empty PATH).",
+        "Standalone CLI, MCP, bundles, Markdown translations, editor assets, and Japanese lint passed (empty PATH).",
     );
 } finally {
     if (server && server.exitCode === null && server.signalCode === null) {

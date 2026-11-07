@@ -14,7 +14,6 @@ import { open, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isRemoteTextfile, parseTextfileRange } from "../core/textfile.js";
 
-import { readManifest } from "./manifest.js";
 import { readRemoteTextfile, readRemoteTextfileAsync } from "./textfile-remote.js";
 
 export { parseTextfileRange } from "../core/textfile.js";
@@ -62,12 +61,15 @@ export const textfilePath = (root: string, file: string): string => {
     return resolved;
 };
 
-export const readTextfile = (root: string, file: string, refresh = false): string => {
+export const readTextfile = (
+    root: string,
+    file: string,
+    refresh = false,
+    domains: readonly string[] = [],
+): string => {
     let data: Uint8Array;
     if (isRemoteTextfile(file)) {
-        const manifest = readManifest(root);
-        if (manifest.errors.length) throw new Error(manifest.errors.join("\n"));
-        data = readRemoteTextfile(file, manifest.previews?.domains ?? [], refresh);
+        data = readRemoteTextfile(file, domains, refresh);
     } else {
         const path = textfilePath(root, file);
         if (!statSync(path).isFile()) throw new Error("expected a regular UTF-8 text file");
@@ -86,13 +88,10 @@ export const readTextfileAsync = async (
     root: string,
     file: string,
     refresh = false,
+    domains: readonly string[] = [],
 ): Promise<string> => {
     if (isRemoteTextfile(file)) {
-        const manifest = readManifest(root);
-        if (manifest.errors.length) throw new Error(manifest.errors.join("\n"));
-        return decodeTextfile(
-            await readRemoteTextfileAsync(file, manifest.previews?.domains ?? [], refresh),
-        );
+        return decodeTextfile(await readRemoteTextfileAsync(file, domains, refresh));
     }
     const path = textfilePath(root, file);
     if (!(await stat(path)).isFile()) throw new Error("expected a regular UTF-8 text file");

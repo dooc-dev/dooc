@@ -4,8 +4,13 @@ import { textfilePath, writeTextfile } from "../compiler/textfile.js";
 import { codeFileName, codeFilePlan } from "../core/code-file.js";
 import { isDocId } from "../core/content-metadata.js";
 import { defaultFilePath } from "../core/files.js";
+import type { PreviewSettings } from "../core/previewers.js";
 
-export const codeFileResponse = (root: string, input: Record<string, unknown> | undefined) => {
+export const codeFileResponse = (
+    root: string,
+    input: Record<string, unknown> | undefined,
+    previews?: PreviewSettings,
+) => {
     if (typeof input?.body !== "string" || typeof input.position !== "number")
         return { status: 400, body: { error: "Invalid code file request" } };
     try {
@@ -18,7 +23,7 @@ export const codeFileResponse = (root: string, input: Record<string, unknown> | 
         const target = automatic
             ? defaultFilePath(codeFileName(input.body, input.position, input.documentId as string))
             : (input.file as string);
-        let plan = codeFilePlan(input.body, input.position, target, manifest.previews);
+        let plan = codeFilePlan(input.body, input.position, target, previews);
         const create = () =>
             !existsSync(textfilePath(root, plan.file)) &&
             writeTextfile(root, plan.file, plan.content, null);
@@ -29,7 +34,7 @@ export const codeFileResponse = (root: string, input: Record<string, unknown> | 
                     input.body,
                     input.position,
                     `${target.slice(0, dot)}-${index}${target.slice(dot)}`,
-                    manifest.previews,
+                    previews,
                 );
             }
             return { status: 200, body: { file: plan.file, change: plan.change } };

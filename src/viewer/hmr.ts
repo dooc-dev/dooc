@@ -13,15 +13,16 @@
 //           The client notices the swap from the bootId difference in `hello` on reconnect and
 //           reloads.
 // All content events reach the editor, which compares disk contents with its saved base.
-import { existsSync, unwatchFile, watch, watchFile } from "node:fs";
+import { existsSync, readFileSync, realpathSync, unwatchFile, watch, watchFile } from "node:fs";
 import type { ServerResponse } from "node:http";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { managedFile } from "../compiler/files.js";
 import { textfilePath } from "../compiler/textfile.js";
 import { MANIFEST_FILE } from "../core/content-metadata.js";
 import { isRemoteTextfile } from "../core/textfile.js";
 import { prebuilt } from "./assets.js";
 import type { ServeMode } from "./serve.js";
+import { gitHeadFile } from "./workspace.js";
 
 /** SSE endpoint. SoT for the server route and the client script's connection target. */
 export const HMR_PATH = "/api/hmr";
@@ -43,6 +44,7 @@ export const classifyChange = (rel: string): HmrKind | undefined => {
     if (
         p === "src/viewer/edit-client.ts" ||
         p === "src/viewer/files-ui.ts" ||
+        p === "src/viewer/resource-library-ui.ts" ||
         p === "src/viewer/edit-code-file.ts" ||
         p === "src/core/code-file.ts" ||
         p === "src/core/files.ts" ||
@@ -50,19 +52,24 @@ export const classifyChange = (rel: string): HmrKind | undefined => {
         p === "src/viewer/edit-textfile.ts" ||
         p === "src/viewer/file-references.ts" ||
         p === "src/core/markdown.ts" ||
+        p === "src/core/mermaid-mount.ts" ||
         p === "src/core/textfile.ts" ||
         p === "src/core/file-embed.ts" ||
         p === "src/core/term-reference.ts" ||
         p === "src/core/taxonomy.ts" ||
         p === "src/core/previewers.ts" ||
         p === "src/viewer/edit-file-preview.ts" ||
-        p === "src/viewer/preview-settings-ui.ts" ||
         p === "src/viewer/edit-conflict.ts" ||
         p === "src/viewer/edit-code-highlight.ts" ||
+        p === "src/viewer/edit-git-diff.ts" ||
         p === "src/viewer/code-tokens.ts" ||
         p === "src/viewer/i18n.ts" ||
         p === "src/viewer/language-picker.ts" ||
+        p === "src/viewer/theme-picker.ts" ||
         p === "src/viewer/ui-client.ts" ||
+        p === "src/viewer/plugins-ui.ts" ||
+        p === "src/viewer/plugin-view.ts" ||
+        p === "src/plugins/view.ts" ||
         p === "src/viewer/nav-focus.ts" ||
         p === "src/viewer/code-highlight.ts" ||
         (p.startsWith("src/viewer/locales/") && p.endsWith(".json")) ||
@@ -193,12 +200,47 @@ export const watchProject = (
         watch(docsRoot, { recursive: true }, (_event, name) => {
             if (!name) return;
             const path = String(name).replaceAll("\\", "/");
-            if (path === MANIFEST_FILE || path.startsWith("locales/")) note(path, "content");
+            if (
+                path === MANIFEST_FILE ||
+                path.startsWith("locales/") ||
+                /(^|\/)\.gitignore$/.test(path)
+            )
+                note(path, "content");
             else if (managedFile(path) && !path.startsWith("src/") && !/\.(tmp|swp)$/.test(path))
                 note(path, "content");
         }),
     );
     const textfiles = new Map<string, () => void>();
+    const headFile = gitHeadFile(docsRoot);
+    if (headFile) {
+        for (let parent = realpathSync(docsRoot); !existsSync(join(parent, ".git")); ) {
+            const next = dirname(parent);
+            if (next === parent) break;
+            parent = next;
+            const ignore = join(parent, ".gitignore");
+            const changed = () => note(".gitignore", "content");
+            watchFile(ignore, { persistent: false, interval: 200 }, changed);
+            textfiles.set(ignore, changed);
+        }
+        const directory = dirname(headFile);
+        const common = join(directory, "commondir");
+        const directories = new Set([
+            directory,
+            existsSync(common)
+                ? resolve(directory, readFileSync(common, "utf8").trim())
+                : directory,
+        ]);
+        for (const path of directories)
+            watchers.push(
+                watch(path, { recursive: true }, (_event, name) => {
+                    const file = String(name).replaceAll("\\", "/");
+                    if (file === "HEAD" || file === "packed-refs" || file.startsWith("refs/"))
+                        note(".git/HEAD", "content");
+                    else if (file === "index" || file === "info/exclude" || file === "config")
+                        note(`.git/${file}`, "content");
+                }),
+            );
+    }
     // shortcut: keep encountered file watches until shutdown; prune if sessions collect many removed references.
     const watchTextfiles = (files: Iterable<string>): void => {
         for (const file of files) {

@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 //   - <name>.html : self-contained HTML fragment (leading <!--fig title/desc --> meta comment,
 //                   styles such as CSS animations bundled in <style>, no scripts)
 // Both use var(--doc-*, fallback) for colors (follows the theme + works standalone). Content
-// references them via `![caption](figures/<file>)` (png / webp / jpeg become
+// references them via `![alt text](figures/<file>)` (png / webp / jpeg become
 // data-URI <img>s).
 //
 // Figures drawn in draw.io live in the same figures/. Two ways to place them; in both, name is
@@ -26,11 +26,12 @@ import type { FigureEntry } from "../core/content-types.js";
 import { extractMxfile, isDrawioSvg, normalizeDrawioSvg } from "./drawio.js";
 import { textfilePath } from "./textfile.js";
 
-const EXT_RE = /\.(drawio\.svg|svg|html|png|webp|jpe?g)$/;
-const FILE_RE = /^[a-z0-9][a-z0-9_-]*\.(drawio\.svg|svg|html|png|webp|jpe?g)$/;
+const EXT_RE = /\.(drawio\.svg|svg|html|png|webp|gif|mp4|webm|jpe?g)$/;
+const FILE_RE = /^[a-z0-9][a-z0-9_-]*\.(drawio\.svg|svg|html|png|webp|gif|mp4|webm|jpe?g)$/;
 const IMAGE_MIME: Record<string, string> = {
     png: "image/png",
     webp: "image/webp",
+    gif: "image/gif",
     jpg: "image/jpeg",
     jpeg: "image/jpeg",
 };
@@ -48,7 +49,7 @@ export const figureName = (file: string): string =>
  */
 export const figureUploadName = (raw: string): string | undefined => {
     const lower = raw.toLowerCase().split(/[\\/]/).pop() ?? "";
-    const ext = /\.(drawio\.svg|svg|html|png|webp|jpe?g)$/.exec(lower)?.[1];
+    const ext = /\.(drawio\.svg|svg|html|png|webp|gif|mp4|webm|jpe?g)$/.exec(lower)?.[1];
     if (ext == null) {
         return undefined;
     }
@@ -163,7 +164,7 @@ export const loadFigures = (
     let files: string[] = [];
     try {
         files = readdirSync(figuresDir)
-            .filter((f) => /\.(svg|html|png|webp|jpe?g)$/.test(f))
+            .filter((f) => /\.(svg|html|png|webp|gif|mp4|webm|jpe?g)$/.test(f))
             .sort();
     } catch {
         // A missing figures/ is valid.
@@ -187,10 +188,23 @@ export const loadFigures = (
             errors.push(`${file}: duplicate name "${name}" (also used by ${dup.file})`);
             continue;
         }
+        if (/\.(mp4|webm)$/.test(file)) {
+            const data = readFileSync(
+                file.startsWith("figures/")
+                    ? textfilePath(figuresDir, file.slice(8))
+                    : textfilePath(dirname(figuresDir), file),
+            );
+            figures.push({
+                name,
+                file,
+                kind: "video",
+                markup: `<video data-dooc-video controls playsinline preload="metadata" aria-label="Video preview" src="data:video/${file.endsWith(".mp4") ? "mp4" : "webm"};base64,${data.toString("base64")}"></video>`,
+            });
+            continue;
+        }
         const mime = IMAGE_MIME[file.slice(file.lastIndexOf(".") + 1)];
         if (mime != null) {
-            // Rasters are inlined as data URIs (= HTML exports are self-contained). The caption
-            // comes from [caption] on the content side.
+            // Rasters are inlined as data URIs; Markdown embeds supply their alternative text.
             const data = readFileSync(
                 file.startsWith("figures/")
                     ? textfilePath(figuresDir, file.slice(8))

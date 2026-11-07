@@ -1,4 +1,5 @@
 import { MAX_FILE_UPLOAD_BYTES } from "../core/files.js";
+import { CHECK_ICON } from "../core/icons.js";
 import { showNotice } from "./edit-dialog.js";
 import type { HmrBridge } from "./hmr.js";
 import { t } from "./i18n.js";
@@ -43,9 +44,10 @@ export const mountFileUpload = (): void => {
         delete button.dataset.i18nTitle;
         delete button.dataset.i18nAriaLabel;
         const mark = button.querySelector("span");
-        if (mark)
-            mark.textContent =
-                state === "loading" ? `${count}/${total}` : state === "done" ? "✓" : "!";
+        if (mark) {
+            if (state === "done") mark.innerHTML = CHECK_ICON;
+            else mark.textContent = state === "loading" ? `${count}/${total}` : "!";
+        }
     };
     new MutationObserver(sync).observe(nav, { childList: true });
     document.addEventListener("docs:ui-language", sync);

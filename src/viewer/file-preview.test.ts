@@ -19,7 +19,7 @@ describe("file preview indicators", () => {
                     "```md",
                     "![](figures/hidden.html)",
                     "```",
-                    "```grapth",
+                    "```graphth",
                     "![](figures/hidden.svg)",
                     "```",
                     "    ![](hidden.txt)",
@@ -109,7 +109,7 @@ describe("file preview indicators", () => {
             doc: "![](__proto__)\n![](figures/card.html)\n![](figures/card.html)\n",
             extensions: [filePreviewState],
         });
-        expect(state.field(filePreviewState).decorations.size).toBe(3);
+        expect(state.field(filePreviewState).decorations.size).toBe(2);
         const old = state;
         state = state.update({
             effects: setFilePreviews.of({

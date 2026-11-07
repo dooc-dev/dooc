@@ -1,5 +1,5 @@
-// Loads `<docs root>/docs.config.mjs` (optional): extra language
-// adapters (the language socket, core/language.ts). The file is a JS module, so loading it runs
+// Loads `<docs root>/docs.config.mjs` (optional): language adapters.
+// The file is a JS module, so loading it runs
 // its code — it belongs to the docs root like a build config. Read once per process; restart
 // after changing it.
 import { existsSync } from "node:fs";

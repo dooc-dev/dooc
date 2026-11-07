@@ -33,6 +33,10 @@ export const searchIndex = (site: Site): SearchSection[] => {
             .join(" ");
     const text = (block: Block): string => {
         switch (block.type) {
+            case "themeVariants":
+                return text(block.default);
+            case "external":
+                return `${block.alt ?? ""} ${block.url}`;
             case "h":
             case "p":
                 return plain(block.text);

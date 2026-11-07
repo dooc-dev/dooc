@@ -1,0 +1,4 @@
+Theme: dark
+Surface: #151a22
+Text: #e1e7f0
+Accent: #afaaff

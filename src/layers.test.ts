@@ -4,8 +4,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const FORBIDDEN: Record<string, string[]> = {
-    core: ["../compiler/", "../viewer/"],
-    compiler: ["../viewer/"],
+    core: ["../compiler/", "../viewer/", "../plugins/"],
+    compiler: ["../viewer/", "../plugins/"],
 };
 
 describe("layers", () => {

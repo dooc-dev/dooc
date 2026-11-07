@@ -26,11 +26,17 @@ import {
     keymap,
     lineNumbers,
     rectangularSelection,
+    ViewPlugin,
 } from "@codemirror/view";
 import { foldPlaceholder } from "./edit-fold.js";
 
 // CodeMirror's basic setup, with inline folding controls instead of a fold gutter.
 export const editorSetup: Extension = [
+    ViewPlugin.define((view) => {
+        const measure = () => view.requestMeasure();
+        document.addEventListener("docs:font-change", measure);
+        return { destroy: () => document.removeEventListener("docs:font-change", measure) };
+    }),
     lineNumbers(),
     highlightActiveLineGutter(),
     highlightSpecialChars(),

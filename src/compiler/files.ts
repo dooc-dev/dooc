@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
     existsSync,
@@ -27,12 +28,14 @@ import {
     parseFileLayout,
 } from "../core/files.js";
 import { codeBlockAt, parseMdast } from "../core/markdown.js";
+import { docPath } from "../core/routing.js";
 import { termFileUrl } from "../core/term-reference.js";
 import { isRemoteTextfile, parseFileReference } from "../core/textfile.js";
 import { fileSig } from "./file-cache.js";
 import { translationFile, translationFiles, translationLanguages } from "./locales.js";
 import { readManifest } from "./manifest.js";
 import { textfilePath, writeTextfile } from "./textfile.js";
+import { themeNames, themeVariants } from "./theme-variants.js";
 
 // Project settings and translations have their own layout, outside file restructuring.
 const reserved = new Set([MANIFEST_FILE, "docs.config.mjs", "node_modules", "dist", "locales"]);
@@ -66,7 +69,20 @@ export const projectFiles = (root: string): ProjectFile[] => {
 export const filesSnapshot = (root: string) => {
     const manifest = readManifest(root);
     if (manifest.errors.length) throw new Error(manifest.errors.join("\n"));
-    const files = projectFiles(root);
+    let files = projectFiles(root);
+    if (files.length) {
+        const ignored = spawnSync("git", ["-C", root, "check-ignore", "--stdin", "-z"], {
+            input: `${files.map((file) => file.path).join("\0")}\0`,
+            encoding: "utf8",
+            timeout: 2_000,
+            maxBuffer: 5_000_000,
+            windowsHide: true,
+        });
+        if (ignored.status === 0) {
+            const paths = new Set(ignored.stdout.split("\0"));
+            files = files.filter((file) => !paths.has(file.path));
+        }
+    }
     const layout: FileLayout = manifest.files ?? parseFileLayout({});
     const rank = new Map(layout.order.map((path, index) => [path, index]));
     files.sort(
@@ -84,12 +100,13 @@ export const filesSnapshot = (root: string) => {
             .update(String(file.size));
     for (const file of translationFiles(root))
         hash.update(file).update(fileSig(textfilePath(root, file)));
+    const docs = flattenTree(manifest.tree);
     return {
         files,
         layout,
         revision: hash.digest("hex"),
         documents: Object.fromEntries(
-            flattenTree(manifest.tree).map(({ id }) => [docFile(id, layout), id]),
+            docs.map(({ id }) => [docFile(id, layout), docPath(docs, id)]),
         ),
     };
 };
@@ -234,6 +251,7 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
     } else if (input.action === "restructure") {
         const taken = new Set(paths);
         for (const file of paths) {
+            if (file.startsWith("themes/")) continue;
             let target = defaultFilePath(file);
             if (target === file) continue;
             const ext = posix.extname(target);
@@ -300,6 +318,10 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
         if (index < 0) throw new Error("Invalid drop position");
         order.splice(index, 0, ...picked);
     } else throw new Error("Unknown file action");
+    for (const [source, target] of [...moves]) {
+        for (const [theme, file] of Object.entries(themeVariants(root, source, themeNames(root))))
+            moves.set(file, `themes/${theme}/${target}`);
+    }
     const translated = translationFiles(root);
     for (const language of translationLanguages(root)) {
         for (const [source, target] of [...moves]) {

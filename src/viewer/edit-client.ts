@@ -43,18 +43,24 @@ import {
     setPreviewSettings,
 } from "./edit-file-preview.js";
 import { inlineFoldButtons } from "./edit-fold.js";
+import { gitBaseState, gitDiffState, gitDiffTheme, setGitBase } from "./edit-git-diff.js";
 import { schemaCompletion } from "./edit-schema-completion.js";
 import { editorSetup } from "./edit-setup.js";
 import { createTextfileEditors } from "./edit-textfile.js";
 import { CODE_BLOCK_NODE_NAMES, isEditingCodeBlock } from "./edit-validation.js";
 import { type FilePreview, type FilePreviewResults, fileReferences } from "./file-references.js";
 import { mountFileUpload } from "./file-upload.js";
+import { mountFiles } from "./files-ui.js";
+import { mountGit } from "./git-ui.js";
 import type { HmrBridge } from "./hmr.js";
 import { applyUiLanguage, mountUiLanguage, t } from "./i18n.js";
 import { focusNavTree } from "./nav-focus.js";
-import { mountPreviewSettings } from "./preview-settings-ui.js";
+import { mountPlugins } from "./plugins-ui.js";
+import { mountResourceLibrary } from "./resource-library-ui.js";
 
 interface Boot {
+    gitBase: string | null;
+    resource?: ResourcePage;
     previews?: PreviewSettings;
     filePreviews: FilePreviewResults;
     siteTitle?: string;
@@ -118,6 +124,7 @@ interface DraftFrontmatter {
  * render/save/doc responses).
  */
 interface RenderSnapshot {
+    gitBase: string | null;
     sourceFile?: string;
     previews?: PreviewSettings;
     filePreviews: FilePreviewResults;
@@ -169,6 +176,13 @@ interface PageResponse extends Omit<RenderSnapshot, "blockLines"> {
     boot: Boot;
 }
 
+interface ResourcePage {
+    sourceFile?: string;
+    path: string;
+    title: string;
+    html: string;
+}
+
 /** Shape apply() / reflectExternal() actually use (both DraftResponse and DocResponse fit). */
 type ExternalSnapshot = RenderSnapshot & {
     raw: string;
@@ -202,6 +216,8 @@ const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) 
 // Boot data of the open doc. A doc switch (client-side navigation, end of this file) does not
 // rebuild the sidebar / panel DOM; it only replaces this, the CM contents and the main html.
 let boot = JSON.parse($("boot").textContent ?? "{}") as Boot;
+const initialResource = boot.resource;
+delete boot.resource;
 let siteTitle = boot.siteTitle;
 let siteIcon = boot.siteIcon;
 const localeUrl = (path: string): string => {
@@ -215,6 +231,7 @@ const localeFetch = (url: string, init: RequestInit = {}): Promise<Response> =>
         headers: { ...init.headers, "x-docs-language": boot.contentLanguage ?? boot.defaultLang },
     });
 const workspace = document.querySelector("main") as HTMLElement;
+let resourceView: (ResourcePage & { element: HTMLElement; dispose?: () => void }) | undefined;
 let mainEl = workspace.querySelector(".preview-content") as HTMLElement;
 // Remember the server markup before interactive diagrams / syntax highlighting mutate the DOM.
 // Unchanged blocks keep their DOM, avoiding a React Flow remount on every keystroke.
@@ -223,6 +240,7 @@ for (const block of mainEl.querySelector("article")?.children ?? []) {
     blockMarkup.set(block, block.outerHTML);
 }
 const updatePreview = (fragment: DocumentFragment): void => {
+    mainEl.parentElement?.querySelector(".pane-actions > .in-toc")?.remove();
     const next = fragment.querySelector("article");
     const current = mainEl.querySelector("article");
     if (!current || !next) {
@@ -253,7 +271,8 @@ const updatePreview = (fragment: DocumentFragment): void => {
     }
 };
 mountUiLanguage();
-mountPreviewSettings();
+mountPlugins();
+mountResourceLibrary((file, line) => openFileEditor(file, line));
 
 const updateLanguageControls = (): void => {
     const lang = $<HTMLSelectElement>("fm-lang");
@@ -304,6 +323,7 @@ const setPreviewState = (
             if (!files || files.includes(file)) previews.set(file, { state, message });
         }
         view.dispatch({ effects: setFilePreviews.of(Object.fromEntries(previews)) });
+        textfiles.setPreviews(Object.fromEntries(previews));
     });
 };
 const applyFilePreviews = (results: FilePreviewResults, blocked: readonly string[] = []): void => {
@@ -330,6 +350,7 @@ const applyFilePreviews = (results: FilePreviewResults, blocked: readonly string
         ),
     });
     boot.filePreviews = results;
+    textfiles.setPreviews(view.state.field(filePreviewState).previews);
 };
 document.addEventListener("docs:ui-language", () => {
     view.dispatch({ effects: setFilePreviews.of(view.state.field(filePreviewState).previews) });
@@ -364,7 +385,7 @@ const setSaveState = (state: "pending" | "saving" | "saved" | "error"): void => 
 const setDirty = (v: boolean): void => {
     dirty = v;
     setSaveState(v ? (autosaveEl.checked ? "saving" : "pending") : "saved");
-    hmr()?.setDirty(
+    hmr()?.setDirty?.(
         v ||
             textfiles.hasUnsavedChanges() ||
             panes.some((pane) => pane !== activePane && pane.draft?.dirty),
@@ -705,8 +726,7 @@ const docsComplete = (ctx: CompletionContext): CompletionResult | null => {
 // ── CodeMirror ────────────────────────────────────────────────────────────
 // CM colors follow the --doc-* palette (so the 3-state theme switch applies as-is). Headings keep
 // weight 400 and are distinguished by color.
-// Same value as --doc-mono in the main content (preview).
-const MONO_FONT = "var(--doc-mono)";
+const MONO_FONT = "var(--editor-font, var(--doc-mono))";
 const theme = EditorView.theme({
     "&": {
         backgroundColor: "transparent",
@@ -816,6 +836,9 @@ const editorExtensions: Extension[] = [
         indentWithTab,
     ]),
     editorSetup,
+    gitBaseState.init(() => boot.gitBase),
+    gitDiffState,
+    gitDiffTheme,
     inlineFoldButtons,
     codeFileButtons(() => boot.docId),
     previewSettingsState.init(() => boot.previews),
@@ -1048,7 +1071,24 @@ const updateNavLocation = (): void => {
     else logo.removeAttribute("src");
     const docTitle = boot.title.trim() || boot.docId;
     document.title =
-        docTitle === siteTitle ? docTitle : `${docTitle} — ${siteTitle ?? "dooc edit"}`;
+        resourceView?.title ??
+        (docTitle === siteTitle ? docTitle : `${docTitle} — ${siteTitle ?? "dooc edit"}`);
+    for (const link of document.querySelectorAll<HTMLAnchorElement>(
+        "#nav-files a, #nav-git a, #nav-statics a",
+    )) {
+        const current =
+            resourceView !== undefined &&
+            (link.pathname === "/_git"
+                ? resourceView.path === "/_git"
+                : link.pathname === "/_statics"
+                  ? resourceView.path.startsWith("/_statics") ||
+                    /^\/_files\/(dictionary|code|urls)$/.test(resourceView.path)
+                  : resourceView.path.startsWith("/_files") &&
+                    !/^\/_files\/(dictionary|code|urls)$/.test(resourceView.path));
+        link.classList.toggle("cur", current);
+        if (current) link.setAttribute("aria-current", "page");
+        else link.removeAttribute("aria-current");
+    }
     const item = document.querySelector<HTMLElement>(
         `#nav-groups .nav-item[data-doc-id="${CSS.escape(boot.docId)}"]`,
     );
@@ -1057,7 +1097,7 @@ const updateNavLocation = (): void => {
         // (refreshNav).
         return;
     }
-    for (const a of document.querySelectorAll("#nav-groups .nav-row a.cur")) {
+    for (const a of document.querySelectorAll("#nav-docs .nav-row a.cur")) {
         a.classList.remove("cur");
     }
     const cur = item.querySelector(":scope > .nav-row > a");
@@ -1079,6 +1119,10 @@ const updateNavLocation = (): void => {
 };
 
 const apply = (r: RenderSnapshot, keepLastValid = true): void => {
+    if (view.state.field(gitBaseState) !== r.gitBase) {
+        boot.gitBase = r.gitBase;
+        view.dispatch({ effects: setGitBase.of(r.gitBase) });
+    }
     if (r.sourceFile) boot.sourceFile = r.sourceFile;
     if (JSON.stringify(view.state.field(previewSettingsState)) !== JSON.stringify(r.previews)) {
         boot.previews = r.previews;
@@ -1190,7 +1234,9 @@ const render = async (): Promise<RenderSnapshot | undefined> => {
 const refreshNav = async (): Promise<void> => {
     const requestedBoot = boot;
     try {
-        const res = await localeFetch(`/api/nav?current=${encodeURIComponent(boot.docId)}`);
+        const res = await localeFetch(
+            `/api/nav?current=${encodeURIComponent(boot.docId)}${resourceView ? `&res=${encodeURIComponent(resourceView.path.startsWith("/_statics") ? resourceView.path.slice(1) : resourceView.path === "/_git" ? "_git" : resourceView.path.slice("/_files".length).replace(/^\/|\/$/g, ""))}` : ""}`,
+        );
         if (!res.ok) {
             return;
         }
@@ -1213,7 +1259,7 @@ const refreshNav = async (): Promise<void> => {
             }
             if (currentPath !== boot.path) {
                 currentPath = boot.path;
-                history.replaceState(null, "", localeUrl(currentPath + location.hash));
+                history.replaceState(null, "", currentUrl(location.hash));
             }
         }
         (window as unknown as { __docsNavRestore?: () => void }).__docsNavRestore?.();
@@ -1269,6 +1315,8 @@ const handleContentChange = async (files: string[]): Promise<void> => {
     // terms in the main content using the current edits, and swap the nav (list, order).
     await render();
     await refreshNav();
+    // Git actions refresh their own state; remounting here interrupts PR forms and running actions.
+    if (resourceView && resourceView.path !== "/_git") await openResource(resourceView.path);
 };
 
 // Files from the server are already debounced (60ms, hmr.ts), but several change frames can still
@@ -1352,7 +1400,10 @@ const saveCurrent = async (): Promise<void> => {
     }
 };
 
-const refresh = debounce(150, () => void render());
+const refresh = debounce(150, () => {
+    void render();
+    void refreshResourcePreview();
+});
 const schedulePreview = (files?: readonly string[]): void => {
     renderRevision++;
     setPreviewState("loading", "", files);
@@ -1811,6 +1862,9 @@ bindToggle("opt-corr", CORR_KEY, false, (v) => {
         view.dispatch({ effects: setCorr.of(null) });
     }
 });
+bindToggle("opt-git-diff", "docs-edit:git-diff", true, (visible) => {
+    document.body.classList.toggle("git-diff-hidden", !visible);
+});
 
 // The gear opens on hover / focus-within (CSS). Click / Enter also pins it open or closed (for
 // keyboard use).
@@ -1849,12 +1903,20 @@ window.addEventListener("beforeunload", (ev) => {
 // Instead, `/api/page` supplies only the parts to swap (main html + panel file name /
 // front-matter fields + CM contents + boot), and the nav only updates the current-location
 // display (cur + TOC). Non-doc routes and fetch failures fall back to normal navigation.
-let currentPath = location.pathname;
+let currentPath = boot.path;
+const resourceUrl = (path: string): string => {
+    const url = new URL(localeUrl(path), location.origin);
+    url.searchParams.set("editor", boot.docId);
+    return url.pathname + url.search + url.hash;
+};
+const currentUrl = (hash = ""): string =>
+    resourceView ? resourceUrl(resourceView.path + hash) : localeUrl(currentPath + hash);
 
 // Handling of leaving a doc with unsaved changes: same decision as beforeunload (real
 // navigation). With autosave ON, silently save and then move (= treated as a continuation of
 // typing).
 const confirmLeave = async (all = false, activeApproved = false): Promise<boolean> => {
+    if (all) await textfiles.flush();
     if (!activeApproved && dirty && autosaveEl.checked && !conflictPending) {
         await save();
     }
@@ -1877,6 +1939,11 @@ const leavePage = async (url: string, activeApproved = false): Promise<void> => 
 let languageButton: HTMLButtonElement | undefined;
 const languageMenu = $("preview-language-menu");
 const paneActions = workspace.querySelector(".pane-actions") as HTMLElement;
+const clonePaneActions = (): HTMLElement => {
+    const actions = paneActions.cloneNode(true) as HTMLElement;
+    actions.querySelector(".in-toc")?.remove();
+    return actions;
+};
 const closeLanguageMenu = (): void => {
     languageMenu.hidden = true;
     languageButton?.setAttribute("aria-expanded", "false");
@@ -2012,6 +2079,139 @@ const restorePane = (pane: PreviewPane): void => {
     markValidationPending();
     validateSoon();
 };
+const closeResource = (): void => {
+    closeFileEditor();
+    document.body.classList.remove("resource-library-open");
+    resourceView?.dispose?.();
+    resourceView?.element.remove();
+    resourceView = undefined;
+    paneHost.hidden = false;
+    updateNavLocation();
+};
+let fileEditor: { file: string; element: HTMLElement; dispose: () => void } | undefined;
+const closeFileEditor = (): void => {
+    fileEditor?.dispose();
+    fileEditor?.element.remove();
+    fileEditor = undefined;
+    $("cm").hidden = false;
+    document.body.classList.remove("textfile-open");
+};
+const openFileEditor = (file?: string, line?: number): void => {
+    if (fileEditor?.file === file && line === undefined) return;
+    closeFileEditor();
+    if (!file) return;
+    const element = document.createElement("section");
+    element.id = "file-editor";
+    const heading = document.createElement("div");
+    heading.className = "file-editor-heading";
+    const title = document.createElement("span");
+    title.className = "file-editor-title";
+    title.textContent = title.title = file;
+    heading.append(title);
+    $("phead").insertBefore(heading, $("gear"));
+    $("panel").append(element);
+    $("cm").hidden = true;
+    document.body.classList.add("textfile-open");
+    const dispose = textfiles.mount(file, element, view, line);
+    const controls = element.querySelector(".cm-textfile-controls");
+    if (controls) heading.append(controls);
+    fileEditor = {
+        file,
+        element,
+        dispose: () => {
+            dispose();
+            heading.remove();
+        },
+    };
+};
+const refreshResourcePreview = async (): Promise<void> => {
+    const current = resourceView;
+    const file = current?.sourceFile;
+    if (!current || !file || /\.(?:svg|html)$/i.test(file)) return;
+    const content = textfiles.content(file);
+    if (content === undefined) return;
+    try {
+        const response = await localeFetch("/api/textfile", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ action: "preview", file, content }),
+        });
+        const result = (await response.json()) as { html?: string };
+        if (
+            !response.ok ||
+            !result.html ||
+            resourceView !== current ||
+            textfiles.content(file) !== content
+        )
+            return;
+        const preview = current.element.querySelector(".res-preview");
+        if (preview && preview.innerHTML !== result.html) preview.innerHTML = result.html;
+    } catch {
+        // A later edit or save retries the preview without discarding the file draft.
+    }
+};
+const openLibraryFile = async (file: string): Promise<void> => {
+    const current = resourceView;
+    if (!current) return;
+    const path = `/_files/file/${encodeURIComponent(file)}`;
+    try {
+        const response = await localeFetch(`/api/page?route=${encodeURIComponent(path)}`);
+        const data = (await response.json()) as ResourcePage & { error?: string };
+        const selected = current.element.querySelectorAll<HTMLElement>("tr.selected[data-path]");
+        // A delayed response must not replace a newer file or a multiple selection.
+        if (resourceView !== current || selected.length !== 1 || selected[0]?.dataset.path !== file)
+            return;
+        if (!response.ok) throw new Error(data.error ?? t("Failed to load pane"));
+        if (data.sourceFile) openFileEditor(data.sourceFile);
+        else await navigateTo(path);
+    } catch (error) {
+        await showNotice(error instanceof Error ? error.message : String(error));
+    }
+};
+const showResource = (resource: ResourcePage): void => {
+    const source = resource.path === resourceView?.path ? fileEditor?.file : undefined;
+    resourceView?.dispose?.();
+    resourceView?.element.remove();
+    const element = document.createElement("section");
+    element.className = "preview-pane resources-pane";
+    const content = document.createElement("div");
+    content.className = "preview-content";
+    content.innerHTML = resource.html;
+    element.append(content);
+    // Keep both the editor and its document panes mounted, including unsaved drafts and undo.
+    paneHost.hidden = true;
+    workspace.append(element);
+    resourceView = {
+        ...resource,
+        element,
+        dispose:
+            resource.path === "/_git"
+                ? mountGit()
+                : mountFiles((file) => void openLibraryFile(file)),
+    };
+    document.body.classList.toggle(
+        "resource-library-open",
+        !!element.querySelector(".resource-library"),
+    );
+    openFileEditor(resource.sourceFile ?? source);
+    void refreshResourcePreview();
+    closeLanguageMenu();
+    updateNavLocation();
+    applyUiLanguage();
+};
+const openResource = async (path: string): Promise<boolean> => {
+    const requestedBoot = boot;
+    try {
+        const response = await localeFetch(`/api/page?route=${encodeURIComponent(path)}`);
+        if (!response.ok) return false;
+        const data = (await response.json()) as ResourcePage & { resource?: boolean };
+        if (!data.resource || boot !== requestedBoot) return false;
+        showResource(data);
+        return true;
+    } catch {
+        return false;
+    }
+};
 const activatePane = async (pane: PreviewPane): Promise<void> => {
     if (pane === activePane || paneBusy) return;
     paneBusy = true;
@@ -2036,7 +2236,7 @@ const activatePane = async (pane: PreviewPane): Promise<void> => {
             swapDoc(fresh);
             pane.element.scrollTop = scrollTop;
         } else void render();
-        history.replaceState(null, "", localeUrl(currentPath));
+        history.replaceState(null, "", currentUrl());
         void refreshNav();
     } catch {
         setStatus(t("Failed to load pane"), true);
@@ -2046,7 +2246,7 @@ const activatePane = async (pane: PreviewPane): Promise<void> => {
 };
 for (const event of ["pointerdown", "focusin"]) {
     paneHost.addEventListener(event, (ev) => {
-        if ((ev.target as Element).closest(".pane-language")) return;
+        if ((ev.target as Element).closest(".pane-language, .in-toc")) return;
         const element = (ev.target as Element).closest(".preview-pane");
         const pane = panes.find((item) => item.element === element);
         if (pane) void activatePane(pane);
@@ -2075,7 +2275,7 @@ const changeLanguage = async (language: string): Promise<void> => {
             return;
         }
         syncPane();
-        history.replaceState(null, "", localeUrl(currentPath));
+        history.replaceState(null, "", currentUrl());
         closeLanguageMenu();
         await refreshNav();
     } finally {
@@ -2134,6 +2334,10 @@ const toggleTranslation = async (language: string): Promise<void> => {
 };
 $("split-preview").addEventListener("click", () => {
     if (paneBusy) return;
+    if (resourceView) {
+        closeResource();
+        history.pushState(null, "", localeUrl(currentPath));
+    }
     paneBusy = true;
     void (async () => {
         try {
@@ -2162,7 +2366,7 @@ $("split-preview").addEventListener("click", () => {
                 const element = document.createElement("section");
                 element.className = "preview-pane";
                 element.tabIndex = 0;
-                element.append(paneActions.cloneNode(true));
+                element.append(clonePaneActions());
                 const content = document.createElement("div");
                 content.className = "preview-content";
                 element.append(content);
@@ -2219,6 +2423,7 @@ const swapDoc = (data: PageResponse, remember = true): void => {
     apply(
         {
             html: data.html,
+            gitBase: boot.gitBase,
             errors: data.errors,
             toc: data.toc,
             blockLines: boot.blockLines,
@@ -2267,7 +2472,7 @@ const openDoc = async (
 
 const scrollToAnchor = (hash: string): void => {
     if (!hash) {
-        activePane.element.scrollTop = 0;
+        (resourceView?.element ?? activePane.element).scrollTop = 0;
         return;
     }
     let id: string;
@@ -2276,16 +2481,30 @@ const scrollToAnchor = (hash: string): void => {
     } catch {
         return;
     }
-    mainEl.querySelector(`#${CSS.escape(id)}`)?.scrollIntoView({ block: "start" });
+    (resourceView?.element ?? mainEl)
+        .querySelector(`#${CSS.escape(id)}`)
+        ?.scrollIntoView({ block: "start" });
 };
 
+const isResourcePath = (path: string): boolean =>
+    path === "/_git" ||
+    path === "/_statics" ||
+    path.startsWith("/_statics/") ||
+    path === "/_files" ||
+    path.startsWith("/_files/");
 let navigationTask: Promise<void> | undefined;
 const navigateTo = (path: string, hash = ""): Promise<void> => {
     navigationTask ??= (async () => {
         if (paneBusy) return;
+        if (isResourcePath(path) && (await openResource(path))) {
+            history.pushState(null, "", resourceUrl(path + hash));
+            scrollToAnchor(hash);
+            return;
+        }
         await saveTask;
         if (!(await confirmLeave())) return;
         if (await openDoc(path)) {
+            closeResource();
             history.pushState(null, "", localeUrl(currentPath + hash));
             scrollToAnchor(hash);
             return;
@@ -2337,7 +2556,10 @@ document.addEventListener("click", (ev) => {
         return;
     }
     const url = new URL(a.href, location.href);
-    if (url.origin !== location.origin || !isDocPath(url.pathname)) {
+    if (
+        url.origin !== location.origin ||
+        (!isDocPath(url.pathname) && !isResourcePath(url.pathname))
+    ) {
         if (url.protocol !== "http:" && url.protocol !== "https:") return;
         ev.preventDefault();
         void leavePage(url.href);
@@ -2345,6 +2567,7 @@ document.addEventListener("click", (ev) => {
     }
     if (url.pathname === currentPath) {
         ev.preventDefault();
+        closeResource();
         const targetUrl = localeUrl(currentPath + url.hash);
         if (location.pathname + location.search + location.hash !== targetUrl) {
             history.pushState(null, "", targetUrl);
@@ -2364,23 +2587,49 @@ window.addEventListener("popstate", () => {
     const language =
         new URL(location.href).searchParams.get("lang") ?? boot.sourceLanguage ?? boot.defaultLang;
     if (target === currentPath && language === (boot.contentLanguage ?? boot.defaultLang)) {
+        closeResource();
         scrollToAnchor(location.hash);
         return;
     }
     void (async () => {
+        if (isResourcePath(target)) {
+            const editor = new URL(location.href).searchParams.get("editor");
+            if (
+                (editor && editor !== boot.docId) ||
+                language !== (boot.contentLanguage ?? boot.defaultLang)
+            ) {
+                if (!(await confirmLeave())) {
+                    history.pushState(null, "", currentUrl());
+                    return;
+                }
+                const link = document.querySelector<HTMLAnchorElement>(
+                    `#nav-docs [data-doc-id="${CSS.escape(editor ?? boot.docId)}"] > .nav-row > a`,
+                );
+                if (!link || !(await openDoc(new URL(link.href).pathname, language))) {
+                    await leavePage(location.href, true);
+                    return;
+                }
+            }
+            if (await openResource(target)) {
+                scrollToAnchor(location.hash);
+                return;
+            }
+        }
         if (!(await confirmLeave())) {
-            history.pushState(null, "", localeUrl(currentPath));
+            history.pushState(null, "", currentUrl());
             return;
         }
         if (!(await openDoc(target, language))) {
             await leavePage(location.href, true);
         } else {
+            closeResource();
             scrollToAnchor(location.hash);
         }
     })();
 });
 
 syncPane();
+if (initialResource) showResource(initialResource);
 if (location.hash) requestAnimationFrame(() => scrollToAnchor(location.hash));
 
 // Initial tagging (set data-ln even when corr is off, so turning it ON later works immediately).

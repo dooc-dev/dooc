@@ -28,6 +28,7 @@ export const fileReferences = (body: string, settings?: PreviewSettings): FileRe
         if (node.type === "image" && images.has(node as Image)) {
             try {
                 const { file, kind } = parseFileEmbed(node.url, settings);
+                if (kind === "external") return;
                 references.push({
                     line: node.position?.start.line ?? 1,
                     file: file.replace(/^(\.\/)+/, ""),

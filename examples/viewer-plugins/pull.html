@@ -1,0 +1,29 @@
+<style>
+  :root { --accent: #238653; --tint: #eaf5ee; }
+  .pull { border-left: 3px solid var(--accent); padding-left: 12px; }
+  .pull header { font: 10px ui-monospace, monospace; }
+  .forge { color: var(--accent); font-size: 14px; }
+  .pull h1 { font-size: 14px; }
+  .pull h1 span { color: var(--muted); font-weight: 400; }
+  .pull p { font-size: 11px; }
+  .pull .status { padding: 2px 7px; border: 1px solid var(--accent); border-radius: 10px; font: 10px system-ui, sans-serif; color: var(--accent); }
+  .branches { margin-top: 8px; color: var(--muted); }
+  .branches code { padding: 2px 5px; border-radius: 3px; background: var(--surface); color: var(--ink); font: 10px ui-monospace, monospace; }
+  .review-diff { margin-top: 10px; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+  .review-diff summary { display: flex; align-items: center; gap: 6px; padding: 5px 8px; background: var(--surface); font-size: 10px; }
+  .added { color: var(--accent); font: 10px ui-monospace, monospace; }
+  .removed { color: #bd5566; font: 10px ui-monospace, monospace; }
+  .review-diff pre { margin: 0; max-height: 68px; overflow: auto; padding: 6px 8px; color: var(--accent); background: var(--tint); font: 10px/1.5 ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .pull:has(.review-diff[open]) .overview { display: none; }
+  .pull footer { font-size: 10px; }
+  .checks { color: var(--accent); }
+  .pull .avatar { color: var(--ink); background: var(--surface); border-radius: 4px; }
+  @media (prefers-color-scheme: dark) { :root { --accent: #78ce99; --tint: #1c3228; } }
+</style>
+<article class="pull" lang="en">
+  <header><svg class="forge" width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="5" cy="4" r="2"/><circle cx="5" cy="16" r="2"/><circle cx="15" cy="4" r="2"/><path d="M5 6v8m10-8v2a4 4 0 0 1-4 4H5"/></svg><strong>forge / {{repository}}</strong><span class="status spacer">Open</span></header>
+  <h1>{{title}} <span>{{id}}</span></h1>
+  <div class="overview"><p>{{body}}</p><div class="row branches"><code>{{branch}}</code><span>→</span><code>{{base}}</code><span class="small spacer">{{status}}</span></div></div>
+  <details class="review-diff"><summary><span>{{files}} files changed</span><span class="added spacer">+{{additions}}</span><span class="removed">−{{deletions}}</span></summary><pre aria-label="Code diff">{{diff}}</pre></details>
+  <footer><span class="person"><span class="avatar" aria-hidden="true">{{initial}}</span>{{author}}</span><span class="checks">✓ {{checks}} checks passed</span><span class="small spacer">{{reviews}}</span></footer>
+</article>

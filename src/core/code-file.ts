@@ -26,7 +26,7 @@ export const codeFileName = (body: string, position: number, documentId: string)
     const directory =
         language === "termth"
             ? "terms"
-            : language === "grapth" || language === "schemath"
+            : language === "graphth" || language === "schemath"
               ? "figures"
               : "examples";
     return `${directory}/${documentId}-${body.slice(0, block.start).split("\n").length}.${extension}`;
@@ -56,12 +56,12 @@ export const codeFilePlan = (
         throw new Error(`Use the .${block.language} extension`);
     const url = termFileUrl(file);
     const previewer = resolvePreviewer(url, settings);
-    if (semantic && previewer && previewer !== "code")
+    if (semantic && previewer && previewer !== "code" && previewer !== "table")
         throw new Error("Register this extension with the Code previewer");
     const sourceOnly =
         !semantic &&
         ((previewer !== undefined && previewer !== "code") ||
-            /\.(callouth|schemath|grapth|termth)$/i.test(file));
+            /\.(callouth|schemath|graphth|termth)$/i.test(file));
     const lastLine = block.code.split("\n").length;
     const range = sourceOnly ? `#L1${lastLine > 1 ? `-L${lastLine}` : ""}` : "";
     const caption = semantic ? block.meta.replace(/[\\[\]]/g, "\\$&") : "";

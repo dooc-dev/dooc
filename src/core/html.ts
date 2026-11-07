@@ -14,6 +14,7 @@ import {
     graphUid,
     layoutGraph,
 } from "./graph.js";
+import { CHECK_ICON } from "./icons.js";
 import { type InlineSegment, inlineSegmenter, termMap } from "./inline.js";
 import { type LanguageAdapter, termComparator } from "./language.js";
 import { parseDocLink } from "./routing.js";
@@ -150,6 +151,29 @@ const tableHtml = (
     ctx: RenderCtx,
     seg: Segmenter,
 ): string => {
+    if (b.dataSource) {
+        const rows = [b.headers, ...b.rows];
+        const mode = b.tableMode ?? "data";
+        const header = mode === "header";
+        const body = rows.slice(header ? 1 : 0);
+        const headings = b.headers
+            .map(
+                (cell, index) =>
+                    `<th scope="col">${header ? escapeHtml(cell) : `<span data-i18n="Column">Column</span> ${index + 1}`}</th>`,
+            )
+            .join("");
+        const content = body
+            .map(
+                (row, index) =>
+                    `<tr><th scope="row">${index + (header ? 2 : 1)}</th>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`,
+            )
+            .join("");
+        return `<section class="data-table" data-table-source="${escapeHtml(b.dataSource)}" data-table-mode="${mode}">
+<div class="data-table-scroll" tabindex="0" role="region" aria-label="${escapeHtml(b.alt ?? b.caption ?? b.dataSource)}"><table><thead title="Click a column to sort; row numbers refer to the source" data-i18n-title="Click a column to sort; row numbers refer to the source"><tr><th scope="col">#</th>${headings}</tr></thead><tbody>${content}</tbody></table></div>
+<div class="data-table-resize" role="separator" tabindex="0" aria-orientation="horizontal" aria-label="Resize table" data-i18n-aria-label="Resize table"></div>
+<span hidden data-table-column-label data-i18n="Column">Column</span>
+<template data-table-rows>${escapeHtml(JSON.stringify(rows))}</template></section>`;
+    }
     const th = b.headers.map((h) => `<th>${segmentsHtml(h, ctx, seg)}</th>`).join("");
     const trs = b.rows
         .map((r) => `<tr>${r.map((c) => `<td>${segmentsHtml(c, ctx, seg)}</td>`).join("")}</tr>`)
@@ -218,7 +242,7 @@ const schemaBoxHtml = (t: SchemaLayoutTable): string => {
 // multiple graphs on the same page don't collide.
 const schemaGraphHtml = (b: Extract<Block, { type: "schemaGraph" }>): string => {
     if (b.graph.tables.length === 0) {
-        return `<div class="ph">schema graph<span> — no tables declared</span></div>`;
+        return `<div class="ph">${escapeHtml(b.alt || "schema graph")}<span> — no tables declared</span></div>`;
     }
     const layout = layoutSchemaGraph(b.graph);
     const cls = `sg-${schemaGraphUid(b.graph)}`;
@@ -293,7 +317,7 @@ const schemaGraphHtml = (b: Extract<Block, { type: "schemaGraph" }>): string => 
     const clientData = schemaGraphClientData(cls, b.graph, layout, b.source);
     const svg = [
         `<svg xmlns="http://www.w3.org/2000/svg" class="${cls}" viewBox="0 0 ${layout.width} ${layout.height}" role="img" data-sg-layout="${escapeHtml(JSON.stringify(clientData))}">`,
-        `<title>${escapeHtml(b.caption ?? "schema graph")}</title>`,
+        `<title>${escapeHtml(b.alt ?? b.caption ?? "schema graph")}</title>`,
         `<desc>${escapeHtml(desc)}</desc>`,
         `<defs><marker id="${arrow}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:context-stroke"></path></marker></defs>`,
         `<style>${rules.join("\n")}</style>`,
@@ -306,7 +330,7 @@ const schemaGraphHtml = (b: Extract<Block, { type: "schemaGraph" }>): string => 
         legend,
         "</svg>",
     ].join("");
-    return `<figure class="fig">${svg}${
+    return `<figure class="fig"${b.alt ? ` aria-label="${escapeHtml(b.alt)}"` : ""}>${svg}${
         b.caption ? `<figcaption class="cap">${escapeHtml(b.caption)}</figcaption>` : ""
     }</figure>`;
 };
@@ -321,14 +345,14 @@ const graphBoxHtml = (n: GraphLayoutNode): string =>
         "</g>",
     ].join("");
 
-// Relationship graph (`grapth`) → self-contained SVG. Geometry comes from graph.ts
+// Relationship graph (`graphth`) → self-contained SVG. Geometry comes from graph.ts
 // (deterministic layout); this is markup only. Colors reference `var(--doc-*, fallback)` like
 // figures / schema graph, and linked hover (highlighting related edges) is done entirely with CSS
 // :has() (no JS = same behavior on every consumer). Classes / marker ids are namespaced by the
 // model hash, so multiple graphs on the same page don't collide.
 const graphHtml = (b: Extract<Block, { type: "graph" }>): string => {
     if (b.graph.nodes.length === 0) {
-        return `<div class="ph">graph<span> — no nodes declared</span></div>`;
+        return `<div class="ph">${escapeHtml(b.alt || "graph")}<span> — no nodes declared</span></div>`;
     }
     const layout = layoutGraph(b.graph);
     const cls = `gr-${graphUid(b.graph)}`;
@@ -380,7 +404,7 @@ const graphHtml = (b: Extract<Block, { type: "graph" }>): string => {
         .join(", ")}`;
     const svg = [
         `<svg xmlns="http://www.w3.org/2000/svg" class="${cls}" viewBox="0 0 ${layout.width} ${layout.height}" role="img">`,
-        `<title>${escapeHtml(b.caption ?? "graph")}</title>`,
+        `<title>${escapeHtml(b.alt ?? b.caption ?? "graph")}</title>`,
         `<desc>${escapeHtml(desc)}</desc>`,
         `<defs><marker id="${arrow}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill:context-stroke"></path></marker></defs>`,
         `<style>${rules.join("\n")}</style>`,
@@ -390,7 +414,7 @@ const graphHtml = (b: Extract<Block, { type: "graph" }>): string => {
         legend,
         "</svg>",
     ].join("");
-    return `<figure class="fig">${svg}${
+    return `<figure class="fig"${b.alt ? ` aria-label="${escapeHtml(b.alt)}"` : ""}>${svg}${
         b.caption ? `<figcaption class="cap">${escapeHtml(b.caption)}</figcaption>` : ""
     }</figure>`;
 };
@@ -417,9 +441,24 @@ export const termsHtml = (
 
 const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
     switch (b.type) {
+        case "themeVariants":
+            return `<div data-theme-variants><div data-theme-variant="">${blockHtml(b.default, ctx, seg)}</div>${Object.entries(
+                b.variants,
+            )
+                .map(
+                    ([theme, block]) =>
+                        `<div data-theme-variant="${escapeHtml(theme)}" hidden>${blockHtml(block, ctx, seg)}</div>`,
+                )
+                .join("")}</div>`;
+        case "external": {
+            const url = new URL(b.url);
+            if (!/^https?:$/.test(url.protocol) || url.username || url.password)
+                return `<p>${escapeHtml(b.url)}</p>`;
+            return `<div class="external-embed" data-embed-url="${escapeHtml(b.url)}"><a href="${escapeHtml(b.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(b.alt || b.url)}</a></div>`;
+        }
         case "h":
             // id = slug (a single-doc page, so no namespace is needed).
-            return `<h${b.level} id="${escapeHtml(b.slug)}">${segmentsHtml(b.text, ctx, seg)}${ctx.sectionUrl === undefined ? "" : `<button class="section-copy" type="button" data-section-url="${escapeHtml(ctx.sectionUrl)}#${encodeURIComponent(b.slug)}" title="Copy section URL" aria-label="Copy section URL" data-i18n-title="Copy section URL" data-i18n-aria-label="Copy section URL"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m8 12 4-4m-5 2-2 2a3 3 0 0 0 4 4l2-2m-2-8 2-2a3 3 0 0 1 4 4l-2 2"/></svg></button>`}</h${b.level}>`;
+            return `<h${b.level} id="${escapeHtml(b.slug)}">${segmentsHtml(b.text, ctx, seg)}${ctx.sectionUrl === undefined ? "" : `<button class="section-copy" type="button" data-section-url="${escapeHtml(ctx.sectionUrl)}#${encodeURIComponent(b.slug)}" title="Copy section URL" aria-label="Copy section URL" data-i18n-title="Copy section URL" data-i18n-aria-label="Copy section URL"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m8 12 4-4m-5 2-2 2a3 3 0 0 0 4 4l2-2m-2-8 2-2a3 3 0 0 1 4 4l-2 2"/></svg>${CHECK_ICON}</button>`}</h${b.level}>`;
         case "p":
             return `<p>${segmentsHtml(b.text, ctx, seg)}</p>`;
         case "quote":
@@ -427,6 +466,8 @@ const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
         case "list":
             return listHtml(b.items, ctx, seg, b.ordered === true);
         case "code": {
+            if (b.lang === "mermaid" && !b.unavailable)
+                return `<pre data-mermaid="pending" aria-label="${escapeHtml(b.alt || "Mermaid diagram")}" style="overflow:auto;background:var(--doc-bg);color:var(--doc-fg);padding:1rem">${escapeHtml(b.lines.join("\n"))}</pre>`;
             const filename = b.filename ? textfileName(b.filename) : "";
             const lang = b.filename ? /^.+(\.[^.]+)$/.exec(filename)?.[1] : (b.lang ?? "text");
             const langLabel = lang ? `<span class="codeblk-lang">${escapeHtml(lang)}</span>` : "";
@@ -439,15 +480,15 @@ const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
             if (b.filename && b.unavailable) {
                 const message =
                     b.unavailable === "missing" ? "File not found" : "File could not be loaded";
-                return `<div class="codeblk textfile unavailable"${title}><span class="codeblk-head">${langLabel}${filenameLabel}</span><p class="textfile-unavailable" role="status" data-i18n="${message}">${message}</p></div>`;
+                return `<div class="codeblk textfile unavailable"${title}><span class="codeblk-head">${langLabel}${filenameLabel}</span><p class="textfile-unavailable" role="status">${b.alt ? `${escapeHtml(b.alt)} — ` : ""}<span data-i18n="${message}">${message}</span></p></div>`;
             }
             // Copy/fold behavior and border-label styling are shared by the page shell.
-            return `<div class="codeblk${b.filename ? " textfile" : ""}" data-lang="${escapeHtml(b.lang ?? "text")}"${title}><span class="codeblk-head">${langLabel}${filenameLabel}<button class="codecopy" type="button" title="copy" aria-label="copy code"><svg class="ic-copy" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg><svg class="ic-ok" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></button><button class="codefold" type="button" aria-expanded="true" aria-label="Collapse code" title="Collapse code" data-i18n-aria-label="Collapse code" data-i18n-title="Collapse code"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 7.5 5 5 5-5"/></svg></button></span><pre><code>${escapeHtml(b.lines.join("\n"))}</code></pre></div>`;
+            return `<div class="codeblk${b.filename ? " textfile" : ""}" data-lang="${escapeHtml(b.lang ?? "text")}"${title}><span class="codeblk-head">${langLabel}${filenameLabel}<button class="codecopy" type="button" title="copy" aria-label="copy code"><svg class="ic-copy" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>${CHECK_ICON}</button><button class="codefold" type="button" aria-expanded="true" aria-label="Collapse code" title="Collapse code" data-i18n-aria-label="Collapse code" data-i18n-title="Collapse code"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 7.5 5 5 5-5"/></svg></button></span><pre><code>${escapeHtml(b.lines.join("\n"))}</code></pre></div>`;
         }
         case "table":
             return tableHtml(b, ctx, seg);
         case "callout": {
-            const title = b.title ? `<div class="cap">${escapeHtml(b.title)}</div>` : "";
+            const title = b.title ? `<div class="callout-title">${escapeHtml(b.title)}</div>` : "";
             const body = b.body
                 .map((it) =>
                     it.type === "p"
@@ -455,14 +496,16 @@ const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
                         : listHtml(it.items, ctx, seg, it.ordered === true),
                 )
                 .join("");
-            return `<aside class="callout">${title}${body}</aside>`;
+            return `<aside class="callout"${b.alt ? ` aria-label="${escapeHtml(b.alt)}"` : ""}>${title}<div class="callout-body">${body}</div></aside>`;
         }
         case "figureRef": {
             const fig = ctx.figures.get(b.name);
             if (fig) {
+                if (b.alt !== undefined)
+                    return `<figure class="fig">${figureFrameHtml(fig, "fig-frame", b.alt)}</figure>`;
                 return figureHtml(fig, true, b.caption);
             }
-            return `<div class="ph">${escapeHtml(`Fig. ${b.name}`)}<span> — not found in figures/</span></div>`;
+            return `<div class="ph">${escapeHtml(b.alt || `Fig. ${b.name}`)}<span> — not found in figures/</span></div>`;
         }
         case "term":
             return termsHtml([b.entry], ctx.language);
@@ -501,9 +544,7 @@ export const blocksHtml = (blocks: Block[], ctx: RenderCtx = emptyCtx): string =
         .join("\n");
 };
 
-// In-page table of contents at the top of the body text. Separate from the nav one (.nav-toc), it
-// gives an overview of the heading structure as soon as the page is opened (docs without
-// headings = render nothing).
+// The viewer moves this navigation into the fixed document header.
 const inPageTocHtml = (toc: TocEntry[], title = "Contents"): string => {
     if (toc.length === 0) {
         return "";
@@ -511,10 +552,10 @@ const inPageTocHtml = (toc: TocEntry[], title = "Contents"): string => {
     const items = toc
         .map(
             (t) =>
-                `<li class="lvl${t.depth}"><a href="#${escapeHtml(t.slug)}">${escapeHtml(t.text)}</a></li>`,
+                `<li class="lvl${t.depth}"><a href="#${escapeHtml(t.slug)}" data-toc-target="${escapeHtml(t.slug)}" title="${escapeHtml(t.text)}">${escapeHtml(t.text)}</a></li>`,
         )
         .join("");
-    return `<nav class="in-toc" aria-label="${escapeHtml(title)}"><div class="in-toc-title">${escapeHtml(title)}</div><ul>${items}</ul></nav>`;
+    return `<nav class="in-toc" aria-label="${escapeHtml(title)}"><button class="toc-current" type="button" aria-expanded="false">${escapeHtml(toc[0]?.text ?? "")}</button><ul class="toc-options" popover>${items}</ul><input class="toc-seek" type="range" min="0" max="1000" step="1" value="0" aria-label="${escapeHtml(title)}" disabled></nav>`;
 };
 
 export const docHtml = (

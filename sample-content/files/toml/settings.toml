@@ -1,0 +1,7 @@
+[workspace]
+name = "Field notes"
+language = "eng"
+
+[preview]
+theme = "auto"
+split = true

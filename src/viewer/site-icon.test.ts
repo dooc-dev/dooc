@@ -11,8 +11,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { parse } from "yaml";
+import { bundleEntries } from "../compiler/bundle.js";
 import { compileSite } from "../compiler/compile.js";
-import { exportEntries } from "../compiler/export.js";
 import { siteIconResponse } from "./site-icon.js";
 
 const roots: string[] = [];
@@ -29,10 +29,8 @@ afterEach(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-it("saves a square site SVG while preserving title, docs, comments and preview settings", () => {
-    const root = fixture(
-        "# Keep this\ntitle: Guide\ndefaultLang: jpn\ndocs: [one]\npreviews:\n  domains: [example.com]\n",
-    );
+it("saves a square site SVG while preserving title, docs, comments and language", () => {
+    const root = fixture("# Keep this\ntitle: Guide\ndefaultLang: jpn\ndocs: [one]\n");
     expect(siteIconResponse(root, { data }).status).toBe(200);
     const raw = readFileSync(join(root, "dooc.yaml"), "utf8");
     expect(raw).toContain("# Keep this");
@@ -40,14 +38,13 @@ it("saves a square site SVG while preserving title, docs, comments and preview s
         title: "Guide",
         defaultLang: "jpn",
         docs: ["one"],
-        previews: { domains: ["example.com"] },
         icon: "files/svg/_site.svg",
     });
     const compiled = compileSite(root);
     expect(compiled.errors).toEqual([]);
     expect(compiled.icon).toContain('viewBox="0 -5 20 20"');
     expect(
-        exportEntries(root).filter((entry) => entry.name === "files/svg/_site.svg"),
+        bundleEntries(root).filter((entry) => entry.name === "files/svg/_site.svg"),
     ).toHaveLength(1);
     const next = Buffer.from('<svg viewBox="0 0 8 8"><circle r="3"/></svg>').toString("base64");
     expect(siteIconResponse(root, { data: next }).status).toBe(200);

@@ -1,9 +1,9 @@
 import { filesSnapshot, updateFiles, uploadFile } from "../compiler/files.js";
+import { loadProjectFonts, type ProjectFont } from "../compiler/fonts.js";
 import { textfilePath, writeTextfile } from "../compiler/textfile.js";
 import {
     defaultFilePath,
     docIconFile,
-    localFile,
     MAX_FILE_UPLOAD_BYTES,
     parseFileLayout,
     docFile as sourceDocFile,
@@ -29,6 +29,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { LanguageRegistration } from "shiki/core";
+import { parseContentSource } from "../compiler/code-blocks.js";
 import {
     type Compiled,
     compileDraft,
@@ -46,9 +47,9 @@ import {
 } from "../compiler/language-codes.js";
 import {
     setDocTranslation,
+    siteContentLanguages,
     translationFile,
     translationFiles,
-    translationLanguages,
 } from "../compiler/locales.js";
 import { readManifest, writeManifest } from "../compiler/manifest.js";
 import { assembleDoc, createDocOps, isOpError, type OpResult } from "../compiler/ops.js";
@@ -56,20 +57,30 @@ import { type Block, type TocEntry, walkBlocks } from "../core/blocks.js";
 import { docIdOfFile } from "../core/content-metadata.js";
 import type { CompiledDoc, FigureEntry, TermEntry } from "../core/content-types.js";
 import { figureFrameHtml, mountFigureFrames } from "../core/figure-frame.js";
-import { docHtml, escapeHtml, type RenderCtx, termsHtml } from "../core/html.js";
+import { blocksHtml, docHtml, escapeHtml, type RenderCtx, termsHtml } from "../core/html.js";
 import {
     DEFAULT_LANG,
     isLangTag,
     type LanguageAdapter,
     resolveLanguage,
 } from "../core/language.js";
-import type { PreviewSettings } from "../core/previewers.js";
+import {
+    defaultPreviewSettings,
+    type PreviewSettings,
+    parsePreviewSettings,
+} from "../core/previewers.js";
 import { ancestorsOf, childrenOf, docPath, resolveDocPath } from "../core/routing.js";
+import { mountTables } from "../core/table-ui.js";
 import { CODE_LANGS, docDisplayName, type Frontmatter } from "../core/taxonomy.js";
 import { isTermFile, termAnchor, termFileUrl } from "../core/term-reference.js";
 import { mountTerms } from "../core/terms-ui.js";
 import { isRemoteTextfile, textfileName } from "../core/textfile.js";
+import { mountThemeVariants } from "../core/theme-variants.js";
+import { mountToc } from "../core/toc-ui.js";
+import { mountVideos } from "../core/video-ui.js";
+import { parseWorkspaceSource, type WorkspaceSource, workspaceLabel } from "../core/workspace.js";
 import { readViewerAsset, prebuilt as usePrebuiltAssets } from "./assets.js";
+import { mountBundleNetwork } from "./bundle-network.js";
 import { codeFileResponse } from "./code-file.js";
 import {
     isLocalToolRequest,
@@ -78,16 +89,24 @@ import {
     validateTextfileCode,
 } from "./editor-tools.js";
 import { type FilePreviewResults, fileReferences } from "./file-references.js";
+import { mountFontPickers } from "./font-picker.js";
+import { createFontSettings } from "./font-settings.js";
 import { fontCss, readFont } from "./fonts.js";
+import { createGitHandler, validateGitOrigin } from "./git.js";
+import { gitBaseBody, gitBaseText } from "./git-diff.js";
 import { createHmrHub, HMR_PATH, hmrClientScript, watchProject } from "./hmr.js";
 import { translate } from "./i18n.js";
 import { DEFAULT_SITE_LANGUAGES, loadSiteLanguages } from "./languages.js";
 import { focusNavTree } from "./nav-focus.js";
-import { previewSettingsResponse } from "./preview-settings.js";
-import { mountFilesResize, mountPanelResize } from "./resize.js";
+import { loadViewerPlugins, type ViewerRuntime } from "./plugin-config.js";
+import { createPluginHandler } from "./plugins.js";
+import { mountPanelResize, mountToolsResize } from "./resize.js";
+import { resourceIndex, resourceLibraryHtml, resourceTabs } from "./resource-library.js";
 import { mountSearch, SEARCH_LABELS, searchIndex, searchSections } from "./search.js";
 import { siteIconResponse } from "./site-icon.js";
 import { previewTextfiles, textfileResponse } from "./textfile.js";
+import { mountThemePickers } from "./theme-picker.js";
+import { readWorkspaceSource } from "./workspace.js";
 
 export type ServeMode = "preview" | "edit";
 
@@ -138,6 +157,8 @@ export interface Entry {
 }
 
 export interface Site {
+    fonts?: readonly ProjectFont[];
+    workspace?: WorkspaceSource;
     filePaths?: readonly string[];
     previews?: PreviewSettings;
     title?: string;
@@ -154,6 +175,9 @@ export interface Site {
     languages: readonly LanguageAdapter[];
     /** Site default language. */
     defaultLang: string;
+    /** Declared site languages, when the manifest restricts the language picker. */
+    contentLanguages?: readonly string[];
+    themes?: readonly ("light" | "dark")[];
 }
 
 const CONTENT_PREFIX = "content/";
@@ -187,11 +211,25 @@ const ops = createDocOps(root);
 
 /** Compile result → viewer Site (shared by the server's per-request path and one-off publish). */
 export const siteFrom = (
-    { title, icon, docs, terms, figures, sources, siteErrors, defaultLang, previews }: Compiled,
+    {
+        title,
+        icon,
+        docs,
+        terms,
+        figures,
+        sources,
+        siteErrors,
+        defaultLang,
+        previews,
+        contentLanguages,
+        themes,
+    }: Compiled,
     languages: readonly LanguageAdapter[] = DEFAULT_SITE_LANGUAGES.languages,
 ): Site => {
     return {
         previews,
+        ...(contentLanguages ? { contentLanguages } : {}),
+        ...(themes ? { themes } : {}),
         ...(title === undefined ? {} : { title }),
         ...(icon === undefined ? {} : { icon }),
         entries: docs.flatMap((doc) => {
@@ -231,6 +269,8 @@ export const siteFrom = (
 };
 
 const localeCompilers = new Map<string, ReturnType<typeof createCompiler>>();
+let workspaceSource: WorkspaceSource | undefined;
+let applicationPreviews = defaultPreviewSettings();
 let watchTextfiles: ((files: Iterable<string>) => void) | undefined;
 const watchEntryTextfiles = (entries: readonly Entry[]): void => {
     watchTextfiles?.(
@@ -241,12 +281,13 @@ const watchEntryTextfiles = (entries: readonly Entry[]): void => {
     );
 };
 const loadSite = (locale?: string): Site => {
+    const previews = applicationPreviews;
     const manifest = readManifest(root);
     const source = contentLanguageCode(manifest.defaultLang ?? DEFAULT_LANG);
     locale ??= source;
     let selected = compiler;
     if (locale !== source) {
-        selected = localeCompilers.get(locale) ?? createCompiler(root, { locale });
+        selected = localeCompilers.get(locale) ?? createCompiler(root, { locale, previews });
         localeCompilers.set(locale, selected);
     }
     const site = siteFrom(selected.compile(), siteLanguages.languages);
@@ -257,7 +298,9 @@ const loadSite = (locale?: string): Site => {
     }
     try {
         const translated = new Set(translationFiles(root));
-        for (const language of translationLanguages(root)) {
+        for (const language of siteContentLanguages(root, manifest).filter(
+            (language) => language !== sourceLanguage,
+        )) {
             for (const entry of site.entries) {
                 if (
                     translated.has(
@@ -275,6 +318,8 @@ const loadSite = (locale?: string): Site => {
     if (siteIconFile) watchTextfiles?.([siteIconFile]);
     return {
         ...site,
+        fonts: loadProjectFonts(root),
+        workspace: workspaceSource ?? readWorkspaceSource(root),
         filePaths: manifest.errors.length
             ? undefined
             : filesSnapshot(root).files.map((file) => file.path),
@@ -291,6 +336,7 @@ const draftContext = (site: Site): DraftContext => ({
         id: e.id,
         ...(e.parent == null ? {} : { parent: e.parent }),
         file: e.sourceFile ?? CONTENT_PREFIX + e.file,
+        toc: e.toc,
     })),
     figures: site.ctx.figures,
     defaultLang: site.defaultLang,
@@ -379,12 +425,18 @@ export const filePreviewResults = (entry: Entry, site: Site): FilePreviewResults
 };
 
 // Render the raw being edited (unsaved draft) to body html — shared by the save / render APIs.
+const entryGitBase = (entry: Entry, site: Site): string | null =>
+    site.workspace?.protocol === "git"
+        ? gitBaseBody(root, entry.sourceFile ?? CONTENT_PREFIX + entry.file)
+        : null;
+
 const renderDraft = (
     site: Site,
     file: string,
     raw: string,
     textfiles?: ReadonlyMap<string, string>,
 ): {
+    gitBase: string | null;
     html: string;
     errors: string[];
     toc: TocEntry[];
@@ -395,6 +447,7 @@ const renderDraft = (
 } => {
     const entry = draftEntry(site, file, raw, textfiles);
     return {
+        gitBase: entryGitBase(entry, site),
         sourceFile: entry.sourceFile,
         html: renderEntry(site, entry, ""),
         errors: [...site.errors, ...entry.errors],
@@ -457,6 +510,7 @@ export const renderDocFile = (
     file: string,
     raw: string,
 ): {
+    gitBase: string | null;
     raw: string;
     frontmatter: Frontmatter | undefined;
     body: string;
@@ -470,6 +524,7 @@ export const renderDocFile = (
 } => {
     const entry = draftEntry(site, file, raw);
     return {
+        gitBase: entryGitBase(entry, site),
         sourceFile: entry.sourceFile,
         raw,
         frontmatter: entry.frontmatter,
@@ -570,8 +625,7 @@ const DOC_FROM_C = `
   --doc-accent:var(--c-accent); --doc-ok:var(--c-ok); --doc-warn:var(--c-warn);
   --doc-danger:var(--c-danger); --doc-info:var(--c-info);`;
 
-// Monospace font stack for code blocks etc. (same value as the editor's MONO_FONT in
-// edit-client.ts).
+// Default for code and editing; browser display settings can override each independently.
 const MONO_FONT = `"UDEV Gothic", monospace`;
 const SANS_FONT = `"IBM Plex Sans JP", -apple-system, "Segoe UI", "Noto Sans JP", sans-serif`;
 
@@ -589,6 +643,22 @@ const GLOBE_ICON = icon(
 const BOX_ICON = icon(
     '<path d="M3.5 6.5 10 3l6.5 3.5v7L10 17l-6.5-3.5v-7Z"/><path d="M3.5 6.5 10 10l6.5-3.5M10 10v7"/>',
 );
+const GIT_ICON = icon(
+    '<path d="M5.5 6.5v7M14.5 6.5v1a4 4 0 0 1-4 4h-5"/><circle cx="5.5" cy="4.5" r="2"/><circle cx="5.5" cy="15.5" r="2"/><circle cx="14.5" cy="4.5" r="2"/>',
+);
+const STORAGE_ICON = icon(
+    '<path d="m3 12 2-8h10l2 8"/><rect x="3" y="12" width="14" height="5" rx="1"/><path d="M13 14.5h1"/>',
+);
+const workspaceName = (site: Site): string =>
+    site.workspace?.protocol === "storage" ? workspaceLabel(site.workspace) : "Files";
+const workspaceText = (site: Site): string =>
+    `<span${site.workspace?.protocol === "storage" ? "" : ' data-i18n="Files"'}>${escapeHtml(workspaceName(site))}</span>`;
+const workspaceIcon = (site: Site): string => {
+    if (site.workspace?.protocol === "git") return icon('<path d="M2 5h6l2 2h8v10H2Z"/>');
+    return site.workspace?.icon
+        ? svgImg(site.workspace.icon, "nav-icon workspace-icon")
+        : STORAGE_ICON;
+};
 const UPLOAD_ICON = icon(
     '<path d="M11.5 3H6a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V6.5L11.5 3Z"/><path d="M11.5 3v3.5H15M10 14V9M7.8 11.2 10 9l2.2 2.2"/>',
     24,
@@ -625,10 +695,45 @@ const THEME_ICONS = {
     dark: icon('<path d="M15.5 12.4A6.2 6.2 0 0 1 7.6 4.5a6.5 6.5 0 1 0 7.9 7.9Z"/>'),
 };
 
+const fontButton = (target: "editor" | "viewer"): string => {
+    const label = target === "editor" ? "Editor font" : "Viewer font";
+    return `<button class="pbtn font-control" type="button" data-font-picker="${target}" aria-haspopup="menu" aria-expanded="false" aria-label="${label}" title="${label}" disabled>${icon('<path d="M2.5 15 7 4l4.5 11M4 11h6M13 10.5c0-2.5 5-2.5 5 0V15M18 12h-2.5c-3.5 0-3.5 4 0 3L18 13.5"/>')}</button>`;
+};
+
 const CSS = `
 :root { ${DARK_C} ${DOC_FROM_C} --doc-mono: ${MONO_FONT}; --font-sans: ${SANS_FONT}; }
 @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { ${LIGHT_C} } }
 :root[data-theme="light"] { ${LIGHT_C} }
+body.edit :is(#sidebar, #panel, .resources-pane), .preview-pane[data-theme], .theme-picker[data-theme] { ${DARK_C} ${DOC_FROM_C} }
+@media (prefers-color-scheme: light) {
+  :root:not([data-editor-theme="dark"]) body.edit :is(#sidebar, #panel, .resources-pane),
+  :is(.preview-pane, .theme-picker)[data-theme="auto"] { ${LIGHT_C} }
+}
+:root[data-editor-theme="light"] body.edit :is(#sidebar, #panel, .resources-pane),
+:is(.preview-pane, .theme-picker)[data-theme="light"] { ${LIGHT_C} }
+.preview-pane { background: var(--c-bg0); color: var(--c-fg); }
+.theme-picker { position: fixed; margin: 0; padding: 5px; width: 148px; border: 1px solid var(--c-line);
+  border-radius: 6px; background: var(--c-bg1); color: var(--c-fg); box-shadow: 0 8px 24px var(--c-shadow); }
+.theme-picker button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 8px;
+  border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.theme-picker button:hover, .theme-picker button:focus-visible { background: var(--c-raised); }
+.theme-picker [aria-checked="true"]::after { content: "✓"; margin-left: auto; color: var(--c-accent); }
+.font-control:focus:not(:focus-visible), .font-picker button:focus:not(:focus-visible) { outline: none; }
+.font-control:focus-visible, .font-picker button:focus-visible { outline: 1px solid var(--c-accent); outline-offset: 1px; }
+.font-control:disabled { opacity: .5; cursor: wait; }
+.font-picker { width: min(240px, calc(100vw - 16px)); overflow-y: auto; }
+.font-picker button { overflow-wrap: anywhere; }
+.font-picker [aria-checked="true"]::after { flex: none; }
+.font-status { padding: 8px; font-size: 11px; color: var(--c-danger); }
+main { --doc-mono: var(--viewer-font, ${MONO_FONT}); }
+.resources-pane { --doc-mono: var(--editor-font, ${MONO_FONT}); background: var(--c-bg1); color: var(--c-fg); font-family: var(--doc-mono); }
+.page-actions, .pane-actions { position: sticky; display: flex; align-items: center; justify-content: flex-end;
+  gap: 2px; height: 36px; padding: 0 24px; border-bottom: 1px solid var(--c-line); background: var(--c-bg0); z-index: 5; }
+.page-actions { top: 0; margin: -20px -24px 20px; }
+.pbtn { flex: none; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+  padding: 0; color: var(--c-fg-faint); background: none; border: none; border-radius: 5px; cursor: pointer;
+  transition: color 120ms ease, background 120ms ease; }
+.pbtn:hover, .pbtn:focus-visible, #gear.open > .pbtn { color: var(--c-fg); background: var(--c-raised); }
 * { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--c-fg-muted) 42%, transparent) transparent; }
 ::-webkit-scrollbar { width: 7px; height: 7px; }
 ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
@@ -701,11 +806,10 @@ body.sidebar-closed #sidebar-resize { display: none; }
 .panel-resize:hover, .panel-resize:focus-visible, .panel-resize.drag {
   background: color-mix(in srgb, var(--c-accent) 60%, transparent); }
 body.resizing, body.resizing * { cursor: col-resize !important; user-select: none !important; }
-body.sidebar-closed #sidebar-content, body.sidebar-closed .site-title,
-body.sidebar-closed #sidebar-foot .nav-label { display: none; }
-#sidebar-head { position: relative; flex: none; display: flex; align-items: center; min-width: 0; min-height: 47px;
+body.sidebar-closed .site-title { display: none; }
+#sidebar-head { position: relative; flex: none; display: flex; align-items: center; min-width: 0; min-height: 36px;
   border-bottom: 1px solid var(--c-line); }
-#sidebar-toggle { flex: none; display: flex; align-items: center; padding: 14px 16px;
+#sidebar-toggle { flex: none; display: flex; align-items: center; padding: 8px 16px;
   background: transparent; border: none; color: var(--c-fg-muted); cursor: pointer; }
 #sidebar-toggle:hover { color: var(--c-fg); }
 #site-icon-slot { position: relative; flex: none; width: 24px; height: 24px; margin: 0 8px 0 16px; color: var(--c-fg-muted); }
@@ -729,6 +833,7 @@ body.sidebar-closed #sidebar-toggle svg { visibility: hidden; }
 .nav-link.cur { color: var(--c-fg); }
 .nav-link.cur::before { background: var(--c-accent); }
 .nav-icon { flex: none; }
+.workspace-icon { width: 18px; height: 18px; object-fit: contain; }
 .nav-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* The doc tree. Top-level docs are .nav-link with an icon,
    descendants are .nav-tree. --nav-depth is set on the children list (top level's children = 2),
@@ -805,31 +910,52 @@ img.doc-icon { flex: none; width: 18px; height: 18px; object-fit: contain; }
 .nav-row > a.cur .doc-icon-frame::after, .nav-doc-row:has(> a.cur) > .nav-doc-icon .doc-icon-frame::after {
   content: ""; position: absolute; inset: 0; background: currentColor; mask: var(--doc-icon) center / contain no-repeat; }
 .nav-count { margin-left: auto; padding-left: 8px; color: var(--c-fg-faint); font-size: 11px; }
-/* Files (edit only). Dashed border to set it apart from the doc tree */
-.nav-resources { position: relative; container-type: size; height: var(--files-height, min(320px, 40dvh)); margin: 12px 0 4px; padding-bottom: 8px;
-  border: 1px dashed var(--c-line); border-radius: 6px; overflow: hidden; }
-#files-resize { top: auto; bottom: 0; left: 0; right: 0; width: auto; height: 8px; cursor: row-resize; }
-#files-resize::after { content: ""; position: absolute; top: 3px; left: 50%; transform: translateX(-50%);
-  width: 32px; border-top: 1px solid var(--c-fg-faint); }
-body.resizing-files, body.resizing-files * { cursor: row-resize !important; user-select: none !important; }
-body.resizing-files #files-resize { background: color-mix(in srgb, var(--c-accent) 60%, transparent); }
-.nav-resources > .nav-item { height: 100%; display: flex; flex-direction: column; }
-.nav-resources > .nav-item > .nav-row { flex: none; }
-.nav-resources > .nav-item > .nav-list { flex: 1; min-height: 0; overflow-y: auto;
-  overflow-x: hidden; scrollbar-gutter: stable; }
-.nav-resources .nav-row > .nav-link { padding: 8px 12px; gap: 6px; }
+body.sidebar-closed #sidebar-content { display: block; overflow-y: auto; scrollbar-width: none; padding: 6px 0; }
+body.sidebar-closed #nav-groups { display: block; }
+body.sidebar-closed #nav-docs { scrollbar-width: none; }
+body.sidebar-closed #nav-groups :is(.nav-label, .nav-count, .nav-toc, .nav-tree-toggle, .nav-tree-spacer, .nav-placeholder, .new, .nav-delete, .files-upload, .files-drop-hint, input, .nav-icon-clear),
+body.sidebar-closed #nav-status { display: none; }
+body.sidebar-closed #nav-groups .nav-tree { display: block; padding: 0; margin: 0; }
+body.sidebar-closed #nav-groups .nav-row { position: relative; padding: 0; gap: 0; min-height: 36px; }
+body.sidebar-closed #nav-groups .nav-row > a { width: 100%; height: 36px; padding: 0; justify-content: center; }
+body.sidebar-closed #nav-groups .nav-doc-icon { position: absolute; left: 16px; z-index: 1; pointer-events: none; }
+body.sidebar-closed #nav-groups .nav-row > a .nav-icon, body.sidebar-closed #nav-groups .nav-row > a .doc-icon-frame { margin: 0; width: 18px; height: 18px; }
+body.sidebar-closed #nav-groups :is(.nav-item, .nav-tree, .nav-row, a)::before,
+body.sidebar-closed #nav-groups :is(.nav-item, .nav-tree, .nav-row, a)::after { display: none; }
+body.sidebar-closed :is(#nav-files, #nav-git) { border: 0; border-top: 1px solid var(--c-line); border-radius: 0; margin: 6px 0 0; padding: 6px 0 0; overflow: visible; }
+body.edit #sidebar-content { display: flex; flex-direction: column; overflow: hidden; scrollbar-gutter: auto; }
+body.edit #nav-groups { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#nav-docs { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
+#nav-tools { position: relative; flex: none; display: flex; flex-direction: column; min-height: 0; height: var(--tools-height, 220px); margin: 10px 8px 4px; padding: 12px 4px 4px; border: 1px solid var(--c-line); border-radius: 8px; background: var(--c-bg1); }
+#tools-resize { position: absolute; top: -4px; left: 0; right: 0; height: 8px; z-index: 2; cursor: row-resize; touch-action: none; border-radius: 6px; }
+#tools-resize:hover, #tools-resize:focus-visible, body.resizing-tools #tools-resize { background: color-mix(in srgb, var(--c-fg-muted) 20%, transparent); }
+body.resizing-tools, body.resizing-tools * { cursor: row-resize !important; user-select: none !important; }
+.nav-tool-cards { flex: 1; min-height: 0; overflow: auto; }
+#nav-tools .nav-resources { height: 36px; margin: 0; border: 0; border-radius: 4px; }
+.workspace-location { position: absolute; top: -1px; left: 10px; z-index: 3; transform: translateY(-50%); display: flex; align-items: center; gap: 4px; max-width: calc(100% - 32px); color: var(--c-fg-muted); font: 400 10px/16px var(--font-sans); cursor: default; }
+.workspace-location > .nav-icon { flex: none; width: 14px; height: 14px; padding: 1px; background: var(--c-bg1); }
+.workspace-address { min-width: 0; padding: 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--c-bg1); }
+body.sidebar-closed #nav-tools { height: auto; margin: 4px 0; padding: 0; border: 0; }
+body.sidebar-closed :is(#tools-resize, .workspace-location) { display: none; }
+.nav-resources { position: relative; container-type: size; flex: none; height: 42px; margin: 8px 8px 4px;
+  border: 1px solid var(--c-line); border-radius: 8px; overflow: hidden;
+  background: var(--c-bg1); font-family: var(--font-sans); }
+.nav-resources > .nav-item, .nav-resources .nav-row { height: 100%; }
+.nav-resources .nav-row > .nav-link { height: 100%; padding: 8px 10px; gap: 8px; }
 .nav-resources .nav-row { cursor: default; }
+.nav-resources .nav-link::before { display: none; }
+.nav-resources .files-upload { margin-right: 6px; }
 .files-upload { flex: none; display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
   border: 0; border-radius: 4px; background: transparent; color: var(--c-fg-muted); cursor: pointer; }
 .files-upload:hover, .files-upload:focus-visible { color: var(--c-fg); background: var(--c-raised); }
-.files-upload > svg { width: 16px; height: 16px; }
+.files-upload svg { display: block; width: 16px; height: 16px; }
 .files-upload > span { display: none; font: 10px var(--doc-mono); }
 .files-upload[data-state] > svg { display: none; }
 .files-upload[data-state] > span { display: block; }
 .files-upload[data-state="error"] { color: var(--c-danger); }
 .files-upload[data-state="done"] { color: var(--doc-ok); }
-.files-drop-hint { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center;
-  justify-content: center; gap: 10px; padding: 12px; pointer-events: none; text-align: center; }
+.files-drop-hint { position: absolute; inset: 0; display: none; align-items: center;
+  justify-content: center; gap: 6px; padding: 6px; pointer-events: none; text-align: center; }
 .files-drop-hint > svg { width: 28px; height: 28px; }
 .files-drop-hint ul { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 8px;
   margin: 0; padding: 0; list-style: none; font: 11px var(--doc-mono); color: var(--c-fg-muted); }
@@ -838,17 +964,58 @@ body.files-dragging #nav-files { border-color: var(--c-accent); }
 body.files-dragging #nav-files > .nav-item { opacity: .15; }
 body.files-dragging .files-drop-hint { display: flex; }
 body.files-over #nav-files { background: color-mix(in srgb, var(--c-accent) 10%, var(--c-bg1)); }
-.nav-file-folder { border: 0; background: transparent; font-family: inherit; text-align: left; cursor: pointer; }
-.nav-resources .nav-tree { --nav-pad: calc(42px + (var(--nav-depth, 2) - 2) * 22px); }
 #nav-status { min-height: 16px; margin: 6px 16px 0; color: var(--c-fg-faint); font-size: 11px;
   line-height: 1.35; }
 #nav-status.err { color: var(--c-danger); }
-#sidebar-foot { flex: none; margin-top: auto; border-top: 1px solid var(--c-line); padding: 8px 0; }
-#theme { width: 100%; }
 
 /* ── main (document body) ── */
 main { flex: 1; min-width: 0; padding: 20px 24px 50vh; }
-article { max-width: 860px; margin: 0 auto; font-family: system-ui, sans-serif; }
+article { max-width: 860px; margin: 0 auto; font-family: var(--viewer-font, system-ui, sans-serif); }
+.external-embed { margin: 18px 0; overflow-wrap: anywhere; }
+.plugin { position: relative; min-width: 0; border: 2px solid var(--doc-border); border-top: 0; }
+.plugin-toolbar { position: absolute; top: 0; left: -2px; right: -2px; transform: translateY(-50%);
+  display: flex; align-items: center; gap: 4px; }
+.plugin-toolbar::before, .plugin-toolbar::after { content: ""; border-top: 2px solid var(--doc-border); }
+.plugin-toolbar::before { flex: 1; min-width: 12px; }
+.plugin-toolbar::after { flex: 0 0 8px; }
+.plugin-action[data-state="copied"] { color: var(--doc-ok); }
+.plugin-action .ic-ok, .plugin-action[data-state="copied"] svg:not(.ic-ok) { display: none; }
+.plugin-action[data-state="copied"] .ic-ok { display: block; }
+.plugin.collapsed [data-plugin-action="fold"] svg { transform: rotate(-90deg); }
+.plugin.collapsed [data-plugin-result], .plugin.collapsed [data-plugin-controls],
+.plugin.collapsed [data-plugin-status], .plugin[data-ready="true"]:not(.collapsed) .plugin-info,
+.plugin[data-ready="true"]:not(.collapsed) .plugin-header:has([data-plugin-controls][hidden]) { display: none; }
+.plugin:not(.collapsed) [data-plugin-collapsed],
+.plugin.collapsed:has([data-plugin-collapsed]:not(:empty)) .plugin-header { display: none; }
+.plugin-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  gap: 8px; padding: 12px; }
+.plugin-info { flex: 1 1 240px; min-width: 0; }
+.plugin-info h2 { margin: 0; padding: 0; border: 0; font-size: 12px; overflow-wrap: anywhere; }
+[data-plugin-status] { margin: 6px 0 0; color: var(--doc-fg-3); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+[data-plugin-status] a { color: var(--doc-accent); text-underline-offset: 3px; }
+[data-plugin-controls] { display: flex; flex-wrap: wrap; gap: 6px; }
+[data-plugin-controls][hidden], [data-plugin-status]:empty { display: none; }
+[data-plugin-controls] button { min-height: 26px; padding: 3px 8px; border: 1px solid var(--doc-border);
+  border-radius: 4px; background: var(--doc-bg); color: var(--doc-fg); font: inherit; font-size: 11px; cursor: pointer; }
+[data-plugin-controls] button[data-plugin-action="read"] { background: var(--doc-accent); border-color: transparent; color: var(--doc-accent-fg); }
+[data-plugin-controls] button[data-plugin-action="disconnect"] { background: transparent; border-color: transparent; color: var(--doc-fg-3); }
+[data-plugin-controls] button:hover { box-shadow: inset 0 0 0 1px currentColor; }
+[data-plugin-controls] button:focus-visible { outline: 2px solid var(--doc-accent); outline-offset: 3px; }
+[data-plugin-controls] button:disabled { opacity: .55; cursor: wait; }
+.plugin-content { padding: 12px; overflow: auto; }
+.plugin-content:has(> iframe) { padding: 0; }
+.plugin-content:empty { display: none; }
+.plugin .plugin-card { margin: 0; max-width: none; }
+.plugin-card strong { font-size: 14px; font-weight: 600; }
+.plugin-card p { margin: 6px 0 0; font-size: 13px; white-space: pre-wrap; line-height: 1.5; overflow-wrap: anywhere; }
+.plugin-content > ul { display: grid; gap: 4px; padding-left: 20px; margin: 0; line-height: 1.5; }
+.plugin-content > ul li::marker { color: var(--doc-accent); }
+.plugin-content > table { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.6; }
+.plugin-content :is(th, td) { padding: 6px 8px; text-align: start; border-bottom: 1px solid var(--doc-border); }
+.plugin-content th { background: var(--doc-bg-2); color: var(--doc-fg-2); font-size: 12px; font-weight: 600; }
+.plugin-content tr:last-child td { border-bottom: 0; }
+.plugin-content > pre { margin: 0; max-height: 320px; padding: 10px; }
+.plugin-content > iframe { display: block; color-scheme: inherit; }
 article, article * { font-weight: 400; }
 h1, h2, h3 { font-weight: 400; }
 article h1 { font-size: 26px; margin: 0 0 2px; }
@@ -857,8 +1024,9 @@ article :is(h1, h2, h3, h4, h5, h6):has(> .section-copy) { position: relative; p
   width: 28px; height: 28px; padding: 0; border: 0; border-radius: 4px; background: transparent;
   color: var(--c-fg-faint); cursor: pointer; }
 .section-copy:hover, .section-copy:focus-visible { background: var(--c-raised); color: var(--c-fg); }
-.section-copy.ok svg, .section-copy.error svg { display: none; }
-.section-copy.ok::after { content: "✓"; color: var(--c-ok); }
+.section-copy svg { flex: none; width: 16px; height: 16px; }
+.section-copy .ic-ok, .section-copy.ok svg:not(.ic-ok), .section-copy.error svg { display: none; }
+.section-copy.ok .ic-ok { display: block; color: var(--doc-ok); }
 .section-copy.error::after { content: "!"; color: var(--c-danger); }
 article h2 { font-size: 20px; margin-top: 24px; margin-bottom: 8px; border-bottom: 1px solid
   color-mix(in srgb, currentColor 20%, transparent); padding-bottom: 3px; }
@@ -875,10 +1043,48 @@ code { background: color-mix(in srgb, currentColor 10%, transparent);
 pre { background: color-mix(in srgb, currentColor 6%, transparent);
   padding: 10px 14px; overflow-x: auto; line-height: 1.5; font-family: var(--doc-mono); }
 pre code { background: none; padding: 0; font-size: 13.5px; }
+pre code.code-foldable { display: block; padding-left: 18px; }
+.code-line { position: relative; }
+.code-line[hidden] { display: none; }
+.code-section-fold { position: absolute; left: -17px; top: 1px; display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 16px; padding: 0; border: 0; border-radius: 3px; background: transparent; color: var(--doc-fg-3); cursor: pointer; }
+.code-section-fold:hover { color: var(--doc-accent); background: var(--doc-bg-2); }
+.code-section-fold:focus-visible { outline: 2px solid var(--doc-accent); }
+.code-section-fold[aria-expanded="false"] svg { transform: rotate(-90deg); }
+.code-line-folded > .code-line-text::after { content: " …"; color: var(--doc-fg-3); }
 .fig { margin: 10px 0; }
 /* Only direct svg / img children (= figures) follow the width; icon svgs inside html fragments
    are left alone */
-.fig > svg, .fig > img { max-width: 100%; height: auto; display: block; }
+.fig > svg, .fig > img, .fig > video { max-width: 100%; height: auto; display: block; }
+.video-player { container-type: inline-size; width: 100%; min-width: 0; color: var(--doc-fg-2); }
+.video-player > video { display: block; width: 100%; height: auto; border-radius: 8px; background: #000; }
+.video-player > video:fullscreen { max-height: none; border-radius: 0; object-fit: contain; }
+.video-controls { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.video-controls > button { display: grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0;
+  border: 0; border-radius: 5px; color: inherit; background: transparent; cursor: pointer; }
+.video-controls > button:hover, .video-controls > button[aria-expanded="true"] { color: var(--doc-fg); background: var(--doc-bg-3); }
+.video-controls > button:disabled { opacity: .4; cursor: default; }
+.video-controls :is(button, input):focus-visible, .video-settings input:focus-visible { outline: 2px solid var(--doc-accent); outline-offset: 2px; }
+:is(.video-controls, .video-settings) input { appearance: none; height: 24px; padding: 0; margin: 0; border: 0; background: transparent; cursor: pointer; }
+:is(.video-controls, .video-settings) input:disabled { opacity: .4; cursor: default; }
+:is(.video-controls, .video-settings) input::-webkit-slider-runnable-track { height: 2px; border-radius: 1px;
+  background: linear-gradient(to right, var(--doc-accent) var(--video-progress, 0%), var(--doc-border-2) var(--video-progress, 0%)); }
+:is(.video-controls, .video-settings) input::-webkit-slider-thumb { appearance: none; width: 8px; height: 8px; margin-top: -3px;
+  border: 0; border-radius: 50%; background: var(--doc-accent); }
+:is(.video-controls, .video-settings) input::-moz-range-track { height: 2px; border-radius: 1px; background: var(--doc-border-2); }
+:is(.video-controls, .video-settings) input::-moz-range-progress { height: 2px; border-radius: 1px; background: var(--doc-accent); }
+:is(.video-controls, .video-settings) input::-moz-range-thumb { width: 8px; height: 8px; border: 0; border-radius: 50%; background: var(--doc-accent); }
+.video-controls .video-seek { flex: 1; min-width: 24px; width: 0; }
+.video-controls .video-volume { flex: 0 0 60px; width: 60px; }
+.video-time { flex: none; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.video-settings { position: fixed; inset: auto; box-sizing: border-box; width: min(240px, calc(100vw - 16px)); margin: 0;
+  padding: 12px; border: 1px solid var(--doc-border); border-radius: 8px; color: var(--doc-fg);
+  background: var(--doc-bg-2); box-shadow: 0 8px 24px var(--c-shadow); }
+.video-settings label { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px 12px; font-size: 12px; }
+.video-speed-value { color: var(--doc-fg-2); font-variant-numeric: tabular-nums; }
+.video-settings .video-speed { grid-column: 1 / -1; width: 100%; }
+.video-status { color: var(--doc-danger); font-size: 12px; margin: 6px 0; }
+.video-player [hidden] { display: none; }
+@container (max-width: 420px) { .video-controls .video-volume { display: none; } }
 .fig-frame { display: block; max-width: 100%; border: 0; background: transparent; }
 /* Code and file blocks share a border label; clicking it collapses the content. */
 .codeblk { position: relative; margin: 12px 0; border: 2px solid var(--doc-border); border-top: 0; }
@@ -899,10 +1105,11 @@ pre code { background: none; padding: 0; font-size: 13.5px; }
 @media (prefers-reduced-motion: reduce) { .codefold svg { transition: none; } }
 .codeblk.collapsed > pre { display: none; }
 .codeblk.collapsed { min-height: 1px; border-bottom: 0; margin-bottom: 18px; }
-.codeblk :is(.codecopy, .codefold) { display: flex; align-items: center; justify-content: center;
+.codeblk :is(.codecopy, .codefold), .plugin-action { display: flex; align-items: center; justify-content: center;
   flex-shrink: 0; width: 16px; height: 16px; padding: 0; border: none; border-radius: 6px; background: none;
   color: var(--doc-fg-3); cursor: pointer; }
-.codeblk :is(.codecopy, .codefold):hover, .codeblk :is(.codecopy, .codefold):focus-visible { color: var(--doc-accent);
+.codeblk :is(.codecopy, .codefold):hover, .codeblk :is(.codecopy, .codefold):focus-visible,
+.plugin-action:hover, .plugin-action:focus-visible { color: var(--doc-accent);
   background: color-mix(in srgb, currentColor 8%, transparent); }
 .codeblk .codecopy .ic-ok { display: none; }
 .codeblk .codecopy.ok .ic-copy { display: none; }
@@ -911,24 +1118,73 @@ pre code { background: none; padding: 0; font-size: 13.5px; }
 .codeblk .codecopy.ok .ic-ok { display: block; color: var(--doc-ok); }
 table { border-collapse: collapse; font-size: 14px; }
 th, td { border: 1px solid color-mix(in srgb, currentColor 25%, transparent); padding: 4px 10px; }
+.data-table { position: relative; min-width: 0; width: 100%; margin: 12px 0; }
+.data-table button { color: inherit; background: transparent; font: inherit; cursor: pointer; }
+.data-table button:focus-visible, .data-table-scroll:focus-visible { outline: 2px solid var(--doc-accent); outline-offset: -2px; }
+.data-table-scroll { overflow: auto; max-height: min(480px, 65vh); border: 1px solid var(--doc-border); border-radius: 8px; box-sizing: border-box; }
+.data-table-resize { position: absolute; bottom: -5px; left: 8px; right: 8px; height: 10px; z-index: 3; cursor: ns-resize; touch-action: none; }
+.data-table-resize::after { content: ""; position: absolute; top: 4px; left: calc(50% - 14px); width: 28px; height: 2px; background: var(--doc-border-2); border-radius: 2px; }
+.data-table-resize:hover::after, .data-table-resize:focus-visible::after { background: var(--doc-accent); }
+.data-table-resize:focus-visible { outline: 2px solid var(--doc-accent); border-radius: 4px; }
+.data-table table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; line-height: 1.4; }
+.data-table :is(th, td) { border: 0; border-bottom: 1px solid color-mix(in srgb, var(--doc-border) 65%, transparent); padding: 5px 12px; text-align: left; white-space: pre-wrap; min-width: 90px; max-width: 480px; overflow-wrap: anywhere; }
+.data-table thead th { position: sticky; top: 0; z-index: 2; background: var(--doc-bg-2, var(--doc-bg)); color: var(--doc-fg-2); font-size: 12px; font-weight: 500; }
+.data-table[data-table-mode="header"] thead th { border-bottom: 3px double var(--doc-border-2); }
+.data-table thead th:has(button) { padding: 0; }
+.data-table thead button { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; text-align: left; padding: 5px 12px; border: 0; font-weight: inherit; }
+.data-table th:first-child { min-width: 24px; width: 24px; color: var(--doc-fg-3); font-size: 11px; font-weight: 400; text-align: right; font-variant-numeric: tabular-nums; }
+.data-table-sort-mark { flex: none; opacity: 0; }
+.data-table thead button:is(:hover, :focus-visible) .data-table-sort-mark { opacity: .5; }
+.data-table th[aria-sort] { color: var(--doc-accent); }
+.data-table th[aria-sort] .data-table-sort-mark { opacity: 1; }
+.data-table tbody tr:last-child > * { border-bottom: 0; }
+.data-table tbody tr:hover { background: color-mix(in srgb, var(--doc-fg) 3%, transparent); }
+
 article a { color: var(--doc-accent); }
 .ph { border: 1px dashed color-mix(in srgb, currentColor 40%, transparent);
   border-radius: 8px; padding: 18px; text-align: center; margin: 16px 0; }
 .ph span { opacity: .5; font-size: 13px; }
 .cap { opacity: .7; font-size: 13px; margin-top: 6px; white-space: pre-line; }
-.callout { border: 1px solid color-mix(in srgb, var(--doc-accent) 45%, transparent);
-  border-radius: 8px; padding: 4px 16px; margin: 10px 0; }
-.callout .cap { margin: 6px 0 0; }
+.callout { border: 1px solid var(--doc-border); border-radius: 8px; padding: 8px 14px; margin: 10px 0;
+  background: color-mix(in srgb, var(--doc-accent) 3%, var(--doc-bg-2)); overflow-wrap: anywhere; }
+.callout-title { display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+  color: var(--doc-fg); font-size: 13px; font-weight: 650; line-height: 1.5; }
+.callout-title::before { content: ""; flex: none; width: 18px; height: 2px; background: var(--doc-accent); }
+.callout-body { color: var(--doc-fg-2); font-size: 14px; line-height: 1.5; }
+.callout-body > p { margin: 6px 0; }
+.callout-body > p:first-child { color: var(--doc-fg); font-size: 15px; }
+.callout-body > :is(ul, ol) { display: grid; gap: 2px; margin: 6px 0; padding-left: 20px; }
+.callout-body > :is(ul, ol) > li { padding-left: 4px; }
+.callout-body > :is(ul, ol) > li::marker { color: var(--doc-accent); }
+.callout-body > :first-child { margin-top: 0; }
+.callout-body > :last-child { margin-bottom: 0; }
 .errors { border: 1px solid var(--doc-danger); border-radius: 8px; padding: 10px 16px;
   margin-bottom: 16px; color: var(--doc-danger); font-size: 13px; }
-.in-toc { border: 1px solid var(--doc-border); border-radius: 8px;
-  padding: 8px 14px 10px; margin: 10px 0 20px; }
-.in-toc-title { font-size: 11.5px; opacity: .6; margin-bottom: 3px; }
-.in-toc ul { list-style: none; margin: 0; padding-left: 0; line-height: 1.55; }
-.in-toc li.lvl2 { padding-left: 14px; }
-.in-toc li.lvl3 { padding-left: 26px; opacity: .7; font-size: .95em; }
-.in-toc a { text-decoration: none; color: inherit; }
-.in-toc a:hover { color: var(--doc-accent); }
+.in-toc { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; margin: 0 10px 0 0; }
+.toc-current { position: relative; flex: none; width: 120px; min-width: 0; max-width: calc(100% - 36px); padding: 4px 20px 4px 4px;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border: 0; border-radius: 4px;
+  background: transparent; color: var(--doc-fg-2); font: 12px/20px var(--font-sans); text-align: left; cursor: pointer; }
+.toc-current::after { content: ""; position: absolute; right: 6px; top: 10px; width: 5px; height: 5px;
+  border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg); }
+.toc-current:hover, .toc-current[aria-expanded="true"] { background: var(--c-raised); color: var(--doc-accent); }
+.toc-options { position: fixed; margin: 0; padding: 6px; max-height: min(420px, calc(100dvh - 60px)); overflow: auto;
+  list-style: none; border: 1px solid var(--doc-border); border-radius: 6px; background: var(--doc-bg); color: var(--doc-fg);
+  box-shadow: 0 8px 24px var(--c-shadow); }
+.in-toc a { display: block; padding: 7px 10px; border-radius: 4px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  text-decoration: none; font: 12px/1.5 var(--font-sans); color: var(--doc-fg-2); }
+.in-toc .lvl2 a { padding-left: 20px; }
+.in-toc .lvl3 a { padding-left: 30px; }
+.in-toc a:hover, .in-toc a[aria-current] { color: var(--doc-accent); background: color-mix(in srgb, var(--doc-accent) 8%, transparent); }
+.toc-seek { flex: 1; appearance: none; width: 0; min-width: 24px; height: 24px; margin: 0; padding: 0; background: transparent; cursor: ew-resize; }
+.toc-seek::-webkit-slider-runnable-track { height: 2px; background: linear-gradient(to right, var(--doc-accent) var(--toc-progress, 0%), var(--doc-border) var(--toc-progress, 0%)); }
+.toc-seek::-moz-range-track { height: 2px; background: linear-gradient(to right, var(--doc-accent) var(--toc-progress, 0%), var(--doc-border) var(--toc-progress, 0%)); }
+.toc-seek::-webkit-slider-thumb { appearance: none; width: 8px; height: 8px; margin-top: -3px; border: 0; border-radius: 50%; background: var(--doc-accent); }
+.toc-seek::-moz-range-thumb { width: 8px; height: 8px; border: 0; border-radius: 50%; background: var(--doc-accent); }
+.toc-seek:disabled { opacity: .35; cursor: default; }
+html:has(.page-actions .toc-seek), .preview-pane:has(> .pane-actions .toc-seek) { scrollbar-width: none; }
+html:has(.page-actions .toc-seek)::-webkit-scrollbar,
+.preview-pane:has(> .pane-actions .toc-seek)::-webkit-scrollbar { display: none; }
+main :is(h1, h2, h3)[id] { scroll-margin-top: 52px; }
 article strong { font-weight: 700; }
 article em { font-style: italic; }
 article blockquote { margin: 16px 0; padding: 4px 16px; border-left: 3px solid var(--doc-border-2); color: var(--doc-fg-2); }
@@ -977,6 +1233,88 @@ details summary { cursor: pointer; opacity: .8; }
 .terms .term-description::before { content: ""; position: absolute; left: 0; right: 0; top: -9px; height: 9px; }
 .terms .term-name:hover .term-description,
 .terms .term-name:focus .term-description { display: block; }
+.resource-library { width: 100%; max-width: none; }
+.git-page { padding-top: 8px; font: 12px/1.55 var(--font-sans); }
+.git-controls { min-width: 0; margin: 0; padding: 0; border: 0; }
+.git-toolbar, .git-actions, .git-branches { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-height: 30px; }
+.git-toolbar { border-bottom: 1px solid var(--c-line); margin: 4px 0 8px; padding-inline: 6px; }
+.git-toolbar strong { font-size: 13px; font-weight: 500; }
+.git-branches { gap: 12px; margin-bottom: 8px; }
+.git-branches > form { flex: 1; }
+.git-branches input { width: 150px; flex: 1; }
+.git-actions { margin: 6px 0; }
+.git-page :is(input:not([type=checkbox]), textarea, select) { box-sizing: border-box; min-width: 0; max-width: 100%; border: 1px solid var(--c-line); border-radius: 4px; padding: 4px 8px; background: var(--c-bg1); color: var(--c-fg); font: inherit; }
+.git-page :is(input:not([type=checkbox]), select) { height: 28px; }
+.git-branches :is(input, select), .git-actions select { border-color: transparent; background: transparent; }
+.git-page :is(input, textarea, select):focus-visible { outline: 1px solid var(--c-fg-muted); outline-offset: -1px; }
+.git-page select option { background: var(--c-bg1); color: var(--c-fg); }
+.git-page .git-text-button { width: auto; padding: 0 8px; font: inherit; }
+.git-page .pbtn:disabled { opacity: .45; cursor: default; }
+.git-page .pbtn:disabled:hover { background: transparent; color: var(--c-fg-muted); }
+.git-page .resource-item > summary .pbtn { width: 24px; height: 24px; }
+.git-field { display: flex; flex-direction: column; gap: 4px; color: var(--c-fg-muted); }
+.git-field textarea { resize: vertical; }
+.git-form { display: flex; flex-direction: column; gap: 8px; }
+.git-form > button { align-self: flex-start; }
+.git-commit { margin: 10px 0 18px; }
+.git-commit textarea { height: 54px; }
+.git-caption, .git-notice { margin: 6px 0; font-size: 11px; color: var(--c-fg-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.git-notice:empty { display: none; }
+.git-status { width: 2ch; flex: none; white-space: pre; color: var(--c-fg-muted); }
+.git-diff { max-height: 320px; overflow: auto; padding: 8px; background: var(--c-surface); font: 11px/1.6 var(--editor-font, ${MONO_FONT}); }
+.git-checkbox { display: flex; align-items: center; gap: 6px; }
+.resource-tabs { display: flex; gap: 4px; overflow-x: auto; border-bottom: 1px solid var(--doc-border); margin-bottom: 18px; }
+.resource-tabs a { padding: 9px 15px; color: var(--doc-fg-3); text-decoration: none; white-space: nowrap; font-size: 13px; border-bottom: 2px solid transparent; }
+.resource-tabs a:hover { color: var(--doc-fg); background: color-mix(in srgb, var(--doc-fg) 4%, transparent); }
+.resource-tabs a[aria-current] { color: var(--doc-accent); border-bottom-color: currentColor; }
+.resource-toolbar { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 6px;
+  border-bottom: 1px solid var(--c-line); color: var(--c-fg-muted); font-size: 11px; }
+.resource-toolbar > span { flex: none; }
+.resource-search {display:flex;align-items:center;gap:5px;flex:0 1 140px;min-width:0;height:24px;border-bottom:1px solid transparent;color:var(--c-fg-faint);}
+.resource-search > svg {flex:none;width:13px;height:13px;}
+.resource-search input {min-width:0;width:100%;height:22px;padding:0;border:0;border-radius:0;background:transparent;color:var(--c-fg);font:inherit;}
+.resource-search input::placeholder {color:var(--c-fg-faint);}
+.resource-search:focus-within {border-bottom-color:var(--c-accent);color:var(--c-fg-muted);}
+.resource-search input:focus-visible {outline:none;}
+.resource-toolbar select { flex: 0 1 auto; min-width: 50px; max-width: 110px; height: 24px; padding: 0 4px;
+  border: 0; border-radius: 0; background: transparent; color: var(--c-fg-muted); font: inherit; }
+.resource-toolbar select option { background: var(--c-bg1); color: var(--c-fg); }
+.resource-count { margin-left: auto; color: var(--doc-fg-3); font-variant-numeric: tabular-nums; }
+.resource-items { display: flex; flex-direction: column; }
+.resource-item { min-width: 0; margin: 0; padding: 0; border: 0; }
+.resource-item[hidden], .resource-empty[hidden] { display: none; }
+.resource-item > summary { display: flex; align-items: center; gap: 8px; min-width: 0; height: 28px; padding: 0 6px;
+  list-style: none; color: var(--doc-fg); font-size: 13px; cursor: pointer; }
+.resource-item > summary::-webkit-details-marker { display: none; }
+.resource-item > summary::before { content: ""; flex: none; width: 5px; height: 5px; margin: 0 4px 0 2px;
+  border-right: 1px solid var(--c-fg-faint); border-bottom: 1px solid var(--c-fg-faint); transform: rotate(-45deg); }
+.resource-item[open] > summary::before { transform: rotate(45deg); }
+.resource-item > summary:hover { background: var(--c-surface); }
+.resource-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.resource-item a.resource-name { color: inherit; text-decoration: none; }
+.resource-item a.resource-name:hover { color: var(--doc-accent); text-decoration: underline; }
+.resource-body { min-width: 0; padding: 6px 8px 10px 24px; }
+.resource-source { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; max-width: 100%;
+  overflow: hidden; white-space: nowrap; color: var(--doc-fg-3); font-family: var(--doc-mono); font-size: 11px; text-decoration: none; }
+.resource-item > summary > .resource-source { margin-left: auto; max-width: 50%; }
+.resource-source:hover { color: var(--doc-accent); text-decoration: underline; }
+.resource-source span { flex: none; opacity: .7; }
+.resource-source .resource-source-file { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; opacity: 1; }
+.resource-badge { flex: none; color: var(--doc-fg-2); font: 11px var(--doc-mono); }
+.resource-item .term-definition { margin: 0; white-space: pre-wrap; font-size: 13px; }
+.resource-description { color: var(--doc-fg-3); white-space: pre-wrap; font-size: 12px; margin: 6px 0 0; }
+.resource-item .codeblk { margin: 0; }
+.resource-item .codeblk > pre { max-height: 260px; overflow: auto; }
+.resource-usage { flex: none; margin-left: auto; color: var(--doc-fg-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.resource-sources { display: flex; flex-direction: column; gap: 4px; }
+.resource-empty { padding: 20px 6px; color: var(--doc-fg-3); font-size: 12px; }
+.resource-errors { margin: 0 0 16px; color: var(--doc-danger); font-size: 12px; overflow-wrap: anywhere; }
+.resource-errors summary { cursor: pointer; }
+.resource-library .resource-tabs { margin-bottom: 8px; }
+.resource-library .files-viewport { max-height: calc(100dvh - 76px); min-height: 0; }
+.resource-library .files-table :is(th, td) { border: 0; }
+.resource-library .files-table thead th { position: sticky; top: 0; z-index: 1; border-bottom: 1px solid var(--c-line); background: var(--c-bg1); font-size: 11px; color: var(--c-fg-muted); font-weight: 500; }
+@media(max-width:600px) { .resource-tabs a { padding-inline: 10px; } .resource-toolbar { gap: 8px; } }
 `;
 
 // edit mode only (right panel / new doc form). Uses the viewer's shared background / rules and
@@ -984,20 +1322,35 @@ details summary { cursor: pointer; opacity: .8; }
 // (autosave / correspondence display / fm visibility) are gathered in the header gear's hover
 // menu. Width is drag-resizable.
 const EDIT_CSS = `
+body.git-diff-hidden .cm-lineNumbers :is(.cm-git-added, .cm-git-modified, .cm-git-deleted-start, .cm-git-deleted-end) { box-shadow: none; }
+body.git-diff-hidden .cm-line:is(.cm-git-added, .cm-git-modified, .cm-git-deleted-start, .cm-git-deleted-end) { background-color: transparent; }
 #site-icon-slot input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 #site-icon-slot:hover, #site-icon-slot:focus-within, #sidebar-head.over #site-icon-slot { background: var(--c-line); border-radius: 3px; }
 #site-icon-slot:focus-within, #sidebar-head.over #site-icon-slot { outline: 1px solid var(--c-fg-muted); outline-offset: 2px; }
-body.sidebar-closed #site-icon-slot { margin: 0 0 0 4px; }
-body.sidebar-closed #sidebar-toggle { position: static; width: 20px; height: 32px; flex: none; }
-body.sidebar-closed #sidebar-toggle svg { visibility: visible; }
+body.sidebar-closed #site-icon-slot input { display: none; }
 /* Right panel = header / properties / editor stacked on one surface, separated by rules (no
    nested frames). */
 #panel { width: var(--panel-width, min(760px, 52vw)); flex-shrink: 0; position: sticky; top: 0; height: 100vh;
   display: flex; flex-direction: column; font-size: 12.5px; line-height: 1.6;
   border-left: 1px solid var(--c-line); background: var(--c-bg1); }
+body.textfile-open #phead :is(.fm-language, #status, #validate, #save, #split-preview) { display: none; }
+#file-editor { display: flex; flex-direction: column; flex: 1; min-height: 0; color: var(--doc-fg); background: var(--doc-bg); }
+.file-editor-heading { display: flex; align-items: center; flex: 1; min-width: 0; gap: 6px; margin-left: 6px; color: var(--c-fg-muted); }
+.file-editor-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--doc-mono); }
+.file-editor-heading .cm-textfile-controls { display: inline-flex; align-items: center; flex: none; gap: 2px; }
+.file-editor-heading .cm-textfile-save-status { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-editor-heading .cm-inline-fold { display: none; }
+.file-editor-heading [hidden] { display: none; }
+#file-editor > .cm-textfile { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+#file-editor .cm-textfile-editor { flex: 1; min-height: 0; }
+#file-editor .cm-editor { height: 100%; }
+#file-editor .cm-scroller { overflow: auto; }
+#file-editor .cm-textfile-status { padding: 8px 12px; white-space: pre-wrap; }
+#file-editor .cm-textfile-status[hidden] { display: none; }
+#file-editor .cm-textfile-status.error { color: var(--doc-danger); }
 
 /* header band (same height and rule as sidebar-head) */
-#phead { flex: none; display: flex; align-items: center; gap: 2px; height: 47px; padding: 0 10px 0 14px;
+#phead { flex: none; display: flex; align-items: center; gap: 2px; height: 36px; padding: 0 10px 0 14px;
   border-bottom: 1px solid var(--c-line); }
 /* Document metadata is edited in the tree, without changing the row's size. */
 body.edit #nav-groups { --nav-rail: 22px; --nav-icon-half: 9px; }
@@ -1026,10 +1379,6 @@ body.edit #nav-groups { --nav-rail: 22px; --nav-icon-half: 9px; }
 .nav-rename-form input:focus, .nav-new input:focus { outline: 1px solid var(--c-line); }
 @media (forced-colors: active) { .nav-rename-form input:focus, .nav-new input:focus { outline: 1px solid CanvasText; } }
 .nav-doc-row.renaming > a { visibility: hidden; }
-.pbtn { flex: none; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px;
-  padding: 0; color: var(--c-fg-faint); background: none; border: none; border-radius: 5px; cursor: pointer;
-  transition: color 120ms ease, background 120ms ease; }
-.pbtn:hover, .pbtn:focus-visible, #gear.open > .pbtn { color: var(--c-fg); background: var(--c-raised); }
 .nav-delete:hover, .nav-delete:focus-visible { color: var(--c-danger); }
 #status { flex: 1; min-width: 0; padding: 0 8px; text-align: right; color: var(--c-fg-faint);
   font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1103,13 +1452,15 @@ body.edit #nav-groups { --nav-rail: 22px; --nav-icon-half: 9px; }
 
 main.editor-workspace { padding: 0; height: 100vh; display: flex; flex-direction: column; position: sticky; top: 0; }
 #split-preview[aria-pressed="true"] { color: var(--c-accent); background: var(--c-raised); }
-.pane-actions { position: relative; top: -12px; right: -16px; height: 0; display: flex; justify-content: flex-end; z-index: 4; }
-.pane-actions .pbtn { background: var(--c-bg0); border-radius: 50%; }
-.preview-content article > h1 { padding-right: 34px; }
+.pane-actions { top: -20px; margin: -20px -24px 20px; }
 #preview-panes { display: flex; flex: 1; min-height: 0; }
+#preview-panes[hidden] { display: none; }
+.preview-pane.resources-pane { min-height: 0; padding-bottom: 24px; }
+.preview-pane.resources-pane:has(.resource-library) { padding-top: 0; }
+.resources-pane .resource-tabs { margin-inline: -24px; padding: 0 12px; }
 .preview-pane { flex: 1; min-width: 0; overflow: auto; padding: 20px 24px 50vh; border-top: 2px solid transparent; }
 #preview-panes.split .preview-pane { padding: 16px; }
-#preview-panes.split .pane-actions { top: -8px; right: -8px; }
+#preview-panes.split .pane-actions { top: -16px; margin: -16px -16px 16px; padding-inline: 10px; }
 #preview-panes.split .preview-pane + .preview-pane { border-left: 1px solid var(--c-line); }
 #preview-panes.split .preview-pane.active { border-top-color: var(--c-accent); }
 .preview-pane:focus-visible { outline: 2px solid var(--c-accent); outline-offset: -2px; }
@@ -1125,11 +1476,14 @@ main.editor-workspace { padding: 0; height: 100vh; display: flex; flex-direction
 .cm-code-diagnostic { text-decoration:underline wavy var(--c-warn); text-underline-offset:3px; }
 #validate[data-state="error"], .cm-textfile-validate[data-state="error"] { color:var(--c-danger); }
 #validate[data-state="valid"], .cm-textfile-validate[data-state="valid"] { color:var(--c-ok); }
-#validate[data-state="pending"], .cm-textfile-validate[data-state="pending"], .cm-textfile-save[data-state="unknown"] { color:var(--c-fg-faint); }
+#validate[data-state="pending"], .cm-textfile-validate[data-state="pending"] { color:var(--c-fg-faint); }
 #validate[data-state="checking"], .cm-textfile-validate[data-state="checking"] { color:var(--c-info); }
-#save[data-state="error"], .cm-textfile-save[data-state="error"] { color:var(--c-danger); }
-#save[data-state="saved"], .cm-textfile-save[data-state="saved"] { color:var(--c-ok); }
-#save[data-state="pending"], .cm-textfile-save[data-state="pending"] { color:var(--c-accent); }
+#save[data-state="error"], .cm-textfile-save-status[data-state="error"] { color:var(--c-danger); }
+#save[data-state="saved"] { color:var(--c-ok); }
+#save[data-state="pending"] { color:var(--c-accent); }
+.cm-textfile-save-status { font-size: 10px; color: var(--c-fg-faint); margin-left: 4px; }
+.cm-textfile-save-status[hidden], .cm-textfile-retry[hidden] { display: none; }
+.cm-textfile-retry { width: auto; padding: 0 5px; font-size: 11px; }
 #cm { flex: 1; min-height: 200px; overflow: hidden; }
 #cm .cm-inline-fold { display:inline-flex; align-items:center; justify-content:center; vertical-align:middle; width:16px; height:16px; margin-left:2px; padding:0; border:0; border-radius:3px; background:transparent; color:var(--c-fg-faint); cursor:pointer; }
 #cm .cm-inline-fold:hover, #cm .cm-inline-fold:focus-visible { color:var(--c-fg); background:var(--c-raised); }
@@ -1160,36 +1514,46 @@ body.corr main article > [data-ln].corr-hi {
   background: color-mix(in srgb, var(--c-accent) 12%, transparent);
   box-shadow: -6px 0 0 color-mix(in srgb, var(--c-accent) 55%, transparent); border-radius: 2px; }
 
-.files-toolbar {display:flex;flex-wrap:wrap;gap:8px;margin:16px 0;align-items:center;}
-.files-toolbar input,.files-toolbar button,.files-root {height:34px;border:1px solid var(--c-line);background:var(--c-bg);color:var(--c-fg);border-radius:5px;padding:6px 10px;}
-.files-toolbar input {min-width:100px;flex:1;width:180px;}.files-toolbar .files-extension {flex:0 1 120px;width:120px;}
-.files-toolbar button {position:relative;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;}
-.files-toolbar button[aria-pressed=true] {border-color:var(--c-accent);color:var(--c-accent);}
+.files-toolbar {display:flex;gap:10px;align-items:center;min-width:0;}
+.files-toolbar > span {flex:none;}
+.files-toolbar button {flex:none;position:relative;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-left:auto;cursor:pointer;}
 .files-toolbar button:disabled {opacity:.5;cursor:default;}.files-toolbar button[data-state=loading] {color:transparent;opacity:1;}
 .files-toolbar button[data-state=loading]:after {content:"";position:absolute;left:calc(50% - 6px);top:calc(50% - 6px);width:12px;height:12px;border:1px solid var(--c-line);border-top-color:var(--c-accent);border-radius:50%;animation:files-spin .8s linear infinite;}
 @keyframes files-spin {to{transform:rotate(360deg);}}
 @media(prefers-reduced-motion:reduce){.files-toolbar button[data-state=loading]:after{animation:none;}}
-.files-toolbar button[data-state=error] {border-color:var(--c-danger);}
+.files-toolbar button[data-state=error] {color:var(--c-danger);}
 .files-viewport {overflow:auto;min-height:360px;max-height:70vh;}
 .files-table {width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;}
-.files-table th,.files-table td {height:38px;padding:4px 8px;border-bottom:1px solid var(--c-line);text-align:left;}
-.files-table th:first-child {width:32px;}.files-table th:nth-child(3) {width:85px;}.files-table th:last-child {width:36px;}
-.files-table tr.selected {outline:1px solid var(--c-accent);outline-offset:-1px;}
-.files-table input[type=checkbox] {appearance:none;background:transparent;width:14px;height:14px;border:1px solid currentColor;border-radius:2px;display:grid;place-content:center;color:var(--c-fg);cursor:pointer;}
-.files-table input[type=checkbox]:checked {color:var(--c-accent);}.files-table input[type=checkbox]:checked:after {content:"✓";font-size:12px;}
-.files-name {display:flex;min-width:0;}.files-name a,.files-folder {display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%;height:30px;}
-.files-folder:before {content:"▾";width:12px;flex-shrink:0;}.files-folder[aria-expanded=false]:before {content:"▸";}
-.files-name span {display:flex;flex-shrink:0;}.files-name a {color:var(--c-accent);text-decoration:none;}
-.files-table button {border:0;background:none;color:inherit;cursor:pointer;padding:4px;}.files-folder {font:inherit;}
+.files-table th,.files-table td {height:26px;padding:0 6px;text-align:left;}
+.files-table th {height:30px;border-bottom:1px solid var(--c-line);}
+.files-table th:nth-child(2) {width:76px;}.files-table th:last-child {width:28px;}
+.files-table th:nth-child(2),.files-table td:nth-child(2) {text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}
+.files-table td:nth-child(2) {font-size:11px;color:var(--c-fg-faint);}
+.files-table tbody tr:hover {background:var(--c-surface);}
+.files-table tbody {user-select:none;}
+.files-table tr.selected {background:var(--c-raised);}
+.files-table button {border:0;background:none;color:inherit;cursor:pointer;padding:3px;}
+.files-name {display:flex;min-width:0;}
+.files-name a,.files-name .files-folder {position:relative;display:flex;align-items:center;gap:6px;min-width:0;white-space:nowrap;width:100%;height:26px;padding:0 0 0 16px;color:var(--c-fg);font:inherit;text-align:left;text-decoration:none;}
+.files-folder:before {content:"";position:absolute;left:3px;top:9px;width:5px;height:5px;border-right:1px solid var(--c-fg-faint);border-bottom:1px solid var(--c-fg-faint);transform:rotate(45deg);}
+.files-folder[aria-expanded=false]:before {transform:rotate(-45deg);}
+.files-name span {display:flex;flex:none;}
+.files-name svg {width:15px;height:15px;color:var(--c-fg-muted);}
+.files-name .files-basename {display:block;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.files-copy {display:flex;opacity:0;}
+.files-copy svg {width:14px;height:14px;color:var(--c-fg-faint);}
+.files-table tr:hover .files-copy,.files-table tr:focus-within .files-copy {opacity:1;}
+@media(hover:none){.files-copy{opacity:1;}}
 .files-table [data-drop=before] {box-shadow:inset 0 2px var(--c-accent);}.files-table [data-drop=after] {box-shadow:inset 0 -2px var(--c-accent);}.files-table [data-drop=into] {outline:2px solid var(--c-accent);outline-offset:-2px;}
-.files-table .files-placeholder {height:280px;text-align:center;vertical-align:middle;}.files-root {width:100%;text-align:left;}
+.files-table .files-placeholder {height:96px;text-align:center;vertical-align:middle;}
 .app-dialog textarea {display:block;box-sizing:border-box;width:100%;min-height:64px;max-height:65vh;resize:both;font:inherit;}
-@media(max-width:600px){.files-table {min-width:0;}.files-table th:nth-child(3){width:65px;}.files-toolbar input{width:120px;}.files-name{max-width:100%;}}
+@media(max-width:600px){.files-table {min-width:0;}.files-table th:nth-child(2){width:65px;}.files-name{max-width:100%;}}
 
-@media(max-width:400px){.files-table th:nth-child(3),.files-table td:nth-child(3){display:none;}}
+@media(max-width:400px){.files-table th:nth-child(2),.files-table td:nth-child(2){display:none;}}
 
 /* Files pages */
 .res-page h1 { margin-bottom: 6px; }
+.files-page h1 { display: flex; align-items: center; gap: 10px; overflow-wrap: anywhere; }
 .res-crumbs { color: var(--c-fg-faint); font-size: 12.5px; margin: 0 0 20px; }
 .res-crumbs a { color: var(--c-fg-muted); text-decoration: none; }
 .res-crumbs a:hover { color: var(--c-fg); }
@@ -1224,28 +1588,33 @@ body.corr main article > [data-ln].corr-hi {
 .res-dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 16px 0 0; font-size: 13px; }
 .res-dl dt { color: var(--c-fg-faint); }
 .res-dl dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.resources-pane .preview-content, .res-file-page { min-width: 0; width: 100%; max-width: none; }
+.resources-pane .res-file-page > h1 { margin: 8px 0 14px; font-size: 17px; overflow-wrap: anywhere; }
+.res-file-page .res-preview { display: block; min-width: 0; padding: 0; border: 0; background: transparent; }
+.res-file-page .res-preview > :is(img, video) { display: block; max-width: 100%; max-height: calc(100vh - 160px); margin: auto; object-fit: contain; }
+.res-file-page .video-player > video:not(:fullscreen) { max-height: calc(100vh - 210px); object-fit: contain; }
+.res-file-page .res-preview > :is(.codeblk, .data-table, pre) { margin-top: 0; width: 100%; min-width: 0; box-sizing: border-box; }
+.res-file-page .res-preview .codeblk > pre { max-height: calc(100vh - 180px); overflow: auto; }
+.res-file-page .res-preview .fig-frame { max-width: 100%; min-height: 300px; }
+.res-details { border-top: 1px solid var(--c-line); margin-top: 16px; padding-top: 8px; font-size: 12px; }
+.res-details > summary { cursor: pointer; color: var(--c-fg-muted); }
+
 
 /* Draft placeholders, the in-sidebar create form, and drag moves */
-.nav-row .new, .nav-row .nav-delete { flex: none; width: 20px; height: 24px; display: flex;
+.nav-row :is(.new, .nav-delete, .nav-create) { flex: none; width: 20px; height: 24px; display: flex;
   align-items: center; justify-content: center; border: none; border-radius: 4px; padding: 0;
   background: transparent; color: var(--c-fg-muted); cursor: pointer; opacity: 0; }
 .nav-row:hover :is(.new, .nav-delete), .nav-row:focus-within :is(.new, .nav-delete),
 .nav-row.renaming :is(.new, .nav-delete) { opacity: 1; }
-.nav-row :is(.new, .nav-delete):hover { background: var(--c-line); }
+.nav-row :is(.new, .nav-delete, .nav-create):is(:hover, :focus-visible) { background: var(--c-line); }
 .nav-doc-row .nav-tree-toggle, .nav-tree-spacer { width: 18px; margin-right: 3px; }
 .nav-tree-spacer { flex: none; height: 28px; }
 @media (hover: none) { .nav-row :is(.new, .nav-delete) { opacity: 1; } }
-.nav-row > .nav-create { display: flex; flex: 1; min-width: 0; align-items: center; gap: 6px; margin: 4px 0; padding: 5px 12px;
-  min-height: 42px; border: 1px dashed var(--c-line); border-radius: 6px; background: none;
-  color: var(--c-fg-faint); font: inherit; text-align: left; cursor: pointer; }
-.nav-tree .nav-create { margin-left: calc(var(--nav-pad) - 12px); }
-.nav-create:hover { color: var(--c-fg-muted); background: var(--c-raised); }
-.nav-create > .nav-icon { color: var(--c-fg-muted); }
-.nav-create .nav-label { color: var(--c-fg-muted); }
+.nav-row > .nav-create { margin: 7px 12px; opacity: 1; }
 .nav-add-hover { visibility: hidden; }
 #sidebar:hover .nav-add-hover, #sidebar:focus-within .nav-add-hover { visibility: visible; }
 #sidebar .nav-list:has(> .nav-new-item) > .nav-placeholder { display: none; }
-/* The create form occupies the same card as its placeholder. */
+/* Keep the title and filename together in a compact create form. */
 .nav-row > .nav-new { position: relative; display: flex; flex: 1; min-width: 0;
   flex-direction: column; justify-content: center; align-items: stretch; cursor: auto;
   margin: 4px 0; height: 42px; padding: 5px 38px 5px 36px;
@@ -1293,7 +1662,7 @@ interface PageOpts {
      * When writing out a single static HTML file (publishHtml). Replaces every server-served
      * script with an inline one.
      */
-    publish?: { graphJs: string; codeJs: string; pages: string; first: string };
+    publish?: { graphJs: string; codeJs: string; pages: string; first: string; network: boolean };
 }
 
 // Contents of #nav-groups (the doc tree). Used by both page()'s initial render and
@@ -1342,10 +1711,10 @@ export const navGroupsHtml = (
             .join("");
         const placeholder =
             mode === "edit" && depth === 0
-                ? `<div class="nav-item nav-placeholder${items ? " nav-add-hover" : ""}"><div class="nav-row"><button class="nav-create" type="button" data-parent="" aria-label="Add doc" data-i18n-aria-label="Add doc">${DOCS_ICON}<span class="nav-doc-name" aria-hidden="true"><span class="nav-label">...</span></span></button></div></div>`
+                ? `<div class="nav-item nav-placeholder${items ? " nav-add-hover" : ""}"><div class="nav-row"><button class="nav-create" type="button" data-parent="" title="Add doc" data-i18n-title="Add doc" aria-label="Add doc" data-i18n-aria-label="Add doc">${PLUS_ICON}</button></div></div>`
                 : "";
         return depth === 0
-            ? `<div class="nav-list nav-root" data-parent="">${items}${placeholder}</div>`
+            ? `<div class="nav-list nav-root" data-parent=""${mode === "edit" ? ' id="nav-docs"' : ""}>${items}${placeholder}</div>`
             : `<div class="nav-list nav-tree" data-parent="${escapeHtml(parent ?? "")}" style="--nav-depth:${depth + 1}">${items}${placeholder}</div>`;
     };
     const html = list(undefined, 0) + (mode === "edit" ? navFilesHtml(site, currentRes) : "");
@@ -1396,54 +1765,23 @@ const siteResources = (site: Site): Resource[] => [
 const resourceHref = (kind?: ResourceKind, file?: string): string =>
     `/_files${kind ? `/${kind}` : ""}${file ? `/${encodeURIComponent(file)}` : ""}`;
 
-/** Physical folders share the document tree's expand/collapse behavior. */
 const navFilesHtml = (site: Site, currentRes?: string): string => {
-    const resources = siteResources(site);
-    const paths = [...new Set(site.filePaths ?? resources.map((resource) => resource.path))].filter(
-        localFile,
-    );
-    const children = new Map<string, string[]>();
-    for (const file of paths) {
-        const parts = file.split("/");
-        for (let i = 0; i < parts.length; i++) {
-            const parent = parts.slice(0, i).join("/");
-            const path = parts.slice(0, i + 1).join("/");
-            const list = children.get(parent) ?? [];
-            if (!list.includes(path)) list.push(path);
-            children.set(parent, list);
-        }
-    }
-    let location = currentRes ?? "";
-    try {
-        location = decodeURIComponent(location);
-    } catch {
-        /* Invalid paths have no selected file. */
-    }
-    const current = location.startsWith("file/")
-        ? location.slice(5)
-        : resources.find((resource) => `${resource.kind}/${resource.file}` === location)?.path;
-    const folderIcon = icon('<path d="M2 5h6l2 2h8v10H2z"/>', 15);
-    const fileIcon = icon('<path d="M4 2h8l4 4v12H4zM12 2v5h4"/>', 15);
-    const toggle = (label: string, open: boolean) =>
-        `<button class="nav-tree-toggle" type="button" aria-label="Toggle ${escapeHtml(label)}" aria-expanded="${open}">${CHEVRON_ICON}</button>`;
-    const list = (parent: string, depth: number): string =>
-        `<div class="nav-list nav-tree" style="--nav-depth:${depth}">${(children.get(parent) ?? [])
-            .map((path) => {
-                const label = escapeHtml(path.split("/").pop() ?? path);
-                const folder = children.has(path);
-                const open = folder && !!current?.startsWith(`${path}/`);
-                const doc = site.entries.find(
-                    (entry) => (entry.sourceFile ?? CONTENT_PREFIX + entry.file) === path,
-                );
-                const link = folder
-                    ? `<button class="nav-tree-link nav-file-folder" type="button" data-file-folder aria-expanded="${open}" title="${escapeHtml(path)}">${folderIcon}<span class="nav-label">${label}</span></button>`
-                    : `<a class="nav-tree-link${path === current ? " cur" : ""}" href="${doc ? docPath(site.entries, doc.id) : `/_files/file/${encodeURIComponent(path)}`}" title="${escapeHtml(path)}"${path === current ? ' aria-current="page"' : ""}>${fileIcon}<span class="nav-label">${label}</span></a>`;
-                return `<div class="nav-item${open ? " open" : ""}" data-node-id="_files:${escapeHtml(path)}"><div class="nav-row">${link}${folder ? toggle(path, open) : ""}</div>${folder ? list(path, depth + 1) : ""}</div>`;
-            })
-            .join("")}</div>`;
+    const source = site.workspace;
+    const statics =
+        currentRes?.startsWith("_statics") ||
+        ["dictionary", "code", "urls"].includes(currentRes ?? "");
+    const folderIcon = icon('<path d="M2 5h6l2 2h8v10H2Z"/>');
     const upload = `<button class="files-upload" type="button" title="Upload files" data-i18n-title="Upload files" aria-label="Upload files" data-i18n-aria-label="Upload files">${UPLOAD_ICON}<span></span></button><input id="files-upload-input" type="file" multiple hidden>`;
-    const hint = `<div class="files-drop-hint" aria-hidden="true">${UPLOAD_ICON}<span data-i18n="Upload files">Upload files</span><ul>${["csv", "png", "html", "md", "txt", "mp4", "termth", "grapth"].map((extension) => `<li>.${extension}</li>`).join("")}<li>…</li></ul></div>`;
-    return `<div class="nav-resources" id="nav-files"><div class="nav-item open" data-node-id="_files"><div class="nav-row"><a class="nav-link${currentRes === "" ? " cur" : ""}" href="/_files">${BOX_ICON}<span class="nav-label" data-i18n="Files">Files</span></a>${upload}${paths.length ? toggle("Files", true) : ""}</div>${list("", 2)}</div>${hint}<div id="files-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="horizontal" aria-controls="nav-files" aria-label="Resize Files" data-i18n-aria-label="Resize Files" title="Resize Files" data-i18n-title="Resize Files"></div></div>`;
+    const hint = `<div class="files-drop-hint" aria-hidden="true">${UPLOAD_ICON}<span data-i18n="Upload files">Upload files</span></div>`;
+    const location =
+        source?.protocol === "git"
+            ? `<div class="workspace-location" data-workspace-protocol="git" title="${escapeHtml(`${source.repo ?? "repo"}[${source.branch}]`)}">${GIT_ICON}<span class="workspace-address"><span class="git-repo-name">${escapeHtml(source.repo ?? "repo")}</span><span class="git-branch-caption">[${escapeHtml(source.branch)}]</span></span></div>`
+            : `<div class="workspace-location" id="nav-storage" data-workspace-protocol="storage" title="${escapeHtml(workspaceName(site))}">${workspaceIcon(site)}<span class="workspace-address">${escapeHtml(source?.folder ?? "Files")} / ${escapeHtml(source?.service ?? "Local")}</span></div>`;
+    const git =
+        source?.protocol === "git"
+            ? `<div class="nav-resources" id="nav-git"><div class="nav-item" data-node-id="_git"><div class="nav-row"><a class="nav-link${currentRes === "_git" ? " cur" : ""}" href="/_git" title="Git controls" data-i18n-title="Git controls">${GIT_ICON}<span class="nav-label">Git</span></a></div></div></div>`
+            : "";
+    return `<section id="nav-tools" aria-label="Workspace tools" data-i18n-aria-label="Workspace tools"><div id="tools-resize" role="separator" tabindex="0" aria-orientation="horizontal" aria-controls="nav-tools" aria-label="Resize workspace tools" data-i18n-aria-label="Resize workspace tools"></div>${location}<div class="nav-tool-cards"><div class="nav-resources" id="nav-files"><div class="nav-item" data-node-id="_files"><div class="nav-row"><a class="nav-link${currentRes !== undefined && currentRes !== "_git" && !statics ? " cur" : ""}" href="/_files" title="Files" data-i18n-title="Files">${folderIcon}<span class="nav-label" data-i18n="Files">Files</span></a>${upload}</div></div>${hint}</div><div class="nav-resources" id="nav-statics"><div class="nav-item" data-node-id="_statics"><div class="nav-row"><a class="nav-link${statics ? " cur" : ""}" href="/_statics" title="Statics" data-i18n-title="Statics">${BOX_ICON}<span class="nav-label" data-i18n="Statics">Statics</span></a></div></div></div>${git}</div></section>`;
 };
 
 const formatSize = (bytes: number): string =>
@@ -1504,17 +1842,83 @@ const resourceCards = (site: Site, list: Resource[]): string =>
               .join("")}</div>`;
 
 /** Path after `/_files` → main content (unknown → undefined = 404). */
+const textfilePreview = (
+    site: Site,
+    file: string,
+    source: string,
+): { html: string; errors: string[] } => {
+    const language = (file.split(".").at(-1) ?? "text").toLowerCase();
+    const parsed = parseContentSource(language, source, file);
+    const errors = parsed?.errors.map(({ message }) => message) ?? [];
+    if (errors.length) return { html: "", errors };
+    try {
+        return {
+            html: blocksHtml(
+                parsed?.blocks ?? [
+                    { type: "code", lang: language, lines: source.split(/\r?\n/), filename: file },
+                ],
+                site.ctx,
+            ),
+            errors,
+        };
+    } catch (error) {
+        return { html: "", errors: [error instanceof Error ? error.message : String(error)] };
+    }
+};
+export const textfilePreviewHtml = (site: Site, file: string, source: string): string => {
+    const { html, errors } = textfilePreview(site, file, source);
+    return errors.length
+        ? `<div class="errors" role="status">${errors.map(escapeHtml).join("<br>")}</div>`
+        : html;
+};
+export const textfilePreviewErrors = (site: Site, file: string, source: string): string[] => {
+    const errors = textfilePreview(site, file, source).errors;
+    if (/\.(md|markdown)$/i.test(file)) {
+        const { doc, source: parsed } = compileDraft(draftContext(site), file, source);
+        errors.push(...parsed.errors);
+        try {
+            blocksHtml(doc.blocks, site.ctx);
+        } catch (error) {
+            errors.push(error instanceof Error ? error.message : String(error));
+        }
+    }
+    return errors;
+};
+
 export const resourcesMain = (
     site: Site,
     rest: string,
-): { title: string; main: string } | undefined => {
+): { title: string; main: string; sourceFile?: string } | undefined => {
+    if (rest === "_git")
+        return site.workspace?.protocol === "git"
+            ? {
+                  title: `${site.workspace.repo ?? "repo"} [${site.workspace.branch}]`,
+                  main: '<article class="res-page resource-library git-page"><div id="git-manager"></div></article>',
+              }
+            : undefined;
+    if (rest === "_statics" || rest.startsWith("_statics/")) {
+        const view = rest.slice("_statics".length).replace(/^\//, "") || "dictionary";
+        return ["dictionary", "code", "urls"].includes(view)
+            ? resourcesMain(site, view)
+            : undefined;
+    }
     const all = siteResources(site);
     const [kind, ...tail] = rest === "" ? [] : rest.split("/");
     const file = tail.length > 0 ? decodeURIComponent(tail.join("/")) : undefined;
     if (kind == null) {
         return {
-            title: "Files",
-            main: `<article class="res-page files-page"><h1 data-i18n="Files">Files</h1><div id="files-manager"></div></article>`,
+            title: workspaceName(site),
+            main: `<article class="res-page files-page resource-library"><div id="files-manager"></div></article>`,
+        };
+    }
+    if (!file && (kind === "dictionary" || kind === "code" || kind === "urls")) {
+        const index = resourceIndex(
+            root,
+            site.filePaths ?? filesSnapshot(root).files.map((item) => item.path),
+        );
+        return {
+            title: "Statics",
+            main: `<article class="res-page files-page resource-library">${resourceTabs(kind)}${resourceLibraryHtml(index, kind)}</article>`,
         };
     }
     if (kind === "file" && file) {
@@ -1525,24 +1929,29 @@ export const resourcesMain = (
             if (!filesSnapshot(root).files.some((item) => item.path === file)) return undefined;
             const content = readFileSync(textfilePath(root, file));
             let preview = "";
+            let sourceFile: string | undefined;
             if (/\.(svg|png|jpe?g|gif|webp)$/i.test(file)) {
                 const extension = file.split(".").pop()?.toLowerCase();
                 const mime =
                     extension === "svg" ? "svg+xml" : extension === "jpg" ? "jpeg" : extension;
                 preview = `<img alt="" src="data:image/${mime};base64,${content.toString("base64")}">`;
+                if (extension === "svg") sourceFile = file;
             } else if (/\.(mp4|webm|ogg)$/i.test(file)) {
-                preview = `<video controls preload="metadata" src="data:video/${file.split(".").pop()};base64,${content.toString("base64")}"></video>`;
+                preview = `<video data-dooc-video controls playsinline preload="metadata" aria-label="Video preview" src="data:video/${file.split(".").pop()};base64,${content.toString("base64")}"></video>`;
             } else {
                 try {
                     const source = new TextDecoder("utf-8", { fatal: true }).decode(content);
-                    preview = `<pre><code>${escapeHtml(source)}</code></pre>`;
+                    if (source.includes("\0")) throw new Error("Binary file");
+                    sourceFile = file;
+                    preview = textfilePreviewHtml(site, file, source);
                 } catch {
                     preview = BOX_ICON;
                 }
             }
             return {
                 title: file,
-                main: `<article class="res-page"><nav class="res-crumbs"><a href="/_files" data-i18n="Files">Files</a></nav><h1>${escapeHtml(file)}</h1><div class="res-preview">${preview}</div></article>`,
+                sourceFile,
+                main: `<article class="res-page res-file-page"><nav class="res-crumbs"><a href="/_files">${workspaceText(site)}</a></nav><h1>${escapeHtml(file)}</h1><div class="res-preview${sourceFile ? " res-text-preview" : ""}">${preview}</div></article>`,
             };
         } catch {
             return undefined;
@@ -1552,10 +1961,10 @@ export const resourcesMain = (
         return undefined;
     }
     const k = kind as ResourceKind;
-    const crumbs = `<nav class="res-crumbs"><a href="/_files" data-i18n="Files">Files</a> › ${file ? `<a href="${resourceHref(k)}" data-i18n="${k}">${k}</a> › ${escapeHtml(file)}` : k}</nav>`;
+    const crumbs = `<nav class="res-crumbs"><a href="/_files">${workspaceText(site)}</a> › ${file ? `<a href="${resourceHref(k)}" data-i18n="${k}">${k}</a> › ${escapeHtml(file)}` : k}</nav>`;
     if (file == null) {
         return {
-            title: `${k} — Files`,
+            title: `${k} — ${workspaceName(site)}`,
             main: `<article class="res-page">${k === "terms" ? "" : crumbs}<h1 data-i18n="${k}">${translate("eng", k)}</h1>${
                 k === "terms"
                     ? termsHtml(
@@ -1606,7 +2015,8 @@ export const resourcesMain = (
     ];
     return {
         title: `${r.file} — Files`,
-        main: `<article class="res-page">${crumbs}<h1>${escapeHtml(r.file)}</h1><div class="res-preview${k === "icons" ? " square" : ""}">${resourcePreview(site, r)}</div><dl class="res-dl">${rows.map(([dt, dd]) => `<dt data-i18n="${dt}">${dt}</dt><dd>${dd}</dd>`).join("")}</dl></article>`,
+        ...(/\.(?:svg|html|termth|md|markdown)$/i.test(r.path) ? { sourceFile: r.path } : {}),
+        main: `<article class="res-page res-file-page">${crumbs}<h1>${escapeHtml(r.file)}</h1><div class="res-preview${k === "icons" ? " square" : ""}">${resourcePreview(site, r)}</div><details class="res-details"><summary data-i18n="File details">File details</summary><dl class="res-dl">${rows.map(([dt, dd]) => `<dt data-i18n="${dt}">${dt}</dt><dd>${dd}</dd>`).join("")}</dl></details></article>`,
     };
 };
 
@@ -1627,15 +2037,11 @@ const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
     const nav = navGroupsHtml(mode, site, opts.currentId, opts.currentRes);
     const siteTitle = escapeHtml(site.title ?? "dooc");
     const siteIcon = `<span id="site-icon-slot"${mode === "edit" ? ' title="Change site icon" data-i18n-title="Change site icon"' : ""}><img id="site-icon" alt=""${site.icon ? ` src="${svgDataUri(site.icon)}"` : " hidden"}>${DOCS_ICON}${mode === "edit" ? '<input type="file" accept=".svg,image/svg+xml" aria-label="Change site icon" data-i18n-aria-label="Change site icon">' : ""}</span>`;
-    const previewSettings =
-        mode === "edit"
-            ? `<button id="preview-settings-open" class="nav-link" type="button" title="Preview settings" data-i18n-title="Preview settings" aria-label="Preview settings" data-i18n-aria-label="Preview settings">${GEAR_ICON}<span class="nav-label" data-i18n="Preview settings">Preview settings</span></button>`
-            : "";
     const bootScripts =
         opts.boot != null
             ? `<script id="boot" type="application/json">${JSON.stringify(opts.boot).replace(/</g, "\\u003c")}</script>
 <script src="/assets/edit.js"></script>`
-            : mode === "edit"
+            : !opts.publish
               ? '<script src="/assets/ui.js"></script>'
               : "";
     // Interaction layer of the schema graph (zoom / pan / box drag / enlarged view). Shared by
@@ -1647,17 +2053,20 @@ const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
 
 
 <div id="preview-language-menu" role="menu" aria-label="Change language" data-i18n-aria-label="Change language" hidden></div>
-<div id="preview-panes"><section class="preview-pane active" tabindex="0" aria-label="Active pane" data-i18n-aria-label="Active pane"><div class="pane-actions"><button class="pbtn pane-language" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="preview-language-menu" aria-label="Change language" data-i18n-aria-label="Change language" title="Change language" data-i18n-title="Change language">${GLOBE_ICON}</button></div><div class="preview-content">${opts.main}</div></section></div></main>`
-            : `<main>${opts.main}</main>`;
+<div id="preview-panes"><section class="preview-pane active" tabindex="0" aria-label="Active pane" data-i18n-aria-label="Active pane"><div class="pane-actions"><button class="pbtn" type="button" data-theme-picker="document" aria-label="Preview theme"></button>${fontButton("viewer")}<button class="pbtn pane-language" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="preview-language-menu" aria-label="Change language" data-i18n-aria-label="Change language" title="Change language" data-i18n-title="Change language">${GLOBE_ICON}</button></div><div class="preview-content">${opts.main}</div></section></div></main>`
+            : mode === "edit" && opts.currentRes !== undefined
+              ? `<main class="resources-pane">${opts.main}</main>`
+              : `<main><div class="page-actions"><button class="pbtn" type="button" data-theme-picker="document" aria-label="Preview theme"></button>${fontButton("viewer")}</div>${opts.main}</main>`;
     const graphScript = opts.publish
         ? `<script>${inlineScript(opts.publish.graphJs)}</script>`
         : '<script src="/assets/graph.js" defer></script>';
     return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+${opts.publish ? `<meta name="referrer" content="no-referrer"><meta http-equiv="x-dns-prefetch-control" content="off">${opts.publish.network ? "" : `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' data:; img-src data: blob:; media-src data: blob:; font-src data: blob:; frame-src data: blob:; connect-src 'none'; base-uri 'none'; form-action 'none'">`}` : ""}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(pageTitle(mode, opts.title, site.title))}</title>
-<script>try{const t=localStorage.getItem("docs-preview:theme");if(t)document.documentElement.dataset.theme=t}catch{}</script>
+<script>try{const t=localStorage.getItem("docs-preview:theme");if(t)document.documentElement.dataset.theme=t;const e=localStorage.getItem("docs-editor:theme");if(e)document.documentElement.dataset.editorTheme=e}catch{}</script>
 <style>${fontCss(Boolean(opts.publish))}${CSS}${mode === "edit" ? EDIT_CSS : ""}</style></head>
-<body${mode === "edit" ? ' class="edit"' : ""}><nav id="sidebar"><div id="sidebar-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" data-i18n-aria-label="Resize sidebar" title="Resize sidebar" data-i18n-title="Resize sidebar"></div><div id="sidebar-head">${siteIcon}<div id="site-title" class="site-title" title="${siteTitle}">${siteTitle}</div><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button></div><div id="sidebar-content"><div id="nav-groups">${nav}</div><div id="nav-status" role="status" aria-live="polite"></div></div><div id="sidebar-foot">${previewSettings}<button id="theme" class="nav-link" type="button"></button></div></nav>${main}${opts.aside ?? ""}
+<body${mode === "edit" ? ' class="edit"' : ""}><nav id="sidebar"><div id="sidebar-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" data-i18n-aria-label="Resize sidebar" title="Resize sidebar" data-i18n-title="Resize sidebar"></div><div id="sidebar-head">${siteIcon}<div id="site-title" class="site-title" title="${siteTitle}">${siteTitle}</div><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button></div><div id="sidebar-content"><div id="nav-groups">${nav}</div><div id="nav-status" role="status" aria-live="polite"></div></div></nav>${main}${opts.aside ?? ""}
 ${bootScripts}${graphScript}
 <script id="code-grammars" type="application/json">${JSON.stringify(site.codeGrammars ?? []).replace(/</g, "\\u003c")}</script>
 ${opts.publish ? `<script>${inlineScript(opts.publish.codeJs)}</script>` : '<script src="/assets/code.js" defer></script>'}
@@ -1667,30 +2076,13 @@ var __name = (f) => f;
 const contentLanguage = () => JSON.parse(document.getElementById("boot")?.textContent || "null")?.contentLanguage || ${JSON.stringify(site.contentLanguage ?? site.defaultLang)};
 const localeFetch = (url, init = {}) => fetch(url, { ...init, headers: { ...init.headers, "x-docs-language": contentLanguage() } });
 (${mountTerms.toString()})(document);
+(${mountTables.toString()})(document);
+(${mountToc.toString()})(document);
+(${mountVideos.toString()})(document);
 (${mountFigureFrames.toString()})(document);
-(() => {
-  const KEY = "docs-preview:theme";
-  const btn = document.getElementById("theme");
-  const labels = { "": "Auto", light: "Light", dark: "Dark" };
-  const t = (key) => window.__docsTranslate ? window.__docsTranslate(key) : key;
-  const icons = ${JSON.stringify(THEME_ICONS)};
-  const apply = (v) => {
-    if (v) { document.documentElement.dataset.theme = v; } else { delete document.documentElement.dataset.theme; }
-    if (!btn) return;
-    btn.innerHTML = icons[v || ""] + '<span class="nav-label">' + t('Theme') + ': ' + t(labels[v || ""]) + "</span>";
-    btn.title = t("Theme") + ": " + t(labels[v || ""]);
-  };
-  let cur = "";
-  try { cur = localStorage.getItem(KEY) || ""; } catch {}
-  apply(cur);
-  document.addEventListener("docs:ui-language", () => apply(cur));
-  if (!btn) return;
-  btn.addEventListener("click", () => {
-    cur = cur === "" ? "light" : cur === "light" ? "dark" : "";
-    try { cur ? localStorage.setItem(KEY, cur) : localStorage.removeItem(KEY); } catch {}
-    apply(cur);
-  });
-})();
+(${mountThemeVariants.toString()})(document);
+(${mountThemePickers.toString()})(${JSON.stringify(THEME_ICONS)}, ${JSON.stringify(site.themes)});
+void (${mountFontPickers.toString()})(${createFontSettings.toString()}, ${JSON.stringify(site.fonts ?? []).replace(/</g, "\\u003c")});
 (() => {
   const KEY = "docs:sidebar-open";
   const toggle = document.getElementById("sidebar-toggle");
@@ -1713,13 +2105,19 @@ const localeFetch = (url, init = {}) => fetch(url, { ...init, headers: { ...init
     try { localStorage.setItem(KEY, open ? "1" : "0"); } catch {}
     apply(open);
   });
+  document.getElementById("sidebar-content")?.addEventListener("click", (event) => {
+    if (open || !(event.target instanceof Element) || !event.target.closest(".nav-row")) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    toggle.click();
+  }, true);
 })();
 (${mountPanelResize.toString()})();
+(${mountToolsResize.toString()})();
 (() => {
   // Open/close: by default "the branch containing the current doc is open" (the server adds
   // .open), overridden by explicit user actions (sessionStorage = per tab only).
   const OPEN_KEY = "docs:nav-open";
-  const resizeFiles = (${mountFilesResize.toString()})();
   const readOpen = () => { try { return JSON.parse(sessionStorage.getItem(OPEN_KEY) || "{}"); } catch { return {}; } };
   const applyOpen = () => {
     const o = readOpen();
@@ -1729,7 +2127,6 @@ const localeFetch = (url, init = {}) => fetch(url, { ...init, headers: { ...init
       for (const button of it.querySelectorAll(":scope > .nav-row > [aria-expanded]")) button.setAttribute("aria-expanded", String(it.classList.contains("open")));
     }
     (${focusNavTree.toString()})(document.getElementById("nav-groups"));
-    resizeFiles();
   };
   window.__docsNavOpen = (id, v) => {
     const o = readOpen();
@@ -1738,7 +2135,7 @@ const localeFetch = (url, init = {}) => fetch(url, { ...init, headers: { ...init
     applyOpen();
   };
   document.addEventListener("click", (ev) => {
-    const t = ev.target instanceof Element ? ev.target.closest(".nav-tree-toggle, [data-file-folder]") : null;
+    const t = ev.target instanceof Element ? ev.target.closest(".nav-tree-toggle") : null;
     if (!t) return;
     ev.preventDefault();
     const it = t.closest(".nav-item");
@@ -1768,7 +2165,7 @@ ${
     if (window.__docsRefreshNav) return window.__docsRefreshNav();
     const cur = document.querySelector("#nav-groups .nav-row a.cur");
     const id = (cur && cur.closest(".nav-item").dataset.docId) || "";
-    const rp = location.pathname.startsWith("/_files") ? location.pathname.slice(8).replace(/^\\/|\\/$/g, "") : null;
+    const rp = location.pathname.startsWith("/_statics") ? location.pathname.slice(1) : location.pathname === "/_git" ? "_git" : location.pathname.startsWith("/_files") ? location.pathname.slice(8).replace(/^\\/|\\/$/g, "") : null;
     const res = await localeFetch("/api/nav?current=" + encodeURIComponent(id) + (rp == null ? "" : "&res=" + encodeURIComponent(rp)));
     if (res.ok) document.getElementById("nav-groups").innerHTML = (await res.json()).html;
     if (window.__docsNavRestore) window.__docsNavRestore();
@@ -2053,7 +2450,7 @@ document.addEventListener("click", (ev) => {
 });
 </script>
 <script>${inlineScript(`(${mountSearch.toString()})(${JSON.stringify(opts.publish ? searchIndex(site) : []).replace(/</g, "\\u003c")}, ${searchSections.toString()}, ${JSON.stringify(Object.fromEntries(SEARCH_LABELS.map((key) => [key, translate(site.defaultLang, key)]))).replace(/</g, "\\u003c")}, ${Boolean(opts.publish)});`)}</script>
-${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publish.first)}</script>` : `<script>${hmrClientScript(mode)}</script>`}</body></html>`;
+${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publish.first)}${opts.publish.network ? `\n(${mountBundleNetwork.toString()})();` : ""}</script>` : `<script>${hmrClientScript(mode)}</script>`}</body></html>`;
 };
 
 // A `</script` inside an inline <script> would close the script early, so escape it.
@@ -2073,7 +2470,9 @@ const publishRouterScript = (first: string): string => `
     const p = (path || "").split("?")[0].replace(/^\\/+|\\/+$/g, "");
     const route = pages.has(p) ? p : FIRST;
     const page = pages.get(route);
+    const actions = main.querySelector(":scope > .page-actions");
     main.innerHTML = page.innerHTML;
+    if (actions) main.prepend(actions);
     document.title = page.dataset.title;
     for (const a of document.querySelectorAll("#nav-groups a")) {
       a.classList.toggle("cur", a.getAttribute("href").split("?")[0] === "#/" + route);
@@ -2084,7 +2483,9 @@ const publishRouterScript = (first: string): string => `
     }
     (${focusNavTree.toString()})(document.getElementById("nav-groups"));
     const target = anchor && document.getElementById(anchor);
-    if (target) target.scrollIntoView(); else window.scrollTo(0, 0);
+    requestAnimationFrame(() => {
+      if (target) target.scrollIntoView(); else window.scrollTo(0, 0);
+    });
   };
   window.addEventListener("hashchange", show);
   show();
@@ -2107,6 +2508,7 @@ export const publishHtml = (
     graphJs: string,
     title = site.title ?? "dooc",
     codeJs = "",
+    mode: "static" | "network" = "static",
 ): string => {
     const pages = site.entries.map((e) => ({
         route: docPath(site.entries, e.id).slice(1),
@@ -2138,7 +2540,7 @@ export const publishHtml = (
             {
                 title,
                 main: "",
-                publish: { graphJs, codeJs, pages: templates, first },
+                publish: { graphJs, codeJs, pages: templates, first, network: mode === "network" },
             },
         ),
         first,
@@ -2169,6 +2571,7 @@ const entryMain = (site: Site, e: Entry): string => {
  * display.
  */
 export interface EditorBoot {
+    gitBase: string | null;
     filePreviews: FilePreviewResults;
     previews?: PreviewSettings;
     siteTitle?: string;
@@ -2204,16 +2607,18 @@ export const languageFieldHtml = (
     defaultLang: string,
     language = contentLanguageCode(defaultLang),
     translatedLanguages: readonly string[] = [contentLanguageCode(defaultLang)],
+    declaredLanguages?: readonly string[],
 ): string => {
     const existing = new Set(translatedLanguages);
     const options = [...contentLanguages]
+        .filter(({ code }) => !declaredLanguages || declaredLanguages.includes(code))
         .sort((a, b) => Number(existing.has(b.code)) - Number(existing.has(a.code)))
         .map(
             ({ code, name }) =>
                 `<option value="${code}" data-name="${escapeHtml(name)}" data-added="${existing.has(code)}"${code === language ? " selected" : ""}>${escapeHtml(name)} (${code})</option>`,
         )
         .join("");
-    return `<div class="fm-language">${GLOBE_ICON}<select id="fm-lang" data-source="${contentLanguageCode(defaultLang)}" aria-label="Change language" data-i18n-aria-label="Change language">${options}</select></div>`;
+    return `<div class="fm-language"><button class="pbtn" type="button" data-language-open aria-label="Change language" data-i18n-aria-label="Change language" aria-haspopup="listbox" aria-expanded="false" aria-controls="fm-lang-options">${GLOBE_ICON}</button><select id="fm-lang" data-source="${contentLanguageCode(defaultLang)}" aria-label="Change language" data-i18n-aria-label="Change language">${options}</select></div>`;
 };
 
 // The same thing is passed for the initial render (editorAside) and doc switch (`/api/page`)
@@ -2226,6 +2631,7 @@ export const editorBoot = (entry: Entry, site: Site): EditorBoot => {
         title: docDisplayName(e.frontmatter, e.id),
     }));
     return {
+        gitBase: entryGitBase(entry, site),
         ...(site.title === undefined ? {} : { siteTitle: site.title }),
         ...(site.icon === undefined ? {} : { siteIcon: svgDataUri(site.icon) }),
         ...(entry.frontmatter?.lang ? { docLanguage: entry.frontmatter.lang } : {}),
@@ -2260,7 +2666,9 @@ export const editorBoot = (entry: Entry, site: Site): EditorBoot => {
 const editorAside = (entry: Entry, site: Site): { aside: string; boot: EditorBoot } => {
     const aside = `<aside id="panel"><div id="resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="panel" aria-label="Resize editor" data-i18n-aria-label="Resize editor" title="Resize editor" data-i18n-title="Resize editor"></div>
 <div id="phead">
-${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLanguages)}
+<button class="pbtn" type="button" data-theme-picker="editor" aria-label="Editor theme"></button>
+${fontButton("editor")}
+${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLanguages, site.contentLanguages)}
 <span id="status"></span>
 <button id="validate" class="pbtn" type="button" title="Validate and apply" data-i18n-title="Validate and apply" aria-label="Validate and apply" data-i18n-aria-label="Validate and apply">${icon('<path d="M5 5l-4 5 4 5M15 5l4 5-4 5M7 10l2 2 4-5"/>')}</button>
 <button id="save" class="pbtn" data-state="saved" type="button" title="Save (Ctrl+S)" data-i18n-title="Save (Ctrl+S)" aria-label="Save" data-i18n-aria-label="Save">${icon('<path d="M3 3h11l3 3v11H3z"/><path d="M6 3v5h7V3M6 17v-6h8v6"/>')}</button>
@@ -2270,6 +2678,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
 <label><input type="checkbox" id="opt-autovalidate"><span data-i18n="Auto validate">Auto validate</span></label>
 <label><input type="checkbox" id="opt-autosave"><span data-i18n="Auto save">Auto save</span></label>
 <label><input type="checkbox" id="opt-corr"><span data-i18n="Source mapping">Source mapping</span></label>
+<label><input type="checkbox" id="opt-git-diff"><span data-i18n="Show Git changes">Show Git changes</span></label>
 </div></div>
 </div>
 
@@ -2284,11 +2693,43 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
  * search term / open state without rebuilding the sidebar DOM); it returns only what the client
  * replaces: main html + the panel's variable parts (file name / front-matter fields) + the new
  * doc's boot.
- * Non-doc routes (unknown) → 404 — the caller falls back to normal navigation.
+ * File views replace the central workspace while retaining the current editor.
  */
 export const pageDataResponse = (site: Site, path: unknown): { status: number; body: unknown } => {
     if (typeof path !== "string" || !path.startsWith("/")) {
         return { status: 400, body: { error: "route must be /<docId>" } };
+    }
+    if (
+        path === "/_git" ||
+        path === "/_statics" ||
+        path.startsWith("/_statics/") ||
+        path === "/_files" ||
+        path.startsWith("/_files/")
+    ) {
+        try {
+            const resource = resourcesMain(
+                site,
+                path.startsWith("/_statics")
+                    ? path.slice(1)
+                    : path === "/_git"
+                      ? "_git"
+                      : path.slice("/_files".length).replace(/^\/|\/$/g, ""),
+            );
+            return resource
+                ? {
+                      status: 200,
+                      body: {
+                          resource: true,
+                          path,
+                          title: pageTitle("edit", resource.title, site.title),
+                          html: docLinks(site, resource.main),
+                          sourceFile: resource.sourceFile,
+                      },
+                  }
+                : { status: 404, body: { error: `${path} is not a file route` } };
+        } catch {
+            return { status: 400, body: { error: "Invalid file route" } };
+        }
     }
     const id = resolveDocPath(site.entries, path);
     const doc = site.entries.find((e) => e.id === id);
@@ -2659,10 +3100,18 @@ export const bundleClient = async (entry: string, publish = false): Promise<stri
     return out.outputFiles?.[0]?.text ?? "";
 };
 
-export const startServer = async (mode: ServeMode, port = 5179): Promise<void> => {
+export const startServer = async (
+    mode: ServeMode,
+    port = 5179,
+    pluginModule?: string,
+): Promise<ViewerRuntime> => {
     // Language adapters are read once; the manifest is re-read by the compiler.
     siteLanguages = await loadSiteLanguages(root);
-    compiler = createCompiler(root);
+    const viewerPlugins = await loadViewerPlugins(pluginModule);
+    workspaceSource = viewerPlugins.workspace;
+    let gitOrigin = viewerPlugins.gitOrigin;
+    const handleGit = createGitHandler(root, () => gitOrigin);
+    const handlePlugins = createPluginHandler(viewerPlugins.plugins, viewerPlugins);
     // Client bundles (bundleClient) = edit's editing UI and the schema graph interaction layer
     // shared by preview/edit. React Flow's stylesheet isn't mixed into the bundle — the mount
     // layer (flow-css.ts) injects it into a <style> at runtime, so the page needs no CSS delivery
@@ -2676,6 +3125,27 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
     // HMR — bootId changes on every process start. It's how the client detects a tsx watch
     // restart.
     const hub = createHmrHub(`${process.pid}-${Date.now()}`);
+    const viewer: ViewerRuntime = {
+        register: handlePlugins.register,
+        unregister: handlePlugins.unregister,
+        setWorkspace(workspace) {
+            workspaceSource = workspace === undefined ? undefined : parseWorkspaceSource(workspace);
+            hub.broadcast("content", []);
+        },
+        setGitOrigin(origin) {
+            gitOrigin = origin === undefined ? undefined : validateGitOrigin(origin);
+        },
+        setAllowedDomains(domains) {
+            if (!Array.isArray(domains)) throw new Error("Allowed domains must be a list");
+            const previews = parsePreviewSettings({ domains });
+            applicationPreviews = previews;
+            compiler = createCompiler(root, { previews });
+            localeCompilers.clear();
+            hub.broadcast("content", []);
+        },
+    };
+    viewer.setAllowedDomains(viewerPlugins.allowedDomains ?? []);
+    await viewerPlugins.setup?.(viewer);
     // DOCS_HMR=0 = no hot reload (nothing is watched = changes need a manual reload).
     if (process.env.DOCS_HMR !== "0") {
         const watcher = watchProject(root, pkgRoot, (kind, files) => {
@@ -2690,6 +3160,7 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
     }
 
     const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        if (await handlePlugins(req, res)) return;
         const requestUrl = new URL(req.url ?? "/", "http://localhost");
         const requestedLanguage =
             req.headers["x-docs-language"] ??
@@ -2734,7 +3205,7 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
                   ? "core/schema-graph-global.tsx"
                   : mode === "edit" && path === "/assets/edit.js"
                     ? "viewer/edit-client.ts"
-                    : mode === "edit" && path === "/assets/ui.js"
+                    : path === "/assets/ui.js"
                       ? "viewer/ui-client.ts"
                       : undefined;
         if (req.method === "GET" && clientEntry != null) {
@@ -2755,21 +3226,42 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
             return;
         }
         if (mode === "edit" && req.method === "POST") {
-            if (path === "/api/preview-settings") {
+            if (path === "/api/git") {
+                res.setHeader("cache-control", "no-store");
                 if (
                     !isLocalToolRequest(
                         req.headers.host ?? "",
                         req.headers.origin,
                         req.headers["content-type"],
-                    )
+                    ) ||
+                    (req.headers.host !== `localhost:${req.socket.localPort}` &&
+                        req.headers.host !== `127.0.0.1:${req.socket.localPort}` &&
+                        req.headers.host !== `[::1]:${req.socket.localPort}`)
                 ) {
                     sendJson(res, 403, {
-                        error: "Preview settings require a same-origin local editor request",
+                        error: "Git requires a same-origin local editor request",
                     });
                     return;
                 }
-                const result = previewSettingsResponse(root, await readJson(req));
-                sendJson(res, result.status, result.body);
+                try {
+                    if ((workspaceSource ?? readWorkspaceSource(root)).protocol !== "git")
+                        throw new Error("Git workspace is not available");
+                    const input = await readJson(req, 1_048_576);
+                    const result = await handleGit(input);
+                    if (
+                        workspaceSource?.protocol === "git" &&
+                        (input?.action === "switch" || input?.action === "branch")
+                    ) {
+                        const local = readWorkspaceSource(root);
+                        if (local.protocol === "git")
+                            workspaceSource = { ...workspaceSource, branch: local.branch };
+                    }
+                    sendJson(res, 200, result);
+                } catch (error) {
+                    sendJson(res, 409, {
+                        error: error instanceof Error ? error.message : "Git operation failed",
+                    });
+                }
                 return;
             }
             if (path === "/api/files") {
@@ -2818,7 +3310,7 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
                     });
                     return;
                 }
-                const result = codeFileResponse(root, await readJson(req));
+                const result = codeFileResponse(root, await readJson(req), applicationPreviews);
                 sendJson(res, result.status, result.body);
                 return;
             }
@@ -2836,6 +3328,21 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
                     return;
                 }
                 const input = await readJson(req);
+                if (input?.action === "preview") {
+                    try {
+                        if (typeof input.file !== "string") throw new Error("Expected a file path");
+                        const files = previewTextfiles(root, {
+                            [input.file]: input.content,
+                        });
+                        const [file, content] = [...files][0] as [string, string];
+                        sendJson(res, 200, {
+                            html: textfilePreviewHtml(loadSite(locale), file, content),
+                        });
+                    } catch (error) {
+                        sendJson(res, 400, { error: String(error) });
+                    }
+                    return;
+                }
                 if (input?.action === "validate") {
                     try {
                         if (
@@ -2844,6 +3351,7 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
                             isRemoteTextfile(input.file)
                         )
                             throw new Error("Invalid text file tool request");
+                        previewTextfiles(root, { [input.file]: input.content });
                         const name = textfileName(input.file);
                         const extension = (name.split(".").at(-1) || name).toLowerCase();
                         const grammar = siteLanguages.codeGrammars?.find(
@@ -2855,11 +3363,18 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
                         )
                             ? extension
                             : (grammar?.name ?? extension);
-                        sendJson(
-                            res,
-                            200,
-                            await validateTextfileCode(root, language, input.content),
-                        );
+                        const result = await validateTextfileCode(root, language, input.content);
+                        for (const message of textfilePreviewErrors(
+                            loadSite(locale),
+                            input.file,
+                            result.content,
+                        ))
+                            result.findings.push({
+                                message,
+                                range: [0, result.content.length],
+                                ruleId: "preview",
+                            });
+                        sendJson(res, 200, result);
                     } catch (error) {
                         sendJson(res, 400, {
                             error: error instanceof Error ? error.message : String(error),
@@ -2867,7 +3382,17 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
                     }
                     return;
                 }
-                const result = await textfileResponse(root, input);
+                const result = await textfileResponse(root, input, applicationPreviews.domains);
+                if (
+                    result.status === 200 &&
+                    typeof input?.file === "string" &&
+                    !isRemoteTextfile(input.file)
+                ) {
+                    result.body.gitBase =
+                        (workspaceSource ?? readWorkspaceSource(root)).protocol === "git"
+                            ? gitBaseText(root, input.file)
+                            : null;
+                }
                 sendJson(res, result.status, result.body);
                 return;
             }
@@ -3078,13 +3603,48 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
             return;
         }
         if (
-            (mode === "edit" && (path === "/_files" || path.startsWith("/_files/"))) ||
+            (mode === "edit" &&
+                (path === "/_git" ||
+                    path === "/_statics" ||
+                    path.startsWith("/_statics/") ||
+                    path === "/_files" ||
+                    path.startsWith("/_files/"))) ||
             path === "/_files/terms"
         ) {
-            const rest = requestUrl.pathname.slice("/_files".length).replace(/^\/|\/$/g, "");
+            const rest = path.startsWith("/_statics")
+                ? path.slice(1)
+                : path === "/_git"
+                  ? "_git"
+                  : requestUrl.pathname.slice("/_files".length).replace(/^\/|\/$/g, "");
             const page = resourcesMain(site, rest);
             if (!page) {
                 notFound(res, path);
+                return;
+            }
+            const editor =
+                mode === "edit"
+                    ? (site.entries.find(
+                          (entry) => entry.id === requestUrl.searchParams.get("editor"),
+                      ) ?? site.entries[0])
+                    : undefined;
+            if (editor) {
+                const { aside, boot } = editorAside(editor, site);
+                sendPage(res, mode, site, {
+                    title: page.title,
+                    main: entryMain(site, editor),
+                    currentId: editor.id,
+                    currentRes: rest,
+                    aside,
+                    boot: {
+                        ...boot,
+                        resource: {
+                            path,
+                            title: pageTitle(mode, page.title, site.title),
+                            html: docLinks(site, page.main),
+                            sourceFile: page.sourceFile,
+                        },
+                    },
+                });
                 return;
             }
             sendPage(res, mode, site, { ...page, currentRes: rest });
@@ -3136,4 +3696,5 @@ export const startServer = async (mode: ServeMode, port = 5179): Promise<void> =
         server.listen(p, "127.0.0.1");
     };
     listen(port, 10);
+    return viewer;
 };

@@ -6,7 +6,7 @@ import { parseFileReference } from "./textfile.js";
 export const parseFigureLink = (source: string): { file: string; fragment: string } | undefined => {
     if (/^(?:[a-z][a-z\d+.-]*:|\/)/i.test(source)) return undefined;
     const path = decodeURIComponent(source.split(/[?#]/)[0] ?? "");
-    if (!/\.(svg|html|png|webp|jpe?g)$/.test(path)) return undefined;
+    if (!/\.(svg|html|png|webp|gif|mp4|webm|jpe?g)$/.test(path)) return undefined;
     const ref = parseFileReference(source);
     const file = ref.file.replace(/^(\.\/)+/, "");
     if (!localFile(file)) throw new Error("Figure links require a file inside the docs root");
@@ -20,11 +20,29 @@ export const parseFileEmbed = (
 ): {
     file: string;
     range?: string;
-    kind: "textfile" | "figure" | "html";
+    tableMode?: "header";
+    kind: "textfile" | "figure" | "html" | "external";
 } => {
+    if (/^https?:\/\//i.test(source)) {
+        const url = new URL(source);
+        if (url.username || url.password)
+            throw new Error("Embed URLs must not contain credentials");
+        return { file: source, kind: "external" };
+    }
     const ref = parseFileReference(source);
     const previewer = resolvePreviewer(source, settings);
-    if (ref.range !== undefined || (previewer !== "image" && previewer !== "html"))
+    if (ref.range === "#H") {
+        if (previewer !== "table") throw new Error("#H requires a CSV or TSV file");
+        return {
+            file: ref.file,
+            tableMode: "header",
+            kind: "textfile",
+        };
+    }
+    if (
+        ref.range !== undefined ||
+        (previewer !== "image" && previewer !== "html" && previewer !== "video")
+    )
         return { ...ref, kind: "textfile" };
     const file = ref.file.replace(/^(\.\/)+/, "");
     if (!localFile(file))

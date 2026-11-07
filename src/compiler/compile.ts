@@ -1,5 +1,5 @@
 // Reads dooc.yaml and source files into validated, in-memory content for the viewer and HTML
-// export. createCompiler caches unchanged files; compileSite performs a one-shot compilation.
+// bundles. createCompiler caches unchanged files; compileSite performs a one-shot compilation.
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { type Block, type ListItem, type TocEntry, walkBlocks } from "../core/blocks.js";
@@ -8,7 +8,11 @@ import type { CompiledDoc, FigureEntry, TermEntry } from "../core/content-types.
 import { termMap } from "../core/inline.js";
 import { DEFAULT_LANG, isLangTag } from "../core/language.js";
 import { contentLinks, parseMdast } from "../core/markdown.js";
-import { defaultPreviewSettings, type PreviewSettings } from "../core/previewers.js";
+import {
+    defaultPreviewSettings,
+    type PreviewSettings,
+    parsePreviewSettings,
+} from "../core/previewers.js";
 import { type DocRef, parseDocLink } from "../core/routing.js";
 import type { Frontmatter } from "../core/taxonomy.js";
 import { isTermFile } from "../core/term-reference.js";
@@ -21,11 +25,12 @@ import { projectFiles } from "./files.js";
 import { toBlocks } from "./from-mdast.js";
 import { loadIcons, squareSvg } from "./icons.js";
 import { contentLanguageCode, isContentLanguage } from "./language-codes.js";
-import { translationFile } from "./locales.js";
-import { parseManifestText, readManifest } from "./manifest.js";
+import { siteContentLanguages, translationFile } from "./locales.js";
+import { parseManifestText } from "./manifest.js";
 import { parseTermSource } from "./terms.js";
 import { readTextfile, selectTextfileRange } from "./textfile.js";
 import { TextfileUnavailable } from "./textfile-remote.js";
+import { siteThemes, themeVariants } from "./theme-variants.js";
 
 export type {
     CompiledDoc,
@@ -81,9 +86,13 @@ export interface Compiled {
     errors: string[];
     /** Site default language (docs without front-matter `lang` resolve to it). */
     defaultLang: string;
+    contentLanguages?: string[];
+    themes?: ("light" | "dark")[];
 }
 
 export interface CompileOptions {
+    /** Network permissions supplied by the host application, never by document metadata. */
+    previews?: PreviewSettings;
     /** Selected content language; translations mirror source paths under locales/<locale>/. */
     locale?: string;
     /** Override dooc.yaml's defaultLang for programmatic compilation. */
@@ -106,7 +115,7 @@ export interface DraftContext {
     /** Unsaved local file contents, used only for draft previews. */
     textfiles?: ReadonlyMap<string, string>;
     /** file = CompiledDoc.file (`content/<id>.md`); used to look up a draft's id / parent. */
-    docs: readonly (DocRef & { file: string })[];
+    docs: readonly (DocRef & { file: string; toc?: readonly TocEntry[] })[];
     /** name → figure (file = `figures/<file>`). */
     figures: { get(name: string): { file: string } | undefined };
     /** Site default language for a draft without front-matter `lang`. Default: DEFAULT_LANG. */
@@ -154,8 +163,15 @@ const resolveFiles = (
     f: ParsedFile,
     root?: string,
     textfiles?: ReadonlyMap<string, string>,
+    previews?: PreviewSettings,
+    themes?: string[],
 ): ParsedFile => {
-    if (!f.refs.terms.length && !walkBlocks(f.blocks).some((b) => b.type === "code" && b.filename))
+    if (
+        !f.refs.terms.length &&
+        !walkBlocks(f.blocks).some(
+            (b) => b.type === "figureRef" || (b.type === "code" && b.filename),
+        )
+    )
         return f;
     const errors = [...f.parsed.errors];
     const terms = [...f.parsed.terms];
@@ -169,6 +185,35 @@ const resolveFiles = (
               ? { blocks: item.blocks.map(resolveBlock) }
               : { ...item, children: item.children.map(resolveItem) };
     const resolveBlock = (b: Block): Block => {
+        const file =
+            b.type === "code"
+                ? b.filename?.replace(/^(\.\/)+/, "")
+                : b.type === "figureRef"
+                  ? f.figureFiles.find((file) => figureName(file) === b.name)
+                  : undefined;
+        let variants: Record<string, string> = {};
+        try {
+            if (file && root) variants = themeVariants(root, file, themes);
+        } catch (error) {
+            errors.push(`${file}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        const base = resolveContent(b);
+        if (!Object.keys(variants).length) return base;
+        return {
+            type: "themeVariants",
+            default: base,
+            variants: Object.fromEntries(
+                Object.entries(variants).map(([theme, path]) => {
+                    if (b.type === "figureRef") {
+                        figureFiles.add(path);
+                        return [theme, { ...b, name: figureName(path) }];
+                    }
+                    return [theme, resolveContent({ ...b, filename: path } as Block)];
+                }),
+            ),
+        };
+    };
+    const resolveContent = (b: Block): Block => {
         if (b.type === "quote") return { ...b, blocks: b.blocks.map(resolveBlock) };
         if (b.type === "list") return { ...b, items: b.items.map(resolveItem) };
         if (b.type !== "code" || !b.filename) return b;
@@ -176,17 +221,12 @@ const resolveFiles = (
             if (!root) throw new Error("docs root is required to read text files");
             const source = selectTextfileRange(
                 textfiles?.get(b.filename.replace(/^(\.\/)+/, "")) ??
-                    readTextfile(root, b.filename),
+                    readTextfile(root, b.filename, false, previews?.domains),
                 b.range,
             );
             const parsed =
                 b.range === undefined && !isRemoteTextfile(b.filename)
-                    ? parseContentSource(
-                          b.lang ?? "",
-                          source,
-                          b.filename.replace(/^(\.\/)+/, ""),
-                          b.alt,
-                      )
+                    ? parseContentSource(b.lang ?? "", source, b.filename.replace(/^(\.\/)+/, ""))
                     : undefined;
             if (parsed) {
                 if (b.lang === "callouth") {
@@ -202,7 +242,12 @@ const resolveFiles = (
                 );
                 for (const block of parsed.blocks)
                     if (block.type === "term") terms.push(block.entry);
-                if (parsed.blocks[0]) return parsed.blocks[0];
+                if (parsed.blocks[0]) {
+                    const block = { ...parsed.blocks[0], ...(b.alt ? { alt: b.alt } : {}) };
+                    return block.type === "table" && b.tableMode
+                        ? { ...block, tableMode: b.tableMode }
+                        : block;
+                }
             }
             return {
                 ...b,
@@ -285,8 +330,15 @@ const docErrors = (f: ParsedFile, { docs, figures }: DraftContext): string[] => 
     }
     for (const url of f.docLinks) {
         const ref = parseDocLink(url);
-        if (ref && !docs.some((doc) => doc.file === ref.file))
+        const target = ref && docs.find((doc) => doc.file === ref.file);
+        if (ref && !target)
             errors.push(`Document link "${url}" is unresolved (check the file path)`);
+        else if (
+            ref?.fragment &&
+            target?.toc &&
+            !target.toc.some((heading) => heading.slug === ref.fragment)
+        )
+            errors.push(`Document link "${url}" refers to a missing heading`);
     }
     return errors;
 };
@@ -310,9 +362,16 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             ? manifestCache.get(manifestPath, parseManifestText)
             : { tree: [], errors: [`${MANIFEST_FILE} is required`] };
         const defaultLang = options.defaultLang ?? manifest.defaultLang ?? DEFAULT_LANG;
+        if (
+            options.locale &&
+            manifest.languages &&
+            !siteContentLanguages(root, manifest).includes(options.locale)
+        )
+            throw new Error(`Language ${options.locale} is not declared in dooc.yaml languages`);
+        const themes = siteThemes(root, manifest);
         const visualFiles = projectFiles(root)
             .map((file) => file.path)
-            .filter((file) => /\.(svg|html|png|webp|jpe?g)$/.test(file));
+            .filter((file) => /\.(svg|html|png|webp|gif|mp4|webm|jpe?g)$/.test(file));
         const { figures, errors: figErrors } = figuresCache.get(
             dirSig(figuresDir) +
                 visualFiles.map((file) => `${file}:${fileSig(textfilePath(root, file))}`).join("|"),
@@ -322,7 +381,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
         if (!isLangTag(defaultLang)) {
             siteErrors.push("defaultLang must be a BCP 47 language tag");
         }
-        let previews = defaultPreviewSettings();
+        const previews = parsePreviewSettings(options.previews ?? defaultPreviewSettings());
         let title: string | undefined;
         let icon: string | undefined;
         let iconFile: string | undefined;
@@ -334,10 +393,8 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                 tree,
                 title: manifestTitle,
                 icon: manifestIcon,
-                previews: manifestPreviews,
                 errors: manifestErrors,
             } = manifest;
-            previews = manifestPreviews ?? defaultPreviewSettings();
             const nextPreviewKey = JSON.stringify(previews);
             if (nextPreviewKey !== previewKey) {
                 docCache = createFileCache<ParsedFile>();
@@ -409,7 +466,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                         siteErrors.push(`${file}: ${error}`);
                     }
                 }
-                parsed = resolveFiles(parsed, root);
+                parsed = resolveFiles(parsed, root, undefined, previews, themes);
                 files.push({ doc: toDoc(id, parent, rel, parsed, language), parsed });
             }
             for (const id of onDisk) {
@@ -460,6 +517,8 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
         }
         return {
             previews,
+            ...(manifest.languages ? { contentLanguages: manifest.languages } : {}),
+            ...(manifest.themes ? { themes: manifest.themes } : {}),
             ...(title === undefined ? {} : { title }),
             ...(icon === undefined ? {} : { icon }),
             docs,
@@ -486,8 +545,8 @@ export const compileDraft = (
     raw: string,
 ): { doc: CompiledDoc; source: DocSource } => {
     const known = ctx.docs.find((d) => d.file === file);
-    const previews = ctx.previews ?? (ctx.root ? readManifest(ctx.root).previews : undefined);
-    const parsed = resolveFiles(parseFile(raw, previews, file), ctx.root, ctx.textfiles);
+    const previews = ctx.previews;
+    const parsed = resolveFiles(parseFile(raw, previews, file), ctx.root, ctx.textfiles, previews);
     return {
         doc: toDoc(known?.id ?? "", known?.parent, file, parsed, ctx.defaultLang ?? DEFAULT_LANG),
         source: {

@@ -1,0 +1,7 @@
+.card {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  color: var(--doc-fg);
+  border: 1px solid var(--doc-border);
+}

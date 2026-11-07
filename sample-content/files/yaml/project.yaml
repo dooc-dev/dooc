@@ -1,0 +1,7 @@
+project: Field notes
+owners:
+  - Alice
+  - Bob
+review:
+  required: true
+  status: ready

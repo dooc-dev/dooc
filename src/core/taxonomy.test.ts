@@ -6,7 +6,15 @@ const fill = (sample: string): string => sample.replace(/<([^<>\n]+)>/g, "$1");
 
 describe("semantic code templates", () => {
     it("inserts valid, closed code fences with non-nested snippet fields", () => {
-        expect(Object.keys(CODE_TEMPLATES)).toEqual(["callouth", "schemath", "grapth", "termth"]);
+        expect(Object.keys(CODE_TEMPLATES)).toEqual([
+            "csv",
+            "tsv",
+            "mermaid",
+            "callouth",
+            "schemath",
+            "graphth",
+            "termth",
+        ]);
         for (const [name, sample] of Object.entries(CODE_TEMPLATES)) {
             expect(sample.startsWith(`\`\`\`${name}`)).toBe(true);
             expect(sample.endsWith("```")).toBe(true);

@@ -1,10 +1,16 @@
 import { mountFileUpload } from "./file-upload.js";
 import { mountFiles } from "./files-ui.js";
+import { mountGit } from "./git-ui.js";
 import { mountUiLanguage } from "./i18n.js";
-import { mountPreviewSettings } from "./preview-settings-ui.js";
+import { mountPlugins } from "./plugins-ui.js";
+import { mountResourceLibrary } from "./resource-library-ui.js";
 
 mountUiLanguage();
-mountPreviewSettings();
+mountPlugins();
+mountResourceLibrary();
 
-mountFiles();
-mountFileUpload();
+if (document.body.classList.contains("edit")) {
+    mountFiles();
+    mountGit();
+    mountFileUpload();
+}

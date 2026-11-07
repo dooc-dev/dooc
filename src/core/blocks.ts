@@ -18,6 +18,8 @@ export type CalloutItem =
     | { type: "list"; items: ListItem[]; ordered?: boolean };
 
 export type Block =
+    | { type: "themeVariants"; default: Block; variants: Record<string, Block> }
+    | { type: "external"; url: string; alt?: string }
     | { type: "p"; text: string }
     | { type: "quote"; blocks: Block[] }
     // slug is derived from the heading text and filled in by the build (shared with the TOC, no
@@ -32,26 +34,30 @@ export type Block =
           lang?: CodeLang;
           filename?: string;
           range?: string;
+          tableMode?: "header";
           alt?: string;
           unavailable?: "missing" | "unreachable";
       }
     | {
           type: "table";
+          dataSource?: string;
+          tableMode?: "header";
           headers: string[];
           rows: string[][];
+          alt?: string;
           caption?: string;
           collapsible?: boolean;
       }
-    | { type: "callout"; title?: string; body: CalloutItem[] }
-    // Figure markup comes from the render context. Markdown captions override its title.
-    | { type: "figureRef"; name: string; caption?: string }
+    | { type: "callout"; title?: string; alt?: string; body: CalloutItem[] }
+    // Markdown embeds supply alt text; explicit captions belong to programmatic figures.
+    | { type: "figureRef"; name: string; alt?: string; caption?: string }
     | { type: "term"; entry: TermEntry }
     // Listing of all figures in the render context.
     | { type: "figures" }
     // Parsed schemath model. Keep the original source for the interactive source viewer.
-    | { type: "schemaGraph"; caption?: string; graph: SchemaModel; source?: string }
-    // Parsed grapth model, with the original source preserving notes and ordering.
-    | { type: "graph"; caption?: string; graph: GraphModel; source?: string };
+    | { type: "schemaGraph"; alt?: string; caption?: string; graph: SchemaModel; source?: string }
+    // Parsed graphth model, with the original source preserving notes and ordering.
+    | { type: "graph"; alt?: string; caption?: string; graph: GraphModel; source?: string };
 
 export interface TocEntry {
     /** heading depth (1 = `#`, 2 = `##`, 3 = `###`) */
@@ -71,11 +77,13 @@ export const walkBlocks = (blocks: readonly Block[]): Block[] => {
         );
     return blocks.flatMap((block) => [
         block,
-        ...(block.type === "quote"
-            ? walkBlocks(block.blocks)
-            : block.type === "list"
-              ? listBlocks(block.items)
-              : []),
+        ...(block.type === "themeVariants"
+            ? walkBlocks([block.default, ...Object.values(block.variants)])
+            : block.type === "quote"
+              ? walkBlocks(block.blocks)
+              : block.type === "list"
+                ? listBlocks(block.items)
+                : []),
     ]);
 };
 
