@@ -1,6 +1,6 @@
 {
     "name": "@sasaki-s-sci/dooc-plugin",
-    "version": "0.1.0",
+    "version": "0.0.2",
     "description": "Plugin authoring types and OAuth helpers for dooc.",
     "type": "module",
     "main": "./dist/plugins/index.js",
