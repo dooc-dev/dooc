@@ -220,10 +220,11 @@ export const watchProject = (
             const next = dirname(parent);
             if (next === parent) break;
             parent = next;
-            const ignore = join(parent, ".gitignore");
-            const changed = () => note(".gitignore", "content");
-            watchFile(ignore, { persistent: false, interval: 200 }, changed);
-            textfiles.set(ignore, changed);
+            watchers.push(
+                watch(parent, (_event, name) => {
+                    if (String(name) === ".gitignore") note(".gitignore", "content");
+                }),
+            );
         }
         const directory = dirname(headFile);
         const common = join(directory, "commondir");

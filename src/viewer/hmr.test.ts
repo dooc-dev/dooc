@@ -211,8 +211,19 @@ describe("watchProject", () => {
             20,
         );
         try {
-            writeFileSync(join(root, ".gitignore"), "docs/private.txt\n");
-            await expect.poll(() => seen, { timeout: 2000 }).toContain(".gitignore");
+            const ignore = join(root, ".gitignore");
+            const changed = async (change: () => void) => {
+                seen.length = 0;
+                change();
+                await expect.poll(() => seen, { timeout: 2000 }).toContain(".gitignore");
+            };
+            await changed(() => writeFileSync(ignore, "docs/private.txt\n"));
+            await changed(() => {
+                writeFileSync(`${ignore}.tmp`, "docs/hidden.txt\n");
+                renameSync(`${ignore}.tmp`, ignore);
+            });
+            await changed(() => rmSync(ignore));
+            await changed(() => writeFileSync(ignore, "docs/private.txt\n"));
         } finally {
             watcher.close();
             rmSync(root, { recursive: true, force: true });
