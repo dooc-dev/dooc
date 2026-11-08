@@ -1,6 +1,7 @@
 import { CHECK_ICON } from "../core/icons.js";
 import type { PluginView } from "../plugins/view.js";
 import { t } from "./i18n.js";
+import { createPluginResize } from "./plugin-resize.js";
 import { pluginViewHtml } from "./plugin-view.js";
 
 export const mountPlugins = (): void => {
@@ -10,7 +11,11 @@ export const mountPlugins = (): void => {
         for (const frame of document.querySelectorAll<HTMLIFrameElement>(
             "iframe[data-plugin-auto-height]",
         )) {
-            if (frame.contentWindow !== event.source) continue;
+            if (
+                frame.contentWindow !== event.source ||
+                frame.parentElement?.hasAttribute("data-resized")
+            )
+                continue;
             const value = `${Math.max(32, Math.min(1200, Math.ceil(height)))}px`;
             if (frame.style.height !== value) frame.style.height = value;
         }
@@ -159,7 +164,7 @@ export const mountPlugins = (): void => {
                     const collapsed = document.createElement("div");
                     collapsed.className = "plugin-content";
                     collapsed.dataset.pluginCollapsed = "";
-                    section.append(toolbar, header, result, collapsed);
+                    section.append(toolbar, header, result, collapsed, createPluginResize(result));
                     host.replaceChildren(section);
                     if (autoConnect) void run(section, "read");
                 })
@@ -185,7 +190,7 @@ export const mountPlugins = (): void => {
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ["class", "data-embed-url"],
+        attributeFilter: ["data-embed-url"],
     });
     window.addEventListener("popstate", mount);
     window.addEventListener("pagehide", () => {

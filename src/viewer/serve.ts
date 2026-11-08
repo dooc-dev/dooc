@@ -1016,6 +1016,16 @@ article { max-width: 860px; margin: 0 auto; font-family: var(--viewer-font, syst
 .plugin-content tr:last-child td { border-bottom: 0; }
 .plugin-content > pre { margin: 0; max-height: 320px; padding: 10px; }
 .plugin-content > iframe { display: block; color-scheme: inherit; }
+[data-plugin-result][data-resized] > iframe { height: 100% !important; }
+[data-plugin-result][data-resized] > pre { max-height: none; }
+.plugin-resize { display: none; height: 12px; align-items: center; justify-content: center;
+  cursor: row-resize; touch-action: none; user-select: none; }
+.plugin[data-ready="true"]:not(.collapsed) > .plugin-resize { display: flex; }
+.plugin-resize::before { content: ""; width: 32px; height: 3px; border-radius: 2px; background: var(--doc-border); }
+.plugin-resize:hover::before, .plugin-resize:focus-visible::before, .plugin-resize.drag::before { background: var(--doc-accent); }
+.plugin-resize:focus-visible { outline: 2px solid var(--doc-accent); outline-offset: -2px; }
+body:has(.plugin-resize.drag), body:has(.plugin-resize.drag) * { cursor: row-resize !important; user-select: none !important; }
+body:has(.plugin-resize.drag) iframe { pointer-events: none; }
 article, article * { font-weight: 400; }
 h1, h2, h3 { font-weight: 400; }
 article h1 { font-size: 26px; margin: 0 0 2px; }

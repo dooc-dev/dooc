@@ -69,6 +69,8 @@ export const classifyChange = (rel: string): HmrKind | undefined => {
         p === "src/viewer/ui-client.ts" ||
         p === "src/viewer/plugins-ui.ts" ||
         p === "src/viewer/plugin-view.ts" ||
+        p === "src/viewer/plugin-resize.ts" ||
+        p === "src/viewer/preview-update.ts" ||
         p === "src/plugins/view.ts" ||
         p === "src/viewer/nav-focus.ts" ||
         p === "src/viewer/code-highlight.ts" ||
@@ -105,6 +107,7 @@ export const sseFrame = (event: string, data: unknown): string =>
 export interface HmrBridge {
     setDirty: (v: boolean) => void;
     onContent?: (files: string[]) => void;
+    updatePreview?: (target: HTMLElement, source: HTMLElement) => void;
 }
 
 export interface HmrHub {
@@ -324,7 +327,9 @@ export const hmrClientScript = (mode: ServeMode): string => `
     const logo = document.getElementById("site-icon");
     const nextLogo = next.getElementById("site-icon");
     if (logo && nextLogo) logo.replaceWith(nextLogo);
-    main.innerHTML = nextMain.innerHTML;
+    const updatePreview = window.__docsHmr && window.__docsHmr.updatePreview;
+    if (updatePreview) updatePreview(main, nextMain);
+    else main.innerHTML = nextMain.innerHTML;
     const nav = document.getElementById("nav-groups");
     const nextNav = next.getElementById("nav-groups");
     if (nav && nextNav) {

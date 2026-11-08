@@ -4,7 +4,7 @@ import {
     closeBracketsKeymap,
     completionKeymap,
 } from "@codemirror/autocomplete";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
+import { defaultKeymap, historyKeymap, redo, undo } from "@codemirror/commands";
 import {
     bracketMatching,
     codeFolding,
@@ -29,6 +29,7 @@ import {
     ViewPlugin,
 } from "@codemirror/view";
 import { foldPlaceholder } from "./edit-fold.js";
+import { editorHistory } from "./edit-history.js";
 
 // CodeMirror's basic setup, with inline folding controls instead of a fold gutter.
 export const editorSetup: Extension = [
@@ -40,7 +41,7 @@ export const editorSetup: Extension = [
     lineNumbers(),
     highlightActiveLineGutter(),
     highlightSpecialChars(),
-    history({ minDepth: 10_000 }),
+    editorHistory,
     codeFolding({ placeholderDOM: foldPlaceholder }),
     drawSelection(),
     dropCursor(),
@@ -55,6 +56,9 @@ export const editorSetup: Extension = [
     highlightActiveLine(),
     highlightSelectionMatches(),
     keymap.of([
+        // Keep Ctrl shortcuts available on macOS alongside the native Cmd bindings.
+        { key: "Ctrl-z", run: undo, preventDefault: true },
+        { key: "Ctrl-y", run: redo, preventDefault: true },
         ...closeBracketsKeymap,
         ...defaultKeymap,
         ...searchKeymap,

@@ -28,6 +28,8 @@ describe("classifyChange", () => {
         expect(classifyChange("src/viewer/language-picker.ts")).toBe("client");
         expect(classifyChange("src/viewer/edit-schema-completion.ts")).toBe("client");
         expect(classifyChange("src/viewer/edit-git-diff.ts")).toBe("client");
+        expect(classifyChange("src/viewer/preview-update.ts")).toBe("client");
+        expect(classifyChange("src/viewer/plugin-resize.ts")).toBe("client");
         expect(classifyChange("src/core/schema-graph-global.tsx")).toBe("client");
         expect(classifyChange("src/core/schema-graph-flow.tsx")).toBe("client");
         expect(classifyChange("src/core/schema-graph-mount.tsx")).toBe("client");

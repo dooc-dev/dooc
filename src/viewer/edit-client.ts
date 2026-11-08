@@ -56,6 +56,7 @@ import type { HmrBridge } from "./hmr.js";
 import { applyUiLanguage, mountUiLanguage, t } from "./i18n.js";
 import { focusNavTree } from "./nav-focus.js";
 import { mountPlugins } from "./plugins-ui.js";
+import { createPreviewUpdater } from "./preview-update.js";
 import { mountResourceLibrary } from "./resource-library-ui.js";
 
 interface Boot {
@@ -233,42 +234,10 @@ const localeFetch = (url: string, init: RequestInit = {}): Promise<Response> =>
 const workspace = document.querySelector("main") as HTMLElement;
 let resourceView: (ResourcePage & { element: HTMLElement; dispose?: () => void }) | undefined;
 let mainEl = workspace.querySelector(".preview-content") as HTMLElement;
-// Remember the server markup before interactive diagrams / syntax highlighting mutate the DOM.
-// Unchanged blocks keep their DOM, avoiding a React Flow remount on every keystroke.
-const blockMarkup = new WeakMap<Element, string>();
-for (const block of mainEl.querySelector("article")?.children ?? []) {
-    blockMarkup.set(block, block.outerHTML);
-}
+const patchPreview = createPreviewUpdater(mainEl);
 const updatePreview = (fragment: DocumentFragment): void => {
     mainEl.parentElement?.querySelector(".pane-actions > .in-toc")?.remove();
-    const next = fragment.querySelector("article");
-    const current = mainEl.querySelector("article");
-    if (!current || !next) {
-        for (const block of next?.children ?? []) blockMarkup.set(block, block.outerHTML);
-        mainEl.replaceChildren(fragment);
-        return;
-    }
-    const available = new Map<string, Element[]>();
-    for (const block of current.children) {
-        const markup = blockMarkup.get(block);
-        if (markup === undefined) continue;
-        const matches = available.get(markup) ?? [];
-        matches.push(block);
-        available.set(markup, matches);
-    }
-    let cursor = current.firstElementChild;
-    for (const block of [...next.children]) {
-        const markup = block.outerHTML;
-        const reused = available.get(markup)?.shift() ?? block;
-        blockMarkup.set(reused, markup);
-        if (reused !== cursor) current.insertBefore(reused, cursor);
-        cursor = reused.nextElementSibling;
-    }
-    while (cursor) {
-        const nextSibling = cursor.nextElementSibling;
-        cursor.remove();
-        cursor = nextSibling;
-    }
+    patchPreview(mainEl, fragment);
 };
 mountUiLanguage();
 mountPlugins();
@@ -1511,8 +1480,8 @@ workspace.addEventListener("click", (ev) => {
         return;
     }
     const target = ev.target as HTMLElement;
-    if (target.closest("a")) {
-        return; // don't block navigation via doc / figure links
+    if (target.closest("a, button, input, textarea, select, summary, .plugin")) {
+        return;
     }
     const el = target.closest("[data-ln]") as HTMLElement | null;
     if (!el) {
