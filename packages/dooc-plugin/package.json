@@ -1,6 +1,6 @@
 {
-    "name": "@sasaki-s-sci/dooc-plugin",
-    "version": "0.0.3",
+    "name": "@dooc-dev/dooc-plugin",
+    "version": "0.0.1",
     "description": "Plugin authoring types and OAuth helpers for dooc.",
     "type": "module",
     "main": "./dist/plugins/index.js",
@@ -20,11 +20,11 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/sasaki-s-sci/dooc.git",
+        "url": "git+https://github.com/dooc-dev/dooc.git",
         "directory": "packages/dooc-plugin"
     },
     "publishConfig": {
-        "registry": "https://npm.pkg.github.com",
-        "access": "restricted"
+        "registry": "https://registry.npmjs.org",
+        "access": "public"
     }
 }

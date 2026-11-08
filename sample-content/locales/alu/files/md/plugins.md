@@ -57,7 +57,7 @@ return {
 };
 ```
 
-The block and action APIs are available in **dooc 0.0.22** and **@sasaki-s-sci/dooc-plugin 0.0.3**. HTML views remain supported for older plugins.
+The block and action APIs are available in **@dooc-dev/dooc 0.0.1** and **@dooc-dev/dooc-plugin 0.0.1**. HTML views remain supported for older plugins.
 
 For editable Linear, GitHub, and Slack cards, use **@sasaki-s-sci/dooc-plugins 0.0.2**. Its playground uses the real provider plugins with local API fixtures, including comment editing, reactions, and confirmed deletion. In the `dooc-plugins` checkout, authenticate npm for GitHub Packages, then run `npm ci` and `mise run dev`. Dependencies are pinned to the released host and SDK; an adjacent dooc checkout is not required.
 

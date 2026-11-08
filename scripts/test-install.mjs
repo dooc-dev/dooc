@@ -31,7 +31,11 @@ try {
     execFileSync(process.execPath, [prepare], { cwd: root });
     const formula = readFileSync(join(root, "Formula/dooc.rb"), "utf8");
     assert.equal((formula.match(/sha256 "[a-f0-9]{64}"/g) ?? []).length, 4);
-    assert.match(formula, /releases\/download\/v1\.2\.3\/dooc-darwin-arm64\.tar\.gz/);
+    assert.match(
+        formula,
+        /dooc-dev\/dooc\/releases\/download\/dooc-v1\.2\.3\/dooc-darwin-arm64\.tar\.gz/,
+    );
+    assert.match(formula, /version_scheme 1/);
     writeFileSync(
         join(mocks, "uname"),
         '#!/bin/sh\ncase "$1" in -s) echo "$DOOC_TEST_OS";; -m) echo "$DOOC_TEST_ARCH";; esac\n',
@@ -73,11 +77,17 @@ cp "$DOOC_TEST_RELEASES/\${url##*/}" "$dest"
     let result = install();
     assert.equal(result.status, 0, result.stderr);
     assert.equal(execFileSync(join(installDir, "dooc"), { encoding: "utf8" }), "fixture\n");
+    result = install({ DOOC_VERSION: "1.2.3" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(
+        readFileSync(join(root, "downloads"), "utf8"),
+        /dooc-dev\/dooc\/releases\/download\/dooc-v1\.2\.3\/dooc-linux-x64\.tar\.gz/,
+    );
     result = install({ DOOC_TEST_OS: "Darwin", DOOC_TEST_ARCH: "arm64", DOOC_VERSION: "v1.2.3" });
     assert.equal(result.status, 0, result.stderr);
     assert.match(
         readFileSync(join(root, "downloads"), "utf8"),
-        /download\/v1\.2\.3\/dooc-darwin-arm64\.tar\.gz/,
+        /download\/dooc-v1\.2\.3\/dooc-darwin-arm64\.tar\.gz/,
     );
     writeFileSync(join(installDir, "dooc"), "keep previous installation");
     writeFileSync(archive, "corrupted download");
@@ -88,6 +98,7 @@ cp "$DOOC_TEST_RELEASES/\${url##*/}" "$dest"
     assert.notEqual(install({ DOOC_TEST_FAIL: "1" }).status, 0);
     assert.notEqual(install({ DOOC_TEST_OS: "FreeBSD" }).status, 0);
     assert.notEqual(install({ DOOC_TEST_ARCH: "riscv64" }).status, 0);
+    assert.notEqual(install({ DOOC_VERSION: "../../invalid" }).status, 0);
     rmSync(archive);
     assert.notEqual(spawnSync(process.execPath, [prepare], { cwd: root }).status, 0);
     assert.equal(readFileSync(join(root, "Formula/dooc.rb"), "utf8"), formula);

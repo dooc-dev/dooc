@@ -1,40 +1,78 @@
 name: Publish dooc-plugin
+run-name: Release dooc-plugin ${{ inputs.bump }} ${{ inputs.request_id }}
 
 on:
-  push:
-    branches: [main]
-    paths: [packages/dooc-plugin/package.json]
   workflow_dispatch:
+    inputs:
+      request_id:
+        description: Correlation ID for the release command
+        required: false
+        type: string
+      bump:
+        description: Version increment
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: read
 
 concurrency:
-  group: publish-dooc-plugin
+  group: release
   cancel-in-progress: false
 
 jobs:
   publish:
-    if: github.repository == 'sasaki-s-sci/dooc' && github.ref_name == github.event.repository.default_branch
+    if: github.repository == 'dooc-dev/dooc' && github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      packages: write
+      contents: write
+      id-token: write
+    env:
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
-          node-version: '22'
-          registry-url: https://npm.pkg.github.com
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
       - run: pnpm install --frozen-lockfile
+      - name: Bump SDK version
+        id: version
+        working-directory: packages/dooc-plugin
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          case "$BUMP" in
+            patch|minor|major) ;;
+            *) echo "Invalid version increment" >&2; exit 1 ;;
+          esac
+          npm version "$BUMP" --no-git-tag-version --ignore-scripts --package-lock=false
+          echo "version=$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
       - name: Test plugin runtime
         run: pnpm exec vitest run src/plugins src/viewer/plugins.test.ts src/viewer/plugin-config.test.ts src/viewer/plugin-view.test.ts
       - name: Verify the packed SDK in a separate consumer
         run: pnpm run test:plugin-package
-      - name: Publish the verified archive privately
-        run: |
-          version=$(node -p 'require("./packages/dooc-plugin/package.json").version')
-          npm publish "build/packages/sasaki-s-sci-dooc-plugin-${version}.tgz" --ignore-scripts --access restricted --tag latest --registry https://npm.pkg.github.com
+      - name: Commit and tag SDK release
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: dooc-plugin-v${{ steps.version.outputs.version }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add packages/dooc-plugin/package.json
+          git commit -m "Release $TAG"
+          git tag "$TAG"
+          git push --atomic origin "HEAD:refs/heads/$DEFAULT_BRANCH" "refs/tags/$TAG"
+      - name: Publish npm package v${{ steps.version.outputs.version }}
+        run: npm publish "build/packages/dooc-dev-dooc-plugin-${VERSION}.tgz" --ignore-scripts --access public --tag latest --registry https://registry.npmjs.org
+        env:
+          VERSION: ${{ steps.version.outputs.version }}

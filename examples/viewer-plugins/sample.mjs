@@ -1,4 +1,4 @@
-/** @returns {import("@sasaki-s-sci/dooc-plugin").DataPlugin} */
+/** @returns {import("@dooc-dev/dooc-plugin").DataPlugin} */
 export const createSamplePlugin = ({ authorizationUrl, tokenUrl, userUrl, clientId, clientSecret }) => {
     const origin = new URL(userUrl).origin;
     const matches = (url) => url.origin === origin &&

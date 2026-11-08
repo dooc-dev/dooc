@@ -13,15 +13,15 @@ install_dooc() {
         *) echo "dooc supports x64 and arm64 CPUs." >&2; exit 1 ;;
     esac
     version=${DOOC_VERSION:-latest}
-    base=https://github.com/sasaki-s-sci/dooc/releases
+    base=https://github.com/dooc-dev/dooc/releases
     if [ "$version" = latest ]; then
         url=$base/latest/download
     else
         version=${version#v}
         case "$version" in
-            ''|*[!0-9.]*) echo "DOOC_VERSION must be a release version, e.g. 0.0.16." >&2; exit 1 ;;
+            ''|*[!0-9.]*) echo "DOOC_VERSION must be a release version, e.g. 0.0.2." >&2; exit 1 ;;
         esac
-        url=$base/download/v$version
+        url=$base/download/dooc-v$version
     fi
     asset=dooc-$os-$arch.tar.gz
     temp=$(mktemp -d)

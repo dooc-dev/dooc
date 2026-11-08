@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
-const repo = "sasaki-s-sci/dooc";
+const repo = "dooc-dev/dooc";
 const gh = (args: string[]): string =>
     execFileSync("gh", [...args, "--repo", repo], {
         encoding: "utf8",
@@ -23,20 +23,27 @@ interface Progress {
 }
 
 export async function release(
+    target: string,
     bump: string,
     command = gh,
     pause = () => setTimeout(5000),
     now = Date.now,
 ): Promise<{ version: string; url: string }> {
+    if (!["dooc", "dooc-plugin"].includes(target)) throw new Error("Expected dooc or dooc-plugin");
     if (!["patch", "minor", "major"].includes(bump))
         throw new Error("Expected patch, minor or major");
+    const workflow = target === "dooc" ? "release.yml" : "publish-plugin.yml";
+    const publishedStep =
+        target === "dooc"
+            ? /^Publish GitHub release dooc-(v\d+\.\d+\.\d+)$/
+            : /^Publish npm package (v\d+\.\d+\.\d+)$/;
     const requestId = randomUUID();
-    const title = `Release ${bump} ${requestId}`;
+    const title = `Release ${target} ${bump} ${requestId}`;
     const deadline = now() + 30 * 60_000;
     command([
         "workflow",
         "run",
-        "release.yml",
+        workflow,
         "--ref",
         "main",
         "-f",
@@ -53,7 +60,7 @@ export async function release(
                     "run",
                     "list",
                     "--workflow",
-                    "release.yml",
+                    workflow,
                     "--event",
                     "workflow_dispatch",
                     "--branch",
@@ -78,7 +85,7 @@ export async function release(
                 ]),
             );
             for (const step of progress.jobs.flatMap((job) => job.steps)) {
-                const version = /^Publish GitHub release (v\d+\.\d+\.\d+)$/.exec(step.name)?.[1];
+                const version = publishedStep.exec(step.name)?.[1];
                 if (!version) continue;
                 if (step.status === "completed" && step.conclusion === "success") {
                     return { version, url: run.url };
@@ -97,7 +104,7 @@ export async function release(
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-    release(process.argv[2] ?? "").then(
+    release(process.argv[2] ?? "", process.argv[3] ?? "").then(
         ({ version, url }) =>
             console.log(`status: success\nphase: published\nworkflow: ${url}\nversion: ${version}`),
         (error) => {

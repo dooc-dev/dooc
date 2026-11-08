@@ -9,10 +9,10 @@ import { createPluginRuntime } from "../src/plugins/runtime.ts";
 
 const root = resolve(import.meta.dirname, "..");
 const manifest = JSON.parse(readFileSync(join(root, "packages/dooc-plugin/package.json"), "utf8"));
-assert.equal(manifest.name, "@sasaki-s-sci/dooc-plugin");
+assert.equal(manifest.name, "@dooc-dev/dooc-plugin");
 assert.deepEqual(manifest.publishConfig, {
-    registry: "https://npm.pkg.github.com",
-    access: "restricted",
+    registry: "https://registry.npmjs.org",
+    access: "public",
 });
 const output = join(root, "build/packages");
 const consumer = mkdtempSync(join(tmpdir(), "dooc-plugin-consumer-"));

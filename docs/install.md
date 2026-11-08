@@ -9,14 +9,14 @@ These commands become available with the first release that includes binary asse
 ## mise
 
 ```sh
-mise use -g github:sasaki-s-sci/dooc@latest
+mise use -g github:dooc-dev/dooc@latest
 dooc --help
 ```
 
 ## curl
 
 ```sh
-curl -fsSL https://github.com/sasaki-s-sci/dooc/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/dooc-dev/dooc/releases/latest/download/install.sh | sh
 ```
 
 The installer verifies SHA-256 and installs to `~/.local/bin/dooc`. Add
@@ -25,8 +25,8 @@ shell configuration. A failed download or checksum leaves the current executable
 untouched. To choose the version and directory:
 
 ```sh
-curl -fsSL https://github.com/sasaki-s-sci/dooc/releases/latest/download/install.sh |
-  DOOC_VERSION=0.0.16 DOOC_INSTALL_DIR="$HOME/bin" sh
+curl -fsSL https://github.com/dooc-dev/dooc/releases/latest/download/install.sh |
+  DOOC_VERSION=0.0.2 DOOC_INSTALL_DIR="$HOME/bin" sh
 ```
 
 ## Homebrew
@@ -34,11 +34,11 @@ curl -fsSL https://github.com/sasaki-s-sci/dooc/releases/latest/download/install
 The source repository also acts as the tap; no separate tap repository is needed.
 
 ```sh
-brew tap sasaki-s-sci/dooc https://github.com/sasaki-s-sci/dooc
-brew install sasaki-s-sci/dooc/dooc
+brew tap dooc-dev/dooc https://github.com/dooc-dev/dooc
+brew install dooc-dev/dooc/dooc
 ```
 
-Use `brew update && brew upgrade sasaki-s-sci/dooc/dooc` for upgrades.
+Use `brew update && brew upgrade dooc-dev/dooc/dooc` for upgrades.
 
 ## Build and release
 
@@ -46,14 +46,22 @@ Use `brew update && brew upgrade sasaki-s-sci/dooc/dooc` for upgrades.
 mise install
 mise run build:binary
 ./build/bin/dooc --help
-mise run release patch
+mise run release dooc patch
+mise run release dooc-plugin patch
 ```
 
 CI builds and tests the executable on all four platforms before release. The
 release workflow adds the archives, `SHA256SUMS`, and `install.sh` to GitHub
 Releases, and commits the matching Homebrew formula with the version bump.
-`mise run release` waits until the binary assets have been uploaded and the
-GitHub release has been published.
+`mise run release dooc patch` bumps and publishes `@dooc-dev/dooc`, then waits
+until the binary assets and GitHub release have been published.
+`mise run release dooc-plugin patch` bumps and publishes `@dooc-dev/dooc-plugin`
+and waits until npm publishing succeeds. Both commands accept `minor` and `major`
+instead of `patch`. Versions are committed on the default branch, with `dooc-v<version>`
+tags for dooc and `dooc-plugin-v<version>` tags for the SDK.
+Both npm releases run only through `workflow_dispatch`, started by these commands
+or GitHub Actions' **Run workflow** button. Pushes and tags do not publish packages.
+The mise commands dispatch workflows on `main` in `dooc-dev/dooc` (origin).
 
 Windows and musl Linux are not built. Git-backed textfile sources still need Git,
 and configured external formatters or linters still need their own tools.

@@ -54,13 +54,16 @@ flag "--url_preview <preview>" default="embed" {
 run = '{{vars.resolve_root}} && pnpm exec tsx src/cli.ts build "$usage_format" "$r" ${usage_out:+"$(cd "$MISE_ORIGINAL_CWD" && realpath -m "$usage_out")"} --url_preview "$usage_url_preview"'
 
 [tasks.release]
-description = "Dispatch a release and wait until its binary downloads are published"
+description = "Bump and publish dooc or dooc-plugin through GitHub Actions"
 usage = '''
+arg "<package>" {
+  choices "dooc" "dooc-plugin"
+}
 arg "<bump>" {
   choices "patch" "minor" "major"
 }
 '''
-run = 'node --import tsx src/release.ts "$usage_bump"'
+run = 'node --import tsx src/release.ts "$usage_package" "$usage_bump"'
 
 [tasks."build:binary"]
 description = "Build and test a standalone executable for this machine"

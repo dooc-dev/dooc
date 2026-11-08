@@ -110,7 +110,7 @@ Diagnostic codes, relative file paths, sourceFile, language, theme and one-based
 machine-readable; message text is for humans. Prose detection is heuristic and offline.
 Short text, unsupported formats and remote content are reported as unchecked/inconclusive.
 Exit codes: 0 passed; 1 errors (or warnings with --warnings-as-errors); 2 invocation/execution failure.
-Node API: import { checkSite } from "@sasaki-s-sci/dooc/check".`);
+Node API: import { checkSite } from "@dooc-dev/dooc/check".`);
                 break;
             }
             if (positionals.length > 1) throw new Error("check accepts at most one root path");
