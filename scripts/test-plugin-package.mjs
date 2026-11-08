@@ -42,6 +42,10 @@ try {
     assert.deepEqual(
         packed.files.map((file) => file.path).sort(),
         [
+            "dist/plugins/actions.d.ts",
+            "dist/plugins/actions.js",
+            "dist/plugins/blocks.d.ts",
+            "dist/plugins/blocks.js",
             "dist/plugins/view.d.ts",
             "dist/plugins/view.js",
             "dist/plugins/index.d.ts",

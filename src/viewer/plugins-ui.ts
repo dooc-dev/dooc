@@ -1,10 +1,74 @@
 import { CHECK_ICON } from "../core/icons.js";
 import type { PluginView } from "../plugins/view.js";
 import { t } from "./i18n.js";
+import { mountPluginActions } from "./plugin-actions.js";
 import { createPluginResize } from "./plugin-resize.js";
 import { pluginViewHtml } from "./plugin-view.js";
 
 export const mountPlugins = (): void => {
+    const disposers = new Map<HTMLElement, () => void>();
+    const syncIcons = () => {
+        for (const image of document.querySelectorAll<HTMLImageElement>(
+            "img[data-plugin-icon-light]",
+        )) {
+            const source =
+                getComputedStyle(image).colorScheme === "dark"
+                    ? image.dataset.pluginIconDark
+                    : image.dataset.pluginIconLight;
+            if (source && image.src !== source) image.src = source;
+        }
+    };
+    new MutationObserver(syncIcons).observe(document.documentElement, {
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["data-theme", "data-editor-theme"],
+    });
+    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", syncIcons);
+    const render = (section: HTMLElement, view: PluginView) => {
+        const html = pluginViewHtml(view);
+        const summary = view.collapsed ? pluginViewHtml(view.collapsed) : "";
+        section.querySelector<HTMLElement>("[data-plugin-result]")!.innerHTML = html;
+        section.querySelector<HTMLElement>("[data-plugin-collapsed]")!.innerHTML = summary;
+        section.querySelector(".plugin-heading")?.remove();
+        section.dataset.blocks = String(view.format === "blocks");
+        if (view.format === "blocks" && view.header) {
+            const heading = document.createElement("span");
+            heading.className = "plugin-heading";
+            const link = document.createElement("a");
+            link.href = section.dataset.url!;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            if (view.header.icon) {
+                const image = document.createElement("img");
+                image.alt = "";
+                image.width = image.height = 16;
+                image.dataset.pluginIconLight = view.header.icon.light;
+                image.dataset.pluginIconDark = view.header.icon.dark ?? view.header.icon.light;
+                image.src = view.header.icon.light;
+                link.append(image);
+            }
+            const name = document.createElement("strong");
+            name.textContent = view.header.title;
+            link.append(name);
+            heading.append(link);
+            if (view.header.context) {
+                const context = document.createElement("span");
+                context.className = "plugin-heading-context";
+                context.textContent = view.header.context;
+                heading.append(context);
+            }
+            if (view.header.reference) {
+                const ref = document.createElement("button");
+                ref.type = "button";
+                ref.dataset.blockCopy = view.header.reference;
+                ref.textContent = view.header.reference;
+                ref.title = t("Copy");
+                heading.append(ref);
+            }
+            section.querySelector(".plugin-toolbar")?.prepend(heading);
+            syncIcons();
+        }
+    };
     window.addEventListener("message", (event: MessageEvent) => {
         const height = event.data?.doocPluginHeight;
         if (typeof height !== "number" || !Number.isFinite(height) || height <= 0) return;
@@ -35,6 +99,8 @@ export const mountPlugins = (): void => {
         revisions.set(plugin, (revisions.get(plugin) ?? 0) + 1);
         for (const section of document.querySelectorAll<HTMLElement>("[data-plugin]")) {
             if (section.dataset.plugin !== plugin) continue;
+            disposers.get(section)?.();
+            disposers.delete(section);
             delete section.dataset.ready;
             for (const content of section.querySelectorAll(".plugin-content"))
                 content.replaceChildren();
@@ -48,6 +114,11 @@ export const mountPlugins = (): void => {
         };
     const mount = (): void => {
         if (!registration) return;
+        for (const [section, dispose] of disposers)
+            if (!section.isConnected) {
+                dispose();
+                disposers.delete(section);
+            }
         for (const host of originals.keys()) if (!host.isConnected) originals.delete(host);
         for (const host of document.querySelectorAll<HTMLElement>("main [data-embed-url]")) {
             const url = host.dataset.embedUrl ?? "";
@@ -207,6 +278,8 @@ export const mountPlugins = (): void => {
         const controls = section.querySelector<HTMLElement>("[data-plugin-controls]");
         const collapsed = section.querySelector<HTMLElement>("[data-plugin-collapsed]");
         if (!status || !result || !controls || !collapsed) return;
+        disposers.get(section)?.();
+        disposers.delete(section);
         const plugin = section.dataset.plugin ?? "";
         const autoConnect = section.dataset.autoConnect === "true";
         if (action !== "read") {
@@ -285,15 +358,48 @@ export const mountPlugins = (): void => {
                 link.textContent = t("Continue to service");
                 status.replaceChildren(link);
             } else if (action === "read" && data.view && data.user) {
-                const html = pluginViewHtml(data.view);
-                const summary = data.view.collapsed ? pluginViewHtml(data.view.collapsed) : "";
-                result.innerHTML = html;
-                collapsed.innerHTML = summary;
+                render(section, data.view);
                 section.dataset.ready = "true";
                 status.textContent = autoConnect
                     ? ""
                     : t("Connected as {name}", { name: data.user.name });
                 controls.hidden = autoConnect;
+                if (data.view.format === "blocks") {
+                    const api = async (action: string, payload = {}) => {
+                        if (!current()) throw new Error("Plugin connection changed");
+                        const response = await fetch("/api/plugins", {
+                            method: "POST",
+                            credentials: "same-origin",
+                            cache: "no-store",
+                            headers: { "content-type": "application/json" },
+                            body: JSON.stringify({
+                                action,
+                                plugin,
+                                url: section.dataset.url,
+                                ...payload,
+                            }),
+                        });
+                        const data = await response.json();
+                        if (!current()) throw new Error("Plugin connection changed");
+                        if (!response.ok)
+                            throw Object.assign(new Error(data.error ?? "Plugin request failed"), {
+                                status: response.status,
+                            });
+                        return data;
+                    };
+                    disposers.set(
+                        section,
+                        mountPluginActions(
+                            section,
+                            api,
+                            async () => {
+                                const data = await api("read");
+                                render(section, data.view);
+                            },
+                            current,
+                        ),
+                    );
+                }
             } else status.textContent = t("Connection forgotten in dooc");
         } catch (error) {
             if (current()) {

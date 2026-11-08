@@ -102,8 +102,8 @@ describe("sample plugin", () => {
         expect(plugin.matches(url)).toBe(true);
         const view = await plugin.read(url, { request, user });
         expect(view).toMatchObject({
-            format: "html",
-            html: expect.stringContaining("From service"),
+            format: "blocks",
+            blocks: expect.arrayContaining([{ type: "heading", text: "From service" }]),
         });
         expect(pluginViewHtml(view)).toContain("Real response");
         expect(request).toHaveBeenLastCalledWith("https://example.com/tickets/DOC-42?view=full");
@@ -131,9 +131,11 @@ describe("sample plugin", () => {
             request,
             user,
         });
-        if (message.format !== "html") throw new Error("Expected an HTML permalink preview");
-        expect(message.html).toContain("&lt;img onerror=&quot;alert(1)&quot;&gt; &amp; {{title}}");
-        expect(message.html).not.toContain("<img");
+        if (message.format !== "blocks") throw new Error("Expected a block permalink preview");
+        expect(pluginViewHtml(message)).toContain(
+            "&lt;img onerror=&quot;alert(1)&quot;&gt; &amp; {{title}}",
+        );
+        expect(pluginViewHtml(message)).not.toContain("<img");
     });
 
     it("renders compact pull request details and escapes service values", async () => {
@@ -161,16 +163,15 @@ describe("sample plugin", () => {
             request,
             user,
         });
-        if (view.format !== "html") throw new Error("Expected an HTML pull preview");
-        expect(view.height).toBe("auto");
-        expect(view.html).toContain("feat/&lt;preview&gt;");
-        expect(view.html).toContain("+248");
-        expect(view.html).toContain("4 checks passed");
-        expect(view.html).not.toContain("{{");
-        expect(view.collapsed).toMatchObject({ format: "html", height: 56 });
-        if (view.collapsed?.format !== "html") throw new Error("Expected a compact pull preview");
-        expect(view.collapsed.html).toContain("✓ 4 checks");
-        expect(view.collapsed.html).not.toContain("{{");
+        if (view.format !== "blocks") throw new Error("Expected a block pull preview");
+        expect(pluginViewHtml(view)).toContain("feat/&lt;preview&gt;");
+        expect(pluginViewHtml(view)).toContain("+248");
+        expect(pluginViewHtml(view)).toContain("4 checks passed");
+        expect(pluginViewHtml(view)).not.toContain("{{");
+        expect(view.collapsed).toMatchObject({ format: "blocks" });
+        if (view.collapsed?.format !== "blocks") throw new Error("Expected a compact pull preview");
+        expect(pluginViewHtml(view.collapsed)).toContain("✓ 4 checks");
+        expect(pluginViewHtml(view.collapsed)).not.toContain("{{");
     });
 
     it("keeps viewer configuration, implementation, and data out of document exports", async () => {

@@ -1,5 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
 import {
+    type PluginActionContext,
+    type PluginActionResult,
+    validatePluginActionRequest,
+    validatePluginActions,
+    validatePluginActionValues,
+} from "./actions.js";
+import {
     fetchPluginJson,
     httpsUrl,
     isPluginError,
@@ -7,7 +14,7 @@ import {
     parseOAuthToken,
     validatePlugins,
 } from "./oauth.js";
-import type { DataPlugin, OAuthToken, PluginContext, PluginUser } from "./types.js";
+import type { DataPlugin, OAuthToken, PluginUser } from "./types.js";
 import { parsePluginUrl, validatePluginView } from "./view.js";
 
 interface Connection {
@@ -15,6 +22,8 @@ interface Connection {
     expires: number;
     user: PluginUser;
     refreshing?: Promise<void>;
+    operations?: Map<string, { fingerprint: string; promise: Promise<PluginActionResult> }>;
+    writing?: Promise<PluginActionResult>;
 }
 
 interface Attempt {
@@ -93,13 +102,24 @@ export const createPluginRuntime = (
             throw new PluginError(502, "Invalid OAuth token response");
         }
     };
-    const context = (plugin: DataPlugin, accessToken: string): PluginContext => ({
+    const context = (
+        plugin: DataPlugin,
+        accessToken: string,
+        write = false,
+        check = () => {},
+    ): Omit<PluginActionContext, "user"> => ({
         request: async (source, init) => {
+            check();
             if (plugins.get(plugin.id) !== plugin) throw expired();
             const url = httpsUrl(source);
             if (!plugin.apiOrigins.includes(url.origin))
                 throw new PluginError(400, "Plugin API origin is not allowed");
-            if (init?.method !== undefined && !["GET", "POST"].includes(init.method))
+            if (
+                init?.method !== undefined &&
+                !(write ? ["GET", "POST", "PUT", "PATCH", "DELETE"] : ["GET", "POST"]).includes(
+                    init.method,
+                )
+            )
                 throw new PluginError(400, "Invalid plugin request method");
             return fetchPluginJson(
                 url.href,
@@ -125,6 +145,57 @@ export const createPluginRuntime = (
         for (const session of sessions.values()) {
             session.connections.delete(pluginId);
             session.attempts.delete(pluginId);
+        }
+    };
+    const access = async <T>(
+        id: string,
+        pluginId: string,
+        source: unknown,
+        run: (plugin: DataPlugin, url: URL, connection: Connection) => Promise<T>,
+    ): Promise<T> => {
+        let url: URL;
+        try {
+            url = parsePluginUrl(source);
+        } catch {
+            throw new PluginError(400, "Invalid service URL");
+        }
+        const session = sessionFor(id);
+        const plugin = pluginFor(pluginId);
+        if (!plugin.matches(url)) throw new PluginError(400, "URL is not supported by this plugin");
+        const connection = session.connections.get(pluginId);
+        if (!connection) throw expired();
+        try {
+            if (connection.expires <= Date.now() + 30_000) {
+                if (!connection.token.refresh_token) throw expired();
+                connection.refreshing ??= (async () => {
+                    const token = await exchange(plugin, {
+                        grant_type: "refresh_token",
+                        refresh_token: connection.token.refresh_token as string,
+                    });
+                    assertCurrent(id, pluginId, connection);
+                    connection.token = {
+                        ...token,
+                        refresh_token: token.refresh_token ?? connection.token.refresh_token,
+                        scope: token.scope ?? connection.token.scope,
+                    };
+                    connection.expires = expiry(token);
+                })().finally(() => {
+                    connection.refreshing = undefined;
+                });
+                await connection.refreshing;
+            }
+            assertCurrent(id, pluginId, connection);
+            const result = await run(plugin, url, connection);
+            assertCurrent(id, pluginId, connection);
+            return result;
+        } catch (error) {
+            if (
+                isPluginError(error) &&
+                error.status === 401 &&
+                session.connections.get(pluginId) === connection
+            )
+                session.connections.delete(pluginId);
+            throw error;
         }
     };
     return {
@@ -256,57 +327,96 @@ export const createPluginRuntime = (
             session.connections.delete(pluginId);
             session.attempts.delete(pluginId);
         },
-        async read(id: string, pluginId: string, source: unknown) {
-            let url: URL;
-            try {
-                url = parsePluginUrl(source);
-            } catch {
-                throw new PluginError(400, "Invalid service URL");
-            }
-            const session = sessionFor(id);
-            const plugin = pluginFor(pluginId);
-            if (!plugin.matches(url))
-                throw new PluginError(400, "URL is not supported by this plugin");
-            const connection = session.connections.get(pluginId);
-            if (!connection) throw expired();
-            try {
-                if (connection.expires <= Date.now() + 30_000) {
-                    if (!connection.token.refresh_token) throw expired();
-                    connection.refreshing ??= (async () => {
-                        const token = await exchange(plugin, {
-                            grant_type: "refresh_token",
-                            refresh_token: connection.token.refresh_token as string,
-                        });
-                        assertCurrent(id, pluginId, connection);
-                        connection.token = {
-                            ...token,
-                            refresh_token: token.refresh_token ?? connection.token.refresh_token,
-                            scope: token.scope ?? connection.token.scope,
-                        };
-                        connection.expires = expiry(token);
-                    })().finally(() => {
-                        connection.refreshing = undefined;
-                    });
-                    await connection.refreshing;
-                }
-                assertCurrent(id, pluginId, connection);
-                const view = validatePluginView(
+        read(id: string, pluginId: string, source: unknown) {
+            return access(id, pluginId, source, async (plugin, url, connection) => ({
+                user: connection.user,
+                view: validatePluginView(
                     await plugin.read(url, {
-                        ...context(plugin, connection.token.access_token),
+                        ...context(plugin, connection.token.access_token, false, () =>
+                            assertCurrent(id, pluginId, connection),
+                        ),
                         user: { ...connection.user },
                     }),
-                );
-                assertCurrent(id, pluginId, connection);
-                return { user: connection.user, view };
-            } catch (error) {
-                if (
-                    isPluginError(error) &&
-                    error.status === 401 &&
-                    session.connections.get(pluginId) === connection
-                )
-                    session.connections.delete(pluginId);
-                throw error;
-            }
+                ),
+            }));
+        },
+        actions(id: string, pluginId: string, source: unknown) {
+            return access(id, pluginId, source, async (plugin, url, connection) => ({
+                user: connection.user,
+                actions: validatePluginActions(
+                    plugin.actions && plugin.act
+                        ? await plugin.actions(url, {
+                              ...context(plugin, connection.token.access_token, false, () =>
+                                  assertCurrent(id, pluginId, connection),
+                              ),
+                              user: { ...connection.user },
+                          })
+                        : [],
+                ),
+            }));
+        },
+        act(id: string, pluginId: string, source: unknown, input: unknown, requestId: unknown) {
+            const operation = validatePluginActionRequest(input);
+            if (typeof requestId !== "string" || !/^[a-zA-Z0-9-]{16,80}$/.test(requestId))
+                throw new PluginError(400, "Invalid operation ID");
+            return access(id, pluginId, source, async (plugin, url, connection) => {
+                if (!plugin.actions || !plugin.act)
+                    throw new PluginError(403, "Plugin operations are not supported");
+                const fingerprint = createHash("sha256")
+                    .update(JSON.stringify([url.href, operation]))
+                    .digest("hex");
+                connection.operations ??= new Map();
+                const requests = connection.operations;
+                const existing = requests.get(requestId);
+                if (existing && existing.fingerprint !== fingerprint)
+                    throw new PluginError(409, "Operation ID was already used for another request");
+                if (!existing) {
+                    // shortcut: retain 128 operation results per connection; use durable idempotency for longer sessions.
+                    if (requests.size >= 128)
+                        throw new PluginError(429, "Reconnect before performing more operations");
+                    const promise = (connection.writing ?? Promise.resolve())
+                        .catch(() => {})
+                        .then(async () => {
+                            const check = () => assertCurrent(id, pluginId, connection);
+                            check();
+                            const user = { ...connection.user };
+                            const actions = validatePluginActions(
+                                await plugin.actions!(url, {
+                                    ...context(plugin, connection.token.access_token, false, check),
+                                    user,
+                                }),
+                            );
+                            const action = actions.find((a) => a.id === operation.id);
+                            if (!action)
+                                throw new PluginError(
+                                    403,
+                                    "Operation is not available for this user and URL",
+                                );
+                            validatePluginActionValues(action, operation);
+                            check();
+                            const result = await plugin.act!(
+                                url,
+                                {
+                                    ...context(plugin, connection.token.access_token, true, check),
+                                    user,
+                                },
+                                operation,
+                            );
+                            if (
+                                !result ||
+                                typeof result.message !== "string" ||
+                                result.message.length > 4000 ||
+                                (result.deleted !== undefined &&
+                                    typeof result.deleted !== "boolean")
+                            )
+                                throw new PluginError(502, "Invalid plugin operation result");
+                            return result;
+                        });
+                    connection.writing = promise;
+                    requests.set(requestId, { fingerprint, promise });
+                }
+                return { user: connection.user, result: await requests.get(requestId)!.promise };
+            });
         },
     };
 };

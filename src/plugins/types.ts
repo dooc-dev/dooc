@@ -33,6 +33,12 @@ export interface PluginContext {
 
 export type { PluginContent, PluginView } from "./view.js";
 
+import type {
+    PluginAction,
+    PluginActionContext,
+    PluginActionRequest,
+    PluginActionResult,
+} from "./actions.js";
 import type { PluginView } from "./view.js";
 
 /** Trusted server code injected into the viewer, independently of document configuration. */
@@ -47,4 +53,12 @@ export interface DataPlugin {
     identifyUser: (context: PluginContext) => Promise<PluginUser>;
     /** Fetch the matched URL's data using read operations and reject provider-level API errors. */
     read: (url: URL, context: PluginContext & { user: PluginUser }) => Promise<PluginView>;
+    /** Resolve operations available to the current user without performing writes. */
+    actions?: (url: URL, context: PluginContext & { user: PluginUser }) => Promise<PluginAction[]>;
+    /** Recheck provider permissions and resource versions before changing remote data. */
+    act?: (
+        url: URL,
+        context: PluginActionContext,
+        request: PluginActionRequest,
+    ) => Promise<PluginActionResult>;
 }

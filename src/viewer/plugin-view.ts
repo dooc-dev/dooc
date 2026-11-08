@@ -1,9 +1,12 @@
 import { escapeHtml } from "../core/html.js";
 import { type PluginView, validatePluginView } from "../plugins/view.js";
+import { pluginBlocksHtml } from "./plugin-blocks.js";
 
 /** Authored HTML cannot run scripts; auto height permits only a nonce-protected reporter. */
 export const pluginViewHtml = (input: PluginView): string => {
     const view = validatePluginView(input);
+    if (view.format === "blocks")
+        return `<div class="plugin-blocks">${pluginBlocksHtml(view.blocks)}</div>`;
     if (view.format === "html") {
         const auto = view.height === "auto";
         const nonce = auto ? crypto.randomUUID() : "";

@@ -281,5 +281,14 @@
     "Statics": "Statics",
     "Workspace tools": "Workspace tools",
     "Resize workspace tools": "Resize workspace tools",
-    "Git controls": "Git controls"
+    "Git controls": "Git controls",
+    "Actions": "Actions",
+    "Updated": "Updated",
+    "Copy": "Copy",
+    "Edit": "Edit",
+    "Saving…": "Saving…",
+    "Reload actions before saving again.": "Reload actions before saving again.",
+    "Saved, but refresh failed. Reload actions before saving again.": "Saved, but refresh failed. Reload actions before saving again.",
+    "Actions could not be loaded.": "Actions could not be loaded.",
+    "An open draft is no longer editable. Copy or cancel it before reloading.": "An open draft is no longer editable. Copy or cancel it before reloading."
 }

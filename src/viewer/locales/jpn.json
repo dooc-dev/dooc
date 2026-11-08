@@ -281,5 +281,14 @@
     "Statics": "Statics",
     "Workspace tools": "ワークスペース操作",
     "Resize workspace tools": "下部カードの高さを変更",
-    "Git controls": "Git操作"
+    "Git controls": "Git操作",
+    "Actions": "操作",
+    "Updated": "更新しました",
+    "Copy": "コピー",
+    "Edit": "編集",
+    "Saving…": "保存中…",
+    "Reload actions before saving again.": "再保存する前に再読み込みしてください。",
+    "Saved, but refresh failed. Reload actions before saving again.": "保存は完了しましたが、再取得に失敗しました。再保存する前に再読み込みしてください。",
+    "Actions could not be loaded.": "操作を取得できませんでした。",
+    "An open draft is no longer editable. Copy or cancel it before reloading.": "編集中の項目を更新する権限がありません。再読み込みの前に入力をコピーするか、キャンセルしてください。"
 }

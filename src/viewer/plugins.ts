@@ -34,7 +34,7 @@ const readBody = (req: IncomingMessage): Promise<string> =>
         req.setEncoding("utf8");
         req.on("data", (chunk: string) => {
             size += Buffer.byteLength(chunk);
-            if (size > 16_384) {
+            if (size > 65_536) {
                 body = "";
                 reject(new PluginError(413, "Plugin request is too large"));
             } else body += chunk;
@@ -257,6 +257,19 @@ export const createPluginHandler = (
                 send(200, { disconnected: true });
             } else if (input.action === "read") {
                 send(200, await runtime.read(session, input.plugin, input.url));
+            } else if (input.action === "actions") {
+                send(200, await runtime.actions(session, input.plugin, input.url));
+            } else if (input.action === "act") {
+                send(
+                    200,
+                    await runtime.act(
+                        session,
+                        input.plugin,
+                        input.url,
+                        input.operation,
+                        input.requestId,
+                    ),
+                );
             } else throw new PluginError(400, "Invalid plugin action");
         } catch (error) {
             send(isPluginError(error) ? error.status : 502, {

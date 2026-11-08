@@ -279,8 +279,10 @@ describe("local plugin HTTP boundary", () => {
         expect(JSON.parse(response.body)).toMatchObject({
             user: { name: "Alice (mock)" },
             view: {
-                format: "html",
-                html: expect.stringContaining("Preview external service URLs"),
+                format: "blocks",
+                blocks: expect.arrayContaining([
+                    { type: "heading", text: "Preview external service URLs" },
+                ]),
             },
         });
         expect(response.body).not.toContain("mock-access-");
@@ -362,7 +364,7 @@ describe("local plugin HTTP boundary", () => {
             { method: "GET" },
         ])
             expect((await call(handler, input, options)).status).toBe(403);
-        expect((await call(handler, { ...input, url: "x".repeat(17_000) })).status).toBe(413);
+        expect((await call(handler, { ...input, url: "x".repeat(70_000) })).status).toBe(413);
         expect((await call(handler, { action: "read", plugin: "sample", url: {} })).status).toBe(
             400,
         );

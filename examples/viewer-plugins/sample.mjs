@@ -1,8 +1,3 @@
-import { readFileSync } from "node:fs";
-
-const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
-
 /** @returns {import("@sasaki-s-sci/dooc-plugin").DataPlugin} */
 export const createSamplePlugin = ({ authorizationUrl, tokenUrl, userUrl, clientId, clientSecret }) => {
     const origin = new URL(userUrl).origin;
@@ -27,29 +22,25 @@ export const createSamplePlugin = ({ authorizationUrl, tokenUrl, userUrl, client
             if (!data || !["ticket", "pull", "message"].includes(data.type) ||
                 ["id", "title", "body", "status", "author"].some((key) => typeof data[key] !== "string"))
                 throw new Error("Invalid sample resource response");
-            const template = { ticket: "ticket.html", pull: "pull.html", message: "card.html" }[data.type];
-            const values = {
-                ...data, initial: data.author.slice(0, 1).toUpperCase(),
-                acknowledgementsPlusOne: String((Number(data.acknowledgements) || 0) + 1),
-                celebrationsPlusOne: String((Number(data.celebrations) || 0) + 1),
-            };
-            const summaries = {
-                ticket: '<div class="compact ticket"><span class="marker" aria-hidden="true">◈</span><div class="text"><strong>{{id}}</strong><span>{{title}}</span></div><span class="badge">{{status}}</span></div>',
-                pull: '<div class="compact pull"><svg class="marker" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="5" cy="4" r="2"/><circle cx="5" cy="16" r="2"/><circle cx="15" cy="4" r="2"/><path d="M5 6v8m10-8v2a4 4 0 0 1-4 4H5"/></svg><div class="text"><strong>PR {{id}} · {{repository}}</strong><span>{{title}}</span></div><span class="badge">✓ {{checks}} checks</span></div>',
-                message: '<div class="compact chat"><span class="avatar" aria-hidden="true">{{initial}}</span><div class="text"><strong>{{author}}<small>#{{channel}}</small></strong><span>{{title}}</span></div><span class="badge">✦ {{celebrations}}</span></div>',
-            };
-            const css = readFileSync(new URL("./card.css", import.meta.url), "utf8");
-            const render = (html) => `<style>${css}</style>` + html.replace(
-                /\{\{(\w+)\}\}/g, (_, key) => escapeHtml(values[key] ?? ""));
-            return {
-                format: "html",
-                height: "auto",
-                html: render(readFileSync(new URL(template, import.meta.url), "utf8")),
-                collapsed: {
-                    format: "html", height: 56,
-                    html: render(`<style>${readFileSync(new URL("./compact.css", import.meta.url), "utf8")}</style>${summaries[data.type]}`),
-                },
-            };
+            const badge = { text: data.status, tone: "accent" };
+            const blocks = [
+                { type: "heading", text: data.title },
+                { type: "context", items: [badge, data.id, data.author] },
+                { type: "text", text: data.body, markdown: true },
+            ];
+            if (data.type === "ticket") blocks.push({ type: "fields", items: [
+                { label: "Project", items: [(data.project ?? "—")] }, { label: "Priority", items: [(data.priority ?? "—")] },
+                { label: "Cycle", items: [(data.cycle ?? "—")] }, { label: "Due", items: [(data.due ?? "—")] },
+            ] }, { type: "section", title: "Checklist", blocks: [{ type: "text", markdown: true,
+                text: [1, 2, 3, 4, 5].map(i => `- [${i <= 3 ? "x" : " "}] ${data[`task${i}`] ?? "—"}`).join("\n") }] });
+            if (data.type === "pull") blocks.push({ type: "context", items: [
+                { text: data.branch ?? "", code: true }, "→", { text: data.base ?? "", code: true }, `${data.checks} checks passed`, { text: `+${data.additions ?? 0}`, tone: "success" }, { text: `−${data.deletions ?? 0}`, tone: "danger" },
+            ] }, { type: "section", title: `${data.files} files changed`, collapsed: true, blocks: [{ type: "code", text: data.diff ?? "", diff: true }] });
+            if (data.type === "message") blocks.push({ type: "section", title: data.attachment ?? "Attachment", collapsed: true,
+                blocks: [{ type: "text", text: data.attachmentPreview ?? "", markdown: true }] });
+            return { format: "blocks", header: { title: { ticket: "Orbit", pull: "Forge", message: "Chatter" }[data.type],
+                context: data.project ?? data.repository ?? data.channel, reference: data.id }, blocks,
+                collapsed: { format: "blocks", blocks: [{ type: "context", items: [{ text: data.title, strong: true }, badge, ...(data.type === "pull" ? [`✓ ${data.checks} checks`] : [])] }] } };
         },
     };
 };

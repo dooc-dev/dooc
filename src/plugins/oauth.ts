@@ -79,7 +79,7 @@ export const fetchPluginJson = async (
             throw new PluginError(
                 response.status === 400 && tokenExchange
                     ? 401
-                    : response.status === 401 || response.status === 403
+                    : [400, 401, 403, 404, 409, 422, 429].includes(response.status)
                       ? response.status
                       : 502,
                 response.status === 401 || (response.status === 400 && tokenExchange)
@@ -89,8 +89,9 @@ export const fetchPluginJson = async (
                       : "Plugin service request failed",
             );
         }
+        if (response.status === 204) return null;
         const reader = response.body?.getReader();
-        if (!reader) throw new Error("Missing response");
+        if (!reader) return null;
         const chunks: Uint8Array[] = [];
         let size = 0;
         try {
@@ -104,7 +105,7 @@ export const fetchPluginJson = async (
         } finally {
             await reader.cancel();
         }
-        return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        return size === 0 ? null : JSON.parse(Buffer.concat(chunks).toString("utf8"));
     } catch (error) {
         if (isPluginError(error)) throw error;
         throw new PluginError(502, "Plugin service request failed");
@@ -134,6 +135,9 @@ export const validatePlugins = (input: unknown): DataPlugin[] => {
             typeof plugin.identifyUser !== "function" ||
             typeof plugin.matches !== "function" ||
             typeof plugin.read !== "function" ||
+            (plugin.actions !== undefined && typeof plugin.actions !== "function") ||
+            (plugin.act !== undefined && typeof plugin.act !== "function") ||
+            Boolean(plugin.actions) !== Boolean(plugin.act) ||
             !Array.isArray(plugin.apiOrigins) ||
             !plugin.apiOrigins.length ||
             (oauth.parseToken !== undefined && typeof oauth.parseToken !== "function")

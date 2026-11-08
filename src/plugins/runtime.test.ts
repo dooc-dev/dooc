@@ -64,6 +64,148 @@ afterEach(() => {
 });
 
 describe("user OAuth plugin runtime", () => {
+    it("authorizes and validates actions, serializes writes and deduplicates retries", async () => {
+        mockService();
+        let version = "one";
+        const act = vi.fn(async (_url, { request }, input) => {
+            await request("https://api.example/item", { method: "PATCH", body: input.values });
+            version = "two";
+            return { message: "Saved" };
+        });
+        const runtime = createPluginRuntime([
+            plugin({
+                actions: async () => [
+                    {
+                        id: "edit",
+                        label: "Edit",
+                        target: "Item",
+                        version,
+                        fields: [{ name: "title", label: "Title", type: "text", required: true }],
+                    },
+                ],
+                act,
+            }),
+        ]);
+        const session = runtime.createSession();
+        await connect(runtime, session);
+        const source = "https://service.example/item";
+        const input = { id: "edit", version: "one", values: { title: "New title" } };
+        await expect(
+            runtime.act(
+                session,
+                "example",
+                source,
+                { ...input, id: "delete" },
+                "request-000000001",
+            ),
+        ).rejects.toMatchObject({ status: 403 });
+        await expect(
+            runtime.act(
+                session,
+                "example",
+                source,
+                { ...input, values: { title: "" } },
+                "request-000000002",
+            ),
+        ).rejects.toMatchObject({ status: 400 });
+        const results = await Promise.all([
+            runtime.act(session, "example", source, input, "request-000000003"),
+            runtime.act(session, "example", source, input, "request-000000003"),
+        ]);
+        expect(results[0]).toEqual(results[1]);
+        expect(act).toHaveBeenCalledTimes(1);
+        await expect(
+            runtime.act(session, "example", source, input, "request-000000004"),
+        ).rejects.toMatchObject({ status: 409 });
+        await expect(
+            runtime.act(
+                session,
+                "example",
+                source,
+                { ...input, values: { title: "Other" } },
+                "request-000000003",
+            ),
+        ).rejects.toMatchObject({ status: 409 });
+        runtime.disconnect(session, "example");
+        await expect(runtime.actions(session, "example", source)).rejects.toMatchObject({
+            status: 401,
+        });
+    });
+
+    it("keeps failed writes idempotent and requires explicit confirmation for destructive actions", async () => {
+        mockService();
+        const act = vi.fn(async () => {
+            throw new PluginError(502, "Write outcome unknown");
+        });
+        const runtime = createPluginRuntime([
+            plugin({
+                actions: async () => [
+                    {
+                        id: "delete",
+                        label: "Delete",
+                        target: "Item",
+                        destructive: true,
+                        fields: [],
+                    },
+                ],
+                act,
+            }),
+        ]);
+        const session = runtime.createSession();
+        await connect(runtime, session);
+        const source = "https://service.example/item",
+            input = { id: "delete", values: {} };
+        await expect(
+            runtime.act(session, "example", source, input, "request-000000001"),
+        ).rejects.toMatchObject({ status: 400 });
+        for (let i = 0; i < 2; i++)
+            await expect(
+                runtime.act(
+                    session,
+                    "example",
+                    source,
+                    { ...input, confirmed: true },
+                    "request-000000002",
+                ),
+            ).rejects.toMatchObject({ status: 502 });
+        expect(act).toHaveBeenCalledTimes(1);
+    });
+
+    it("prevents a delayed operation from sending requests after disconnect", async () => {
+        mockService();
+        let release: () => void = () => {};
+        let ready: () => void = () => {};
+        const entered = new Promise<void>((resolve) => {
+            ready = resolve;
+        });
+        const pause = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const runtime = createPluginRuntime([
+            plugin({
+                actions: async () => [{ id: "edit", label: "Edit", target: "Item", fields: [] }],
+                act: async (_url, { request }) => {
+                    ready();
+                    await pause;
+                    await request("https://api.example/item", { method: "DELETE" });
+                    return { message: "Deleted" };
+                },
+            }),
+        ]);
+        const session = runtime.createSession();
+        await connect(runtime, session);
+        const pending = runtime.act(
+            session,
+            "example",
+            "https://service.example/item",
+            { id: "edit", values: {} },
+            "request-000000001",
+        );
+        await entered;
+        runtime.disconnect(session, "example");
+        release();
+        await expect(pending).rejects.toMatchObject({ status: 401 });
+    });
     it("matches URLs without fetching and rejects mismatched reads even for connected users", async () => {
         const fetcher = mockService();
         const read = vi.fn(async (url: URL) => ({

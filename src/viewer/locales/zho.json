@@ -281,5 +281,14 @@
     "Statics": "Statics",
     "Workspace tools": "工作区工具",
     "Resize workspace tools": "调整底部卡片高度",
-    "Git controls": "Git 操作"
+    "Git controls": "Git 操作",
+    "Actions": "操作",
+    "Updated": "已更新",
+    "Copy": "复制",
+    "Edit": "编辑",
+    "Saving…": "正在保存…",
+    "Reload actions before saving again.": "再次保存前请重新加载。",
+    "Saved, but refresh failed. Reload actions before saving again.": "保存已完成，但刷新失败。再次保存前请重新加载。",
+    "Actions could not be loaded.": "无法加载操作。",
+    "An open draft is no longer editable. Copy or cancel it before reloading.": "正在编辑的草稿已无法修改。重新加载前请复制或取消草稿。"
 }

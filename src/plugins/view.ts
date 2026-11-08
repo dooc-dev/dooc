@@ -1,4 +1,7 @@
+import { type PluginBlockContent, validPluginBlocks } from "./blocks.js";
+
 export type PluginContent =
+    | PluginBlockContent
     | { format: "html"; html: string; height?: number | "auto" }
     | { format: "json"; preset: "card"; title: string; text: string }
     | { format: "json"; preset: "list"; items: string[] }
@@ -15,6 +18,7 @@ export type PluginView = PluginContent & { collapsed?: PluginContent };
 const validContent = (view: PluginContent): boolean => {
     let valid = false;
     if (view && typeof view === "object") {
+        if (view.format === "blocks") return validPluginBlocks(view);
         if (view.format === "html")
             valid =
                 typeof view.html === "string" &&
