@@ -1,6 +1,6 @@
 {
     "name": "@sasaki-s-sci/dooc",
-    "version": "0.0.20",
+    "version": "0.0.21",
     "description": "View and edit source files with dooc.yaml configuration, and share them as source ZIPs or standalone HTML.",
     "type": "module",
     "files": [
