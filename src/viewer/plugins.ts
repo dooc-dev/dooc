@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { escapeHtml } from "../core/html.js";
 import type { PluginCredentialStore } from "../plugins/local-storage.js";
 import { isPluginError, PluginError } from "../plugins/oauth.js";
 import { createPluginRuntime } from "../plugins/runtime.js";
@@ -122,7 +123,15 @@ export const createPluginHandler = (
         tickets.set(ticket, { plugin, origin, expires: Date.now() + 10 * 60 * 1000 });
         return `${origin}/api/plugins/login/${plugin}?ticket=${ticket}`;
     };
-    const authorizationUrl = (session: string, plugin: string, host: string): string => {
+    const authorizationUrl = async (
+        session: string,
+        plugin: string,
+        host: string,
+    ): Promise<string> => {
+        if (config.plugins.find((item) => item.id === plugin)?.oauth.deviceAuthorizationUrl) {
+            const state = await runtime.connectDevice(session, plugin);
+            return `http://${host}/api/plugins/device/${plugin}?state=${state}`;
+        }
         const authorization = new URL(
             runtime.connect(session, plugin, `http://${host}/api/plugins/callback/${plugin}`),
         );
@@ -237,8 +246,57 @@ export const createPluginHandler = (
                     throw new PluginError(400, "Invalid or expired login link");
                 tickets.delete(key);
                 if (!runtime.hasSession(session)) createSession();
-                res.writeHead(303, { location: authorizationUrl(session, ticket.plugin, host) });
+                res.writeHead(303, {
+                    location: await authorizationUrl(session, ticket.plugin, host),
+                });
                 res.end();
+                return true;
+            }
+            const device = /^\/api\/plugins\/device\/([a-z][a-z0-9-]{0,63})$/.exec(url.pathname);
+            if (req.method === "GET" && device?.[1]) {
+                if (url.searchParams.getAll("state").length !== 1)
+                    throw new PluginError(400, "Invalid device authorization");
+                const pending = await runtime.pollDevice(
+                    session,
+                    device[1],
+                    url.searchParams.get("state") ?? "",
+                );
+                if (req.headers.accept === "application/json") {
+                    send(200, pending ?? { connected: true });
+                    return true;
+                }
+                const nonce = randomBytes(16).toString("hex");
+                res.setHeader(
+                    "content-security-policy",
+                    `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,
+                );
+                res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+                const name = escapeHtml(
+                    config.plugins.find((item) => item.id === device[1])?.name ?? device[1],
+                );
+                res.end(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Connect ${name}</title>
+<style>html{color-scheme:light dark}body{max-width:32rem;margin:4rem auto;padding:0 1.5rem;font:16px/1.6 system-ui}input{font:1.5rem monospace;max-width:100%;box-sizing:border-box;padding:.5rem}a{color:LinkText}:focus-visible{outline:2px solid LinkText;outline-offset:3px}</style>
+<main><h1>Connect ${name}</h1>${pending ? `<section id="instructions"><p>Enter this code on ${name} to authorize dooc.</p><p><label>Verification code<br><input readonly value="${escapeHtml(pending.userCode)}"></label></p><p><a href="${escapeHtml(pending.verificationUri)}" target="_blank" rel="noopener noreferrer">Continue to ${name}</a></p><noscript><p>After approving, <a href="">check the connection</a>.</p></noscript></section>` : ""}
+<p id="status" role="status">${pending ? "Waiting for authorization…" : "Connected. You can close this tab and return to dooc."}</p></main>
+${
+    pending
+        ? `<script nonce="${nonce}">
+const status = document.getElementById("status");
+async function poll() {
+  try {
+    const response = await fetch(location.href, {headers:{accept:"application/json"}});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Sign-in failed. Return to dooc and try again.");
+    if (data.connected) {
+      document.getElementById("instructions").hidden = true;
+      status.textContent = "Connected. You can close this tab and return to dooc.";
+    } else setTimeout(poll, data.retryAfter * 1000);
+  } catch (error) { status.textContent = error.message; }
+}
+setTimeout(poll, ${pending.retryAfter * 1000});
+</script>`
+        : ""
+}</html>`);
                 return true;
             }
             const callback = /^\/api\/plugins\/callback\/([a-z][a-z0-9-]{0,63})$/.exec(
@@ -297,7 +355,7 @@ export const createPluginHandler = (
             )
                 createSession();
             if (input.action === "connect") {
-                send(200, { url: authorizationUrl(session, input.plugin, host) });
+                send(200, { url: await authorizationUrl(session, input.plugin, host) });
             } else if (input.action === "status") {
                 send(200, { user: runtime.status(session, input.plugin) ?? null });
             } else if (input.action === "disconnect") {

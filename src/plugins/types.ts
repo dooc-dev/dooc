@@ -1,9 +1,11 @@
-/** OAuth credentials belong in environment variables, never in document source. */
+/** Distributors bundle public client IDs; secrets stay on trusted servers, never in plugin ZIPs. */
 export interface PluginOAuth {
     authorizationUrl: string;
     tokenUrl: string;
     clientId: string;
     clientSecret?: string;
+    /** Public clients may use the device grant instead of a browser callback. */
+    deviceAuthorizationUrl?: string;
     scopes: readonly string[];
     /** Provider-specific user authorization parameters, such as actor=user. */
     authorizationParams?: Readonly<Record<string, string>>;

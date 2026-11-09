@@ -34,10 +34,21 @@ interface Attempt {
     expires: number;
 }
 
+interface DeviceAttempt {
+    state: string;
+    expires: number;
+    deviceCode: string;
+    userCode: string;
+    verificationUri: string;
+    interval: number;
+    nextPoll: number;
+    polling: boolean;
+}
+
 interface Session {
     expires: number;
     connections: Map<string, Connection>;
-    attempts: Map<string, Attempt>;
+    attempts: Map<string, Attempt | DeviceAttempt>;
 }
 
 const nonce = (): string => randomBytes(32).toString("base64url");
@@ -66,6 +77,30 @@ export const createPluginRuntime = (
         if (!plugin) throw new PluginError(404, "Plugin is not configured");
         return plugin;
     };
+    const tokenFrom = (plugin: DataPlugin, result: unknown): OAuthToken => {
+        if (
+            !result ||
+            typeof result !== "object" ||
+            "error" in result ||
+            ("ok" in result && result.ok === false)
+        ) {
+            if (
+                result &&
+                typeof result === "object" &&
+                "error" in result &&
+                result.error === "invalid_grant"
+            )
+                throw expired();
+            throw new PluginError(502, "OAuth exchange failed");
+        }
+        try {
+            return parseOAuthToken(
+                plugin.oauth.parseToken ? plugin.oauth.parseToken(result) : result,
+            );
+        } catch {
+            throw new PluginError(502, "Invalid OAuth token response");
+        }
+    };
     const exchange = async (
         plugin: DataPlugin,
         fields: Record<string, string>,
@@ -83,26 +118,7 @@ export const createPluginRuntime = (
             true,
             transport,
         );
-        if (
-            !result ||
-            typeof result !== "object" ||
-            "error" in result ||
-            ("ok" in result && result.ok === false)
-        ) {
-            if (
-                result &&
-                typeof result === "object" &&
-                "error" in result &&
-                result.error === "invalid_grant"
-            )
-                throw expired();
-            throw new PluginError(502, "OAuth exchange failed");
-        }
-        try {
-            return parseOAuthToken(oauth.parseToken ? oauth.parseToken(result) : result);
-        } catch {
-            throw new PluginError(502, "Invalid OAuth token response");
-        }
+        return tokenFrom(plugin, result);
     };
     const context = (
         plugin: DataPlugin,
@@ -141,6 +157,39 @@ export const createPluginRuntime = (
     });
     const assertCurrent = (id: string, pluginId: string, connection: Connection): void => {
         if (sessionFor(id).connections.get(pluginId) !== connection) throw expired();
+    };
+    const begin = (id: string, plugin: DataPlugin, attempt: Attempt | DeviceAttempt): void => {
+        const session = sessionFor(id);
+        session.connections.delete(plugin.id);
+        credentials?.set(plugin);
+        if (credentials) for (const other of sessions.values()) other.connections.delete(plugin.id);
+        session.attempts.set(plugin.id, attempt);
+    };
+    const complete = async (
+        id: string,
+        plugin: DataPlugin,
+        attempt: Attempt | DeviceAttempt,
+        token: OAuthToken,
+    ): Promise<void> => {
+        const expires = expiry(token);
+        const user = await plugin.identifyUser(context(plugin, token.access_token));
+        if (
+            !user ||
+            typeof user.id !== "string" ||
+            !user.id ||
+            typeof user.name !== "string" ||
+            !user.name ||
+            user.id.length > 512 ||
+            user.name.length > 512
+        )
+            throw new PluginError(502, "Plugin could not identify the authorized user");
+        const session = sessionFor(id);
+        if (session.attempts.get(plugin.id) !== attempt || attempt.expires <= Date.now())
+            throw expired();
+        session.attempts.delete(plugin.id);
+        const connection = { token, expires, user: { id: user.id, name: user.name } };
+        credentials?.set(plugin, connection);
+        session.connections.set(plugin.id, connection);
     };
     const unregister = (pluginId: string): void => {
         plugins.delete(pluginId);
@@ -277,8 +326,9 @@ export const createPluginRuntime = (
             }
         },
         connect(id: string, pluginId: string, redirectUri: string): string {
-            const session = sessionFor(id);
             const plugin = pluginFor(pluginId);
+            if (plugin.oauth.deviceAuthorizationUrl)
+                throw new PluginError(400, "Use device authorization for this plugin");
             const redirect = new URL(redirectUri);
             if (
                 redirect.protocol !== "http:" ||
@@ -296,11 +346,7 @@ export const createPluginRuntime = (
                 redirectUri,
                 expires: Date.now() + 10 * 60 * 1000,
             };
-            session.connections.delete(pluginId);
-            credentials?.set(plugin);
-            if (credentials)
-                for (const other of sessions.values()) other.connections.delete(pluginId);
-            session.attempts.set(pluginId, attempt);
+            begin(id, plugin, attempt);
             const url = new URL(plugin.oauth.authorizationUrl);
             for (const [key, value] of Object.entries(plugin.oauth.authorizationParams ?? {}))
                 url.searchParams.set(key, value);
@@ -319,6 +365,150 @@ export const createPluginRuntime = (
                 url.searchParams.set(key, value);
             return url.href;
         },
+        async connectDevice(id: string, pluginId: string): Promise<string> {
+            const plugin = pluginFor(pluginId);
+            if (!plugin.oauth.deviceAuthorizationUrl)
+                throw new PluginError(400, "Device authorization is not configured");
+            const attempt: DeviceAttempt = {
+                state: nonce(),
+                expires: Date.now() + 15 * 60_000,
+                deviceCode: "",
+                userCode: "",
+                verificationUri: "",
+                interval: 5,
+                nextPoll: Infinity,
+                polling: false,
+            };
+            begin(id, plugin, attempt);
+            try {
+                const result = (await fetchPluginJson(
+                    plugin.oauth.deviceAuthorizationUrl,
+                    {
+                        method: "POST",
+                        headers: { accept: "application/json" },
+                        body: new URLSearchParams({
+                            client_id: plugin.oauth.clientId,
+                            [plugin.oauth.scopeParameter ?? "scope"]: plugin.oauth.scopes.join(
+                                plugin.oauth.scopeSeparator ?? " ",
+                            ),
+                        }),
+                    },
+                    true,
+                    transport,
+                )) as Record<string, unknown> | null;
+                if (
+                    !result ||
+                    typeof result.device_code !== "string" ||
+                    !result.device_code ||
+                    result.device_code.length > 4096 ||
+                    typeof result.user_code !== "string" ||
+                    !result.user_code ||
+                    result.user_code.length > 128 ||
+                    typeof result.verification_uri !== "string" ||
+                    result.verification_uri.length > 2048 ||
+                    typeof result.expires_in !== "number" ||
+                    !Number.isFinite(result.expires_in) ||
+                    result.expires_in <= 0 ||
+                    result.expires_in > 3600 ||
+                    (result.interval !== undefined &&
+                        (typeof result.interval !== "number" ||
+                            !Number.isFinite(result.interval) ||
+                            result.interval <= 0 ||
+                            result.interval > 60))
+                )
+                    throw new PluginError(502, "Invalid device authorization response");
+                const verificationUri = httpsUrl(result.verification_uri).href;
+                if (sessionFor(id).attempts.get(pluginId) !== attempt) throw expired();
+                Object.assign(attempt, {
+                    deviceCode: result.device_code,
+                    userCode: result.user_code,
+                    verificationUri,
+                    expires: Date.now() + result.expires_in * 1000,
+                    interval: result.interval ?? 5,
+                    nextPoll: Date.now() + Number(result.interval ?? 5) * 1000,
+                });
+                return attempt.state;
+            } catch (error) {
+                if (sessionFor(id).attempts.get(pluginId) === attempt)
+                    sessionFor(id).attempts.delete(pluginId);
+                throw error;
+            }
+        },
+        async pollDevice(
+            id: string,
+            pluginId: string,
+            state: string,
+        ): Promise<{ userCode: string; verificationUri: string; retryAfter: number } | undefined> {
+            const session = sessionFor(id);
+            const plugin = pluginFor(pluginId);
+            const attempt = session.attempts.get(pluginId);
+            if (
+                !state ||
+                !attempt ||
+                !("deviceCode" in attempt) ||
+                !attempt.deviceCode ||
+                attempt.state !== state ||
+                attempt.expires <= Date.now()
+            )
+                throw new PluginError(400, "Invalid or expired device authorization");
+            if (!attempt.polling && Date.now() >= attempt.nextPoll) {
+                attempt.polling = true;
+                attempt.nextPoll = Date.now() + attempt.interval * 1000;
+                try {
+                    const result = await fetchPluginJson(
+                        plugin.oauth.tokenUrl,
+                        {
+                            method: "POST",
+                            headers: { accept: "application/json" },
+                            body: new URLSearchParams({
+                                client_id: plugin.oauth.clientId,
+                                device_code: attempt.deviceCode,
+                                grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+                            }),
+                        },
+                        "device",
+                        transport,
+                    );
+                    if (
+                        sessionFor(id).attempts.get(pluginId) !== attempt ||
+                        attempt.expires <= Date.now()
+                    )
+                        throw expired();
+                    if (result && typeof result === "object" && "error" in result) {
+                        if (result.error === "slow_down") {
+                            attempt.interval += 5;
+                            if (
+                                "interval" in result &&
+                                typeof result.interval === "number" &&
+                                Number.isFinite(result.interval) &&
+                                result.interval > attempt.interval
+                            )
+                                attempt.interval = result.interval;
+                        } else if (result.error !== "authorization_pending") {
+                            session.attempts.delete(pluginId);
+                            throw new PluginError(
+                                400,
+                                "Device sign-in was not completed. Connect this plugin again.",
+                            );
+                        }
+                    } else {
+                        await complete(id, plugin, attempt, tokenFrom(plugin, result));
+                        return;
+                    }
+                } finally {
+                    attempt.polling = false;
+                    attempt.nextPoll = Date.now() + attempt.interval * 1000;
+                }
+            }
+            return {
+                userCode: attempt.userCode,
+                verificationUri: attempt.verificationUri,
+                retryAfter: Math.max(
+                    1,
+                    Math.ceil((Math.min(attempt.nextPoll, attempt.expires) - Date.now()) / 1000),
+                ),
+            };
+        },
         async callback(
             id: string,
             pluginId: string,
@@ -330,6 +520,7 @@ export const createPluginRuntime = (
             const attempt = session.attempts.get(pluginId);
             if (
                 !attempt?.state ||
+                !("verifier" in attempt) ||
                 attempt.expires <= Date.now() ||
                 attempt.redirectUri !== redirectUri ||
                 params.getAll("state").length !== 1 ||
@@ -347,23 +538,7 @@ export const createPluginRuntime = (
                 redirect_uri: redirectUri,
                 code_verifier: attempt.verifier,
             });
-            const expires = expiry(token);
-            const user = await plugin.identifyUser(context(plugin, token.access_token));
-            if (
-                !user ||
-                typeof user.id !== "string" ||
-                !user.id ||
-                typeof user.name !== "string" ||
-                !user.name ||
-                user.id.length > 512 ||
-                user.name.length > 512
-            )
-                throw new PluginError(502, "Plugin could not identify the authorized user");
-            if (sessionFor(id).attempts.get(pluginId) !== attempt) throw expired();
-            session.attempts.delete(pluginId);
-            const connection = { token, expires, user: { id: user.id, name: user.name } };
-            credentials?.set(plugin, connection);
-            session.connections.set(pluginId, connection);
+            await complete(id, plugin, attempt, token);
         },
         disconnect(id: string, pluginId: string): void {
             const session = sessionFor(id);

@@ -75,6 +75,9 @@ export const createLocalPluginStorage = (
                     [...plugin.oauth.scopes].sort(),
                     [...plugin.apiOrigins].sort(),
                     plugin.oauth.authorizationParams ?? {},
+                    ...(plugin.oauth.deviceAuthorizationUrl
+                        ? [plugin.oauth.deviceAuthorizationUrl]
+                        : []),
                 ]),
             )
             .digest("hex")}.json`;

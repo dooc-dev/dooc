@@ -33,6 +33,7 @@ const call = async (
         method?: string;
         path?: string;
         contentType?: string;
+        accept?: string;
     } = {},
 ) => {
     const headers: Record<string, string> = {};
@@ -46,6 +47,7 @@ const call = async (
             origin: options.origin ?? "http://localhost:5179",
             "content-type": options.contentType ?? "application/json",
             cookie: options.cookie,
+            accept: options.accept,
         },
         socket: { localPort: 5179 },
     });
@@ -87,6 +89,63 @@ const call = async (
 afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
+});
+
+it("serves an escaped, session-bound device sign-in page without exposing device codes or tokens", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(0);
+    const transport = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(
+            Response.json({
+                device_code: "private-device",
+                user_code: 'CODE<>&"',
+                verification_uri: "https://oauth.example/device",
+                expires_in: 900,
+                interval: 5,
+            }),
+        )
+        .mockResolvedValueOnce(Response.json({ access_token: "private-token" }));
+    vi.stubGlobal("fetch", transport);
+    const handler = createPluginHandler([
+        {
+            ...definition,
+            oauth: {
+                ...definition.oauth,
+                deviceAuthorizationUrl: "https://oauth.example/device/code",
+            },
+        },
+    ]);
+    const begin = await call(handler, { action: "connect", plugin: "sample" });
+    const url = new URL(JSON.parse(begin.body).url);
+    expect(url.origin).toBe("http://localhost:5179");
+    const options = {
+        method: "GET",
+        path: url.pathname + url.search,
+        cookie: begin.headers["set-cookie"]?.split(";")[0],
+    };
+    const page = await call(handler, undefined, options);
+    expect(page.status).toBe(200);
+    expect(page.body).toContain("CODE&lt;&gt;&amp;&quot;");
+    expect(page.body).toContain('rel="noopener noreferrer"');
+    expect(page.body).not.toContain("private-device");
+    expect(page.headers["content-security-policy"]).toContain("script-src 'nonce-");
+    expect(page.headers["referrer-policy"]).toBe("no-referrer");
+    expect((await call(handler, undefined, { ...options, cookie: undefined })).status).toBe(401);
+    expect(
+        (await call(handler, undefined, { ...options, path: `${options.path}&state=other` }))
+            .status,
+    ).toBe(400);
+    vi.setSystemTime(5000);
+    const done = await call(handler, undefined, { ...options, accept: "application/json" });
+    expect(done.body).toBe('{"connected":true}');
+    const status = await call(
+        handler,
+        { action: "status", plugin: "sample" },
+        { cookie: options.cookie },
+    );
+    expect(JSON.parse(status.body).user).toEqual({ id: "alice", name: "Alice" });
+    expect(status.body).not.toContain("private-token");
 });
 
 describe("local plugin HTTP boundary", () => {

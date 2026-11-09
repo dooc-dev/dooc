@@ -65,7 +65,7 @@ export const parseOAuthToken = (input: unknown): OAuthToken => {
 export const fetchPluginJson = async (
     url: string,
     init: RequestInit,
-    tokenExchange = false,
+    tokenExchange: boolean | "device" = false,
     transport: typeof fetch = fetch,
 ): Promise<unknown> => {
     try {
@@ -75,7 +75,7 @@ export const fetchPluginJson = async (
             cache: "no-store",
             signal: AbortSignal.timeout(15_000),
         });
-        if (!response.ok) {
+        if (!response.ok && !(tokenExchange === "device" && response.status === 400)) {
             await response.body?.cancel();
             throw new PluginError(
                 response.status === 400 && tokenExchange
@@ -136,6 +136,8 @@ export const validatePlugins = (input: unknown): DataPlugin[] => {
             typeof oauth.clientId !== "string" ||
             !oauth.clientId.trim() ||
             (oauth.clientSecret !== undefined && typeof oauth.clientSecret !== "string") ||
+            (oauth.deviceAuthorizationUrl !== undefined &&
+                (typeof oauth.deviceAuthorizationUrl !== "string" || !!oauth.clientSecret)) ||
             !Array.isArray(oauth.scopes) ||
             oauth.scopes.some((s) => typeof s !== "string" || !s.trim()) ||
             typeof plugin.identifyUser !== "function" ||
@@ -149,7 +151,11 @@ export const validatePlugins = (input: unknown): DataPlugin[] => {
             (oauth.parseToken !== undefined && typeof oauth.parseToken !== "function")
         )
             throw new Error(`Viewer plugins: invalid plugin ${plugin.id}`);
-        for (const endpoint of [oauth.authorizationUrl, oauth.tokenUrl]) {
+        for (const endpoint of [
+            oauth.authorizationUrl,
+            oauth.tokenUrl,
+            ...(oauth.deviceAuthorizationUrl === undefined ? [] : [oauth.deviceAuthorizationUrl]),
+        ]) {
             if (typeof endpoint !== "string" || httpsUrl(endpoint).search)
                 throw new Error("OAuth endpoints must not contain query parameters");
         }
