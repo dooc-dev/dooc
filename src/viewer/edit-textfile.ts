@@ -197,7 +197,10 @@ export const createTextfileEditors = (
                 return;
             }
             if (draft.state && content === draft.base) {
-                draft.state = draft.state.update({ effects: setGitBase.of(gitBase ?? null) }).state;
+                if (draft.state.field(gitBaseState) !== (gitBase ?? null))
+                    draft.state = draft.state.update({
+                        effects: setGitBase.of(gitBase ?? null),
+                    }).state;
                 return;
             }
             draft.base = content;
