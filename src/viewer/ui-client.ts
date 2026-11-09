@@ -1,3 +1,4 @@
+import { mountExtensions } from "./extensions-ui.js";
 import { mountFileUpload } from "./file-upload.js";
 import { mountFiles } from "./files-ui.js";
 import { mountGit } from "./git-ui.js";
@@ -20,4 +21,5 @@ if (document.body.classList.contains("edit")) {
     mountFiles();
     mountGit();
     mountFileUpload();
+    mountExtensions();
 }

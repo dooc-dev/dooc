@@ -44,13 +44,17 @@ export type PluginBlock =
     | { type: "progress"; label: string; value: number }
     | { type: "divider" };
 
+export interface PluginIcon {
+    light: string;
+    dark?: string;
+}
+
 export interface PluginBlockContent {
-    format: "blocks";
     header?: {
         title: string;
         context?: string;
         reference?: string;
-        icon?: { light: string; dark?: string };
+        icon?: PluginIcon;
     };
     blocks: PluginBlock[];
 }
@@ -78,6 +82,8 @@ const icon = (value: unknown): boolean =>
     typeof value === "string" &&
     value.length <= 100_000 &&
     /^data:image\/(?:svg\+xml|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value);
+export const validPluginIcon = (value: unknown): value is PluginIcon =>
+    record(value) && icon(value.light) && optional(value.dark, icon);
 const edit = (value: unknown): boolean =>
     record(value) && text(value.action) && optional(value.field, text);
 const inlines = (value: unknown): boolean =>
@@ -182,7 +188,7 @@ export const validPluginBlocks = (value: unknown): value is PluginBlockContent =
         });
     return (
         record(value) &&
-        value.format === "blocks" &&
+        !("format" in value) &&
         blocks(value.blocks, 0) &&
         optional(
             value.header,
@@ -191,7 +197,7 @@ export const validPluginBlocks = (value: unknown): value is PluginBlockContent =
                 text(h.title) &&
                 optional(h.context, text) &&
                 optional(h.reference, text) &&
-                optional(h.icon, (v) => record(v) && icon(v.light) && optional(v.dark, icon)),
+                optional(h.icon, validPluginIcon),
         )
     );
 };

@@ -25,17 +25,20 @@ export const mountPlugins = (): void => {
     });
     matchMedia("(prefers-color-scheme: dark)").addEventListener("change", syncIcons);
     const render = (section: HTMLElement, view: PluginView) => {
+        const result = section.querySelector<HTMLElement>("[data-plugin-result]");
+        const collapsed = section.querySelector<HTMLElement>("[data-plugin-collapsed]");
+        const url = section.dataset.url;
+        if (!result || !collapsed || !url) throw new Error(t("Plugin request failed"));
         const html = pluginViewHtml(view);
         const summary = view.collapsed ? pluginViewHtml(view.collapsed) : "";
-        section.querySelector<HTMLElement>("[data-plugin-result]")!.innerHTML = html;
-        section.querySelector<HTMLElement>("[data-plugin-collapsed]")!.innerHTML = summary;
+        result.innerHTML = html;
+        collapsed.innerHTML = summary;
         section.querySelector(".plugin-heading")?.remove();
-        section.dataset.blocks = String(view.format === "blocks");
-        if (view.format === "blocks" && view.header) {
+        if (view.header) {
             const heading = document.createElement("span");
             heading.className = "plugin-heading";
             const link = document.createElement("a");
-            link.href = section.dataset.url!;
+            link.href = url;
             link.target = "_blank";
             link.rel = "noopener noreferrer";
             if (view.header.icon) {
@@ -69,33 +72,22 @@ export const mountPlugins = (): void => {
             syncIcons();
         }
     };
-    window.addEventListener("message", (event: MessageEvent) => {
-        const height = event.data?.doocPluginHeight;
-        if (typeof height !== "number" || !Number.isFinite(height) || height <= 0) return;
-        for (const frame of document.querySelectorAll<HTMLIFrameElement>(
-            "iframe[data-plugin-auto-height]",
-        )) {
-            if (
-                frame.contentWindow !== event.source ||
-                frame.parentElement?.hasAttribute("data-resized")
-            )
-                continue;
-            const value = `${Math.max(32, Math.min(1200, Math.ceil(height)))}px`;
-            if (frame.style.height !== value) frame.style.height = value;
-        }
-    });
     let registration = "";
     let headingId = 0;
     let seen = new WeakMap<HTMLElement, string>();
     const originals = new Map<HTMLElement, Node[]>();
-    const resolved = new Map<string, Promise<{ plugin?: string; autoConnect?: boolean }>>();
+    const resolved = new Map<
+        string,
+        Promise<{ plugin?: string; autoConnect?: boolean; connected?: boolean }>
+    >();
     const connections = new Map<string, Promise<void>>();
-    let connecting = Promise.resolve();
+    let connecting: Promise<void> | undefined;
     const revisions = new Map<string, number>();
     const requests = new WeakMap<HTMLElement, object>();
     const channel =
         typeof BroadcastChannel === "undefined" ? undefined : new BroadcastChannel("dooc:plugins");
     const clear = (plugin: string): void => {
+        resolved.clear();
         revisions.set(plugin, (revisions.get(plugin) ?? 0) + 1);
         for (const section of document.querySelectorAll<HTMLElement>("[data-plugin]")) {
             if (section.dataset.plugin !== plugin) continue;
@@ -108,6 +100,12 @@ export const mountPlugins = (): void => {
             if (status) status.textContent = t("Load data using your connected account");
         }
     };
+    document.addEventListener("docs:plugin-connection", (event) => {
+        const plugin = (event as CustomEvent<unknown>).detail;
+        if (typeof plugin !== "string") return;
+        clear(plugin);
+        channel?.postMessage(plugin);
+    });
     if (channel)
         channel.onmessage = (event: MessageEvent<unknown>) => {
             if (typeof event.data === "string") clear(event.data);
@@ -127,19 +125,21 @@ export const mountPlugins = (): void => {
             const version = registration;
             let match = resolved.get(url);
             if (!match) {
-                match = fetch("/api/plugins", {
-                    method: "POST",
-                    headers: { "content-type": "application/json" },
-                    body: JSON.stringify({ action: "resolve", url }),
-                    cache: "no-store",
-                }).then(async (response) => {
+                match = (async () => {
+                    const response = await fetch("/api/plugins", {
+                        method: "POST",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({ action: "resolve", url }),
+                        cache: "no-store",
+                    });
                     if (!response.ok) throw new Error("Plugin URL resolution failed");
                     return response.json();
-                });
+                })();
                 resolved.set(url, match);
             }
-            void match
-                .then(({ plugin, autoConnect }) => {
+            const mountHost = async () => {
+                try {
+                    const { plugin, autoConnect, connected } = await match;
                     if (
                         !plugin ||
                         !host.isConnected ||
@@ -179,6 +179,11 @@ export const mountPlugins = (): void => {
                             "Copy link",
                             '<path d="m8 12 4-4m-5 2-2 2a3 3 0 0 0 4 4l2-2m-2-8 2-2a3 3 0 0 1 4 4l-2 2"/>',
                         ],
+                        [
+                            "edit",
+                            "Edit",
+                            '<path d="m12 3 5 5M3 17l4-1L17 6a2.1 2.1 0 0 0-3-3L4 13Z"/>',
+                        ],
                         ["fold", "Collapse preview", '<path d="m5 7.5 5 5 5-5"/>'],
                     ]) {
                         const control = document.createElement(action === "open" ? "a" : "button");
@@ -195,6 +200,10 @@ export const mountPlugins = (): void => {
                             control.target = "_blank";
                             control.rel = "noopener noreferrer";
                         } else control.type = "button";
+                        if (action === "edit" && control instanceof HTMLButtonElement) {
+                            control.disabled = true;
+                            control.setAttribute("aria-pressed", "false");
+                        }
                         if (action === "fold") {
                             control.setAttribute("aria-expanded", "true");
                             control.setAttribute("aria-controls", `plugin-result-${headingId}`);
@@ -237,11 +246,12 @@ export const mountPlugins = (): void => {
                     collapsed.dataset.pluginCollapsed = "";
                     section.append(toolbar, header, result, collapsed, createPluginResize(result));
                     host.replaceChildren(section);
-                    if (autoConnect) void run(section, "read");
-                })
-                .catch(() => {
-                    /* An unavailable plugin leaves the source URL readable. */
-                });
+                    if (autoConnect || connected) void run(section, "read");
+                } catch {
+                    // An unavailable plugin leaves the source URL readable.
+                }
+            };
+            void mountHost();
         }
     };
     const events = new EventSource("/api/plugins/events");
@@ -304,31 +314,35 @@ export const mountPlugins = (): void => {
                 let connection = connections.get(plugin);
                 if (!connection) {
                     // Share one mock authorization across embeds and serialize session-cookie creation.
-                    connection = connecting
-                        .catch(() => {})
-                        .then(async () => {
-                            const response = await fetch("/api/plugins", {
-                                method: "POST",
-                                headers: { "content-type": "application/json" },
-                                credentials: "same-origin",
-                                cache: "no-store",
-                                body: JSON.stringify({ action: "connect", plugin }),
-                            });
-                            const data = await response.json();
-                            if (!response.ok || typeof data.url !== "string")
-                                throw new Error("Plugin request failed");
-                            const url = new URL(data.url);
-                            if (
-                                url.origin !== location.origin ||
-                                !url.pathname.startsWith("/api/plugins/mock/")
-                            )
-                                throw new Error("Plugin request failed");
-                            const authorization = await fetch(url.href, {
-                                credentials: "same-origin",
-                                cache: "no-store",
-                            });
-                            if (!authorization.ok) throw new Error("Plugin request failed");
+                    const previous = connecting;
+                    connection = (async () => {
+                        try {
+                            await previous;
+                        } catch {
+                            // A failed connection must not block the next authorization.
+                        }
+                        const response = await fetch("/api/plugins", {
+                            method: "POST",
+                            headers: { "content-type": "application/json" },
+                            credentials: "same-origin",
+                            cache: "no-store",
+                            body: JSON.stringify({ action: "connect", plugin }),
                         });
+                        const data = await response.json();
+                        if (!response.ok || typeof data.url !== "string")
+                            throw new Error("Plugin request failed");
+                        const url = new URL(data.url);
+                        if (
+                            url.origin !== location.origin ||
+                            !url.pathname.startsWith("/api/plugins/mock/")
+                        )
+                            throw new Error("Plugin request failed");
+                        const authorization = await fetch(url.href, {
+                            credentials: "same-origin",
+                            cache: "no-store",
+                        });
+                        if (!authorization.ok) throw new Error("Plugin request failed");
+                    })();
                     connections.set(plugin, connection);
                     connecting = connection;
                 }
@@ -364,42 +378,45 @@ export const mountPlugins = (): void => {
                     ? ""
                     : t("Connected as {name}", { name: data.user.name });
                 controls.hidden = autoConnect;
-                if (data.view.format === "blocks") {
-                    const api = async (action: string, payload = {}) => {
-                        if (!current()) throw new Error("Plugin connection changed");
-                        const response = await fetch("/api/plugins", {
-                            method: "POST",
-                            credentials: "same-origin",
-                            cache: "no-store",
-                            headers: { "content-type": "application/json" },
-                            body: JSON.stringify({
-                                action,
-                                plugin,
-                                url: section.dataset.url,
-                                ...payload,
-                            }),
+                let viewSignature = JSON.stringify(data.view);
+                const api = async (action: string, payload = {}) => {
+                    if (!current()) throw new Error("Plugin connection changed");
+                    const response = await fetch("/api/plugins", {
+                        method: "POST",
+                        credentials: "same-origin",
+                        cache: "no-store",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({
+                            action,
+                            plugin,
+                            url: section.dataset.url,
+                            ...payload,
+                        }),
+                    });
+                    const data = await response.json();
+                    if (!current()) throw new Error("Plugin connection changed");
+                    if (!response.ok)
+                        throw Object.assign(new Error(data.error ?? "Plugin request failed"), {
+                            status: response.status,
                         });
-                        const data = await response.json();
-                        if (!current()) throw new Error("Plugin connection changed");
-                        if (!response.ok)
-                            throw Object.assign(new Error(data.error ?? "Plugin request failed"), {
-                                status: response.status,
-                            });
-                        return data;
-                    };
-                    disposers.set(
+                    return data;
+                };
+                disposers.set(
+                    section,
+                    mountPluginActions(
                         section,
-                        mountPluginActions(
-                            section,
-                            api,
-                            async () => {
-                                const data = await api("read");
+                        api,
+                        async (ready, force) => {
+                            const data = await api("read");
+                            const signature = JSON.stringify(data.view);
+                            if ((force || signature !== viewSignature) && ready()) {
                                 render(section, data.view);
-                            },
-                            current,
-                        ),
-                    );
-                }
+                                viewSignature = signature;
+                            }
+                        },
+                        current,
+                    ),
+                );
             } else status.textContent = t("Connection forgotten in dooc");
         } catch (error) {
             if (current()) {
@@ -414,7 +431,13 @@ export const mountPlugins = (): void => {
             if (requests.get(section) === request) section.removeAttribute("aria-busy");
         }
     };
-    document.addEventListener("click", (event) => {
+    window.addEventListener("focus", () => {
+        resolved.clear();
+        for (const section of document.querySelectorAll<HTMLElement>("[data-plugin]"))
+            if (!section.dataset.ready && !section.hasAttribute("aria-busy"))
+                void run(section, "read");
+    });
+    document.addEventListener("click", async (event) => {
         const button =
             event.target instanceof Element
                 ? event.target.closest<HTMLButtonElement>("button[data-plugin-action]")
@@ -431,22 +454,20 @@ export const mountPlugins = (): void => {
             button.title = t(label);
             button.setAttribute("aria-label", t(label));
         } else if (action === "copy") {
-            void navigator.clipboard.writeText(section.dataset.url ?? "").then(
-                () => {
-                    button.dataset.state = "copied";
-                    button.title = t("Copied");
-                    button.setAttribute("aria-label", t("Copied"));
-                    setTimeout(() => {
-                        delete button.dataset.state;
-                        button.title = t("Copy link");
-                        button.setAttribute("aria-label", t("Copy link"));
-                    }, 1500);
-                },
-                () => {
-                    button.title = t("Copy failed");
-                    button.setAttribute("aria-label", t("Copy failed"));
-                },
-            );
-        } else void run(section, action, button);
+            try {
+                await navigator.clipboard.writeText(section.dataset.url ?? "");
+                button.dataset.state = "copied";
+                button.title = t("Copied");
+                button.setAttribute("aria-label", t("Copied"));
+                setTimeout(() => {
+                    delete button.dataset.state;
+                    button.title = t("Copy link");
+                    button.setAttribute("aria-label", t("Copy link"));
+                }, 1500);
+            } catch {
+                button.title = t("Copy failed");
+                button.setAttribute("aria-label", t("Copy failed"));
+            }
+        } else if (action !== "edit") await run(section, action, button);
     });
 };

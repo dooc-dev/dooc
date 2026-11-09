@@ -8,7 +8,9 @@ import { loadDocsConfig } from "../compiler/config.js";
 import { loadViewerPlugins } from "../viewer/plugin-config.js";
 import { pluginViewHtml } from "../viewer/plugin-view.js";
 import { publishHtml, siteFrom } from "../viewer/serve.js";
+import { createPluginRuntime } from "./runtime.js";
 import type { DataPlugin } from "./types.js";
+import { validatePluginView } from "./view.js";
 
 const sample = new URL("../../sample-content/", import.meta.url);
 
@@ -102,10 +104,29 @@ describe("sample plugin", () => {
         expect(plugin.matches(url)).toBe(true);
         const view = await plugin.read(url, { request, user });
         expect(view).toMatchObject({
-            format: "blocks",
-            blocks: expect.arrayContaining([{ type: "heading", text: "From service" }]),
+            header: { reference: data.id },
+            blocks: expect.arrayContaining([
+                expect.objectContaining({ type: "heading", text: "From service" }),
+            ]),
         });
         expect(pluginViewHtml(view)).toContain("Real response");
+        expect(view).not.toHaveProperty("format");
+        request.mockResolvedValue({
+            ...data,
+            id: "DOC-99",
+            title: "Updated from HTTPS",
+            status: "Done",
+        });
+        const updated = await plugin.read(new URL("https://example.com/tickets/DOC-99"), {
+            request,
+            user,
+        });
+        expect(updated.header?.reference).toBe("DOC-99");
+        expect(pluginViewHtml(updated)).toContain("Updated from HTTPS");
+        expect(pluginViewHtml(updated)).toContain("Done");
+        expect(pluginViewHtml(updated)).not.toContain("DOC-42");
+        request.mockResolvedValue(data);
+        await plugin.read(url, { request, user });
         expect(request).toHaveBeenLastCalledWith("https://example.com/tickets/DOC-42?view=full");
         const count = request.mock.calls.length;
         for (const source of [
@@ -131,7 +152,6 @@ describe("sample plugin", () => {
             request,
             user,
         });
-        if (message.format !== "blocks") throw new Error("Expected a block permalink preview");
         expect(pluginViewHtml(message)).toContain(
             "&lt;img onerror=&quot;alert(1)&quot;&gt; &amp; {{title}}",
         );
@@ -163,13 +183,11 @@ describe("sample plugin", () => {
             request,
             user,
         });
-        if (view.format !== "blocks") throw new Error("Expected a block pull preview");
         expect(pluginViewHtml(view)).toContain("feat/&lt;preview&gt;");
         expect(pluginViewHtml(view)).toContain("+248");
         expect(pluginViewHtml(view)).toContain("4 checks passed");
         expect(pluginViewHtml(view)).not.toContain("{{");
-        expect(view.collapsed).toMatchObject({ format: "blocks" });
-        if (view.collapsed?.format !== "blocks") throw new Error("Expected a compact pull preview");
+        if (!view.collapsed) throw new Error("Expected a compact pull preview");
         expect(pluginViewHtml(view.collapsed)).toContain("✓ 4 checks");
         expect(pluginViewHtml(view.collapsed)).not.toContain("{{");
     });
@@ -182,7 +200,7 @@ describe("sample plugin", () => {
             fileURLToPath(new URL("../examples/viewer-plugins/index.mjs", sample)),
         );
         expect(viewer).not.toHaveProperty("mounts");
-        expect(viewer.plugins.map((plugin) => plugin.id)).toEqual(["sample"]);
+        expect(viewer.plugins.map((plugin) => plugin.id)).toEqual(["sample", "sample-auth"]);
         const compiled = createCompiler(root).compile();
         expect(compiled.errors).toEqual([]);
         const source = compiled.sources.get("files/md/plugins.md");
@@ -200,4 +218,112 @@ describe("sample plugin", () => {
             "```plugin",
         );
     });
+});
+
+it("runs editable sample cards, comments, reactions, conflict checks, and ownership without external services", async () => {
+    const { createSampleMock } = await import(
+        new URL("../../examples/viewer-plugins/mock.mjs", import.meta.url).href
+    );
+    const { createSamplePlugin } = await import(
+        new URL("../../examples/viewer-plugins/sample.mjs", import.meta.url).href
+    );
+    const mock = createSampleMock({ autoConnect: true });
+    const plugin = createSamplePlugin({
+        authorizationUrl: `${mock.origin}/authorize`,
+        tokenUrl: `${mock.origin}/token`,
+        userUrl: `${mock.origin}/me`,
+        clientId: "dooc-sample",
+    });
+    const runtime = createPluginRuntime([plugin], (input, init) =>
+        mock.handle(new Request(input, init)),
+    );
+    const session = runtime.createSession();
+    const callback = "http://localhost:5179/api/plugins/callback/sample";
+    const authorization = runtime.connect(session, "sample", callback);
+    const approved = await mock.handle(new Request(authorization));
+    const returned = new URL(approved.headers.get("location"));
+    await runtime.callback(session, "sample", callback, returned.searchParams);
+    const icons = new Set<string>();
+    for (const path of ["tickets/DOC-42", "pulls/17", "messages/release-notes"]) {
+        const url = `${mock.origin}/${path}`;
+        const read = () => runtime.read(session, "sample", url);
+        const actions = () => runtime.actions(session, "sample", url);
+        const act = async (id: string, values: Record<string, string>, confirmed?: boolean) => {
+            const action = (await actions()).actions.find((action) => action.id === id);
+            return runtime.act(
+                session,
+                "sample",
+                url,
+                { id, values, version: action?.version, confirmed },
+                crypto.randomUUID(),
+            );
+        };
+        const view = (await read()).view;
+        if (!view.header?.icon) throw new Error("Missing service icon");
+        icons.add(view.header.icon.light);
+        expect(view.header.icon.dark).not.toBe(view.header.icon.light);
+        expect(pluginViewHtml(view)).toContain("data-block-edit");
+        const oldVersion = (await actions()).actions.find((a) => a.id === "update")?.version;
+        await act("update", { title: "Edited in the demo" });
+        expect(pluginViewHtml((await read()).view)).toContain("Edited in the demo");
+        await expect(
+            runtime.act(
+                session,
+                "sample",
+                url,
+                { id: "update", values: { title: "Stale title" }, version: oldVersion },
+                crypto.randomUUID(),
+            ),
+        ).rejects.toMatchObject({ status: 409 });
+        await expect(act("update", { title: "" })).rejects.toMatchObject({ status: 400 });
+        await expect(act("delete:2", {}, true)).rejects.toMatchObject({ status: 403 });
+        await act("comment", { body: "A demo comment" });
+        const comment = (await actions()).actions.find(
+            (action) =>
+                action.id.startsWith("edit:") && action.fields[0]?.value === "A demo comment",
+        );
+        if (!comment) throw new Error("Missing editable comment");
+        await act(comment.id, { body: "Revised comment" });
+        expect(pluginViewHtml((await read()).view)).toContain("Revised comment");
+        const deletion = comment.id.replace("edit:", "delete:");
+        await expect(act(deletion, {})).rejects.toMatchObject({ status: 400 });
+        await act(deletion, {}, true);
+        expect(pluginViewHtml((await read()).view)).not.toContain("Revised comment");
+        await act("react", { emoji: "🎉" });
+        expect(pluginViewHtml((await read()).view)).toContain('aria-pressed="true"');
+        await act("react", { emoji: "🎉" });
+        expect(pluginViewHtml((await read()).view)).not.toContain('aria-pressed="true"');
+    }
+    expect(icons.size).toBe(3);
+});
+
+it("loads the ZIP demo entry with valid SVG asset icons for every service", async () => {
+    const config = await loadViewerPlugins(
+        fileURLToPath(new URL("../../examples/viewer-plugins/extension.mjs", import.meta.url)),
+    );
+    const plugin = config.plugins[0];
+    if (!plugin) throw new Error("Missing sample extension");
+    for (const [type, path] of [
+        ["ticket", "tickets/DOC-42"],
+        ["pull", "pulls/17"],
+        ["message", "messages/release-notes"],
+    ]) {
+        const view = validatePluginView(
+            await plugin.read(new URL(`https://sample.dooc.invalid/${path}`), {
+                user: { id: "one", name: "One" },
+                request: async () => ({
+                    type,
+                    id: "DOC-42",
+                    title: "Demo",
+                    body: "Description",
+                    status: "Open",
+                    author: "Alice",
+                }),
+            }),
+        );
+        expect(view).toMatchObject({
+            header: { icon: { light: expect.stringMatching(/^data:image\/svg\+xml;base64,/) } },
+        });
+        expect(pluginViewHtml(view)).toContain("Demo");
+    }
 });

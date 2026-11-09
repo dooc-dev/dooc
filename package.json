@@ -65,7 +65,8 @@
         "test:install": "node scripts/test-install.mjs",
         "check": "biome check . && tsc --noEmit && pnpm run build && vitest run && pnpm run test:install && pnpm run test:plugin-package",
         "fix": "biome check --write .",
-        "build:fonts": "node -e \"require('node:fs').cpSync('src/viewer/fonts', 'dist/viewer/fonts', {recursive:true})\""
+        "build:fonts": "node -e \"require('node:fs').cpSync('src/viewer/fonts', 'dist/viewer/fonts', {recursive:true})\"",
+        "build:sample-extension": "node --import tsx scripts/build-sample-extension.mjs"
     },
     "devDependencies": {
         "@biomejs/biome": "2.4.15",

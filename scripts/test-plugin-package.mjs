@@ -90,7 +90,7 @@ try {
         `
 import { parseOAuthToken, PluginError } from ${JSON.stringify(manifest.name)};
 import type { DataPlugin, PluginView } from ${JSON.stringify(manifest.name)};
-const card: PluginView = { format: "json", preset: "card", title: "Hello", text: "World", collapsed: { format: "html", html: "<b>Summary</b>", height: 48 } };
+const card: PluginView = { header: { title: "Hello" }, blocks: [{ type: "text", text: "World" }], collapsed: { blocks: [{ type: "context", items: ["Summary"] }] } };
 const plugin: DataPlugin = {
     id: "example",
     matches: (url) => url.origin === "https://example.com",
@@ -103,8 +103,8 @@ const plugin: DataPlugin = {
         return card;
     },
 };
-// @ts-expect-error A card requires both a title and text.
-const invalid: PluginView = { format: "json", preset: "card", title: "Incomplete" };
+// @ts-expect-error A view requires structured blocks.
+const invalid: PluginView = { header: { title: "Incomplete" } };
 export default plugin;
 `,
     );

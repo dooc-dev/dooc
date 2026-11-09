@@ -56,8 +56,10 @@ import { assembleDoc, createDocOps, isOpError, type OpResult } from "../compiler
 import { type Block, type TocEntry, walkBlocks } from "../core/blocks.js";
 import { docIdOfFile } from "../core/content-metadata.js";
 import type { CompiledDoc, FigureEntry, TermEntry } from "../core/content-types.js";
+import { MAX_EXTENSION_BYTES } from "../core/extension-package.js";
 import { figureFrameHtml, mountFigureFrames } from "../core/figure-frame.js";
 import { blocksHtml, docHtml, escapeHtml, type RenderCtx, termsHtml } from "../core/html.js";
+import { PLUGINS_ICON } from "../core/icons.js";
 import {
     DEFAULT_LANG,
     isLangTag,
@@ -79,6 +81,7 @@ import { mountThemeVariants } from "../core/theme-variants.js";
 import { mountToc } from "../core/toc-ui.js";
 import { mountVideos } from "../core/video-ui.js";
 import { parseWorkspaceSource, type WorkspaceSource, workspaceLabel } from "../core/workspace.js";
+import { createLocalPluginStorage } from "../plugins/local-storage.js";
 import { readViewerAsset, prebuilt as usePrebuiltAssets } from "./assets.js";
 import { mountBundleNetwork } from "./bundle-network.js";
 import { codeFileResponse } from "./code-file.js";
@@ -88,6 +91,7 @@ import {
     validateCodeTools,
     validateTextfileCode,
 } from "./editor-tools.js";
+import { createExtensionManager, EXTENSIONS_DIR } from "./extensions.js";
 import { type FilePreviewResults, fileReferences } from "./file-references.js";
 import { mountFontPickers } from "./font-picker.js";
 import { createFontSettings } from "./font-settings.js";
@@ -643,6 +647,7 @@ const GLOBE_ICON = icon(
 const BOX_ICON = icon(
     '<path d="M3.5 6.5 10 3l6.5 3.5v7L10 17l-6.5-3.5v-7Z"/><path d="M3.5 6.5 10 10l6.5-3.5M10 10v7"/>',
 );
+const STATICS_ICON = icon('<path d="M3 3v14h14M7 13V9m4 4V5m4 8V7"/>');
 const GIT_ICON = icon(
     '<path d="M5.5 6.5v7M14.5 6.5v1a4 4 0 0 1-4 4h-5"/><circle cx="5.5" cy="4.5" r="2"/><circle cx="5.5" cy="15.5" r="2"/><circle cx="14.5" cy="4.5" r="2"/>',
 );
@@ -909,11 +914,10 @@ img.doc-icon { flex: none; width: 18px; height: 18px; object-fit: contain; }
 .nav-row > a.cur .doc-icon-frame > img, .nav-doc-row:has(> a.cur) > .nav-doc-icon .doc-icon-frame > img { visibility: hidden; }
 .nav-row > a.cur .doc-icon-frame::after, .nav-doc-row:has(> a.cur) > .nav-doc-icon .doc-icon-frame::after {
   content: ""; position: absolute; inset: 0; background: currentColor; mask: var(--doc-icon) center / contain no-repeat; }
-.nav-count { margin-left: auto; padding-left: 8px; color: var(--c-fg-faint); font-size: 11px; }
 body.sidebar-closed #sidebar-content { display: block; overflow-y: auto; scrollbar-width: none; padding: 6px 0; }
 body.sidebar-closed #nav-groups { display: block; }
 body.sidebar-closed #nav-docs { scrollbar-width: none; }
-body.sidebar-closed #nav-groups :is(.nav-label, .nav-count, .nav-toc, .nav-tree-toggle, .nav-tree-spacer, .nav-placeholder, .new, .nav-delete, .files-upload, .files-drop-hint, input, .nav-icon-clear),
+body.sidebar-closed #nav-groups :is(.nav-label, .nav-toc, .nav-tree-toggle, .nav-tree-spacer, .nav-placeholder, .new, .nav-delete, .files-upload-status, .files-drop-hint, .extensions-drop-hint, input, .nav-icon-clear),
 body.sidebar-closed #nav-status { display: none; }
 body.sidebar-closed #nav-groups .nav-tree { display: block; padding: 0; margin: 0; }
 body.sidebar-closed #nav-groups .nav-row { position: relative; padding: 0; gap: 0; min-height: 36px; }
@@ -944,25 +948,19 @@ body.sidebar-closed :is(#tools-resize, .workspace-location) { display: none; }
 .nav-resources .nav-row > .nav-link { height: 100%; padding: 8px 10px; gap: 8px; }
 .nav-resources .nav-row { cursor: default; }
 .nav-resources .nav-link::before { display: none; }
-.nav-resources .files-upload { margin-right: 6px; }
-.files-upload { flex: none; display: grid; place-items: center; width: 28px; height: 28px; padding: 0;
-  border: 0; border-radius: 4px; background: transparent; color: var(--c-fg-muted); cursor: pointer; }
-.files-upload:hover, .files-upload:focus-visible { color: var(--c-fg); background: var(--c-raised); }
-.files-upload svg { display: block; width: 16px; height: 16px; }
-.files-upload > span { display: none; font: 10px var(--doc-mono); }
-.files-upload[data-state] > svg { display: none; }
-.files-upload[data-state] > span { display: block; }
-.files-upload[data-state="error"] { color: var(--c-danger); }
-.files-upload[data-state="done"] { color: var(--doc-ok); }
-.files-drop-hint { position: absolute; inset: 0; display: none; align-items: center;
+.files-upload-status { flex: none; margin-right: 10px; color: var(--c-fg-muted); font: 10px var(--doc-mono); }
+.files-upload-status:empty { display: none; }
+.files-upload-status[data-state="error"] { color: var(--c-danger); }
+.files-upload-status[data-state="done"] { color: var(--doc-ok); }
+.files-drop-hint, .extensions-drop-hint { position: absolute; inset: 0; display: none; align-items: center;
   justify-content: center; gap: 6px; padding: 6px; pointer-events: none; text-align: center; }
 .files-drop-hint > svg { width: 28px; height: 28px; }
 .files-drop-hint ul { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 8px;
   margin: 0; padding: 0; list-style: none; font: 11px var(--doc-mono); color: var(--c-fg-muted); }
 @container (max-height: 140px) { .files-drop-hint ul { display: none; } }
 body.files-dragging #nav-files { border-color: var(--c-accent); }
-body.files-dragging #nav-files > .nav-item { opacity: .15; }
-body.files-dragging .files-drop-hint { display: flex; }
+body.files-dragging :is(#nav-files, #nav-extensions) > .nav-item { opacity: .15; }
+body.files-dragging :is(.files-drop-hint, .extensions-drop-hint) { display: flex; }
 body.files-over #nav-files { background: color-mix(in srgb, var(--c-accent) 10%, var(--c-bg1)); }
 #nav-status { min-height: 16px; margin: 6px 16px 0; color: var(--c-fg-faint); font-size: 11px;
   line-height: 1.35; }
@@ -1003,21 +1001,10 @@ article { max-width: 860px; margin: 0 auto; font-family: var(--viewer-font, syst
 [data-plugin-controls] button:focus-visible { outline: 2px solid var(--doc-accent); outline-offset: 3px; }
 [data-plugin-controls] button:disabled { opacity: .55; cursor: wait; }
 .plugin-content { padding: 12px; overflow: auto; }
-.plugin-content:has(> iframe) { padding: 0; }
 .plugin-content:empty { display: none; }
-.plugin .plugin-card { margin: 0; max-width: none; }
-.plugin-card strong { font-size: 14px; font-weight: 600; }
-.plugin-card p { margin: 6px 0 0; font-size: 13px; white-space: pre-wrap; line-height: 1.5; overflow-wrap: anywhere; }
-.plugin-content > ul { display: grid; gap: 4px; padding-left: 20px; margin: 0; line-height: 1.5; }
-.plugin-content > ul li::marker { color: var(--doc-accent); }
-.plugin-content > table { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 1.6; }
 .plugin-content :is(th, td) { padding: 6px 8px; text-align: start; border-bottom: 1px solid var(--doc-border); }
 .plugin-content th { background: var(--doc-bg-2); color: var(--doc-fg-2); font-size: 12px; font-weight: 600; }
 .plugin-content tr:last-child td { border-bottom: 0; }
-.plugin-content > pre { margin: 0; max-height: 320px; padding: 10px; }
-.plugin-content > iframe { display: block; color-scheme: inherit; }
-[data-plugin-result][data-resized] > iframe { height: 100% !important; }
-[data-plugin-result][data-resized] > pre { max-height: none; }
 .plugin-resize { display: none; height: 12px; align-items: center; justify-content: center;
   cursor: row-resize; touch-action: none; user-select: none; }
 .plugin[data-ready="true"]:not(.collapsed) > .plugin-resize { display: flex; }
@@ -1027,63 +1014,60 @@ article { max-width: 860px; margin: 0 auto; font-family: var(--viewer-font, syst
 body:has(.plugin-resize.drag), body:has(.plugin-resize.drag) * { cursor: row-resize !important; user-select: none !important; }
 body:has(.plugin-resize.drag) iframe { pointer-events: none; }
 
-.plugin[data-blocks="true"] { container-type: inline-size; background: var(--doc-bg); color: var(--doc-fg); }
-.plugin[data-blocks="true"] .plugin-content { padding: 20px; }
-.plugin[data-blocks="true"] .plugin-header { padding: 0 16px; }
-.plugin[data-blocks="true"][data-ready="true"] .plugin-info { display: block; flex-basis: auto; }
-.plugin[data-blocks="true"][data-ready="true"] .plugin-info h2 { display: none; }
-.plugin[data-blocks="true"][data-ready="true"] .plugin-header:has([data-plugin-status]:not(:empty)) { display: flex; padding-top: 12px; }
-.plugin[data-blocks="true"] [data-plugin-status] { margin: 0; }
+.plugin { container-type: inline-size; background: var(--doc-bg); color: var(--doc-fg); }
+.plugin .plugin-content { padding: 12px 14px; }
+.plugin .plugin-header { padding: 0 16px; }
+.plugin[data-ready="true"] .plugin-info { display: block; flex-basis: auto; }
+.plugin[data-ready="true"] .plugin-info h2 { display: none; }
+.plugin[data-ready="true"] .plugin-header:has([data-plugin-status]:not(:empty)) { display: flex; padding-top: 12px; }
+.plugin [data-plugin-status] { margin: 0; }
 .plugin[data-operation-error="true"] [data-plugin-status] { color: var(--doc-danger); }
-.plugin-heading { order: -1; display: flex; align-items: center; gap: 8px; min-width: 0; max-width: calc(100% - 156px); font: 11px/20px var(--doc-mono); }
+.plugin-heading { order: -1; display: flex; align-items: center; gap: 8px; min-width: 0; max-width: calc(100% - 156px); font: inherit; font-size: 11px; line-height: 20px; }
 .plugin-heading::before { content: ""; border-top: 2px solid var(--doc-border); width: 8px; flex: none; }
 .plugin-heading a { display: flex; align-items: center; gap: 6px; color: var(--doc-fg-2); text-decoration: none; flex: none; }
 .plugin-heading img { display: block; width: 16px; height: 16px; }
 .plugin-heading-context { color: var(--doc-fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .plugin-heading button { font: inherit; color: var(--doc-fg-2); background: transparent; border: 0; padding: 0; cursor: pointer; white-space: nowrap; }
-.plugin-action-menu { position: relative; margin: 0; }
-.plugin-action-menu > summary { list-style: none; font-size: 20px; line-height: 16px; }
-.plugin-action-menu > summary::-webkit-details-marker { display: none; }
-.plugin-action-menu > div { position: absolute; z-index: 20; right: 0; top: 26px; width: min(340px, calc(100vw - 64px)); max-height: 65vh; overflow: auto; padding: 8px; background: var(--doc-bg); color: var(--doc-fg); border: 1px solid var(--doc-border-2); border-radius: 8px; box-shadow: 0 8px 24px var(--c-shadow); }
-.plugin-action-menu > div > div > button { width: 100%; text-align: start; margin-bottom: 3px; }
-.plugin-blocks { font: 13px/1.65 var(--doc-mono); overflow-wrap: anywhere; }
+.plugin-blocks { font: inherit; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
 .plugin-blocks > :first-child, .plugin-block-columns > div > :first-child { margin-top: 0; }
-.plugin-blocks .plugin-block-heading { margin: 0 0 16px; padding: 0; border: 0; font: 600 20px/1.45 var(--doc-mono); color: var(--doc-fg); }
-.plugin-block-text { margin: 12px 0; white-space: pre-wrap; }
+.plugin-blocks .plugin-block-heading { margin: 0 0 8px; padding: 0; border: 0; font: inherit; font-size: 17px; font-weight: 600; line-height: 1.4; color: var(--doc-fg); }
+.plugin-block-text { margin: 8px 0; white-space: pre-wrap; }
 .plugin-block-text:has(p, pre, ul, ol) { white-space: normal; }
-.plugin-blocks p { margin: 6px 0; white-space: pre-wrap; }
+.plugin-blocks p { margin: 4px 0; white-space: pre-wrap; }
+.plugin-blocks :is(ul, ol) { margin: 6px 0; padding-left: 22px; }
+.plugin-blocks > :last-child { margin-bottom: 0; }
 .plugin-blocks strong { font-weight: 600; }
 .plugin-blocks a { color: var(--doc-accent); text-underline-offset: 3px; }
 .plugin-blocks code { font-family: var(--doc-mono); }
-.plugin-block-context { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; margin: 10px 0; color: var(--doc-fg-3); font-size: 11px; }
-.plugin-block-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px 20px; margin: 14px 0; }
+.plugin-block-context { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin: 6px 0; color: var(--doc-fg-3); font-size: 11px; }
+.plugin-block-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 6px 16px; margin: 8px 0; }
 .plugin-block-fields > div { min-width: 0; }
-.plugin-block-fields dt { color: var(--doc-fg-3); font-size: 11px; margin-bottom: 3px; }
-.plugin-block-fields dd { margin: 0; min-height: 26px; font-size: 12px; }
-.plugin-block-columns { display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 24px; }
+.plugin-block-fields dt { color: var(--doc-fg-3); font-size: 10px; margin-bottom: 1px; }
+.plugin-block-fields dd { margin: 0; min-height: 20px; font-size: 12px; }
+.plugin-block-columns { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 16px; }
 .plugin-block-columns > div, .plugin-block-columns aside { min-width: 0; }
-.plugin-block-columns aside { border-left: 1px solid var(--doc-border); padding-left: 18px; }
+.plugin-block-columns aside { border-left: 1px solid var(--doc-border); padding-left: 12px; }
 .plugin-block-columns aside .plugin-block-fields { grid-template-columns: 1fr; margin-top: 0; }
-.plugin-block-section { border-top: 1px solid var(--doc-border); padding-top: 10px; margin: 18px 0 0; min-width: 0; }
+.plugin-block-section { border-top: 1px solid var(--doc-border); padding-top: 6px; margin: 10px 0 0; min-width: 0; }
 .plugin-block-section > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--doc-fg-2); padding: 4px 0; }
 .plugin-block-note { color: var(--doc-warn); font-size: 11px; border-left: 2px solid currentColor; padding-left: 10px; }
 .plugin-block-table { overflow: auto; width: 100%; margin: 8px 0; }
 .plugin-block-table table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.plugin-block-table :is(th, td) { padding: 8px 10px; min-width: 90px; max-width: 320px; vertical-align: top; }
+.plugin-block-table :is(th, td) { padding: 5px 8px; min-width: 72px; max-width: 320px; vertical-align: top; }
 .plugin-blocks .plugin-block-code { font: 12px/1.65 var(--doc-mono); padding: 12px; margin: 10px 0; border: 1px solid var(--doc-border); border-radius: 6px; max-height: 400px; overflow: auto; white-space: pre-wrap; }
 .plugin-block-diff code > span { display: inline-block; min-width: 100%; }
 .plugin-block-diff [data-tone="success"] { color: var(--doc-ok); background: color-mix(in srgb, var(--doc-ok) 8%, transparent); }
 .plugin-block-diff [data-tone="danger"] { color: var(--doc-danger); background: color-mix(in srgb, var(--doc-danger) 8%, transparent); }
-.plugin-block-message { padding: 12px 0; border-bottom: 1px solid var(--doc-border); }
+.plugin-block-message { padding: 8px 0; border-bottom: 1px solid var(--doc-border); }
 .plugin-block-message:last-child { border-bottom: 0; }
 .plugin-message-byline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .plugin-message-byline > span:not(.plugin-avatar, .plugin-message-actions) { color: var(--doc-fg-3); font-size: 10px; }
-.plugin-avatar { display: grid; place-items: center; width: 28px; height: 28px; flex: none; border-radius: 7px; color: var(--doc-accent); background: color-mix(in srgb, var(--doc-accent) 12%, var(--doc-bg)); font-size: 10px; }
+.plugin-avatar { display: grid; place-items: center; width: 24px; height: 24px; flex: none; border-radius: 7px; color: var(--doc-accent); background: color-mix(in srgb, var(--doc-accent) 12%, var(--doc-bg)); font-size: 10px; }
 .plugin-task { display: flex; align-items: baseline; gap: 8px; list-style: none; }
 .plugin-message-actions svg { display: block; width: 14px; height: 14px; }
 .plugin-message-actions .plugin-block-button { padding: 4px; border: 0; color: var(--doc-fg-3); }
 .plugin-message-actions { margin-left: auto; display: flex; gap: 4px; }
-.plugin-message-body, .plugin-reactions { margin: 6px 0 0 36px; }
+.plugin-message-body, .plugin-reactions { margin: 4px 0 0 32px; }
 .plugin-reactions { display: flex; flex-wrap: wrap; gap: 5px; font-size: 11px; }
 .plugin-reactions button { font: inherit; padding: 2px 8px; border: 1px solid var(--doc-border); border-radius: 12px; background: transparent; color: var(--doc-fg-2); cursor: pointer; }
 .plugin-reactions [aria-pressed="true"] { border-color: var(--doc-accent); color: var(--doc-accent); background: color-mix(in srgb, var(--doc-accent) 8%, transparent); }
@@ -1097,19 +1081,18 @@ body:has(.plugin-resize.drag) iframe { pointer-events: none; }
 .plugin-copy svg { width: 14px; height: 14px; }
 .plugin-block-progress { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--doc-fg-3); margin: 12px 0; }
 .plugin-block-progress progress { flex: 1; width: 0; height: 6px; accent-color: var(--doc-accent); }
-.plugin-block-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.plugin-block-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
 .plugin-block-actions:has([data-block-composer]) { display: block; }
 .plugin-block-button { font: inherit; font-size: 12px; padding: 5px 10px; border: 1px solid var(--doc-border); border-radius: 5px; color: var(--doc-fg); background: transparent; cursor: pointer; }
-.plugin-block-button:hover, .plugin-edit-display:hover { background: var(--doc-bg-2); }
+.plugin-block-button:hover { background: var(--doc-bg-2); }
 .plugin-block-button:disabled { opacity: .5; cursor: wait; }
+.plugin-action[aria-pressed="true"] { color: var(--doc-accent); background: var(--doc-bg-2); }
 .plugin-danger { color: var(--doc-danger); }
-.plugin-edit-display { border-radius: 4px; cursor: text; min-height: 24px; }
-.plugin-edit-display:focus-visible, .plugin :is(button, summary, input, select, textarea):focus-visible, .plugin-block-table:focus-visible { outline: 2px solid var(--doc-accent); outline-offset: 2px; }
-.plugin-editor { display: grid; gap: 10px; margin: 8px 0; padding: 10px; border: 1px solid var(--doc-border); border-radius: 6px; font: 12px/1.6 var(--doc-mono); color: var(--doc-fg); background: var(--doc-bg); min-width: 0; }
-.plugin-editor label { display: grid; gap: 5px; color: var(--doc-fg-2); }
-.plugin-editor :is(input, textarea, select) { box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; padding: 7px 8px; border: 1px solid var(--doc-border-2); border-radius: 4px; color: var(--doc-fg); background: var(--doc-bg); font: inherit; }
-.plugin-editor textarea { resize: vertical; min-height: 96px; max-height: 60vh; }
-.plugin-editor-controls { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.plugin [data-plugin-edit-trigger]:focus-visible, .plugin :is(button, summary, input, select, textarea):focus-visible, .plugin-block-table:focus-visible { outline: 2px solid var(--doc-accent); outline-offset: 2px; }
+.plugin-editor { display: grid; gap: 6px; margin: 0; padding: 0; border: 0; font: inherit; font-size: 12px; line-height: 1.5; color: var(--doc-fg); background: var(--doc-bg); min-width: 0; }
+.plugin-editor label { display: grid; gap: 0; font-size: 0; }
+.plugin-editor :is(input, textarea, select) { box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; padding: 3px 6px; border: 1px solid var(--doc-border); border-radius: 4px; color: var(--doc-fg); background: var(--doc-bg); font: inherit; font-size: 12px; line-height: 1.5; }
+.plugin-editor textarea { resize: vertical; min-height: 54px; max-height: 40vh; }
 .plugin-editor .plugin-submit { background: var(--doc-accent); color: var(--doc-accent-fg); border-color: transparent; }
 .plugin-editor-notice { color: var(--doc-danger); font-size: 11px; }
 .plugin-editor-notice:empty { display: none; }
@@ -1117,9 +1100,9 @@ body:has(.plugin-resize.drag) iframe { pointer-events: none; }
 @container (max-width: 600px) {
   .plugin-block-columns { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .plugin-block-columns aside { border-left: 0; border-top: 1px solid var(--doc-border); padding: 14px 0 0; }
-  .plugin-block-columns aside .plugin-block-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .plugin-block-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .plugin-heading-context { display: none; }
-  .plugin-blocks .plugin-block-heading { font-size: 18px; }
+  .plugin-blocks .plugin-block-heading { font-size: 16px; }
   .plugin-message-body, .plugin-reactions { margin-left: 0; }
 }
 
@@ -1340,6 +1323,40 @@ details summary { cursor: pointer; opacity: .8; }
 .terms .term-description::before { content: ""; position: absolute; left: 0; right: 0; top: -9px; height: 9px; }
 .terms .term-name:hover .term-description,
 .terms .term-name:focus .term-description { display: block; }
+
+.extensions-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 12px 0 6px; }
+.extensions-header h1 { margin: 0 auto 0 0; font-size: 18px; }
+.extensions-description, .extension-info small { color: var(--c-fg-muted); font-size: 12px; }
+.extensions-description { margin: 0 0 12px; }
+.extensions-notice { color: var(--c-danger); white-space: pre-wrap; font-size: 12px; }
+.extensions-notice:empty { display: none; }
+.extension-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 0; border-top: 1px solid var(--c-line); }
+.extension-info { flex: 1; min-width: 180px; overflow-wrap: anywhere; }
+.extension-info strong { font-size: 13px; font-weight: 500; }
+.extension-version { margin-left: 8px; color: var(--c-fg-muted); font-size: 11px; }
+.extension-info small { display: block; margin-top: 3px; }
+.extension-accounts { width: 100%; display: grid; gap: 4px; font-size: 12px; color: var(--c-fg-muted); }
+.extension-accounts .extension-actions { align-items: center; }
+.extension-actions { display: flex; gap: 6px; }
+.extension-button, .extension-editor select { padding: 4px 8px; border: 1px solid var(--c-line); border-radius: 4px; color: var(--c-fg); background: var(--c-bg1); font: inherit; font-size: 12px; cursor: pointer; }
+.extension-button:hover { background: var(--c-raised); }
+.extension-button:disabled { opacity: .5; cursor: default; }
+.extension-editor { border-top: 1px solid var(--c-line); margin-top: 12px; padding-top: 4px; }
+.extension-editor .extensions-header { font-size: 12px; }
+.extension-editor select { min-width: 0; max-width: 100%; margin-left: auto; }
+.extension-editor textarea { display: block; box-sizing: border-box; width: 100%; min-height: 320px; margin: 8px 0; padding: 10px; border: 1px solid var(--c-line); border-radius: 4px; background: var(--c-bg1); color: var(--c-fg); font: 12px/1.6 var(--font-mono); tab-size: 2; resize: vertical; }
+.extension-icon { position: relative; flex: none; display: grid; place-items: center; width: 40px; height: 40px; color: var(--c-fg-muted); }
+.extension-icon > :is(svg, img) { width: 32px; height: 32px; object-fit: contain; }
+.extension-icon > img { position: absolute; inset: 4px; }
+.extension-icon:has(img) > svg { visibility: hidden; }
+.extensions-dropzone { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 28px 16px; margin: 16px 0; border: 1px dashed var(--c-fg-faint); border-radius: 8px; color: var(--c-fg-muted); font-size: 12px; cursor: pointer; }
+.extensions-dropzone strong { color: var(--c-fg); font-size: 14px; font-weight: 500; }
+.extensions-dropzone input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.extensions-dropzone:focus-within { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.extensions-dropzone:has(input:disabled) { opacity: .5; }
+body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone { outline: 1px solid var(--c-accent); outline-offset: -1px; background: var(--c-raised); }
+
+
 .resource-library { width: 100%; max-width: none; }
 .git-page { padding-top: 8px; font: 12px/1.55 var(--font-sans); }
 .git-controls { min-width: 0; margin: 0; padding: 0; border: 0; }
@@ -1878,7 +1895,6 @@ const navFilesHtml = (site: Site, currentRes?: string): string => {
         currentRes?.startsWith("_statics") ||
         ["dictionary", "code", "urls"].includes(currentRes ?? "");
     const folderIcon = icon('<path d="M2 5h6l2 2h8v10H2Z"/>');
-    const upload = `<button class="files-upload" type="button" title="Upload files" data-i18n-title="Upload files" aria-label="Upload files" data-i18n-aria-label="Upload files">${UPLOAD_ICON}<span></span></button><input id="files-upload-input" type="file" multiple hidden>`;
     const hint = `<div class="files-drop-hint" aria-hidden="true">${UPLOAD_ICON}<span data-i18n="Upload files">Upload files</span></div>`;
     const location =
         source?.protocol === "git"
@@ -1888,7 +1904,8 @@ const navFilesHtml = (site: Site, currentRes?: string): string => {
         source?.protocol === "git"
             ? `<div class="nav-resources" id="nav-git"><div class="nav-item" data-node-id="_git"><div class="nav-row"><a class="nav-link${currentRes === "_git" ? " cur" : ""}" href="/_git" title="Git controls" data-i18n-title="Git controls">${GIT_ICON}<span class="nav-label">Git</span></a></div></div></div>`
             : "";
-    return `<section id="nav-tools" aria-label="Workspace tools" data-i18n-aria-label="Workspace tools"><div id="tools-resize" role="separator" tabindex="0" aria-orientation="horizontal" aria-controls="nav-tools" aria-label="Resize workspace tools" data-i18n-aria-label="Resize workspace tools"></div>${location}<div class="nav-tool-cards"><div class="nav-resources" id="nav-files"><div class="nav-item" data-node-id="_files"><div class="nav-row"><a class="nav-link${currentRes !== undefined && currentRes !== "_git" && !statics ? " cur" : ""}" href="/_files" title="Files" data-i18n-title="Files">${folderIcon}<span class="nav-label" data-i18n="Files">Files</span></a>${upload}</div></div>${hint}</div><div class="nav-resources" id="nav-statics"><div class="nav-item" data-node-id="_statics"><div class="nav-row"><a class="nav-link${statics ? " cur" : ""}" href="/_statics" title="Statics" data-i18n-title="Statics">${BOX_ICON}<span class="nav-label" data-i18n="Statics">Statics</span></a></div></div></div>${git}</div></section>`;
+    const extensions = `<div class="nav-resources" id="nav-extensions" data-scope="${createHash("sha256").update(root).digest("hex")}"><div class="nav-item" data-node-id="_extensions"><div class="nav-row"><a class="nav-link${currentRes === "_extensions" ? " cur" : ""}" href="/_extensions" title="Plugins" data-i18n-title="Plugins">${PLUGINS_ICON}<span class="nav-label" data-i18n="Plugins">Plugins</span></a></div></div><div class="extensions-drop-hint" aria-hidden="true">${PLUGINS_ICON}<span data-i18n="Add plugins">Add plugins</span></div></div>`;
+    return `<section id="nav-tools" aria-label="Workspace tools" data-i18n-aria-label="Workspace tools"><div id="tools-resize" role="separator" tabindex="0" aria-orientation="horizontal" aria-controls="nav-tools" aria-label="Resize workspace tools" data-i18n-aria-label="Resize workspace tools"></div>${location}<div class="nav-tool-cards"><div class="nav-resources" id="nav-files"><div class="nav-item" data-node-id="_files"><div class="nav-row"><a class="nav-link${currentRes !== undefined && currentRes !== "_git" && currentRes !== "_extensions" && !statics ? " cur" : ""}" href="/_files" title="Files" data-i18n-title="Files">${folderIcon}<span class="nav-label" data-i18n="Files">Files</span></a><span class="files-upload-status" role="status"></span></div></div>${hint}</div><div class="nav-resources" id="nav-statics"><div class="nav-item" data-node-id="_statics"><div class="nav-row"><a class="nav-link${statics ? " cur" : ""}" href="/_statics" title="Statics" data-i18n-title="Statics">${STATICS_ICON}<span class="nav-label" data-i18n="Statics">Statics</span></a></div></div></div>${git}${extensions}</div></section>`;
 };
 
 const formatSize = (bytes: number): string =>
@@ -1996,6 +2013,11 @@ export const resourcesMain = (
     site: Site,
     rest: string,
 ): { title: string; main: string; sourceFile?: string } | undefined => {
+    if (rest === "_extensions")
+        return {
+            title: "Plugins",
+            main: '<article class="res-page resource-library"><div id="extensions-manager"></div></article>',
+        };
     if (rest === "_git")
         return site.workspace?.protocol === "git"
             ? {
@@ -2272,7 +2294,7 @@ ${
     if (window.__docsRefreshNav) return window.__docsRefreshNav();
     const cur = document.querySelector("#nav-groups .nav-row a.cur");
     const id = (cur && cur.closest(".nav-item").dataset.docId) || "";
-    const rp = location.pathname.startsWith("/_statics") ? location.pathname.slice(1) : location.pathname === "/_git" ? "_git" : location.pathname.startsWith("/_files") ? location.pathname.slice(8).replace(/^\\/|\\/$/g, "") : null;
+    const rp = location.pathname.startsWith("/_statics") ? location.pathname.slice(1) : ["/_git", "/_extensions"].includes(location.pathname) ? location.pathname.slice(1) : location.pathname.startsWith("/_files") ? location.pathname.slice(8).replace(/^\\/|\\/$/g, "") : null;
     const res = await localeFetch("/api/nav?current=" + encodeURIComponent(id) + (rp == null ? "" : "&res=" + encodeURIComponent(rp)));
     if (res.ok) document.getElementById("nav-groups").innerHTML = (await res.json()).html;
     if (window.__docsNavRestore) window.__docsNavRestore();
@@ -2807,6 +2829,7 @@ export const pageDataResponse = (site: Site, path: unknown): { status: number; b
         return { status: 400, body: { error: "route must be /<docId>" } };
     }
     if (
+        path === "/_extensions" ||
         path === "/_git" ||
         path === "/_statics" ||
         path.startsWith("/_statics/") ||
@@ -2818,8 +2841,8 @@ export const pageDataResponse = (site: Site, path: unknown): { status: number; b
                 site,
                 path.startsWith("/_statics")
                     ? path.slice(1)
-                    : path === "/_git"
-                      ? "_git"
+                    : ["/_git", "/_extensions"].includes(path)
+                      ? path.slice(1)
                       : path.slice("/_files".length).replace(/^\/|\/$/g, ""),
             );
             return resource
@@ -3211,6 +3234,7 @@ export const startServer = async (
     mode: ServeMode,
     port = 5179,
     pluginModule?: string,
+    startup?: { file?: string; data?: string; login?: string },
 ): Promise<ViewerRuntime> => {
     // Language adapters are read once; the manifest is re-read by the compiler.
     siteLanguages = await loadSiteLanguages(root);
@@ -3218,7 +3242,15 @@ export const startServer = async (
     workspaceSource = viewerPlugins.workspace;
     let gitOrigin = viewerPlugins.gitOrigin;
     const handleGit = createGitHandler(root, () => gitOrigin);
-    const handlePlugins = createPluginHandler(viewerPlugins.plugins, viewerPlugins);
+    const personal = createLocalPluginStorage();
+    const handlePlugins = createPluginHandler(
+        viewerPlugins.plugins,
+        viewerPlugins,
+        personal.credentials,
+    );
+    const handleExtensions = createExtensionManager(root, handlePlugins, viewerPlugins, personal);
+    let loginPlugins = startup?.login ? [startup.login] : [];
+    process.once("exit", handleExtensions.dispose);
     // Client bundles (bundleClient) = edit's editing UI and the schema graph interaction layer
     // shared by preview/edit. React Flow's stylesheet isn't mixed into the bundle — the mount
     // layer (flow-css.ts) injects it into a <style> at runtime, so the page needs no CSS delivery
@@ -3253,6 +3285,21 @@ export const startServer = async (
     };
     viewer.setAllowedDomains(viewerPlugins.allowedDomains ?? []);
     await viewerPlugins.setup?.(viewer);
+    const extensionErrors = await handleExtensions
+        .restore()
+        .catch((error: unknown) => [error instanceof Error ? error.message : String(error)]);
+    for (const error of extensionErrors) console.error(`Plugin: ${error}`);
+    if (startup?.file && startup.data) {
+        const result = (await handleExtensions({
+            action: "install",
+            file: startup.file,
+            data: startup.data,
+            base: null,
+        })) as { items: import("../core/extension-package.js").ExtensionSummary[] };
+        loginPlugins = result.items.find((item) => item.file === startup.file)?.plugins ?? [];
+        console.log(`Installed ${startup.file} in ${join(root, EXTENSIONS_DIR)}`);
+    }
+
     // DOCS_HMR=0 = no hot reload (nothing is watched = changes need a manual reload).
     if (process.env.DOCS_HMR !== "0") {
         const watcher = watchProject(root, pkgRoot, (kind, files) => {
@@ -3333,6 +3380,36 @@ export const startServer = async (
             return;
         }
         if (mode === "edit" && req.method === "POST") {
+            if (path === "/api/extensions") {
+                res.setHeader("cache-control", "no-store");
+                if (
+                    !isLocalToolRequest(
+                        req.headers.host ?? "",
+                        req.headers.origin,
+                        req.headers["content-type"],
+                    ) ||
+                    ![
+                        `localhost:${req.socket.localPort}`,
+                        `127.0.0.1:${req.socket.localPort}`,
+                        `[::1]:${req.socket.localPort}`,
+                    ].includes(req.headers.host ?? "")
+                ) {
+                    sendJson(res, 403, {
+                        error: "Plugins require a same-origin local editor request",
+                    });
+                    return;
+                }
+                try {
+                    const input = await readJson(req, MAX_EXTENSION_BYTES * 6 + 4096);
+                    if (!input) throw new Error("Expected a plugin request");
+                    sendJson(res, 200, await handleExtensions(input));
+                } catch (error) {
+                    sendJson(res, 409, {
+                        error: error instanceof Error ? error.message : "Plugin operation failed",
+                    });
+                }
+                return;
+            }
             if (path === "/api/git") {
                 res.setHeader("cache-control", "no-store");
                 if (
@@ -3711,7 +3788,8 @@ export const startServer = async (
         }
         if (
             (mode === "edit" &&
-                (path === "/_git" ||
+                (path === "/_extensions" ||
+                    path === "/_git" ||
                     path === "/_statics" ||
                     path.startsWith("/_statics/") ||
                     path === "/_files" ||
@@ -3720,8 +3798,8 @@ export const startServer = async (
         ) {
             const rest = path.startsWith("/_statics")
                 ? path.slice(1)
-                : path === "/_git"
-                  ? "_git"
+                : ["/_git", "/_extensions"].includes(path)
+                  ? path.slice(1)
                   : requestUrl.pathname.slice("/_files".length).replace(/^\/|\/$/g, "");
             const page = resourcesMain(site, rest);
             if (!page) {
@@ -3790,6 +3868,19 @@ export const startServer = async (
         const addr = server.address();
         const p = typeof addr === "object" && addr ? addr.port : port;
         console.log(`dooc ${mode} (${root}): http://localhost:${p}/`);
+        for (const plugin of loginPlugins) {
+            try {
+                console.log(
+                    `Log in to ${plugin}: ${handlePlugins.loginLink(plugin, `http://localhost:${p}`)}`,
+                );
+            } catch (error) {
+                console.error(error instanceof Error ? error.message : String(error));
+            }
+        }
+        if (loginPlugins.length)
+            console.log(
+                "Keep this command running while signing in. Login links expire in 10 minutes.",
+            );
     });
     const listen = (p: number, left: number): void => {
         server.once("error", (err: NodeJS.ErrnoException) => {

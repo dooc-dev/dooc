@@ -48,6 +48,7 @@ import { schemaCompletion } from "./edit-schema-completion.js";
 import { editorSetup } from "./edit-setup.js";
 import { createTextfileEditors } from "./edit-textfile.js";
 import { CODE_BLOCK_NODE_NAMES, isEditingCodeBlock } from "./edit-validation.js";
+import { mountExtensions } from "./extensions-ui.js";
 import { type FilePreview, type FilePreviewResults, fileReferences } from "./file-references.js";
 import { mountFileUpload } from "./file-upload.js";
 import { mountFiles } from "./files-ui.js";
@@ -1043,12 +1044,12 @@ const updateNavLocation = (): void => {
         resourceView?.title ??
         (docTitle === siteTitle ? docTitle : `${docTitle} — ${siteTitle ?? "dooc edit"}`);
     for (const link of document.querySelectorAll<HTMLAnchorElement>(
-        "#nav-files a, #nav-git a, #nav-statics a",
+        "#nav-files a, #nav-git a, #nav-statics a, #nav-extensions a",
     )) {
         const current =
             resourceView !== undefined &&
-            (link.pathname === "/_git"
-                ? resourceView.path === "/_git"
+            (["/_git", "/_extensions"].includes(link.pathname)
+                ? resourceView.path === link.pathname
                 : link.pathname === "/_statics"
                   ? resourceView.path.startsWith("/_statics") ||
                     /^\/_files\/(dictionary|code|urls)$/.test(resourceView.path)
@@ -1204,7 +1205,7 @@ const refreshNav = async (): Promise<void> => {
     const requestedBoot = boot;
     try {
         const res = await localeFetch(
-            `/api/nav?current=${encodeURIComponent(boot.docId)}${resourceView ? `&res=${encodeURIComponent(resourceView.path.startsWith("/_statics") ? resourceView.path.slice(1) : resourceView.path === "/_git" ? "_git" : resourceView.path.slice("/_files".length).replace(/^\/|\/$/g, ""))}` : ""}`,
+            `/api/nav?current=${encodeURIComponent(boot.docId)}${resourceView ? `&res=${encodeURIComponent(resourceView.path.startsWith("/_statics") ? resourceView.path.slice(1) : ["/_git", "/_extensions"].includes(resourceView.path) ? resourceView.path.slice(1) : resourceView.path.slice("/_files".length).replace(/^\/|\/$/g, ""))}` : ""}`,
         );
         if (!res.ok) {
             return;
@@ -1284,8 +1285,9 @@ const handleContentChange = async (files: string[]): Promise<void> => {
     // terms in the main content using the current edits, and swap the nav (list, order).
     await render();
     await refreshNav();
-    // Git actions refresh their own state; remounting here interrupts PR forms and running actions.
-    if (resourceView && resourceView.path !== "/_git") await openResource(resourceView.path);
+    // Tool pages refresh their own state; remounting interrupts forms, drafts and running actions.
+    if (resourceView && !["/_git", "/_extensions"].includes(resourceView.path))
+        await openResource(resourceView.path);
 };
 
 // Files from the server are already debounced (60ms, hmr.ts), but several change frames can still
@@ -1317,6 +1319,7 @@ const flushContent = debounce(120, () => {
     },
 };
 mountFileUpload();
+mountExtensions();
 
 let saveTask: Promise<void> | undefined;
 const save = (): Promise<void> => {
@@ -2456,6 +2459,7 @@ const scrollToAnchor = (hash: string): void => {
 };
 
 const isResourcePath = (path: string): boolean =>
+    path === "/_extensions" ||
     path === "/_git" ||
     path === "/_statics" ||
     path.startsWith("/_statics/") ||

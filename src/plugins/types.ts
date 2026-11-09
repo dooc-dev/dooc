@@ -39,11 +39,14 @@ import type {
     PluginActionRequest,
     PluginActionResult,
 } from "./actions.js";
+import type { PluginIcon } from "./blocks.js";
 import type { PluginView } from "./view.js";
 
 /** Trusted server code injected into the viewer, independently of document configuration. */
 export interface DataPlugin {
     id: string;
+    name?: string;
+    icon?: PluginIcon;
     /** Match a service URL without fetching it; unmatched embeds remain ordinary links. */
     matches: (url: URL) => boolean;
     oauth: PluginOAuth;

@@ -44,100 +44,32 @@ describe("plugin references and presentation", () => {
         }
     });
 
-    it("escapes all JSON preset content and validates table cells", () => {
-        expect(
-            pluginViewHtml({
-                format: "json",
-                preset: "card",
-                title: "<img onerror=alert(1)>",
-                text: "<script>",
-            }),
-        ).toContain("&lt;script&gt;");
-        expect(pluginViewHtml({ format: "json", preset: "list", items: ["<b>"] })).toBe(
-            "<ul><li>&lt;b&gt;</li></ul>",
-        );
-        expect(
-            pluginViewHtml({
-                format: "json",
-                preset: "table",
-                headers: ["<head>"],
-                rows: [[null], [false], [12]],
-            }),
-        ).toContain("<td>false</td>");
-        expect(
-            pluginViewHtml({ format: "json", preset: "code", value: { x: "</code><script>" } }),
-        ).not.toContain("<script>");
-        expect(() =>
-            validatePluginView({ format: "json", preset: "table", headers: ["x"], rows: [[{}]] }),
-        ).toThrow();
-        expect(() =>
-            validatePluginView({ format: "json", preset: "table", headers: ["x"], rows: [[1, 2]] }),
-        ).toThrow();
-        expect(() => validatePluginView({ format: "json", preset: "unknown" })).toThrow();
-    });
-
-    it("places HTML inside an opaque sandbox with a restrictive CSP before the content", () => {
-        const html = pluginViewHtml({
-            format: "html",
-            html: '<script>parent.alert(1)</script><img src="https://remote.example/track">',
-        });
-        expect(html).toContain('sandbox=""');
-        expect(html).toContain('referrerpolicy="no-referrer"');
-        expect(html).toContain("default-src 'none'");
-        expect(html).not.toContain("allow-scripts");
-        expect(html).not.toContain("allow-same-origin");
-        expect(html).not.toContain("<script>");
-        expect(html.indexOf("Content-Security-Policy")).toBeLessThan(html.indexOf("parent.alert"));
-    });
-
-    it("allows bounded HTML heights without accepting CSS as a size", () => {
-        expect(pluginViewHtml({ format: "html", html: "card" })).toContain("height:240px");
-        expect(pluginViewHtml({ format: "html", html: "card", height: 196 })).toContain(
-            "height:196px",
-        );
-        for (const height of [0, 31, 1201, 196.5, "196;position:fixed", null]) {
-            expect(() => validatePluginView({ format: "html", html: "card", height })).toThrow(
-                "Invalid plugin view",
-            );
-        }
-    });
-
-    it("allows only the trusted height reporter to execute in auto-sized HTML", () => {
-        const html = pluginViewHtml({
-            format: "html",
-            height: "auto",
-            html: "<script>parent.alert(1)</script>",
-        });
-        expect(html).toContain('sandbox="allow-scripts"');
-        expect(html).not.toContain("allow-same-origin");
-        expect(html).toContain("default-src 'none'");
-        expect(html).not.toContain("script-src 'unsafe-inline'");
-        const nonce = /script-src 'nonce-([a-z0-9-]+)'/.exec(html)?.[1];
-        expect(nonce).toBeTruthy();
-        expect(html).toContain(`script nonce=&quot;${nonce}&quot;`);
-        expect(html).toContain("doocPluginHeight");
-    });
-
-    it("validates rich collapsed views with the same rendering boundaries", () => {
+    it("renders expanded and collapsed blocks without a format discriminator", () => {
         const view = validatePluginView({
-            format: "json",
-            preset: "card",
-            title: "Ticket",
-            text: "Details",
-            collapsed: { format: "html", height: 56, html: "<b>Open</b><script>alert(1)</script>" },
+            header: { title: "Ticket", reference: "runtime-id" },
+            blocks: [{ type: "text", text: "<script>alert(1)</script>" }],
+            collapsed: { blocks: [{ type: "context", items: ["Open", "runtime-id"] }] },
         });
+        expect(pluginViewHtml(view)).toContain("&lt;script&gt;");
+        expect(pluginViewHtml(view)).not.toContain("<iframe");
+        expect(view).not.toHaveProperty("format");
         if (!view.collapsed) throw new Error("Expected a collapsed view");
-        const html = pluginViewHtml(view.collapsed);
-        expect(html).toContain('sandbox=""');
-        expect(html).toContain("height:56px");
-        expect(html).not.toContain("allow-scripts");
-        for (const collapsed of [
-            "text only",
-            null,
-            { format: "html", html: "x", height: 0 },
-            { format: "json", preset: "card", title: "Missing text" },
-        ]) {
+        expect(pluginViewHtml(view.collapsed)).toContain("runtime-id");
+        for (const collapsed of [null, "text", {}, { blocks: [{ type: "html", html: "<b>" }] }])
             expect(() => validatePluginView({ ...view, collapsed })).toThrow("Invalid plugin view");
-        }
+    });
+
+    it.each([
+        { format: "html", html: "<script>alert(1)</script>" },
+        { format: "json", preset: "card", title: "Old", text: "Old" },
+        { format: "json", preset: "list", items: ["Old"] },
+        { format: "json", preset: "table", headers: ["Old"], rows: [[1]] },
+        { format: "json", preset: "code", value: { old: true } },
+        { format: "blocks", blocks: [] },
+    ])("rejects removed view formats: %j", (legacy) => {
+        expect(() => validatePluginView(legacy)).toThrow("Invalid plugin view");
+        expect(() => validatePluginView({ blocks: [], collapsed: legacy })).toThrow(
+            "Invalid plugin view",
+        );
     });
 });

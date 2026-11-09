@@ -29,25 +29,19 @@ export const mountFileUpload = (): void => {
         else onContent(files);
     };
     const sync = () => {
-        const button = document.querySelector<HTMLButtonElement>(".files-upload");
-        if (!button) return;
-        button.disabled = busy;
-        if (state) button.dataset.state = state;
-        else delete button.dataset.state;
-        button.setAttribute("aria-busy", String(busy));
+        const card = document.getElementById("nav-files");
+        const status = card?.querySelector<HTMLElement>(".files-upload-status");
+        if (!card || !status) return;
+        card.setAttribute("aria-busy", String(busy));
+        status.dataset.state = state;
         const label =
             state === "loading"
                 ? t("Uploading {count}/{total}", { count, total })
                 : error || t(state === "done" ? "Files uploaded" : "Upload files");
-        button.title = label;
-        button.setAttribute("aria-label", label);
-        delete button.dataset.i18nTitle;
-        delete button.dataset.i18nAriaLabel;
-        const mark = button.querySelector("span");
-        if (mark) {
-            if (state === "done") mark.innerHTML = CHECK_ICON;
-            else mark.textContent = state === "loading" ? `${count}/${total}` : "!";
-        }
+        status.title = state ? label : "";
+        status.setAttribute("aria-label", state ? label : "");
+        if (state === "done") status.innerHTML = CHECK_ICON;
+        else status.textContent = state === "loading" ? `${count}/${total}` : error ? "!" : "";
     };
     new MutationObserver(sync).observe(nav, { childList: true });
     document.addEventListener("docs:ui-language", sync);
@@ -103,17 +97,6 @@ export const mountFileUpload = (): void => {
         else refresh();
         pending.clear();
     };
-    document.addEventListener("click", (event) => {
-        if (busy || !(event.target instanceof Element) || !event.target.closest(".files-upload"))
-            return;
-        document.getElementById("files-upload-input")?.click();
-    });
-    document.addEventListener("change", (event) => {
-        const input = event.target;
-        if (!(input instanceof HTMLInputElement) || input.id !== "files-upload-input") return;
-        void upload([...(input.files ?? [])]);
-        input.value = "";
-    });
     const hasFiles = (event: DragEvent) => event.dataTransfer?.types.includes("Files");
     const inFiles = (event: DragEvent) =>
         event.target instanceof Element && !!event.target.closest("#nav-files");

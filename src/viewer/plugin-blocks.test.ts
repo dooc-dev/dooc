@@ -10,7 +10,6 @@ import { pluginViewHtml } from "./plugin-view.js";
 describe("plugin blocks", () => {
     it("renders structured content as escaped host DOM with safe markdown and action bindings", () => {
         const html = pluginViewHtml({
-            format: "blocks",
             header: { title: "Example" },
             blocks: [
                 {
@@ -56,13 +55,12 @@ describe("plugin blocks", () => {
             { type: "message", author: "X", text: "x", reactions: [{ label: "x", count: -1 }] },
             { type: "progress", label: "Done", value: 101 },
         ])
-            expect(() => validatePluginView({ format: "blocks", blocks: [block] })).toThrow();
+            expect(() => validatePluginView({ blocks: [block] })).toThrow();
         let block: unknown = { type: "text", text: "x" };
         for (let i = 0; i < 10; i++) block = { type: "section", title: "Nested", blocks: [block] };
-        expect(() => validatePluginView({ format: "blocks", blocks: [block] })).toThrow();
+        expect(() => validatePluginView({ blocks: [block] })).toThrow();
         expect(() =>
             validatePluginView({
-                format: "blocks",
                 blocks: [],
                 header: { title: "X", icon: { light: "https://tracking.example/icon.svg" } },
             }),

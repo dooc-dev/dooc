@@ -18,10 +18,8 @@ const definition: DataPlugin = {
     apiOrigins: ["https://api.example"],
     identifyUser: async () => ({ id: "alice", name: "Alice" }),
     read: async (resource) => ({
-        format: "json",
-        preset: "card",
-        title: decodeURIComponent(resource.pathname.slice(1)),
-        text: "Private card",
+        header: { title: decodeURIComponent(resource.pathname.slice(1)) },
+        blocks: [{ type: "text", text: "Private card" }],
     }),
 };
 
@@ -279,9 +277,11 @@ describe("local plugin HTTP boundary", () => {
         expect(JSON.parse(response.body)).toMatchObject({
             user: { name: "Alice (mock)" },
             view: {
-                format: "blocks",
                 blocks: expect.arrayContaining([
-                    { type: "heading", text: "Preview external service URLs" },
+                    expect.objectContaining({
+                        type: "heading",
+                        text: "Preview external service URLs",
+                    }),
                 ]),
             },
         });
@@ -325,7 +325,7 @@ describe("local plugin HTTP boundary", () => {
             { cookie },
         );
         expect(read.status).toBe(200);
-        expect(JSON.parse(read.body).view.title).toBe("日本語");
+        expect(JSON.parse(read.body).view.header.title).toBe("日本語");
         expect(read.headers["cache-control"]).toBe("no-store");
         expect(read.headers["content-security-policy"]).toContain("frame-ancestors 'none'");
         expect(read.body).not.toContain("secret-token");
@@ -396,4 +396,108 @@ describe("local plugin HTTP boundary", () => {
         expect(response.body).toBe('{"error":"Plugin request failed"}');
         expect(response.headers["referrer-policy"]).toBe("no-referrer");
     });
+});
+
+it("exchanges one-use terminal login tickets for browser-bound OAuth sessions", async () => {
+    const handler = createPluginHandler([definition]);
+    const link = new URL(handler.loginLink("sample", "http://localhost:5179"));
+    const started = await call(handler, undefined, {
+        method: "GET",
+        path: link.pathname + link.search,
+    });
+    expect(started.status).toBe(303);
+    expect(started.headers["set-cookie"]).toContain("HttpOnly; SameSite=Lax");
+    const authorization = new URL(started.headers.location ?? "");
+    expect(authorization.origin).toBe("https://oauth.example");
+    expect(authorization.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(
+        (await call(handler, undefined, { method: "GET", path: link.pathname + link.search }))
+            .status,
+    ).toBe(400);
+    const another = new URL(handler.loginLink("sample", "http://localhost:5179"));
+    expect(
+        (
+            await call(handler, undefined, {
+                method: "GET",
+                path: another.pathname + another.search,
+                host: "127.0.0.1:5179",
+            })
+        ).status,
+    ).toBe(400);
+    expect((await call(handler, { action: "status", plugin: "sample" })).body).toBe(
+        '{"user":null}',
+    );
+});
+
+it("keeps the automatic demo usable while the separate mock login is approved or cancelled", async () => {
+    const network = vi.fn(() => {
+        throw new Error("The demo must not use the network");
+    });
+    vi.stubGlobal("fetch", network);
+    const config = await loadViewerPlugins(
+        fileURLToPath(new URL("../../examples/viewer-plugins/index.mjs", import.meta.url)),
+    );
+    const handler = createPluginHandler(config.plugins, config);
+    const automaticUrl = "https://sample.dooc.invalid/tickets/DOC-42";
+    const manualUrl = "https://auth.sample.dooc.invalid/tickets/DOC-42";
+    expect(JSON.parse((await call(handler, { action: "resolve", url: manualUrl })).body)).toEqual({
+        plugin: "sample-auth",
+    });
+    const begin = await call(handler, { action: "connect", plugin: "sample" });
+    const cookie = begin.headers["set-cookie"]?.split(";")[0];
+    const authorization = new URL(JSON.parse(begin.body).url);
+    const approved = await call(handler, undefined, {
+        method: "GET",
+        path: authorization.pathname + authorization.search,
+        cookie,
+    });
+    const redirect = new URL(approved.headers.location ?? "");
+    expect(
+        (
+            await call(handler, undefined, {
+                method: "GET",
+                path: redirect.pathname + redirect.search,
+                cookie,
+            })
+        ).status,
+    ).toBe(200);
+    for (const user of ["deny", "bob", "alice"]) {
+        const start = await call(handler, { action: "connect", plugin: "sample-auth" }, { cookie });
+        const url = new URL(JSON.parse(start.body).url);
+        const path = url.pathname + url.search;
+        const consent = await call(handler, undefined, { method: "GET", path, cookie });
+        expect(consent.status).toBe(200);
+        expect(consent.body).toContain("Authorize Bob (mock)");
+        const transaction = /name="transaction" value="([^"]+)"/.exec(consent.body)?.[1] ?? "";
+        const accepted = await call(
+            handler,
+            new URLSearchParams({ transaction, user }).toString(),
+            { path, cookie, contentType: "application/x-www-form-urlencoded" },
+        );
+        const callback = new URL(accepted.headers.location ?? "");
+        expect(callback.pathname).toBe("/api/plugins/callback/sample-auth");
+        const returned = await call(handler, undefined, {
+            method: "GET",
+            path: callback.pathname + callback.search,
+            cookie,
+        });
+        expect(returned.status).toBe(user === "deny" ? 400 : 200);
+        if (user === "deny")
+            expect(returned.body).toContain("Sign-in was not completed. No account was connected.");
+        const manual = await call(
+            handler,
+            { action: "read", plugin: "sample-auth", url: manualUrl },
+            { cookie },
+        );
+        expect(manual.status).toBe(user === "deny" ? 401 : 200);
+        if (user !== "deny") expect(JSON.parse(manual.body).user.id).toBe(`mock-${user}`);
+        const automatic = await call(
+            handler,
+            { action: "read", plugin: "sample", url: automaticUrl },
+            { cookie },
+        );
+        expect(automatic.status).toBe(200);
+        expect(JSON.parse(automatic.body).user.id).toBe("mock-alice");
+    }
+    expect(network).not.toHaveBeenCalled();
 });

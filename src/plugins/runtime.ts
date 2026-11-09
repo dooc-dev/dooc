@@ -6,6 +6,7 @@ import {
     validatePluginActions,
     validatePluginActionValues,
 } from "./actions.js";
+import type { PluginCredentialStore } from "./local-storage.js";
 import {
     fetchPluginJson,
     httpsUrl,
@@ -47,9 +48,10 @@ const expiry = (token: OAuthToken): number =>
 export const createPluginRuntime = (
     definitions: readonly DataPlugin[],
     transport?: typeof fetch,
+    credentials?: PluginCredentialStore,
 ) => {
     const plugins = new Map(validatePlugins(definitions).map((plugin) => [plugin.id, plugin]));
-    // shortcut: sessions and tokens live in memory for eight hours; add an OS credential store for persistent login.
+    // Browser sessions expire independently of optional personal credential persistence.
     const sessions = new Map<string, Session>();
     const sessionFor = (id: string): Session => {
         const session = sessions.get(id);
@@ -162,26 +164,62 @@ export const createPluginRuntime = (
         const session = sessionFor(id);
         const plugin = pluginFor(pluginId);
         if (!plugin.matches(url)) throw new PluginError(400, "URL is not supported by this plugin");
-        const connection = session.connections.get(pluginId);
-        if (!connection) throw expired();
+        let restored = session.connections.get(pluginId);
+        if (credentials) {
+            const saved = credentials.get(plugin);
+            if (!saved) {
+                session.connections.delete(pluginId);
+                throw expired();
+            }
+            if (!restored || restored.user.id !== saved.user.id) {
+                restored = saved;
+                session.connections.set(pluginId, restored);
+            } else if (restored.token.access_token !== saved.token.access_token) {
+                restored.token = saved.token;
+                restored.expires = saved.expires;
+            }
+        }
+        if (!restored) throw expired();
+        const connection = restored;
         try {
             if (connection.expires <= Date.now() + 30_000) {
-                if (!connection.token.refresh_token) throw expired();
+                const refreshToken = connection.token.refresh_token;
+                if (!refreshToken) throw expired();
                 connection.refreshing ??= (async () => {
-                    const token = await exchange(plugin, {
-                        grant_type: "refresh_token",
-                        refresh_token: connection.token.refresh_token as string,
-                    });
-                    assertCurrent(id, pluginId, connection);
-                    connection.token = {
-                        ...token,
-                        refresh_token: token.refresh_token ?? connection.token.refresh_token,
-                        scope: token.scope ?? connection.token.scope,
+                    const refresh = async () => {
+                        const saved = credentials?.get(plugin);
+                        if (credentials && (!saved || saved.user.id !== connection.user.id))
+                            throw expired();
+                        if (saved && saved.token.access_token !== connection.token.access_token) {
+                            connection.token = saved.token;
+                            connection.expires = saved.expires;
+                            if (connection.expires > Date.now() + 30_000) return;
+                        }
+                        const previous = connection.token.access_token;
+                        const usedRefresh = connection.token.refresh_token ?? refreshToken;
+                        const token = await exchange(plugin, {
+                            grant_type: "refresh_token",
+                            refresh_token: usedRefresh,
+                        });
+                        assertCurrent(id, pluginId, connection);
+                        if (credentials && credentials.get(plugin)?.token.access_token !== previous)
+                            throw expired();
+                        connection.token = {
+                            ...token,
+                            refresh_token: token.refresh_token ?? usedRefresh,
+                            scope: token.scope ?? connection.token.scope,
+                        };
+                        connection.expires = expiry(token);
+                        credentials?.set(plugin, connection);
                     };
-                    connection.expires = expiry(token);
-                })().finally(() => {
-                    connection.refreshing = undefined;
-                });
+                    try {
+                        await (credentials?.withLock
+                            ? credentials.withLock(plugin, refresh)
+                            : refresh());
+                    } finally {
+                        connection.refreshing = undefined;
+                    }
+                })();
                 await connection.refreshing;
             }
             assertCurrent(id, pluginId, connection);
@@ -193,8 +231,12 @@ export const createPluginRuntime = (
                 isPluginError(error) &&
                 error.status === 401 &&
                 session.connections.get(pluginId) === connection
-            )
+            ) {
                 session.connections.delete(pluginId);
+                const saved = credentials?.get(plugin);
+                if (saved?.token.access_token === connection.token.access_token)
+                    credentials?.set(plugin);
+            }
             throw error;
         }
     };
@@ -255,6 +297,9 @@ export const createPluginRuntime = (
                 expires: Date.now() + 10 * 60 * 1000,
             };
             session.connections.delete(pluginId);
+            credentials?.set(plugin);
+            if (credentials)
+                for (const other of sessions.values()) other.connections.delete(pluginId);
             session.attempts.set(pluginId, attempt);
             const url = new URL(plugin.oauth.authorizationUrl);
             for (const [key, value] of Object.entries(plugin.oauth.authorizationParams ?? {}))
@@ -316,16 +361,30 @@ export const createPluginRuntime = (
                 throw new PluginError(502, "Plugin could not identify the authorized user");
             if (sessionFor(id).attempts.get(pluginId) !== attempt) throw expired();
             session.attempts.delete(pluginId);
-            session.connections.set(pluginId, {
-                token,
-                expires,
-                user: { id: user.id, name: user.name },
-            });
+            const connection = { token, expires, user: { id: user.id, name: user.name } };
+            credentials?.set(plugin, connection);
+            session.connections.set(pluginId, connection);
         },
         disconnect(id: string, pluginId: string): void {
             const session = sessionFor(id);
             session.connections.delete(pluginId);
             session.attempts.delete(pluginId);
+            credentials?.set(pluginFor(pluginId));
+            if (credentials)
+                for (const other of sessions.values()) other.connections.delete(pluginId);
+        },
+        status(id: string, pluginId: string): PluginUser | undefined {
+            const plugin = pluginFor(pluginId);
+            const session = sessionFor(id);
+            const connection = credentials
+                ? credentials.get(plugin)
+                : session.connections.get(pluginId);
+            if (
+                !connection ||
+                (connection.expires <= Date.now() && !connection.token.refresh_token)
+            )
+                return undefined;
+            return { ...connection.user };
         },
         read(id: string, pluginId: string, source: unknown) {
             return access(id, pluginId, source, async (plugin, url, connection) => ({
@@ -360,62 +419,68 @@ export const createPluginRuntime = (
             if (typeof requestId !== "string" || !/^[a-zA-Z0-9-]{16,80}$/.test(requestId))
                 throw new PluginError(400, "Invalid operation ID");
             return access(id, pluginId, source, async (plugin, url, connection) => {
-                if (!plugin.actions || !plugin.act)
+                const { actions: listActions, act } = plugin;
+                if (!listActions || !act)
                     throw new PluginError(403, "Plugin operations are not supported");
                 const fingerprint = createHash("sha256")
                     .update(JSON.stringify([url.href, operation]))
                     .digest("hex");
                 connection.operations ??= new Map();
                 const requests = connection.operations;
-                const existing = requests.get(requestId);
-                if (existing && existing.fingerprint !== fingerprint)
+                let request = requests.get(requestId);
+                if (request && request.fingerprint !== fingerprint)
                     throw new PluginError(409, "Operation ID was already used for another request");
-                if (!existing) {
+                if (!request) {
                     // shortcut: retain 128 operation results per connection; use durable idempotency for longer sessions.
                     if (requests.size >= 128)
                         throw new PluginError(429, "Reconnect before performing more operations");
-                    const promise = (connection.writing ?? Promise.resolve())
-                        .catch(() => {})
-                        .then(async () => {
-                            const check = () => assertCurrent(id, pluginId, connection);
-                            check();
-                            const user = { ...connection.user };
-                            const actions = validatePluginActions(
-                                await plugin.actions!(url, {
-                                    ...context(plugin, connection.token.access_token, false, check),
-                                    user,
-                                }),
+                    const previous = connection.writing;
+                    const promise = (async () => {
+                        try {
+                            await previous;
+                        } catch {
+                            // A failed operation must not block later writes.
+                        }
+                        const check = () => assertCurrent(id, pluginId, connection);
+                        check();
+                        const user = { ...connection.user };
+                        const actions = validatePluginActions(
+                            await listActions.call(plugin, url, {
+                                ...context(plugin, connection.token.access_token, false, check),
+                                user,
+                            }),
+                        );
+                        const action = actions.find((a) => a.id === operation.id);
+                        if (!action)
+                            throw new PluginError(
+                                403,
+                                "Operation is not available for this user and URL",
                             );
-                            const action = actions.find((a) => a.id === operation.id);
-                            if (!action)
-                                throw new PluginError(
-                                    403,
-                                    "Operation is not available for this user and URL",
-                                );
-                            validatePluginActionValues(action, operation);
-                            check();
-                            const result = await plugin.act!(
-                                url,
-                                {
-                                    ...context(plugin, connection.token.access_token, true, check),
-                                    user,
-                                },
-                                operation,
-                            );
-                            if (
-                                !result ||
-                                typeof result.message !== "string" ||
-                                result.message.length > 4000 ||
-                                (result.deleted !== undefined &&
-                                    typeof result.deleted !== "boolean")
-                            )
-                                throw new PluginError(502, "Invalid plugin operation result");
-                            return result;
-                        });
+                        validatePluginActionValues(action, operation);
+                        check();
+                        const result = await act.call(
+                            plugin,
+                            url,
+                            {
+                                ...context(plugin, connection.token.access_token, true, check),
+                                user,
+                            },
+                            operation,
+                        );
+                        if (
+                            !result ||
+                            typeof result.message !== "string" ||
+                            result.message.length > 4000 ||
+                            (result.deleted !== undefined && typeof result.deleted !== "boolean")
+                        )
+                            throw new PluginError(502, "Invalid plugin operation result");
+                        return result;
+                    })();
                     connection.writing = promise;
-                    requests.set(requestId, { fingerprint, promise });
+                    request = { fingerprint, promise };
+                    requests.set(requestId, request);
                 }
-                return { user: connection.user, result: await requests.get(requestId)!.promise };
+                return { user: connection.user, result: await request.promise };
             });
         },
     };

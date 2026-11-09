@@ -67,6 +67,8 @@ export const classifyChange = (rel: string): HmrKind | undefined => {
         p === "src/viewer/language-picker.ts" ||
         p === "src/viewer/theme-picker.ts" ||
         p === "src/viewer/ui-client.ts" ||
+        p === "src/viewer/extensions-ui.ts" ||
+        p === "src/viewer/extensions-store.ts" ||
         p === "src/viewer/plugins-ui.ts" ||
         p === "src/viewer/plugin-view.ts" ||
         p === "src/viewer/plugin-resize.ts" ||

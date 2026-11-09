@@ -10,6 +10,7 @@ export type {
     PluginBlockContent,
     PluginCell,
     PluginEdit,
+    PluginIcon,
     PluginInline,
     PluginTone,
 } from "./blocks.js";

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { setTimeout } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PluginError, parseOAuthToken, validatePlugins } from "./oauth.js";
 import { createPluginRuntime } from "./runtime.js";
@@ -17,9 +18,12 @@ const plugin = (extra: Partial<DataPlugin> = {}): DataPlugin => ({
     apiOrigins: ["https://api.example"],
     identifyUser: async ({ request }) => (await request("https://api.example/me")) as PluginUser,
     read: async (url, { request }) => ({
-        format: "json",
-        preset: "code",
-        value: await request(`https://api.example${url.pathname}`),
+        blocks: [
+            {
+                type: "code",
+                text: JSON.stringify(await request(`https://api.example${url.pathname}`)),
+            },
+        ],
     }),
     ...extra,
 });
@@ -64,6 +68,75 @@ afterEach(() => {
 });
 
 describe("user OAuth plugin runtime", () => {
+    it("rejects writes for read-only plugins", async () => {
+        mockService();
+        const runtime = createPluginRuntime([plugin()]);
+        const session = runtime.createSession();
+        await connect(runtime, session);
+        const source = "https://service.example/item";
+        expect((await runtime.actions(session, "example", source)).actions).toEqual([]);
+        await expect(
+            runtime.act(
+                session,
+                "example",
+                source,
+                { id: "edit", values: {} },
+                "request-000000001",
+            ),
+        ).rejects.toMatchObject({ status: 403 });
+    });
+
+    it("continues queued writes after failure and preserves plugin method context", async () => {
+        mockService();
+        const events: string[] = [];
+        let writes = 0;
+        const runtime = createPluginRuntime([
+            plugin({
+                async actions(this: DataPlugin) {
+                    events.push(`actions:${this.id}`);
+                    return [{ id: "edit", label: "Edit", target: "Item", fields: [] }];
+                },
+                async act(this: DataPlugin) {
+                    const attempt = ++writes;
+                    events.push(`start:${attempt}:${this.id}`);
+                    await setTimeout(0);
+                    events.push(`end:${attempt}`);
+                    if (attempt === 1) throw new PluginError(502, "Write outcome unknown");
+                    return { message: "Saved" };
+                },
+            }),
+        ]);
+        const session = runtime.createSession();
+        await connect(runtime, session);
+        const write = (requestId: string) =>
+            runtime.act(
+                session,
+                "example",
+                "https://service.example/item",
+                { id: "edit", values: {} },
+                requestId,
+            );
+        const results = await Promise.allSettled([
+            write("request-000000001"),
+            write("request-000000002"),
+        ]);
+        expect(results[0]).toMatchObject({ status: "rejected", reason: { status: 502 } });
+        expect(results[1]).toMatchObject({
+            status: "fulfilled",
+            value: { result: { message: "Saved" } },
+        });
+        expect(events).toEqual([
+            "actions:example",
+            "start:1:example",
+            "end:1",
+            "actions:example",
+            "start:2:example",
+            "end:2",
+        ]);
+        await expect(write("request-000000001")).rejects.toMatchObject({ status: 502 });
+        expect(writes).toBe(2);
+    });
+
     it("authorizes and validates actions, serializes writes and deduplicates retries", async () => {
         mockService();
         let version = "one";
@@ -209,9 +282,7 @@ describe("user OAuth plugin runtime", () => {
     it("matches URLs without fetching and rejects mismatched reads even for connected users", async () => {
         const fetcher = mockService();
         const read = vi.fn(async (url: URL) => ({
-            format: "json" as const,
-            preset: "code" as const,
-            value: url.href,
+            blocks: [{ type: "code" as const, text: url.href }],
         }));
         const runtime = createPluginRuntime([plugin({ read })]);
         const source = "https://service.example/pulls/17?view=full#comment-7";
@@ -226,7 +297,7 @@ describe("user OAuth plugin runtime", () => {
         ).rejects.toMatchObject({ status: 400 });
         expect(read).not.toHaveBeenCalled();
         const result = await runtime.read(session, "example", source);
-        expect(result.view).toEqual({ format: "json", preset: "code", value: source });
+        expect(result.view).toEqual({ blocks: [{ type: "code", text: source }] });
         expect(read.mock.calls[0]?.[0]).toBeInstanceOf(URL);
     });
 
@@ -280,9 +351,12 @@ describe("user OAuth plugin runtime", () => {
             read: async (_resource, { request }) => {
                 await gate;
                 return {
-                    format: "json",
-                    preset: "code",
-                    value: await request("https://api.example/items/one"),
+                    blocks: [
+                        {
+                            type: "code",
+                            text: JSON.stringify(await request("https://api.example/items/one")),
+                        },
+                    ],
                 };
             },
         });
@@ -321,9 +395,7 @@ describe("user OAuth plugin runtime", () => {
         expect(url.searchParams.get("code_challenge_method")).toBe("S256");
         const result = await runtime.read(session, "example", "https://service.example/items/one");
         expect(result.view).toEqual({
-            format: "json",
-            preset: "code",
-            value: { item: "Private data" },
+            blocks: [{ type: "code", text: JSON.stringify({ item: "Private data" }) }],
         });
         expect(result).not.toHaveProperty("token");
         expect(JSON.stringify(result)).not.toContain("token-alice");
@@ -420,6 +492,22 @@ describe("user OAuth plugin runtime", () => {
             expect(new Headers(init.headers).get("authorization")).toBe("Bearer new");
     });
 
+    it("allows token refresh to be retried after a temporary failure", async () => {
+        const fetcher = mockService();
+        fetcher.mockImplementationOnce(async () =>
+            json({ access_token: "old", refresh_token: "refresh-old", expires_in: 1 }),
+        );
+        const runtime = createPluginRuntime([plugin()]);
+        const session = runtime.createSession();
+        await connect(runtime, session);
+        const read = () => runtime.read(session, "example", "https://service.example/items/one");
+        fetcher.mockImplementationOnce(async () => json({ error: "Unavailable" }, 503));
+        await expect(read()).rejects.toMatchObject({ status: 502 });
+        fetcher.mockImplementationOnce(async () => json({ access_token: "new", expires_in: 3600 }));
+        await expect(read()).resolves.toHaveProperty("view");
+        expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/token"))).toHaveLength(3);
+    });
+
     it("cannot restore a connection or return stale results after disconnect", async () => {
         mockService();
         let finishUser: ((value: PluginUser) => void) | undefined;
@@ -443,9 +531,12 @@ describe("user OAuth plugin runtime", () => {
         const runtime = createPluginRuntime([
             plugin({
                 read: async (_resource, { request }) => ({
-                    format: "json",
-                    preset: "code",
-                    value: await request("https://attacker.example/data"),
+                    blocks: [
+                        {
+                            type: "code",
+                            text: JSON.stringify(await request("https://attacker.example/data")),
+                        },
+                    ],
                 }),
             }),
         ]);
@@ -520,6 +611,10 @@ describe("user OAuth plugin runtime", () => {
         expect(() => validatePlugins([plugin({ apiOrigins: ["http://localhost"] })])).toThrow(
             "HTTPS",
         );
+        expect(() => validatePlugins([plugin({ name: " " })])).toThrow("invalid plugin");
+        expect(() =>
+            validatePlugins([plugin({ icon: { light: "https://example.com/icon.svg" } })]),
+        ).toThrow("invalid plugin");
         expect(() => parseOAuthToken({ access_token: "secret\r\nInjected: true" })).toThrow();
         expect(() => parseOAuthToken({ access_token: "bot", token_type: "bot" })).toThrow();
         const fetcher = mockService();

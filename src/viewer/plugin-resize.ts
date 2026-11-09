@@ -8,20 +8,55 @@ export const createPluginResize = (content: HTMLElement): HTMLElement => {
     handle.setAttribute("aria-orientation", "horizontal");
     handle.setAttribute("aria-controls", content.id);
     handle.setAttribute("aria-valuemin", "32");
-    handle.setAttribute("aria-valuemax", "1200");
     handle.dataset.i18nTitle = handle.dataset.i18nAriaLabel = "Resize plugin card";
     handle.title = t("Resize plugin card");
     handle.setAttribute("aria-label", handle.title);
     const height = () => content.getBoundingClientRect().height;
+    const maximum = () => {
+        const previous = content.style.height;
+        const scroll = content.scrollTop;
+        content.style.height = "auto";
+        const natural = content.scrollHeight + content.offsetHeight - content.clientHeight;
+        content.style.height = previous;
+        content.scrollTop = scroll;
+        const max = Math.max(32, Math.ceil(natural));
+        handle.setAttribute("aria-valuemax", String(max));
+        return max;
+    };
     const resize = (value: number) => {
-        const size = Math.round(Math.max(32, Math.min(1200, value)));
+        const size = Math.round(Math.max(32, Math.min(maximum(), value)));
         content.dataset.resized = "";
         content.style.height = `${size}px`;
         handle.setAttribute("aria-valuenow", String(size));
     };
     handle.addEventListener("focus", () => {
+        maximum();
         handle.setAttribute("aria-valuenow", String(Math.round(height())));
     });
+    const clamp = () => {
+        if (!content.isConnected) {
+            changes.disconnect();
+            sizes.disconnect();
+            return;
+        }
+        if (!height()) return;
+        if (content.hasAttribute("data-resized")) resize(height());
+    };
+    const changes = new MutationObserver(() => {
+        sizes.disconnect();
+        sizes.observe(content);
+        for (const child of content.children) sizes.observe(child);
+        clamp();
+    });
+    changes.observe(content, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ["open"],
+    });
+    const sizes = new ResizeObserver(clamp);
+    sizes.observe(content);
     let drag: { id: number; y: number; height: number } | undefined;
     handle.addEventListener("pointerdown", (event) => {
         if (event.button !== 0 || drag) return;
@@ -45,7 +80,7 @@ export const createPluginResize = (content: HTMLElement): HTMLElement => {
         if (event.key === "ArrowDown") resize(height() + 32);
         else if (event.key === "ArrowUp") resize(height() - 32);
         else if (event.key === "Home") resize(32);
-        else if (event.key === "End") resize(1200);
+        else if (event.key === "End") resize(maximum());
         else return;
         event.preventDefault();
         event.stopPropagation();

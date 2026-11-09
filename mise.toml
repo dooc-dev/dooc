@@ -13,10 +13,10 @@ bun = "1.4.4"
 # invoked from. Each task just runs src/cli.ts (same as the npx bin) via tsx.
 [vars]
 resolve_root = 'r="$(if [ -n "$usage_root" ]; then cd "$MISE_ORIGINAL_CWD" && realpath -e "$usage_root"; else realpath -e sample-content; fi)"'
-viewer_plugins = 'if [ -z "$usage_root" ]; then export DOOC_VIEWER_PLUGINS="${DOOC_VIEWER_PLUGINS:-$PWD/examples/viewer-plugins/index.mjs}"; fi'
+viewer_plugins = 'if [ "$r" = "$(realpath -e sample-content)" ]; then export DOOC_VIEWER_PLUGINS="${DOOC_VIEWER_PLUGINS:-$PWD/examples/viewer-plugins/index.mjs}"; fi'
 
 [tasks.dev]
-description = "For front-end development: start the viewer with hot reload (src / content). e.g. mise run dev ../my-docs 5179"
+description = "Start the sample workspace, registered demo plugins and mock login with hot reload. e.g. mise run dev ../my-docs 5179"
 usage = '''
 arg "[root]" default=""
 arg "[port]" default="5179"

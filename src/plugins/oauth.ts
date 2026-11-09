@@ -1,3 +1,4 @@
+import { validPluginIcon } from "./blocks.js";
 import type { DataPlugin, OAuthToken } from "./types.js";
 
 export class PluginError extends Error {
@@ -127,6 +128,11 @@ export const validatePlugins = (input: unknown): DataPlugin[] => {
         const oauth = plugin.oauth;
         if (
             !oauth ||
+            (plugin.name !== undefined &&
+                (typeof plugin.name !== "string" ||
+                    !plugin.name.trim() ||
+                    plugin.name.length > 100)) ||
+            (plugin.icon !== undefined && !validPluginIcon(plugin.icon)) ||
             typeof oauth.clientId !== "string" ||
             !oauth.clientId.trim() ||
             (oauth.clientSecret !== undefined && typeof oauth.clientSecret !== "string") ||

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // CLI entry shared by npx and mise. Root defaults to cwd; relative paths resolve against cwd.
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { prebuilt } from "./viewer/assets.js";
 
@@ -16,6 +16,9 @@ const USAGE = `usage: dooc <command>
   build zip [root] [out-dir]         build bundle.zip (default <root>/dist)
     --url_preview embed|network     URL handling for either format (default: embed)
   check [root] [options]            JSON consistency report (check --help for options)
+  plugin pack <built-dir> [zip]     package bundled JS and assets as a plugin ZIP
+  plugin add <zip> [root] [port]    install a local plugin and print login links
+  plugin login <id> [root] [port]   open a local login flow for an installed plugin
   font add <file> [root]            register a font in the project (.dooc/fonts/)
   font list [root]                  list registered project fonts
   font remove <name> [root]         remove a registered project font
@@ -40,6 +43,71 @@ const writeOut = (out: string, data: string | Buffer): void => {
 
 const [command, ...args] = process.argv.slice(2);
 switch (command) {
+    case "plugin": {
+        try {
+            const { positionals, values } = parseArgs({
+                args,
+                allowPositionals: true,
+                options: { help: { type: "boolean", short: "h" } },
+            });
+            const [action, value, rootArg, portArg] = positionals;
+            if (values.help) {
+                console.log(`usage: dooc plugin pack <built-dir> [output.zip]
+       dooc plugin add <zip> [root] [port]
+       dooc plugin login <plugin-id> [root] [port]
+
+ZIP root: package.json with name, version, type: module and main pointing to bundled .js/.mjs.
+Optional icon: path to a bundled SVG asset up to 64 KiB.
+Include relative assets (SVG, JSON, etc.); dependencies must already be bundled. Limit: 16 MiB / 256 files.
+Default output: <built-dir>.zip. Installed ZIPs: <root>/.dooc/plugins/.
+Personal logins and plugin approvals: ~/.dooc/plugins/ (override with DOOC_USER_DIR).
+Add/login starts a local editor and prints browser login links. Keep it running while signing in.
+Tokens stay on this computer and never enter exported documents.`);
+                break;
+            }
+            if (action === "pack" && value && positionals.length <= 3) {
+                const { packExtension } = await import("./viewer/extension-pack.js");
+                const { extensionFile } = await import("./core/extension-package.js");
+                const output = resolve(rootArg ?? `${resolve(value)}.zip`);
+                extensionFile(basename(output));
+                writeOut(output, await packExtension(resolve(value), output));
+                console.log(output);
+            } else if (
+                (action === "add" || action === "login") &&
+                value &&
+                positionals.length <= 4
+            ) {
+                const { extensionFile, MAX_EXTENSION_BYTES } = await import(
+                    "./core/extension-package.js"
+                );
+                const port = Number(portArg ?? 5179);
+                if (!Number.isInteger(port) || port < 1024 || port > 65535)
+                    throw new Error("Choose a local port between 1024 and 65535");
+                process.env.DOCS_ROOT = docsRoot(rootArg);
+                process.env.DOCS_HMR = "1";
+                const { startServer } = await import("./viewer/serve.js");
+                if (action === "add") {
+                    const file = extensionFile(basename(value));
+                    const data = readFileSync(resolve(value));
+                    if (data.length > MAX_EXTENSION_BYTES)
+                        throw new Error("Choose a ZIP smaller than 16 MiB");
+                    await startServer("edit", port, undefined, {
+                        file,
+                        data: data.toString("base64"),
+                    });
+                } else {
+                    if (!/^[a-z][a-z0-9-]{0,63}$/.test(value)) throw new Error("Invalid plugin ID");
+                    await startServer("edit", port, undefined, { login: value });
+                }
+            } else
+                throw new Error(
+                    "usage: dooc plugin pack <built-dir> [zip] | add <zip> [root] [port] | login <id> [root] [port]",
+                );
+        } catch (error) {
+            fail(error instanceof Error ? error.message : String(error));
+        }
+        break;
+    }
     case "font": {
         const { addProjectFont, listProjectFonts, removeProjectFont } = await import(
             "./compiler/fonts.js"

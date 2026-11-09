@@ -7,6 +7,12 @@ if (configured && keys.some((key) => !process.env[key])) {
     throw new Error(`Set all sample OAuth settings: ${keys.join(", ")}`);
 }
 const mock = createSampleMock({ autoConnect: true });
+const authMock = createSampleMock({ id: "sample-auth", origin: "https://auth.sample.dooc.invalid" });
+const authPlugin = createSamplePlugin({
+    id: "sample-auth", authorizationUrl: `${authMock.origin}/authorize`,
+    tokenUrl: `${authMock.origin}/token`, userUrl: `${authMock.origin}/me`, clientId: "dooc-sample",
+});
+authPlugin.name = "Service cards (sign-in demo)";
 
 export default {
     allowedDomains: [],
@@ -21,6 +27,6 @@ export default {
         tokenUrl: `${mock.origin}/token`,
         userUrl: `${mock.origin}/me`,
         clientId: "dooc-sample",
-    })],
-    mocks: configured ? {} : { sample: mock },
+    }), authPlugin],
+    mocks: { ...(configured ? {} : { sample: mock }), "sample-auth": authMock },
 };

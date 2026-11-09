@@ -409,8 +409,8 @@ describe("navGroupsHtml", () => {
         expect(html).not.toContain('id="files-resize"');
         expect(html).toContain('data-node-id="_files"');
         expect(html).not.toContain('class="nav-files-actions"');
-        expect(html).toContain('class="files-upload"');
-        expect(html).toContain('id="files-upload-input"');
+        expect(html).not.toContain('class="files-upload"');
+        expect(html).toContain('class="files-drop-hint"');
         expect(html).toContain('class="nav-link cur" href="/_files"');
         expect(html).toContain('data-i18n="Files">Files');
         expect(resourcesMain(site, "")?.main).toContain('id="files-manager"');
@@ -429,7 +429,7 @@ describe("navGroupsHtml", () => {
         expect(card).not.toContain("nav-tree-toggle");
         expect(card).not.toContain("files/ts");
         expect(card).not.toContain("notes/draft.txt");
-        expect(card).toContain('class="files-upload"');
+        expect(card).toContain('class="files-drop-hint"');
         expect(html).not.toContain("nav-docs-resize");
         expect(card).toContain('id="tools-resize" role="separator"');
         expect(card).toContain('id="nav-storage"');
@@ -894,4 +894,19 @@ it("renders Mermaid sources safely in published HTML", () => {
     } finally {
         rmSync(root, { recursive: true, force: true });
     }
+});
+
+it("opens Plugins through full-page and client navigation and marks only its sidebar card", () => {
+    const site = emptySite();
+    expect(resourcesMain(site, "_extensions")?.title).toBe("Plugins");
+    expect(resourcesMain(site, "_extensions")?.main).toContain('id="extensions-manager"');
+    expect(pageDataResponse(site, "/_extensions")).toMatchObject({
+        status: 200,
+        body: { resource: true, path: "/_extensions" },
+    });
+    const nav = navGroupsHtml("edit", site, undefined, "_extensions");
+    expect(nav).toContain('class="nav-link cur" href="/_extensions"');
+    expect(nav).not.toContain('class="nav-link cur" href="/_files"');
+    expect(nav).not.toMatch(/extensions-upload|extensions-status|nav-count|Add ZIP/);
+    expect(nav).toContain('class="extensions-drop-hint"');
 });
