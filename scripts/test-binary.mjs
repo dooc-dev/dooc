@@ -89,7 +89,7 @@ try {
     assert.equal(JSON.parse(replies[4].result.content[0].text).ok, true);
     assert.equal(JSON.parse(replies[5].result.content[0].text).content, "Created after build");
     assert.match(run("mcp", "--help"), /--git-origin/);
-    server = spawn(binary, ["edit", root, "0"], options);
+    server = spawn(binary, ["edit", join(root, "dooc.yaml"), "0"], options);
     let output = "";
     server.stderr.on("data", (data) => {
         output += data;

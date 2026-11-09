@@ -1,7 +1,7 @@
 // Reads/writes dooc.yaml (node-dependent). Tree validation and manipulation live in
 // core/content-metadata.ts.
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { parse } from "yaml";
 import {
     type DocNode,
@@ -10,6 +10,14 @@ import {
     parseManifest,
     serializeManifest,
 } from "../core/content-metadata.js";
+
+/** CLI paths select a manifest; every project path is relative to its parent. */
+export const projectRoot = (input = MANIFEST_FILE): string => {
+    const file = resolve(input);
+    if (basename(file) !== MANIFEST_FILE || !existsSync(file) || !statSync(file).isFile())
+        throw new Error(`Specify an existing dooc.yaml file: ${file}`);
+    return dirname(file);
+};
 
 export const parseManifestText = (raw: string): ParsedManifest => {
     let value: unknown;

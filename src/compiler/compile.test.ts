@@ -230,8 +230,8 @@ describe("createCompiler (incremental compile for the viewer)", () => {
     });
 });
 
-describe("sample-content (bundled docs root)", () => {
-    const root = new URL("../../sample-content", import.meta.url).pathname;
+describe("sample (manifest beside contents)", () => {
+    const root = new URL("../../sample", import.meta.url).pathname;
     it.each([
         undefined,
         ...translationLanguages(root),

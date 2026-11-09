@@ -1,0 +1,82 @@
+title: dooc
+icon: contents/svg/_site.svg
+defaultLang: eng
+files:
+  defaultLayout: false
+  documents:
+    guide: contents/md/guide.md
+    previews: contents/md/previews.md
+    images: contents/md/images.md
+    data: contents/md/data.md
+    code: contents/md/code.md
+    diagrams: contents/md/diagrams.md
+    documents: contents/md/documents.md
+    video: contents/md/video.md
+    plugins: contents/md/plugins.md
+    themes: contents/md/themes.md
+  order:
+    - contents/md/code.md
+    - contents/md/data.md
+    - contents/md/diagrams.md
+    - contents/md/documents.md
+    - contents/md/guide.md
+    - contents/md/images.md
+    - contents/md/plugins.md
+    - contents/md/previews.md
+    - contents/md/themes.md
+    - contents/md/video.md
+    - contents/css/card.css
+    - contents/sh/check.sh
+    - contents/js/filter.js
+    - contents/rs/hello.rs
+    - contents/txt/notes.txt
+    - contents/ts/preview.ts
+    - contents/sql/query.sql
+    - contents/py/report.py
+    - contents/xml/feed.xml
+    - contents/tsv/inventory.tsv
+    - contents/yaml/project.yaml
+    - contents/csv/release.csv
+    - contents/toml/settings.toml
+    - contents/json/workspace.json
+    - contents/mermaid/review.mermaid
+    - contents/graphth/workflow.graphth
+    - contents/schemath/workspace.schemath
+    - contents/md/fragment.md
+    - contents/html/note.html
+    - contents/callouth/publish.callouth
+    - contents/termth/workspace.termth
+    - contents/gif/activity.gif
+    - contents/jpg/coverage.jpg
+    - contents/png/coverage.png
+    - contents/svg/coverage.svg
+    - contents/webp/coverage.webp
+    - contents/svg/workflow.svg
+    - contents/txt/palette.txt
+    - contents/mp4/workflow.mp4
+    - contents/webm/workflow.webm
+    - contents/svg/_site.svg
+    - themes/dark/contents/mermaid/review.mermaid
+    - themes/dark/contents/png/coverage.png
+    - themes/dark/contents/svg/coverage.svg
+    - themes/dark/contents/svg/workflow.svg
+    - themes/dark/contents/txt/palette.txt
+    - themes/light/contents/mermaid/review.mermaid
+    - themes/light/contents/png/coverage.png
+    - themes/light/contents/svg/coverage.svg
+    - themes/light/contents/svg/workflow.svg
+    - themes/light/contents/txt/palette.txt
+    - contents/jpg/download.jpg
+    - contents/webp/download-2.webp
+    - contents/webp/download.webp
+docs:
+  - guide:
+      - previews:
+          - images
+          - data
+          - code
+          - diagrams
+          - documents
+          - video
+      - plugins
+      - themes

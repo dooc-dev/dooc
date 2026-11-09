@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -20,7 +20,7 @@ const cli = (...args: string[]) => {
     vi.resetModules();
     vi.stubEnv("NODE_ENV", "test");
     process.argv = [process.execPath, "cli.js", ...args];
-    vi.spyOn(process, "cwd").mockReturnValue(tmpdir());
+    vi.spyOn(process, "cwd").mockReturnValue(roots.at(-1) ?? tmpdir());
     const stdout = vi.spyOn(console, "log").mockImplementation(() => {});
     const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
     const exit = vi.spyOn(process, "exit").mockImplementation(() => {
@@ -33,6 +33,7 @@ describe("source-based CLI", () => {
     it("injects an external Git origin into MCP without starting viewer plugins", async () => {
         const root = mkdtempSync(join(tmpdir(), "dooc-cli-mcp-"));
         roots.push(root);
+        writeFileSync(join(root, "dooc.yaml"), "docs: []\n");
         const module = join(root, "origin.mjs");
         writeFileSync(
             module,
@@ -44,7 +45,7 @@ describe("source-based CLI", () => {
         );
         const startMcp = vi.fn().mockResolvedValue(undefined);
         vi.doMock("./mcp.js", () => ({ startMcp }));
-        await cli("mcp", root, "--git-origin", module).run();
+        await cli("mcp", join(root, "dooc.yaml"), "--git-origin", module).run();
         expect(startMcp).toHaveBeenCalledWith(root, {
             gitOrigin: expect.objectContaining({
                 name: "External",
@@ -52,7 +53,7 @@ describe("source-based CLI", () => {
                 execute: expect.any(Function),
             }),
         });
-        const invalid = cli("mcp", root, "--unknown");
+        const invalid = cli("mcp", join(root, "dooc.yaml"), "--unknown");
         await expect(invalid.run()).rejects.toThrow("CLI exit");
         expect(startMcp).toHaveBeenCalledTimes(1);
     });
@@ -60,15 +61,17 @@ describe("source-based CLI", () => {
     it("registers, lists and removes project fonts through the CLI", async () => {
         const root = mkdtempSync(join(tmpdir(), "dooc-cli-font-"));
         roots.push(root);
+        writeFileSync(join(root, "dooc.yaml"), "docs: []\n");
         const file = new URL("./viewer/fonts/udev-gothic-regular.woff2", import.meta.url).pathname;
-        await cli("font", "add", file, root).run();
-        const listed = cli("font", "list", root);
+        await cli("font", "add", file, join(root, "dooc.yaml")).run();
+        expect(existsSync(join(root, ".dooc/fonts/udev-gothic-regular.woff2"))).toBe(true);
+        const listed = cli("font", "list", join(root, "dooc.yaml"));
         await listed.run();
         expect(JSON.parse(listed.stdout.mock.calls[0]?.[0] as string)).toEqual([
             "udev-gothic-regular.woff2",
         ]);
-        await cli("font", "remove", "udev-gothic-regular.woff2", root).run();
-        const empty = cli("font", "list", root);
+        await cli("font", "remove", "udev-gothic-regular.woff2", join(root, "dooc.yaml")).run();
+        const empty = cli("font", "list", join(root, "dooc.yaml"));
         await empty.run();
         expect(JSON.parse(empty.stdout.mock.calls[0]?.[0] as string)).toEqual([]);
     });
@@ -77,12 +80,12 @@ describe("source-based CLI", () => {
         const result = cli(...args);
         await result.run();
         const help = result.stdout.mock.calls[0]?.[0];
-        expect(help).toContain("edit [root] [port]");
-        expect(help).toContain("view [root] [port]");
-        expect(help).toContain("mcp [root]");
+        expect(help).toContain("edit [dooc.yaml] [port]");
+        expect(help).toContain("view [dooc.yaml] [port]");
+        expect(help).toContain("mcp [dooc.yaml]");
         expect(help).not.toMatch(/(?:^|\n)\s+(?:preview|code-language|doc ls|figure ls)\b/);
-        expect(help).toContain("build html [root] [out-dir]");
-        expect(help).toContain("build zip [root] [out-dir]");
+        expect(help).toContain("build html [dooc.yaml] [out-dir]");
+        expect(help).toContain("build zip [dooc.yaml] [out-dir]");
         expect(help).toContain("--url_preview embed|network");
         expect(help).not.toContain("--mode");
         expect(help).not.toContain("export ");
@@ -101,26 +104,55 @@ describe("source-based CLI", () => {
         ["edit", "edit"],
         ["view", "preview"],
     ])("starts %s with the expected server mode and arguments", async (command, mode) => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-project-"));
+        roots.push(root);
+        writeFileSync(join(root, "dooc.yaml"), "docs: []\n");
         const startServer = vi.fn();
         vi.doMock("./viewer/serve.js", () => ({ startServer }));
         vi.stubEnv("DOCS_ROOT", "");
         vi.stubEnv("DOCS_HMR", "");
-        await cli(command, tmpdir(), "4321").run();
+        await cli(command, join(root, "dooc.yaml"), "4321").run();
         expect(startServer).toHaveBeenLastCalledWith(mode, 4321, undefined);
-        expect(process.env.DOCS_ROOT).toBe(tmpdir());
+        expect(process.env.DOCS_ROOT).toBe(root);
         expect(process.env.DOCS_HMR).toBe("1");
         await cli(command).run();
         expect(startServer).toHaveBeenLastCalledWith(mode, 5179, undefined);
-        expect(process.env.DOCS_ROOT).toBe(tmpdir());
+        expect(process.env.DOCS_ROOT).toBe(root);
+    });
+
+    it("rejects folders, missing manifests and other files before starting a viewer", async () => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-invalid-"));
+        roots.push(root);
+        const other = join(root, "other.yaml");
+        writeFileSync(other, "docs: []\n");
+        const startServer = vi.fn();
+        vi.doMock("./viewer/serve.js", () => ({ startServer }));
+        for (const path of [root, other, join(root, "dooc.yaml")]) {
+            const result = cli("edit", path);
+            await expect(result.run()).rejects.toThrow("CLI exit");
+            expect(result.stderr).toHaveBeenCalledWith(
+                expect.stringContaining("Specify an existing dooc.yaml file"),
+            );
+        }
+        expect(startServer).not.toHaveBeenCalled();
     });
 
     it("injects viewer modules independently of the document root", async () => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-project-"));
+        roots.push(root);
+        writeFileSync(join(root, "dooc.yaml"), "docs: []\n");
         const startServer = vi.fn();
         vi.doMock("./viewer/serve.js", () => ({ startServer }));
         vi.stubEnv("DOOC_VIEWER_PLUGINS", "./external-viewer.mjs");
-        await cli("edit", tmpdir()).run();
+        await cli("edit", join(root, "dooc.yaml")).run();
         expect(startServer).toHaveBeenLastCalledWith("edit", 5179, "./external-viewer.mjs");
-        await cli("view", tmpdir(), "4321", "--viewer-plugins", "./override.mjs").run();
+        await cli(
+            "view",
+            join(root, "dooc.yaml"),
+            "4321",
+            "--viewer-plugins",
+            "./override.mjs",
+        ).run();
         expect(startServer).toHaveBeenLastCalledWith("preview", 4321, "./override.mjs");
     });
 
@@ -170,6 +202,7 @@ describe("source-based CLI", () => {
     ] as const)("writes only the selected artifact for build %s --url_preview %s", async (format, preview, expectedPreview) => {
         const root = mkdtempSync(join(tmpdir(), "dooc-cli-build-"));
         roots.push(root);
+        writeFileSync(join(root, "dooc.yaml"), "docs: []\n");
         const out = join(root, preview ? "custom" : "dist");
         mkdirSync(out);
         const other = join(out, format === "html" ? "bundle.zip" : "bundle.html");
@@ -179,7 +212,7 @@ describe("source-based CLI", () => {
         const result = cli(
             "build",
             format,
-            root,
+            join(root, "dooc.yaml"),
             ...(preview
                 ? [
                       out,
@@ -202,13 +235,14 @@ describe("source-based CLI", () => {
     ])("preserves existing artifacts when build %s validation fails", async (format) => {
         const root = mkdtempSync(join(tmpdir(), "dooc-cli-"));
         roots.push(root);
+        writeFileSync(join(root, "dooc.yaml"), "docs: []\n");
         mkdirSync(join(root, "content"));
         mkdirSync(join(root, "dist"));
         writeFileSync(join(root, "dooc.yaml"), "docs: [guide]\n");
         writeFileSync(join(root, "content/guide.md"), "---\ntitle: []\n---\nBody\n");
         for (const file of ["bundle.html", "bundle.zip"])
             writeFileSync(join(root, "dist", file), "Previous bundle");
-        const result = cli("build", format, root);
+        const result = cli("build", format, join(root, "dooc.yaml"));
         await expect(result.run()).rejects.toThrow("CLI exit");
         expect(result.stderr).toHaveBeenCalledWith(expect.stringContaining("validation failed"));
         for (const file of ["bundle.html", "bundle.zip"])

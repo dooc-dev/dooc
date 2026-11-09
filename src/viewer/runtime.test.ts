@@ -97,6 +97,29 @@ it("injects and replaces network policy at runtime without editor controls or pe
             request.end(JSON.stringify(input ?? {}));
         });
     const page = async () => JSON.parse((await call("/api/page?route=/guide")).body);
+    expect((await call("/api/files", { action: "complete", prefix: "content/" })).body).toBe(
+        JSON.stringify(["content/guide.md"]),
+    );
+    expect((await call("/api/files", { action: "complete", prefix: "../" })).status).toBe(409);
+    expect(
+        (await call("/api/files", { action: "complete", prefix: "" }, "https://outside.example"))
+            .status,
+    ).toBe(403);
+    expect(
+        (
+            await call(
+                "/api/site-title",
+                { title: "Project", baseTitle: null },
+                "https://outside.example",
+            )
+        ).status,
+    ).toBe(403);
+    expect(await call("/api/site-title", { title: "Project", baseTitle: null })).toMatchObject({
+        status: 200,
+    });
+    expect(JSON.parse((await call("/api/nav")).body).siteTitle).toBe("Project");
+    expect((await call("/api/site-title", { title: "Stale", baseTitle: null })).status).toBe(409);
+
     expect((await call("/api/git", { action: "push" }, "https://outside.example")).status).toBe(
         403,
     );

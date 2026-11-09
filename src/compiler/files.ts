@@ -47,6 +47,27 @@ export interface ProjectFile {
     size: number;
     extension: string;
 }
+
+export const completeFilePaths = (root: string, prefix: unknown): string[] => {
+    if (typeof prefix !== "string" || prefix.length > 4096) throw new Error("Invalid file prefix");
+    const slash = prefix.lastIndexOf("/");
+    const directory = prefix.slice(0, slash + 1);
+    if (prefix && !managedFile(prefix.replace(/\/$/, "")))
+        throw new Error("Expected a relative project path");
+    const path = directory ? textfilePath(root, directory) : root;
+    if (!existsSync(path)) return [];
+    return readdirSync(path, { withFileTypes: true })
+        .filter(
+            (entry) =>
+                !entry.isSymbolicLink() &&
+                (entry.isFile() || entry.isDirectory()) &&
+                managedFile(directory + entry.name) &&
+                (directory + entry.name).toLowerCase().startsWith(prefix.toLowerCase()),
+        )
+        .map((entry) => directory + entry.name + (entry.isDirectory() ? "/" : ""))
+        .sort((a, b) => Number(b.endsWith("/")) - Number(a.endsWith("/")) || a.localeCompare(b))
+        .slice(0, 200);
+};
 export const projectFiles = (root: string): ProjectFile[] => {
     const result: ProjectFile[] = [];
     const walk = (directory: string) => {

@@ -17,7 +17,13 @@ import { suggestDocFileName } from "../core/files.js";
 import { docPath } from "../core/routing.js";
 import { bundleEntries } from "./bundle.js";
 import { compileSite } from "./compile.js";
-import { filesSnapshot, rewriteFileLinks, updateFiles, uploadFile } from "./files.js";
+import {
+    completeFilePaths,
+    filesSnapshot,
+    rewriteFileLinks,
+    updateFiles,
+    uploadFile,
+} from "./files.js";
 import { setDocTranslation } from "./locales.js";
 import { readManifest } from "./manifest.js";
 import { createDocOps, isOpError } from "./ops.js";
@@ -545,4 +551,32 @@ it("keeps ordinary document IDs that match object properties", () => {
     });
     expect(readManifest(root).files?.documents["new-constructor"]).toBe("files/md/constructor.md");
     expect(existsSync(join(root, "files/md/constructor.md"))).toBe(true);
+});
+
+it("completes paths from the project root without traversing hidden or external directories", () => {
+    const root = fixture();
+    for (const dir of [".dooc", "node_modules", "empty"]) mkdirSync(join(root, dir));
+    writeFileSync(join(root, ".env"), "private");
+    writeFileSync(join(root, "examples/日本語 (1).ts"), "const x = 1;");
+    expect(completeFilePaths(root, "")).toEqual([
+        "content/",
+        "empty/",
+        "examples/",
+        "figures/",
+        "icons/",
+        "terms/",
+    ]);
+    expect(completeFilePaths(root, "ex")).toEqual(["examples/"]);
+    expect(completeFilePaths(root, "examples/")).toEqual([
+        "examples/a.ts",
+        "examples/日本語 (1).ts",
+    ]);
+    writeFileSync(join(root, "examples/new.ts"), "new");
+    expect(completeFilePaths(root, "examples/n")).toEqual(["examples/new.ts"]);
+    expect(completeFilePaths(root, "missing/")).toEqual([]);
+    const outside = fixture();
+    symlinkSync(outside, join(root, "escape"));
+    expect(completeFilePaths(root, "esc")).toEqual([]);
+    for (const prefix of ["escape/", "../", "/", ".dooc/", "node_modules/", "examples/../../", 3])
+        expect(() => completeFilePaths(root, prefix)).toThrow();
 });

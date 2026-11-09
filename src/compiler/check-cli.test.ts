@@ -35,7 +35,7 @@ it("prints one JSON report and returns policy exit codes with cwd as the default
         join(root, "content/guide.md"),
         "---\ntitle: Guide\n---\nThis document explains how to configure the application and prepare translated content for readers around the world.\n",
     );
-    let result = run(root);
+    let result = run(root, join(root, "dooc.yaml"));
     expect(result.stderr).toBe("");
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ schemaVersion: 1, root, exitCode: 0 });
@@ -58,6 +58,7 @@ it("prints one JSON report and returns policy exit codes with cwd as the default
         ["--only", "languages,,themes"],
         ["--languages", "eng"],
         [".", "extra"],
+        ["."],
     ]) {
         result = run(root, ...args);
         expect(result.status).toBe(2);

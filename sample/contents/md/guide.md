@@ -13,11 +13,11 @@ dooc turns Markdown and local files into a document workspace. Keep diagrams, co
 
 ## Explore the samples
 
-| Explore                                   | What you can try                                        |
-| ----------------------------------------- | ------------------------------------------------------- |
-| [File previews](files/md/previews.md)     | Images, tables, source code, diagrams, HTML, and video  |
-| [Service cards](files/md/plugins.md)      | Interactive tickets, pull requests, and messages        |
-| [Themes and variants](files/md/themes.md) | Compare light and dark without changing the source link |
+| Explore                                      | What you can try                                        |
+| -------------------------------------------- | ------------------------------------------------------- |
+| [File previews](contents/md/previews.md)     | Images, tables, source code, diagrams, HTML, and video  |
+| [Service cards](contents/md/plugins.md)      | Interactive tickets, pull requests, and messages        |
+| [Themes and variants](contents/md/themes.md) | Compare light and dark without changing the source link |
 
 ## A small workflow
 

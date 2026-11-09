@@ -6,32 +6,32 @@ File-backed code keeps the document tied to the implementation. Line fragments s
 
 ## TypeScript
 
-![](files/ts/preview.ts)
+![](contents/ts/preview.ts)
 
 ## JavaScript
 
-![](files/js/filter.js#L2-L5)
+![](contents/js/filter.js#L2-L5)
 
 ## Python
 
-![](files/py/report.py)
+![](contents/py/report.py)
 
 ## Rust
 
-![](files/rs/hello.rs)
+![](contents/rs/hello.rs)
 
 ## SQL
 
-![](files/sql/query.sql)
+![](contents/sql/query.sql)
 
 ## CSS
 
-![](files/css/card.css)
+![](contents/css/card.css)
 
 ## Shell
 
-![](files/sh/check.sh)
+![](contents/sh/check.sh)
 
 ## Plain text
 
-![](files/txt/notes.txt)
+![](contents/txt/notes.txt)

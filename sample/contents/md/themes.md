@@ -6,26 +6,26 @@ The document theme is independent of the editor theme. Use split view to show th
 
 ## The same link, two assets
 
-![A theme-aware workflow](files/svg/workflow.svg)
+![A theme-aware workflow](contents/svg/workflow.svg)
 
-![A theme-aware report](files/png/coverage.png)
+![A theme-aware report](contents/png/coverage.png)
 
 ## Text can vary too
 
-![](files/txt/palette.txt)
+![](contents/txt/palette.txt)
 
 ## File layout
 
 Keep a default file at its normal path. Mirror that path under `themes/light/` or `themes/dark/` to provide an alternative.
 
 ```text
-files/images/coverage.png
-themes/light/files/images/coverage.png
-themes/dark/files/images/coverage.png
+contents/images/coverage.png
+themes/light/contents/images/coverage.png
+themes/dark/contents/images/coverage.png
 
-files/themes/palette.txt
-themes/light/files/themes/palette.txt
-themes/dark/files/themes/palette.txt
+contents/themes/palette.txt
+themes/light/contents/themes/palette.txt
+themes/dark/contents/themes/palette.txt
 ```
 
 A missing variant falls back to the original file. This convention works for embedded local files, including binary images, HTML, code, data, and diagram sources. Variants stay in source exports and standalone HTML.

@@ -44,6 +44,7 @@ import {
 } from "./edit-file-preview.js";
 import { inlineFoldButtons } from "./edit-fold.js";
 import { gitBaseState, gitDiffState, gitDiffTheme, setGitBase } from "./edit-git-diff.js";
+import { filePathCompletion } from "./edit-path-completion.js";
 import { schemaCompletion } from "./edit-schema-completion.js";
 import { editorSetup } from "./edit-setup.js";
 import { createTextfileEditors } from "./edit-textfile.js";
@@ -614,11 +615,9 @@ const buildSlash = (): Completion[] => {
 // Candidate data (figures / docs / terms) comes from boot, so rebuild it on every doc switch
 // (so docs added or renamed elsewhere show up in the next doc's completions).
 let SLASH: Completion[] = [];
-let FIG_OPTS: Completion[] = [];
 let DOC_REF_OPTS: Completion[] = [];
 const rebuildCompletions = (): void => {
     SLASH = buildSlash();
-    FIG_OPTS = boot.figures.map((f) => ({ label: f, type: "class" }));
     DOC_REF_OPTS = boot.docs.map((d) => ({
         label: termFileUrl(d.ref),
         detail: d.title,
@@ -646,40 +645,26 @@ const inCodeContext = (ctx: CompletionContext): boolean => {
     return false;
 };
 
-// File embeds occupy standalone paragraphs.
-const atLineStart = (state: EditorState, from: number): boolean =>
-    /^\s*$/.test(state.sliceDoc(state.doc.lineAt(from).from, from));
-
-const docsComplete = (ctx: CompletionContext): CompletionResult | null => {
+const docsComplete = (
+    ctx: CompletionContext,
+): CompletionResult | null | Promise<CompletionResult | null> => {
     const schema = schemaCompletion(ctx);
     if (schema !== undefined) return schema;
     if (inCodeContext(ctx)) {
         return null;
     }
-    const termM = ctx.matchBefore(/\[[^\]\n]*\]\([^()\n]*/);
-    if (termM && ctx.state.sliceDoc(Math.max(0, termM.from - 1), termM.from) !== "!")
-        return {
-            from: termM.from + termM.text.lastIndexOf("(") + 1,
-            options: [
-                ...DOC_REF_OPTS,
-                ...boot.terms
-                    .filter((term) => isTermFile(term.id))
-                    .map((term) => ({
-                        label: termFileUrl(term.id),
-                        detail: term.name,
-                        info: term.definition,
-                        type: "text",
-                    })),
-            ],
-            validFor: /[^()\s]*/,
-        };
-    const figM = ctx.matchBefore(/!\[[^\]\n]*\]\([\w./-]*/);
-    if (figM && atLineStart(ctx.state, figM.from))
-        return {
-            from: figM.from + figM.text.lastIndexOf("(") + 1,
-            options: FIG_OPTS,
-            validFor: /[\w./-]*/,
-        };
+    const paths = filePathCompletion(ctx, [
+        ...DOC_REF_OPTS,
+        ...boot.terms
+            .filter((term) => isTermFile(term.id))
+            .map((term) => ({
+                label: termFileUrl(term.id),
+                detail: term.name,
+                info: term.definition,
+                type: "text",
+            })),
+    ]);
+    if (paths !== undefined) return paths;
     const slashM = ctx.matchBefore(/\/[^\s/]*/);
     if (
         slashM &&
@@ -815,7 +800,10 @@ const editorExtensions: Extension[] = [
     filePreviewState,
     textfiles.extension,
     markdown({ base: markdownLanguage }),
-    autocompletion({ override: [docsComplete] }),
+    autocompletion({
+        override: [docsComplete],
+        activateOnCompletion: (completion) => completion.type === "namespace",
+    }),
     EditorView.lineWrapping,
     theme,
     syntaxHighlighting(mdHighlight),
@@ -1034,7 +1022,8 @@ const post = async (url: string): Promise<DraftResponse> => {
 // Keep the active page, its live title and the ancestor breadcrumb in sync.
 const updateNavLocation = (): void => {
     const header = $("site-title");
-    header.textContent = header.title = siteTitle ?? "dooc";
+    if (!header.querySelector("form")) header.textContent = header.title = siteTitle ?? "dooc";
+    header.dataset.title = siteTitle ?? "";
     const logo = $<HTMLImageElement>("site-icon");
     logo.hidden = !siteIcon;
     if (siteIcon) logo.src = siteIcon;

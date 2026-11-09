@@ -31,8 +31,7 @@ afterEach(() => {
 const fixture = (sample = true): string => {
     const root = mkdtempSync(join(tmpdir(), "docs-mcp-"));
     roots.push(root);
-    if (sample)
-        cpSync(new URL("../sample-content", import.meta.url).pathname, root, { recursive: true });
+    if (sample) cpSync(new URL("../sample", import.meta.url).pathname, root, { recursive: true });
     else {
         mkdirSync(join(root, "content"));
         writeFileSync(join(root, "dooc.yaml"), "defaultLang: eng\ndocs: [guide]\n");
@@ -56,7 +55,7 @@ describe("mcp", () => {
         const root = fixture();
         const tools = createTools(root);
         const file = docFile("guide", readManifest(root).files);
-        expect(file).toBe("files/md/guide.md");
+        expect(file).toBe("contents/md/guide.md");
         const original = await call(tools, "read_doc", { id: "guide" });
         expect(original).toMatchObject({
             isError: false,

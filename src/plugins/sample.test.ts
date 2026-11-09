@@ -12,7 +12,7 @@ import { createPluginRuntime } from "./runtime.js";
 import type { DataPlugin } from "./types.js";
 import { validatePluginView } from "./view.js";
 
-const sample = new URL("../../sample-content/", import.meta.url);
+const sample = new URL("../../sample/", import.meta.url);
 
 describe("sample plugin", () => {
     it("makes the mock reject incorrect PKCE proofs, code replay, and missing Bearer authentication", async () => {
@@ -203,7 +203,7 @@ describe("sample plugin", () => {
         expect(viewer.plugins.map((plugin) => plugin.id)).toEqual(["sample", "sample-auth"]);
         const compiled = createCompiler(root).compile();
         expect(compiled.errors).toEqual([]);
-        const source = compiled.sources.get("files/md/plugins.md");
+        const source = compiled.sources.get("contents/md/plugins.md");
         expect(source?.errors).toEqual([]);
         const output = publishHtml(siteFrom(compiled), "");
         expect(output).not.toContain('data-plugin="sample"');
@@ -214,7 +214,7 @@ describe("sample plugin", () => {
         expect(
             files.some((file) => /(?:mock|sample-plugin|plugin-card)\.(?:mjs|html)$/.test(file)),
         ).toBe(false);
-        expect(readFileSync(new URL("files/md/plugins.md", sample), "utf8")).not.toContain(
+        expect(readFileSync(new URL("contents/md/plugins.md", sample), "utf8")).not.toContain(
             "```plugin",
         );
     });

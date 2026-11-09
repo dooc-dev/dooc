@@ -763,7 +763,7 @@ describe("createBundleCache (client bundle + ETag)", () => {
 });
 
 describe("publishHtml (a single HTML file with everything embedded)", () => {
-    const site = siteFrom(compileSite(new URL("../../sample-content", import.meta.url).pathname));
+    const site = siteFrom(compileSite(new URL("../../sample", import.meta.url).pathname));
     const html = publishHtml(site, "window.graph = '</script>';");
 
     it("includes font selection without font registration in standalone viewers", () => {
@@ -789,16 +789,21 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
         for (const term of site.ctx.terms)
             expect(list).toContain(`id="term-${encodeURIComponent(term.id)}"`);
         expect(list).toContain("data-dict-sort");
-        const detail = resourcesMain(site, "terms/files%2Ftermth%2Fworkspace.termth")?.main ?? "";
-        expect(detail).toContain("[](files/termth/workspace.termth)");
+        const detail =
+            resourcesMain(site, "terms/contents%2Ftermth%2Fworkspace.termth")?.main ?? "";
+        expect(detail).toContain("[](contents/termth/workspace.termth)");
         expect(detail).toContain(
             "A folder containing Markdown documents, supporting files, and a navigation manifest.",
         );
         expect(detail).not.toContain("data-dict-sort");
         expect(html.match(/<select data-dict-sort/g)).toHaveLength(1);
         expect(html).toContain('<template data-route="_files/terms"');
-        expect(html).toContain('href="#/_files/terms#term-files%252Ftermth%252Fworkspace.termth"');
-        expect(list).toContain('href="/_files/terms#term-files%252Ftermth%252Fworkspace.termth"');
+        expect(html).toContain(
+            'href="#/_files/terms#term-contents%252Ftermth%252Fworkspace.termth"',
+        );
+        expect(list).toContain(
+            'href="/_files/terms#term-contents%252Ftermth%252Fworkspace.termth"',
+        );
         expect(resourcesMain(site, "terms/missing")).toBeUndefined();
     });
 

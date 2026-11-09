@@ -1,39 +1,37 @@
 #!/usr/bin/env node
-// CLI entry shared by npx and mise. Root defaults to cwd; relative paths resolve against cwd.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+// CLI entry shared by npx and mise. The manifest defaults to ./dooc.yaml; project paths use its parent directory.
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { projectRoot } from "./compiler/manifest.js";
 import { prebuilt } from "./viewer/assets.js";
 
 process.env.NODE_ENV = prebuilt ? "production" : "development";
 
 const USAGE = `usage: dooc <command>
 
-  edit [root] [port]                 open dooc in edit mode
-  view [root] [port]                 open dooc in view mode
-    --viewer-plugins <module>        inject an external viewer plugin module
-  build html [root] [out-dir]        build bundle.html (default <root>/dist)
-  build zip [root] [out-dir]         build bundle.zip (default <root>/dist)
-    --url_preview embed|network     URL handling for either format (default: embed)
-  check [root] [options]            JSON consistency report (check --help for options)
-  plugin pack <built-dir> [zip]     package bundled JS and assets as a plugin ZIP
-  plugin add <zip> [root] [port]    install a local plugin and print login links
-  plugin login <id> [root] [port]   open a local login flow for an installed plugin
-  font add <file> [root]            register a font in the project (.dooc/fonts/)
-  font list [root]                  list registered project fonts
-  font remove <name> [root]         remove a registered project font
-  mcp [root]                        stdio MCP server (all read / write operations)
-    --git-origin <module>            inject gitOrigin from an external viewer plugin module
-  help, --help, -h                  show this help`;
+  edit [dooc.yaml] [port]                open dooc in edit mode
+  view [dooc.yaml] [port]                open dooc in view mode
+  --viewer-plugins <module>              inject an external viewer plugin module
+  build html [dooc.yaml] [out-dir]       build bundle.html (default <project>/dist)
+  build zip [dooc.yaml] [out-dir]        build bundle.zip (default <project>/dist)
+  --url_preview embed|network            URL handling for either format (default: embed)
+  check [dooc.yaml] [options]            JSON consistency report (check --help for options)
+  plugin pack <built-dir> [zip]          package bundled JS and assets as a plugin ZIP
+  plugin add <zip> [dooc.yaml] [port]    install a local plugin and print login links
+  plugin login <id> [dooc.yaml] [port]   open a local login flow for an installed plugin
+  font add <file> [dooc.yaml]            register a font in the project (.dooc/fonts/)
+  font list [dooc.yaml]                  list registered project fonts
+  font remove <name> [dooc.yaml]         remove a registered project font
+  mcp [dooc.yaml]                        stdio MCP server (all read / write operations)
+  --git-origin <module>                  inject gitOrigin from an external viewer plugin module
+  help, --help, -h                       show this help
+
+Default manifest: ./dooc.yaml. Paths and .dooc/ are relative to its directory.`;
 
 const fail = (message: string): never => {
     console.error(message);
     process.exit(1);
-};
-
-const docsRoot = (arg: string | undefined): string => {
-    const root = resolve(arg ?? ".");
-    return existsSync(root) ? root : fail(`${root} does not exist`);
 };
 
 const writeOut = (out: string, data: string | Buffer): void => {
@@ -53,13 +51,13 @@ switch (command) {
             const [action, value, rootArg, portArg] = positionals;
             if (values.help) {
                 console.log(`usage: dooc plugin pack <built-dir> [output.zip]
-       dooc plugin add <zip> [root] [port]
-       dooc plugin login <plugin-id> [root] [port]
+       dooc plugin add <zip> [dooc.yaml] [port]
+       dooc plugin login <plugin-id> [dooc.yaml] [port]
 
 ZIP root: package.json with name, version, type: module and main pointing to bundled .js/.mjs.
 Optional icon: path to a bundled SVG asset up to 64 KiB.
 Include relative assets (SVG, JSON, etc.); dependencies must already be bundled. Limit: 16 MiB / 256 files.
-Default output: <built-dir>.zip. Installed ZIPs: <root>/.dooc/plugins/.
+Default output: <built-dir>.zip. Installed ZIPs: <project>/.dooc/plugins/.
 Personal logins and plugin approvals: ~/.dooc/plugins/ (override with DOOC_USER_DIR).
 Add/login starts a local editor and prints browser login links. Keep it running while signing in.
 Tokens stay on this computer and never enter exported documents.`);
@@ -83,7 +81,7 @@ Tokens stay on this computer and never enter exported documents.`);
                 const port = Number(portArg ?? 5179);
                 if (!Number.isInteger(port) || port < 1024 || port > 65535)
                     throw new Error("Choose a local port between 1024 and 65535");
-                process.env.DOCS_ROOT = docsRoot(rootArg);
+                process.env.DOCS_ROOT = projectRoot(rootArg);
                 process.env.DOCS_HMR = "1";
                 const { startServer } = await import("./viewer/serve.js");
                 if (action === "add") {
@@ -101,7 +99,7 @@ Tokens stay on this computer and never enter exported documents.`);
                 }
             } else
                 throw new Error(
-                    "usage: dooc plugin pack <built-dir> [zip] | add <zip> [root] [port] | login <id> [root] [port]",
+                    "usage: dooc plugin pack <built-dir> [zip] | add <zip> [dooc.yaml] [port] | login <id> [dooc.yaml] [port]",
                 );
         } catch (error) {
             fail(error instanceof Error ? error.message : String(error));
@@ -120,21 +118,21 @@ Tokens stay on this computer and never enter exported documents.`);
             });
             if (values.help) {
                 console.log(
-                    "usage: dooc font add <file> [root] | list [root] | remove <name> [root]\n\nFonts are copied to <root>/.dooc/fonts/ and included in ZIP and HTML bundles.\nSupported formats: TTF, OTF, WOFF, WOFF2. Existing names are never overwritten.\nReload the viewer after changing registered fonts. Default root: current directory.",
+                    "usage: dooc font add <file> [dooc.yaml] | list [dooc.yaml] | remove <name> [dooc.yaml]\n\nFonts are copied to <project>/.dooc/fonts/ and included in ZIP and HTML bundles.\nSupported formats: TTF, OTF, WOFF, WOFF2. Existing names are never overwritten.\nReload the viewer after changing registered fonts. Default manifest: ./dooc.yaml.",
                 );
                 break;
             }
             const [action, value, rootArg] = positionals;
             if (action === "list" && positionals.length <= 2) {
-                console.log(JSON.stringify(listProjectFonts(docsRoot(value)), null, 2));
+                console.log(JSON.stringify(listProjectFonts(projectRoot(value)), null, 2));
             } else if (action === "add" && value && positionals.length <= 3) {
-                console.log(addProjectFont(docsRoot(rootArg), resolve(value)));
+                console.log(addProjectFont(projectRoot(rootArg), resolve(value)));
             } else if (action === "remove" && value && positionals.length <= 3) {
-                removeProjectFont(docsRoot(rootArg), value);
+                removeProjectFont(projectRoot(rootArg), value);
                 console.log(`Removed font: ${value}`);
             } else
                 throw new Error(
-                    "usage: dooc font add <file> [root] | list [root] | remove <name> [root]",
+                    "usage: dooc font add <file> [dooc.yaml] | list [dooc.yaml] | remove <name> [dooc.yaml]",
                 );
         } catch (error) {
             fail(error instanceof Error ? error.message : String(error));
@@ -156,7 +154,7 @@ Tokens stay on this computer and never enter exported documents.`);
                 },
             });
             if (values.help) {
-                console.log(`usage: dooc check [root] [options]
+                console.log(`usage: dooc check [dooc.yaml] [options]
 
   --only render,languages,themes  select checks (default: all three)
                                  manifest validity is always checked
@@ -181,8 +179,8 @@ Exit codes: 0 passed; 1 errors (or warnings with --warnings-as-errors); 2 invoca
 Node API: import { checkSite } from "@dooc-dev/dooc/check".`);
                 break;
             }
-            if (positionals.length > 1) throw new Error("check accepts at most one root path");
-            report = checkSite(resolve(positionals[0] ?? "."), {
+            if (positionals.length > 1) throw new Error("check accepts at most one dooc.yaml path");
+            report = checkSite(projectRoot(positionals[0]), {
                 ...(values.only
                     ? {
                           only: values.only.flatMap((value) =>
@@ -219,20 +217,24 @@ Node API: import { checkSite } from "@dooc-dev/dooc/check".`);
     }
     case "view":
     case "edit": {
-        const { positionals, values } = parseArgs({
-            args,
-            allowPositionals: true,
-            options: { "viewer-plugins": { type: "string" } },
-        });
-        process.env.DOCS_ROOT = docsRoot(positionals[0]);
-        process.env.DOCS_HMR = "1";
-        // serve.ts reads DOCS_ROOT at import time, so import it after the env is set.
-        const { startServer } = await import("./viewer/serve.js");
-        await startServer(
-            command === "view" ? "preview" : "edit",
-            Number(positionals[1] ?? 5179),
-            values["viewer-plugins"] ?? process.env.DOOC_VIEWER_PLUGINS,
-        );
+        try {
+            const { positionals, values } = parseArgs({
+                args,
+                allowPositionals: true,
+                options: { "viewer-plugins": { type: "string" } },
+            });
+            process.env.DOCS_ROOT = projectRoot(positionals[0]);
+            process.env.DOCS_HMR = "1";
+            // serve.ts reads DOCS_ROOT at import time, so import it after the env is set.
+            const { startServer } = await import("./viewer/serve.js");
+            await startServer(
+                command === "view" ? "preview" : "edit",
+                Number(positionals[1] ?? 5179),
+                values["viewer-plugins"] ?? process.env.DOOC_VIEWER_PLUGINS,
+            );
+        } catch (error) {
+            fail(error instanceof Error ? error.message : String(error));
+        }
         break;
     }
     case "build": {
@@ -246,11 +248,11 @@ Node API: import { checkSite } from "@dooc-dev/dooc/check".`);
                 },
             });
             if (values.help) {
-                console.log(`usage: dooc build html [root] [out-dir] [--url_preview embed|network]
-       dooc build zip  [root] [out-dir] [--url_preview embed|network]
+                console.log(`usage: dooc build html [dooc.yaml] [out-dir] [--url_preview embed|network]
+       dooc build zip  [dooc.yaml] [out-dir] [--url_preview embed|network]
 
 A bundle is dooc.yaml and its managed content. Builds only the selected format.
-Default output directory: <root>/dist. Source files are never rewritten.
+Default output directory: <project>/dist. Source files are never rewritten.
   --url_preview embed    snapshot URL content and assets into the selected artifact (default)
   --url_preview network  preserve URL references without downloading them at build time
 
@@ -269,11 +271,11 @@ Use --url_preview network with either format to build without downloading URL co
             if (format !== "html" && format !== "zip")
                 throw new Error("build format must be html | zip");
             if (positionals.length > 3)
-                throw new Error(`build ${format} accepts a root and an output directory`);
+                throw new Error(`build ${format} accepts a dooc.yaml path and an output directory`);
             const urlPreview = values.url_preview;
             if (urlPreview !== "embed" && urlPreview !== "network")
                 throw new Error("--url_preview must be embed | network");
-            const root = docsRoot(rootArg);
+            const root = projectRoot(rootArg);
             const out = join(resolve(outArg ?? join(root, "dist")), `bundle.${format}`);
             const { buildBundle } = await import("./viewer/build.js");
             const bundle = await buildBundle(root, { format, urlPreview });
@@ -296,17 +298,17 @@ Use --url_preview network with either format to build without downloading URL co
             });
             if (values.help) {
                 console.log(
-                    "usage: dooc mcp [root] [--git-origin <module>]\n\nExposes docs, files, Statics, fonts, check, build and Git over stdio.\nBuild accepts format=html|zip and url_preview=embed|network (default embed).\nThe external module's default export must contain gitOrigin (the same provider used by edit/view).\nOnly gitOrigin is used; viewer setup and data plugins are not started. Authentication stays in the provider.",
+                    "usage: dooc mcp [dooc.yaml] [--git-origin <module>]\n\nExposes docs, files, Statics, fonts, check, build and Git over stdio.\nBuild accepts format=html|zip and url_preview=embed|network (default embed).\nThe external module's default export must contain gitOrigin (the same provider used by edit/view).\nOnly gitOrigin is used; viewer setup and data plugins are not started. Authentication stays in the provider.",
                 );
                 break;
             }
-            if (positionals.length > 1) throw new Error("mcp accepts at most one root path");
+            if (positionals.length > 1) throw new Error("mcp accepts at most one dooc.yaml path");
             const { startMcp } = await import("./mcp.js");
             const { loadViewerPlugins } = await import("./viewer/plugin-config.js");
             const { gitOrigin } = await loadViewerPlugins(values["git-origin"]);
             if (values["git-origin"] && !gitOrigin)
                 throw new Error("Module must provide gitOrigin");
-            await startMcp(docsRoot(positionals[0]), { gitOrigin });
+            await startMcp(projectRoot(positionals[0]), { gitOrigin });
         } catch (error) {
             fail(error instanceof Error ? error.message : String(error));
         }

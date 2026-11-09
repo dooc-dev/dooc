@@ -1,4 +1,4 @@
-import { filesSnapshot, updateFiles, uploadFile } from "../compiler/files.js";
+import { completeFilePaths, filesSnapshot, updateFiles, uploadFile } from "../compiler/files.js";
 import { loadProjectFonts, type ProjectFont } from "../compiler/fonts.js";
 import { textfilePath, writeTextfile } from "../compiler/textfile.js";
 import {
@@ -108,6 +108,7 @@ import { mountPanelResize, mountToolsResize } from "./resize.js";
 import { resourceIndex, resourceLibraryHtml, resourceTabs } from "./resource-library.js";
 import { mountSearch, SEARCH_LABELS, searchIndex, searchSections } from "./search.js";
 import { siteIconResponse } from "./site-icon.js";
+import { siteTitleResponse } from "./site-title.js";
 import { previewTextfiles, textfileResponse } from "./textfile.js";
 import { mountThemePickers } from "./theme-picker.js";
 import { readWorkspaceSource } from "./workspace.js";
@@ -1448,6 +1449,9 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 const EDIT_CSS = `
 body.git-diff-hidden .cm-lineNumbers :is(.cm-git-added, .cm-git-modified, .cm-git-deleted-start, .cm-git-deleted-end) { box-shadow: none; }
 body.git-diff-hidden .cm-line:is(.cm-git-added, .cm-git-modified, .cm-git-deleted-start, .cm-git-deleted-end) { background-color: transparent; }
+#site-title[role="button"] { cursor: text; position: relative; }
+#site-title:focus-visible { outline: 1px solid var(--c-line); }
+#site-title .nav-rename-form { inset: 0; padding: 0; }
 #site-icon-slot input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 #site-icon-slot:hover, #site-icon-slot:focus-within, #sidebar-head.over #site-icon-slot { background: var(--c-line); border-radius: 3px; }
 #site-icon-slot:focus-within, #sidebar-head.over #site-icon-slot { outline: 1px solid var(--c-fg-muted); outline-offset: 2px; }
@@ -2195,7 +2199,7 @@ ${opts.publish ? `<meta name="referrer" content="no-referrer"><meta http-equiv="
 <title>${escapeHtml(pageTitle(mode, opts.title, site.title))}</title>
 <script>try{const t=localStorage.getItem("docs-preview:theme");if(t)document.documentElement.dataset.theme=t;const e=localStorage.getItem("docs-editor:theme");if(e)document.documentElement.dataset.editorTheme=e}catch{}</script>
 <style>${fontCss(Boolean(opts.publish))}${CSS}${mode === "edit" ? EDIT_CSS : ""}</style></head>
-<body${mode === "edit" ? ' class="edit"' : ""}><nav id="sidebar"><div id="sidebar-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" data-i18n-aria-label="Resize sidebar" title="Resize sidebar" data-i18n-title="Resize sidebar"></div><div id="sidebar-head">${siteIcon}<div id="site-title" class="site-title" title="${siteTitle}">${siteTitle}</div><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button></div><div id="sidebar-content"><div id="nav-groups">${nav}</div><div id="nav-status" role="status" aria-live="polite"></div></div></nav>${main}${opts.aside ?? ""}
+<body${mode === "edit" ? ' class="edit"' : ""}><nav id="sidebar"><div id="sidebar-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" data-i18n-aria-label="Resize sidebar" title="Resize sidebar" data-i18n-title="Resize sidebar"></div><div id="sidebar-head">${siteIcon}<div id="site-title" class="site-title" title="${siteTitle}"${mode === "edit" ? ` data-title="${escapeHtml(site.title ?? "")}" tabindex="0" role="button" aria-label="Edit site title" data-i18n-aria-label="Edit site title"` : ""}>${siteTitle}</div><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button></div><div id="sidebar-content"><div id="nav-groups">${nav}</div><div id="nav-status" role="status" aria-live="polite"></div></div></nav>${main}${opts.aside ?? ""}
 ${bootScripts}${graphScript}
 <script id="code-grammars" type="application/json">${JSON.stringify(site.codeGrammars ?? []).replace(/</g, "\\u003c")}</script>
 ${opts.publish ? `<script>${inlineScript(opts.publish.codeJs)}</script>` : '<script src="/assets/code.js" defer></script>'}
@@ -2284,6 +2288,7 @@ ${
   //         re-fetch the nav regardless of the outcome (= the display is always a copy of
   //         dooc.yaml; no rollback logic).
   // The root placeholder and row buttons open the create form.
+  const t = (key) => window.__docsTranslate?.(key) ?? key;
   const status = document.getElementById("nav-status");
   const setStatus = (message, error) => {
     if (!status) return;
@@ -2296,7 +2301,13 @@ ${
     const id = (cur && cur.closest(".nav-item").dataset.docId) || "";
     const rp = location.pathname.startsWith("/_statics") ? location.pathname.slice(1) : ["/_git", "/_extensions"].includes(location.pathname) ? location.pathname.slice(1) : location.pathname.startsWith("/_files") ? location.pathname.slice(8).replace(/^\\/|\\/$/g, "") : null;
     const res = await localeFetch("/api/nav?current=" + encodeURIComponent(id) + (rp == null ? "" : "&res=" + encodeURIComponent(rp)));
-    if (res.ok) document.getElementById("nav-groups").innerHTML = (await res.json()).html;
+    if (res.ok) {
+      const data = await res.json();
+      document.getElementById("nav-groups").innerHTML = data.html;
+      const label = document.getElementById("site-title");
+      if (!label.querySelector("form")) label.textContent = label.title = data.siteTitle || "dooc";
+      label.dataset.title = data.siteTitle || "";
+    }
     if (window.__docsNavRestore) window.__docsNavRestore();
     document.dispatchEvent(new Event("docs:ui-refresh"));
   };
@@ -2323,17 +2334,85 @@ ${
     event.preventDefault();
     docAction(button.closest(".nav-item"), button.dataset.docAction);
   });
+  const editSiteTitle = (label) => {
+    if (document.querySelector(".nav-rename-form")) return;
+    const original = label.textContent;
+    const baseTitle = label.dataset.title || null;
+    const form = document.createElement("form");
+    form.className = "nav-rename-form";
+    form.title = t("Enter to save / Esc to cancel");
+    const input = document.createElement("input");
+    input.name = "title";
+    input.value = original;
+    input.required = true;
+    input.maxLength = 256;
+    input.setAttribute("aria-label", t("Site title"));
+    form.append(input);
+    label.replaceChildren(form);
+    input.select();
+    let busy = false;
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      form.remove();
+      label.textContent = original;
+      void refresh();
+    };
+    form.addEventListener("focusout", (event) => {
+      if (!busy && !form.contains(event.relatedTarget)) close();
+    });
+    form.addEventListener("keydown", (event) => {
+      if (event.isComposing) return;
+      if (event.key === "Escape" && !busy) {
+        event.preventDefault();
+        close();
+        label.focus();
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (busy || closed || !input.value.trim()) return;
+      busy = true;
+      input.readOnly = true;
+      try {
+        const result = await post("/api/site-title", { title: input.value, baseTitle });
+        closed = true;
+        form.remove();
+        label.textContent = label.title = result.title;
+        label.dataset.title = result.title;
+        await refresh();
+        label.focus();
+        setStatus("", false);
+      } catch (error) {
+        setStatus(error.message, true);
+        input.focus();
+      } finally {
+        busy = false;
+        input.readOnly = false;
+      }
+    });
+  };
   const editLabel = (event) => {
     if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
     const target = event.target instanceof Element ? event.target : null;
     if (!target || target.closest("button, input, form, .nav-doc-icon")) return;
+    const label = target.closest("#site-title");
+    if (label) {
+      event.preventDefault();
+      editSiteTitle(label);
+      return;
+    }
     const row = target.closest("#nav-groups [data-doc-id] > .nav-row");
     if (!row) return;
     event.preventDefault();
     docAction(row.closest("[data-doc-id]"), "rename");
   };
   document.addEventListener("dblclick", editLabel);
-  document.addEventListener("keydown", (event) => { if (event.key === "F2") editLabel(event); });
+  document.addEventListener("keydown", (event) => { if (event.key === "F2" || (event.key === "Enter" && event.target.id === "site-title")) editLabel(event); });
   const setIcon = async (slot, file) => {
     if (file && !/\\.svg$/i.test(file.name) && file.type !== "image/svg+xml") {
       setStatus("Icon must be svg", true);
@@ -3468,11 +3547,13 @@ export const startServer = async (
                     );
                     if (!input) throw new Error("Invalid file request");
                     const result =
-                        input.action === "read"
-                            ? filesSnapshot(root)
-                            : input.action === "upload"
-                              ? uploadFile(root, input)
-                              : updateFiles(root, input);
+                        input.action === "complete"
+                            ? completeFilePaths(root, input.prefix)
+                            : input.action === "read"
+                              ? filesSnapshot(root)
+                              : input.action === "upload"
+                                ? uploadFile(root, input)
+                                : updateFiles(root, input);
                     sendJson(res, 200, result);
                 } catch (error) {
                     sendJson(res, 409, {
@@ -3684,7 +3765,7 @@ export const startServer = async (
                 await handleIcon(req, res);
                 return;
             }
-            if (path === "/api/site-icon") {
+            if (path === "/api/site-icon" || path === "/api/site-title") {
                 if (
                     !isLocalToolRequest(
                         req.headers.host ?? "",
@@ -3693,11 +3774,15 @@ export const startServer = async (
                     )
                 ) {
                     sendJson(res, 403, {
-                        error: "Site icons require a same-origin local editor request",
+                        error: "Site settings require a same-origin local editor request",
                     });
                     return;
                 }
-                const result = siteIconResponse(root, await readJson(req));
+                const input = await readJson(req);
+                const result =
+                    path === "/api/site-title"
+                        ? siteTitleResponse(root, input)
+                        : siteIconResponse(root, input);
                 sendJson(res, result.status, result.body);
                 return;
             }
