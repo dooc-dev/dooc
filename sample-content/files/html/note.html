@@ -1,12 +1,169 @@
 <!--fig
 title: Release note
-desc: A small HTML disclosure built with native elements.
+desc: A responsive release note with feature cards, a change log, and an interactive review checklist.
 -->
 <style>
-  .release-note { padding: 16px 18px; border: 1px solid var(--doc-border, #dfe5ed); border-radius: 8px; color: var(--doc-fg, #263244); background: var(--doc-panel, #ffffff); font: 13px/1.6 system-ui, sans-serif; }
-  .release-note header { display: flex; justify-content: space-between; gap: 12px; }
-  .release-note small { color: var(--doc-fg-2, #6b788c); }
-  .release-note summary { margin-top: 8px; cursor: pointer; }
-  .release-note ul { margin: 6px 0 0; padding-left: 20px; }
+  .release-note {
+    --accent: var(--doc-accent-2, #0277bd);
+    --muted: var(--doc-fg-2, #526174);
+    --border: var(--doc-border, #dfe5ed);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    color: var(--doc-fg, #263244);
+    background: var(--doc-panel, #ffffff);
+    font: 14px/1.65 system-ui, sans-serif;
+  }
+  .release-note * { box-sizing: border-box; }
+  .release-note :is(h1, h2, h3, p, ol) { margin: 0; }
+  .release-note .hero {
+    padding: clamp(22px, 5vw, 40px);
+    border-bottom: 1px solid var(--border);
+    background: radial-gradient(ellipse at top right, color-mix(in srgb, var(--accent) 18%, transparent), transparent 70%);
+  }
+  .release-note .eyebrow {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 650;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .release-note .masthead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 26px;
+  }
+  .release-note .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+    border-radius: 20px;
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .release-note h1 {
+    max-width: 17ch;
+    font-size: clamp(30px, 6vw, 46px);
+    font-weight: 650;
+    letter-spacing: -0.045em;
+    line-height: 1.12;
+    text-wrap: balance;
+  }
+  .release-note .intro { max-width: 52ch; margin-top: 16px; color: var(--muted); }
+  .release-note .content { padding: clamp(18px, 4vw, 32px); }
+  .release-note h2 { font-size: 18px; font-weight: 650; letter-spacing: -0.02em; }
+  .release-note h3 { margin: 12px 0 6px; font-size: 15px; font-weight: 650; }
+  .release-note .features {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin: 16px 0 28px;
+    padding: 0;
+    list-style: none;
+  }
+  .release-note .features li {
+    padding: 18px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--accent) 3%, transparent);
+  }
+  .release-note .number { color: var(--accent); font: 12px/1.4 ui-monospace, monospace; }
+  .release-note .features p { color: var(--muted); font-size: 13px; }
+  .release-note .table-scroll { overflow-x: auto; margin-bottom: 28px; }
+  .release-note table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
+  .release-note caption { margin-bottom: 12px; text-align: left; font-size: 18px; font-weight: 650; }
+  .release-note :is(th, td) { padding: 12px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .release-note thead { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+  .release-note th { font-weight: 600; }
+  .release-note td { color: var(--muted); }
+  .release-note code { font: 0.95em ui-monospace, monospace; }
+  .release-note details { border: 1px solid var(--border); border-radius: 10px; }
+  .release-note summary { padding: 16px 18px; cursor: pointer; font-weight: 600; }
+  .release-note summary::marker { color: var(--accent); }
+  .release-note :is(summary, input, .table-scroll):focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+  .release-note .checklist { display: grid; gap: 12px; padding: 0 18px 18px; }
+  .release-note label { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+  .release-note input { flex: none; width: 17px; height: 17px; margin: 3px 0 0; accent-color: var(--accent); }
+  .release-note input:checked + span { color: var(--muted); text-decoration: line-through; }
+  .release-note .hint { color: var(--muted); font-size: 12px; }
+  .release-note footer {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 16px clamp(18px, 4vw, 32px);
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 12px;
+  }
+  @media (max-width: 540px) {
+    .release-note .features { grid-template-columns: 1fr; }
+    .release-note .features li { padding: 16px; }
+    .release-note h3 { margin-top: 6px; }
+  }
 </style>
-<section class="release-note"><header><strong>Ready for review</strong><small>Release 0.1</small></header><details><summary>What changed</summary><ul><li>File previews stay beside the document.</li><li>Each pane has its own theme.</li><li>Service cards fold into a compact summary.</li></ul></details></section>
+<article class="release-note" lang="en" aria-labelledby="release-title">
+  <header class="hero">
+    <div class="masthead">
+      <span class="eyebrow">dooc / Release notes</span>
+      <span class="badge">Sample release · 0.1</span>
+    </div>
+    <h1 id="release-title">A clearer view of your work.</h1>
+    <p class="intro">Keep the explanation, the source, and the conversation together. A small release with more room for the details that matter.</p>
+  </header>
+
+  <div class="content">
+    <section aria-labelledby="highlights-title">
+      <h2 id="highlights-title">Three things to try</h2>
+      <ol class="features">
+        <li>
+          <span class="number" aria-hidden="true">01 / SOURCE</span>
+          <h3>Files in context</h3>
+          <p>Bring code, diagrams, and data into a document. Keep a direct path back to the original file.</p>
+        </li>
+        <li>
+          <span class="number" aria-hidden="true">02 / FOCUS</span>
+          <h3>A view for every pane</h3>
+          <p>Compare light and dark previews side by side, with a theme for each pane.</p>
+        </li>
+        <li>
+          <span class="number" aria-hidden="true">03 / CONTEXT</span>
+          <h3>Details on demand</h3>
+          <p>Fold service cards into a compact summary. Open the details when you need the full story.</p>
+        </li>
+      </ol>
+    </section>
+
+    <div class="table-scroll" tabindex="0" role="region" aria-label="Release changes">
+      <table>
+        <caption>What changed</caption>
+        <thead>
+          <tr><th scope="col">Area</th><th scope="col">Try it out</th></tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row">File previews</th><td>Open a source file from its card and inspect the original alongside the document.</td></tr>
+          <tr><th scope="row">Appearance</th><td>Switch a preview between <code>light</code>, <code>dark</code>, and <code>auto</code>.</td></tr>
+          <tr><th scope="row">Service cards</th><td>Collapse a card to its summary, then expand it to return to the details.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <details open>
+      <summary>Before you share</summary>
+      <div class="checklist">
+        <label><input type="checkbox"><span>Check the preview in both light and dark themes.</span></label>
+        <label><input type="checkbox"><span>Narrow the pane and make sure the content stays readable.</span></label>
+        <p class="hint">Try checking an item or folding this section. Checklist changes reset when the preview reloads.</p>
+      </div>
+    </details>
+  </div>
+
+  <footer>
+    <span>Made for the details.</span>
+    <span>dooc · HTML sample</span>
+  </footer>
+</article>

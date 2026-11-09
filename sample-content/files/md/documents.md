@@ -18,4 +18,4 @@ title: "Document blocks"
 
 ![Release note](files/html/note.html)
 
-HTML fragments stay isolated from the document's layout. Open the disclosure to inspect the checklist.
+HTML fragments stay isolated from the document's layout. This release note combines responsive feature cards, a change log, and a native review checklist. Try checking an item, folding the checklist, narrowing the pane, or switching its theme.
