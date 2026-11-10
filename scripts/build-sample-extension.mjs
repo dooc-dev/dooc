@@ -25,7 +25,7 @@ const data = zip([
                     version: "1.0.0",
                     type: "module",
                     main: "index.mjs",
-                    icon: "assets/orbit.svg",
+                    icon: "assets/taskapp.svg",
                 },
                 null,
                 2,
@@ -33,7 +33,7 @@ const data = zip([
         ),
     },
     { name: "index.mjs", data: Buffer.from(bundle.outputFiles[0].contents) },
-    ...["orbit", "forge", "chatter"].map((name) => ({
+    ...["taskapp", "gitapp", "chatapp"].map((name) => ({
         name: `assets/${name}.svg`,
         data: readFileSync(`examples/viewer-plugins/assets/${name}.svg`),
     })),

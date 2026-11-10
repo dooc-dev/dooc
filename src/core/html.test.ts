@@ -98,15 +98,16 @@ describe("blocksHtml", () => {
         expect(output).toContain(MODEL_FIG.desc);
     });
 
-    it("keeps the localized table of contents label accessible without visible title text", () => {
+    it("places the localized outline beside the title without a seek bar", () => {
         const output = docHtml({ title: "Guide" }, [], [], { ...CTX, tocTitle: '<Contents "&">' }, [
             { depth: 2, text: "Section", slug: "section" },
         ]);
         expect(output).toContain('aria-label="&lt;Contents &quot;&amp;&quot;&gt;"');
+        expect(output).toContain('<header class="doc-title"><h1>Guide</h1><nav class="in-toc"');
         expect(output).not.toContain('class="in-toc-title"');
         expect(output).toContain('href="#section" data-toc-target="section"');
         expect(output).toContain('title="Section">Section</a>');
-        expect(output).toContain('class="toc-seek" type="range"');
+        expect(output).not.toContain('type="range"');
         expect(docHtml({ title: "No headings" }, [], [])).not.toContain('class="in-toc"');
     });
 

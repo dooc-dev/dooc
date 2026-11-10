@@ -111,6 +111,22 @@ describe("sample plugin", () => {
         });
         expect(pluginViewHtml(view)).toContain("Real response");
         expect(view).not.toHaveProperty("format");
+        const overview = await plugin.read(new URL("https://example.com/tickets/DOC-42#overview"), {
+            request,
+            user,
+        });
+        expect(request).toHaveBeenLastCalledWith("https://example.com/tickets/DOC-42");
+        expect(overview.header).toEqual(view.header);
+        expect(overview.blocks).toHaveLength(1);
+        expect(overview.blocks[0]).toMatchObject({
+            type: "section",
+            title: "From service · Open",
+            collapsed: true,
+            blocks: view.blocks,
+        });
+        expect(pluginViewHtml(overview)).toContain(
+            '<details class="plugin-block-section"><summary>From service · Open</summary>',
+        );
         request.mockResolvedValue({
             ...data,
             id: "DOC-99",

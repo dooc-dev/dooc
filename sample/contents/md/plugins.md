@@ -4,21 +4,21 @@ title: "Service cards"
 
 A plugin fetches data and returns structured blocks. dooc renders the blocks using the current theme. These three fictional services are interactive local demos. No external account is needed; changes last until the viewer restarts.
 
-Run `mise run dev` to register the demo plugins and load this sample workspace. The **Plugins** card lists **Service cards** (`sample`) and **Service cards (sign-in demo)** (`sample-auth`). Orbit, Forge, and Chatter connect automatically.
+Run `mise run dev` to register the demo plugins and load this sample workspace. The **Plugins** card lists **Service cards** (`sample`) and **Service cards (sign-in demo)** (`sample-auth`). TaskApp, GitApp, and ChatApp connect automatically.
 
-## Orbit
+## TaskApp
 
 Turn on Edit, then double-click a value (or press Enter / F2) to change the title, status, assignee, priority, due date, labels, estimate, and checklist. Values save automatically. Markdown stays rendered until you open its editor.
 
 ![Issue DOC-42](https://sample.dooc.invalid/tickets/DOC-42)
 
-## Forge
+## GitApp
 
 Inspect the diff, change the review status, and post or edit comments.
 
 ![Pull request 17](https://sample.dooc.invalid/pulls/17)
 
-## Chatter
+## ChatApp
 
 Edit the message, reply to the thread, and toggle reactions. Your own comments can be edited or deleted after confirmation.
 
@@ -55,7 +55,7 @@ async function read(url, { request }) {
     throw new Error("Invalid service response");
   }
   return {
-    header: { title: "Orbit", reference: data.id },
+    header: { title: "TaskApp", reference: data.id },
     blocks: [
       { type: "heading", text: data.title },
       { type: "context", items: [{ text: data.status, tone: "accent" }] },

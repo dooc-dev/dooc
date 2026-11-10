@@ -90,10 +90,13 @@ export const createSamplePlugin = ({ id = "sample", authorizationUrl, tokenUrl, 
                     ...(comment.user === user.id ? { edit: { action: `edit:${comment.id}`, field: "body" }, actions: [`delete:${comment.id}`] } : {}) })),
                 { type: "actions", ids: ["comment"], composer: true },
             ] });
-            return { header: { title: { ticket: "Orbit", pull: "Forge", message: "Chatter" }[data.type],
+            const collapsed = { blocks: [{ type: "context", items: [{ text: data.title, strong: true }, badge, ...(data.type === "pull" ? [`✓ ${data.checks} checks`] : [])] }] };
+            return { header: { title: { ticket: "TaskApp", pull: "GitApp", message: "ChatApp" }[data.type],
                 icon: { light: icon(data.type, "#303a4d"), dark: icon(data.type, "#d5dfef") },
-                context: data.project ?? data.repository ?? data.channel, reference: data.id }, blocks,
-                collapsed: { blocks: [{ type: "context", items: [{ text: data.title, strong: true }, badge, ...(data.type === "pull" ? [`✓ ${data.checks} checks`] : [])] }] } };
+                context: data.project ?? data.repository ?? data.channel, reference: data.id },
+                blocks: url.hash === "#overview" ? [
+                    { type: "section", title: `${data.title} · ${data.status}`, collapsed: true, blocks }] : blocks,
+                collapsed };
         },
         async actions(url, { request, user }) {
             return sampleActions(await request(endpoint(url)), user);

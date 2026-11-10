@@ -1,6 +1,6 @@
-title: dooc
-icon: contents/svg/_site.svg
-defaultLang: eng
+title: "dooc"
+icon: "contents/svg/_site.svg"
+defaultLang: "eng"
 files:
   defaultLayout: false
   documents:
@@ -14,6 +14,7 @@ files:
     video: contents/md/video.md
     plugins: contents/md/plugins.md
     themes: contents/md/themes.md
+    demo-page: content/demo-page.md
   order:
     - contents/md/code.md
     - contents/md/data.md
@@ -69,6 +70,7 @@ files:
     - contents/jpg/download.jpg
     - contents/webp/download-2.webp
     - contents/webp/download.webp
+    - content/demo-page.md
 docs:
   - guide:
       - previews:
@@ -80,3 +82,4 @@ docs:
           - video
       - plugins
       - themes
+  - demo-page

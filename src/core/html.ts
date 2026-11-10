@@ -544,7 +544,7 @@ export const blocksHtml = (blocks: Block[], ctx: RenderCtx = emptyCtx): string =
         .join("\n");
 };
 
-// The viewer moves this navigation into the fixed document header.
+// Keep the document outline beside its title in every viewer.
 const inPageTocHtml = (toc: TocEntry[], title = "Contents"): string => {
     if (toc.length === 0) {
         return "";
@@ -555,7 +555,7 @@ const inPageTocHtml = (toc: TocEntry[], title = "Contents"): string => {
                 `<li class="lvl${t.depth}"><a href="#${escapeHtml(t.slug)}" data-toc-target="${escapeHtml(t.slug)}" title="${escapeHtml(t.text)}">${escapeHtml(t.text)}</a></li>`,
         )
         .join("");
-    return `<nav class="in-toc" aria-label="${escapeHtml(title)}"><button class="toc-current" type="button" aria-expanded="false">${escapeHtml(toc[0]?.text ?? "")}</button><ul class="toc-options" popover>${items}</ul><input class="toc-seek" type="range" min="0" max="1000" step="1" value="0" aria-label="${escapeHtml(title)}" disabled></nav>`;
+    return `<nav class="in-toc" aria-label="${escapeHtml(title)}"><button class="toc-current" type="button" aria-expanded="false">${escapeHtml(toc[0]?.text ?? "")}</button><ul class="toc-options" popover>${items}</ul></nav>`;
 };
 
 export const docHtml = (
@@ -570,5 +570,5 @@ export const docHtml = (
             ? `<div class="errors">${errors.map((e) => `<div>${escapeHtml(e)}</div>`).join("")}</div>`
             : "";
     const lang = ctx.lang ? ` lang="${escapeHtml(ctx.lang)}"` : "";
-    return `<article${lang}>${errBox}<h1>${escapeHtml(docDisplayName(fm, ""))}</h1>${inPageTocHtml(toc, ctx.tocTitle)}${blocksHtml(blocks, ctx)}</article>`;
+    return `<article${lang}>${errBox}<header class="doc-title"><h1>${escapeHtml(docDisplayName(fm, ""))}</h1>${inPageTocHtml(toc, ctx.tocTitle)}</header>${blocksHtml(blocks, ctx)}</article>`;
 };

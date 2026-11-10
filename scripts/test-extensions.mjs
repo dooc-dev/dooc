@@ -36,14 +36,14 @@ window.testExtensionStorage = async (file) => {
             action: "edit",
             file: file.name,
             hash: installed.hash,
-            path: "assets/orbit.svg",
+            path: "assets/taskapp.svg",
             source: "<svg>Edited</svg>",
         })
     ).items[0];
     assert(updated.hash !== installed.hash, "Edits must change the revision");
     const read = await request({ action: "read", file: file.name });
     assert(
-        atob(read.files.find((entry) => entry.name === "assets/orbit.svg").data) ===
+        atob(read.files.find((entry) => entry.name === "assets/taskapp.svg").data) ===
             "<svg>Edited</svg>",
         "Asset edit must persist",
     );

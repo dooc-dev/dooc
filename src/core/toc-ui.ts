@@ -26,17 +26,15 @@ export function mountToc(doc: Document): () => void {
         for (const nav of doc.querySelectorAll<HTMLElement>(".in-toc")) {
             if (mounted.has(nav)) continue;
             const article = nav.closest("article");
-            const seek = nav.querySelector<HTMLInputElement>(".toc-seek");
             const button = nav.querySelector<HTMLButtonElement>(".toc-current");
             const list = nav.querySelector("ul");
-            if (!article || !seek || !button || !list) continue;
+            if (!article || !button || !list) continue;
             const pane = nav.closest<HTMLElement>(".preview-pane");
             const scroller = pane ?? doc.scrollingElement;
             if (!scroller) continue;
             const header = (pane ?? article.parentElement)?.querySelector<HTMLElement>(
                 ":scope > .pane-actions, :scope > .page-actions",
             );
-            header?.prepend(nav);
             const listeners = new AbortController();
             const options = { signal: listeners.signal };
             list.id = `toc-options-${++sequence}`;
@@ -50,24 +48,33 @@ export function mountToc(doc: Document): () => void {
                 }))
                 .filter((section) => section.heading !== null);
             let active: HTMLAnchorElement | undefined;
+            let card = false;
             const update = (): void => {
-                const maximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-                const progress = maximum
-                    ? Math.max(0, Math.min(1, scroller.scrollTop / maximum))
-                    : 0;
-                seek.disabled = maximum === 0;
-                seek.value = String(Math.round(progress * 1000));
-                seek.style.setProperty("--toc-progress", `${progress * 100}%`);
-                const top = (header ?? nav).getBoundingClientRect().bottom + 20;
+                const narrow = article.clientWidth < 520;
+                if (card !== narrow) {
+                    card = narrow;
+                    const focused = nav.contains(doc.activeElement);
+                    list.popover = card ? null : "auto";
+                    list.removeAttribute("style");
+                    nav.classList.toggle("toc-card", card);
+                    if (focused)
+                        (card ? (active ?? sections[0]?.link) : button)?.focus({
+                            preventScroll: true,
+                        });
+                }
+                const top =
+                    (header?.getBoundingClientRect().bottom ??
+                        pane?.getBoundingClientRect().top ??
+                        0) + 20;
                 let current = sections[0];
                 for (const section of sections)
                     if ((section.heading?.getBoundingClientRect().top ?? Infinity) <= top)
                         current = section;
-                if (progress === 1) current = sections.at(-1);
-                seek.setAttribute(
-                    "aria-valuetext",
-                    `${current?.link.textContent ?? ""} · ${Math.round(progress * 100)}%`,
-                );
+                if (
+                    scroller.scrollTop > 0 &&
+                    scroller.scrollTop >= scroller.scrollHeight - scroller.clientHeight - 1
+                )
+                    current = sections.at(-1);
                 if (current?.link === active) return;
                 active?.removeAttribute("aria-current");
                 active = current?.link;
@@ -104,6 +111,7 @@ export function mountToc(doc: Document): () => void {
             list.addEventListener(
                 "keydown",
                 (event) => {
+                    if (card) return;
                     const index = sections.findIndex(({ link }) => link === doc.activeElement);
                     if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
                         event.preventDefault();
@@ -135,25 +143,15 @@ export function mountToc(doc: Document): () => void {
                     const link = (event.target as Element).closest("[data-toc-target]");
                     const heading = sections.find((section) => section.link === link)?.heading;
                     if (!heading) return;
-                    list.hidePopover();
-                    button.focus({ preventScroll: true });
+                    if (!card) {
+                        list.hidePopover();
+                        button.focus({ preventScroll: true });
+                    }
                     if (pane) {
                         // Pane activation is asynchronous, so resolve the clicked pane directly.
                         event.preventDefault();
                         heading.scrollIntoView({ block: "start" });
                     }
-                },
-                options,
-            );
-            seek.addEventListener(
-                "input",
-                () => {
-                    const maximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-                    scroller.scrollTo({
-                        top: (Number(seek.value) / 1000) * maximum,
-                        behavior: "instant",
-                    });
-                    schedule();
                 },
                 options,
             );

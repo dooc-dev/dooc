@@ -238,7 +238,6 @@ let resourceView: (ResourcePage & { element: HTMLElement; dispose?: () => void }
 let mainEl = workspace.querySelector(".preview-content") as HTMLElement;
 const patchPreview = createPreviewUpdater(mainEl);
 const updatePreview = (fragment: DocumentFragment): void => {
-    mainEl.parentElement?.querySelector(".pane-actions > .in-toc")?.remove();
     patchPreview(mainEl, fragment);
 };
 mountUiLanguage();
@@ -1389,7 +1388,7 @@ const onChange = (): void => {
 
 // ── Correspondence view tagging / highlighting ───────────────────────────
 // Zip the direct children of the main <article> with blockLines in block order (excluding the
-// leading front-matter elements = errors / h1 / fullname / lead). Full-listing blocks for figures
+// leading front-matter elements = errors / title / fullname). Full-listing blocks for figures
 // or term definitions occasionally expand 1:N and shift everything after, but highlighting is
 // correct up to the min index (a "good enough" display for a dev tool).
 const clearPreviewHi = (): void => {
@@ -1405,7 +1404,7 @@ const tagCorrespondence = (blockLines: number[]): void => {
         return;
     }
     const kids = ([...article.children] as HTMLElement[]).filter(
-        (el) => !el.matches(".errors, h1, .fullname"),
+        (el) => !el.matches(".errors, .doc-title, h1, .fullname"),
     );
     const n = Math.min(kids.length, blockLines.length);
     for (let i = 0; i < n; i++) {
@@ -1900,11 +1899,6 @@ const leavePage = async (url: string, activeApproved = false): Promise<void> => 
 let languageButton: HTMLButtonElement | undefined;
 const languageMenu = $("preview-language-menu");
 const paneActions = workspace.querySelector(".pane-actions") as HTMLElement;
-const clonePaneActions = (): HTMLElement => {
-    const actions = paneActions.cloneNode(true) as HTMLElement;
-    actions.querySelector(".in-toc")?.remove();
-    return actions;
-};
 const closeLanguageMenu = (): void => {
     languageMenu.hidden = true;
     languageButton?.setAttribute("aria-expanded", "false");
@@ -2327,7 +2321,7 @@ $("split-preview").addEventListener("click", () => {
                 const element = document.createElement("section");
                 element.className = "preview-pane";
                 element.tabIndex = 0;
-                element.append(clonePaneActions());
+                element.append(paneActions.cloneNode(true));
                 const content = document.createElement("div");
                 content.className = "preview-content";
                 element.append(content);
