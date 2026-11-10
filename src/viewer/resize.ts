@@ -156,7 +156,20 @@ export const mountToolsResize = (): (() => void) => {
     } catch {
         /* Persistence is optional. */
     }
-    const apply = (height = preferred ?? Math.min(220, innerHeight * 0.4)): void => {
+    // Without a saved height, fit the cards so the panel shows no empty band below them.
+    const fittedHeight = (): number => {
+        const tools = document.getElementById("nav-tools");
+        const cards = tools?.querySelector(".nav-tool-cards");
+        const last = cards?.lastElementChild;
+        if (!tools || !cards || !last) return 220;
+        // The card list stretches to the panel, so measure its content rather than scrollHeight.
+        const content =
+            last.getBoundingClientRect().bottom -
+            cards.getBoundingClientRect().top +
+            cards.scrollTop;
+        return tools.offsetHeight - cards.clientHeight + content;
+    };
+    const apply = (height = preferred ?? Math.min(fittedHeight(), innerHeight * 0.4)): void => {
         const handle = document.getElementById("tools-resize");
         if (!handle) return;
         const max = Math.max(80, sidebar.clientHeight - 100);
