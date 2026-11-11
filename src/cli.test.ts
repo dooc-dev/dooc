@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    rmSync,
+    symlinkSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -30,6 +39,58 @@ const cli = (...args: string[]) => {
 };
 
 describe("source-based CLI", () => {
+    it("initializes a manifest that supports adding the first document", async () => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-init-"));
+        roots.push(root);
+        const result = cli("init");
+        await result.run();
+        expect(readdirSync(root)).toEqual(["dooc.yaml"]);
+        const { readManifest } = await import("./compiler/manifest.js");
+        expect(readManifest(root)).toMatchObject({ format: "nested", tree: [], errors: [] });
+        expect(result.stdout).toHaveBeenCalledWith(expect.stringContaining("dooc edit"));
+        const { createDocOps } = await import("./compiler/ops.js");
+        expect(createDocOps(root).addFile("guide.md", "Guide")).not.toHaveProperty("error");
+        const { compileSite } = await import("./compiler/compile.js");
+        expect(compileSite(root).errors).toEqual([]);
+    });
+
+    it.each([false, true])("preserves an existing manifest (symlink=%s)", async (symlink) => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-init-existing-"));
+        roots.push(root);
+        const manifest = join(root, "dooc.yaml");
+        const target = symlink ? join(root, "existing.yaml") : manifest;
+        const raw = "# Keep this configuration\ncenter_contents: []\n";
+        writeFileSync(target, raw);
+        if (symlink) symlinkSync(target, manifest);
+        const result = cli("init");
+        await expect(result.run()).rejects.toThrow("CLI exit");
+        expect(result.exit).toHaveBeenCalledWith(1);
+        expect(result.stderr).toHaveBeenCalledWith(expect.stringContaining("already exists"));
+        expect(readFileSync(manifest, "utf8")).toBe(raw);
+        expect(readFileSync(target, "utf8")).toBe(raw);
+    });
+
+    it.each([
+        "--help",
+        "-h",
+        "--unknown",
+        "--force",
+        "other-folder",
+    ])("does not create a manifest for init %s", async (arg) => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-init-args-"));
+        roots.push(root);
+        const result = cli("init", arg);
+        if (arg === "--help" || arg === "-h") {
+            await result.run();
+            expect(result.stdout).toHaveBeenCalledWith(expect.stringContaining("dooc init"));
+            expect(result.exit).not.toHaveBeenCalled();
+        } else {
+            await expect(result.run()).rejects.toThrow("CLI exit");
+            expect(result.exit).toHaveBeenCalledWith(1);
+        }
+        expect(readdirSync(root)).toEqual([]);
+    });
+
     it("injects an external Git origin into MCP without starting viewer plugins", async () => {
         const root = mkdtempSync(join(tmpdir(), "dooc-cli-mcp-"));
         roots.push(root);
@@ -80,6 +141,7 @@ describe("source-based CLI", () => {
         const result = cli(...args);
         await result.run();
         const help = result.stdout.mock.calls[0]?.[0];
+        expect(help).toContain("init");
         expect(help).toContain("edit [dooc.yaml] [port]");
         expect(help).toContain("view [dooc.yaml] [port]");
         expect(help).toContain("mcp [dooc.yaml]");

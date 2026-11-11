@@ -1,0 +1,18 @@
+diff --git a/dist/chunks/mermaid.core/chunk-CFHHFPVC.mjs b/dist/chunks/mermaid.core/chunk-CFHHFPVC.mjs
+index f6668326182481149248542c0c8ae293cd33486c..b0510ab1e0e3b65a63a093326ee27cd9ff06cb25 100644
+--- a/dist/chunks/mermaid.core/chunk-CFHHFPVC.mjs
++++ b/dist/chunks/mermaid.core/chunk-CFHHFPVC.mjs
+@@ -64,11 +64,8 @@ var registerLayoutLoaders = /* @__PURE__ */ __name((loaders) => {
+   }
+ }, "registerLayoutLoaders");
+ var elkLayoutLoaders = /* @__PURE__ */ __name(() => {
+-  const loader = /* @__PURE__ */ __name(async () => await import("./elk-XV6XMXQE.mjs"), "loader");
+-  return [
+-    { name: "elk", loader, algorithm: "elk.layered" },
+-    ...ELK_ALGORITHMS.map((algorithm) => ({ name: algorithm, loader, algorithm }))
+-  ];
++  // Exclude ELK from dooc distributions while preserving the other diagram types.
++  return [];
+ }, "elkLayoutLoaders");
+ var registerDefaultLayoutLoaders = /* @__PURE__ */ __name(() => {
+   registerLayoutLoaders([

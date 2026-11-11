@@ -28,6 +28,8 @@ try {
     };
     const run = (...args) => execFileSync(binary, args, options);
     assert.match(run("--help"), /usage: dooc/);
+    assert.match(run("init"), /Created/);
+    assert.match(readFileSync(join(root, "dooc.yaml"), "utf8"), /center_contents: \[\]/);
     mkdirSync(join(root, "content"));
     writeFileSync(join(root, "dooc.yaml"), "defaultLang: ja\ndocs:\n  - guide\n");
     writeFileSync(

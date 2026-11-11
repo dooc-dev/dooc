@@ -40,6 +40,19 @@ brew install dooc-dev/dooc/dooc
 
 Use `brew update && brew upgrade dooc-dev/dooc/dooc` for upgrades.
 
+## Start a project
+
+Run these commands in the directory where you want to keep your documents:
+
+```sh
+dooc init
+dooc edit
+```
+
+`dooc init` creates an empty `dooc.yaml` using the current manifest format. It does
+not overwrite an existing file. Add your first document in the editor, then use
+`dooc view` or `dooc build html` when you have content to display.
+
 ## Build and release
 
 ```sh

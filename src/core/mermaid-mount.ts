@@ -4,6 +4,7 @@ mermaid.initialize({
     startOnLoad: false,
     securityLevel: "strict",
     suppressErrorRendering: true,
+    layout: "dagre",
 });
 
 let nextId = 0;

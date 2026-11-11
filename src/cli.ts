@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { projectRoot } from "./compiler/manifest.js";
+import { MANIFEST_FILE, serializeManifest } from "./core/content-metadata.js";
 import { prebuilt } from "./viewer/assets.js";
 
 process.env.NODE_ENV = prebuilt ? "production" : "development";
@@ -11,6 +12,7 @@ process.env.NODE_ENV = prebuilt ? "production" : "development";
 const USAGE = `usage: dooc <command>
 
 commands:
+  ├─ init                                 create dooc.yaml in the current directory
   ├─ edit [dooc.yaml] [port]              open dooc in edit mode
   │  └─ --viewer-plugins <module>         inject an external viewer plugin module
   ├─ view [dooc.yaml] [port]              open dooc in view mode
@@ -37,7 +39,7 @@ commands:
   │  └─ --git-origin <module>             inject gitOrigin from an external viewer plugin module
   └─ help, --help, -h                     show this help
 
-Details: dooc <command> --help (build, check, plugin, font, mcp).
+Details: dooc <command> --help (init, build, check, plugin, font, mcp).
 Default manifest: ./dooc.yaml. Paths and .dooc/ are relative to its directory.`;
 
 const fail = (message: string): never => {
@@ -52,6 +54,38 @@ const writeOut = (out: string, data: string | Buffer): void => {
 
 const [command, ...args] = process.argv.slice(2);
 switch (command) {
+    case "init": {
+        try {
+            const { positionals, values } = parseArgs({
+                args,
+                allowPositionals: true,
+                options: { help: { type: "boolean", short: "h" } },
+            });
+            if (values.help) {
+                console.log(`usage: dooc init
+
+Create dooc.yaml in the current directory. Existing files are never overwritten.
+Run dooc edit to add your first document.
+
+options:
+  --help, -h  show this help`);
+                break;
+            }
+            if (positionals.length) throw new Error("init does not accept positional arguments");
+            const file = resolve(MANIFEST_FILE);
+            writeFileSync(file, serializeManifest([], { format: "nested" }), { flag: "wx" });
+            console.log(`Created ${file}\nRun dooc edit to add your first document.`);
+        } catch (error) {
+            fail(
+                error instanceof Error && "code" in error && error.code === "EEXIST"
+                    ? `${MANIFEST_FILE} already exists; nothing was overwritten.`
+                    : error instanceof Error
+                      ? error.message
+                      : String(error),
+            );
+        }
+        break;
+    }
     case "plugin": {
         try {
             const { positionals, values } = parseArgs({
