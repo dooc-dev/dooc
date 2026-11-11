@@ -194,4 +194,37 @@ it("injects and replaces network policy at runtime without editor controls or pe
     expect((await call("/guide")).body).toContain("Injected repository");
     viewer.setWorkspace(undefined);
     expect((await call("/guide")).body).not.toContain("Injected repository");
+
+    mkdirSync(join(root, "figures"));
+    const payload = "Large figure data".repeat(10_000);
+    writeFileSync(
+        join(root, "figures/large.svg"),
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><!--${payload}--><rect width="20" height="20"/></svg>`,
+    );
+    writeFileSync(join(root, "content/guide.md"), "# Guide\n\n![](figures/large.svg)\n");
+    const deferred = await call("/guide");
+    expect(deferred.body).toContain("data-figure-preview=");
+    expect(deferred.body).not.toContain(payload);
+    expect(deferred.body).toContain('data-src="/assets/code-grammars.json"');
+    expect(JSON.parse((await call("/assets/code-grammars.json")).body)).toBeInstanceOf(Array);
+    expect(
+        JSON.parse((await call("/assets/code-grammars.json?language=js")).body).map(
+            (grammar: { name: string }) => grammar.name,
+        ),
+    ).toEqual(["javascript"]);
+    expect(
+        JSON.parse((await call("/assets/code-grammars.json?language=termth")).body).map(
+            (grammar: { name: string }) => grammar.name,
+        ),
+    ).toEqual(["termth", "yaml"]);
+    expect(JSON.parse((await call("/assets/code-grammars.json?language=unknown")).body)).toEqual(
+        [],
+    );
+    const preview = await call("/api/figure-preview?file=figures%2Flarge.svg");
+    expect(preview.status).toBe(200);
+    expect(preview.body).toContain('sandbox=""');
+    expect(preview.body).toContain(payload);
+    expect((await call("/api/figure-preview?file=../private.svg")).status).toBe(404);
+    writeFileSync(join(root, ".gitignore"), "figures/large.svg\n");
+    expect((await call("/api/figure-preview?file=figures%2Flarge.svg")).status).toBe(404);
 });

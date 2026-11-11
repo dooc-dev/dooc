@@ -6,6 +6,7 @@ import { type SchemaObject, schemaObject } from "../core/schema-fields.js";
 import { type SchemaContext, schemaResolver } from "../core/schema-refs.js";
 import { parseSubformatRecord, setSubformatValue } from "../core/subformat-record.js";
 import type { Subformat } from "../core/subformats.js";
+import { mountDatePickers, parseDateValue } from "./date-picker.js";
 import { t } from "./i18n.js";
 import { mountSelectPickers } from "./language-picker.js";
 import { showSubformatError } from "./subformats-ui.js";
@@ -131,15 +132,23 @@ export const subformatForm = (
                             ? '<rect x="3" y="3" width="4" height="4" rx="1"/><rect x="3" y="12" width="4" height="4" rx="1"/><path d="M11 5h6M11 14h6"/>'
                             : '<path d="M7 3H5v5l-2 2 2 2v5h2M13 3h2v5l2 2-2 2v5h-2"/>'
                     }</svg>`;
+                    this.disposePickers?.();
+                    this.disposePickers = undefined;
                     if (form && data) {
                         const scroll = this.panel.scrollTop;
-                        this.disposePickers?.();
                         this.panel.replaceChildren();
                         this.panel.inert = this.view.state.readOnly;
                         this.fields(resolve(schema), data, [], this.panel);
-                        this.disposePickers = mountSelectPickers(t, [
+                        const disposeSelects = mountSelectPickers(t, [
                             ...this.panel.querySelectorAll("select"),
                         ]);
+                        const disposeDates = mountDatePickers(
+                            this.panel.querySelectorAll<HTMLInputElement>("[data-record-date]"),
+                        );
+                        this.disposePickers = () => {
+                            disposeSelects();
+                            disposeDates();
+                        };
                         this.panel.scrollTop = scroll;
                     }
                     this.view.requestMeasure();
@@ -193,6 +202,7 @@ export const subformatForm = (
                         const string =
                             field.type === "string" &&
                             (value === undefined || typeof value === "string");
+                        const date = !choices && string && field.format === "date";
                         // shortcut: arrays and composed values use JSON fields; add specialized controls when needed.
                         const json = !choices && !numeric && !string;
                         const input = choices
@@ -242,13 +252,7 @@ export const subformatForm = (
                             if (input instanceof HTMLTextAreaElement) input.rows = json ? 4 : 2;
                             else if (input instanceof HTMLInputElement) {
                                 if (numeric) input.inputMode = "decimal";
-                                if (
-                                    string &&
-                                    field.format === "date" &&
-                                    (value === undefined ||
-                                        /^\d{4}-\d{2}-\d{2}$/.test(String(value)))
-                                )
-                                    input.type = "date";
+                                if (date) input.dataset.recordDate = "";
                             }
                         }
                         if (json) caption.append(" (JSON)");
@@ -259,11 +263,15 @@ export const subformatForm = (
                             input.value = pending.value;
                             input.setCustomValidity(pending.error);
                         }
+                        if (date) input.setAttribute("aria-invalid", String(!!pending?.error));
                         input.addEventListener(choices ? "change" : "input", () => {
                             if (input.disabled || this.view.state.readOnly) return;
                             input.setCustomValidity("");
+                            if (date) input.setAttribute("aria-invalid", "false");
                             try {
                                 let next: unknown = input.value;
+                                if (date && input.value && !parseDateValue(input.value))
+                                    throw new Error(t("Enter a valid date (YYYY-MM-DD)."));
                                 if (choices) {
                                     if (!input.value || input.value === "unknown") return;
                                     next = choices[Number(input.value)];
@@ -302,7 +310,8 @@ export const subformatForm = (
                                         draft: { value: input.value, error: message },
                                     }),
                                 });
-                                input.reportValidity();
+                                if (date) input.setAttribute("aria-invalid", "true");
+                                else input.reportValidity();
                             }
                         });
                         label.append(input);

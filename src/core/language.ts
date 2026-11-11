@@ -10,9 +10,12 @@ import type { TermEntry } from "./content-types.js";
 
 export const DEFAULT_LANG = "en";
 
-const contentCodes = new Set(iso6393.map((language) => language.iso6393));
+let contentCodes: Set<string> | undefined;
 const from1 = new Map(Object.entries(iso6393To1).map(([three, two]) => [two, three]));
-export const isContentLanguage = (code: string): boolean => contentCodes.has(code);
+export const isContentLanguage = (code: string): boolean => {
+    contentCodes ??= new Set(iso6393.map((language) => language.iso6393));
+    return contentCodes.has(code);
+};
 
 /** Normalize site language declarations and translation directory names consistently. */
 export const contentLanguageCode = (tag: string): string => {

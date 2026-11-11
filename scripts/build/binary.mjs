@@ -16,9 +16,13 @@ const assets = [
     "fonts/udev-gothic-regular.woff2",
     "fonts/LICENSE.txt",
     "flow.global.js",
+    ...readdirSync("dist/graph")
+        .filter((name) => name.endsWith(".js"))
+        .map((name) => `graph/${name}`),
     "edit.global.js",
     "ui.global.js",
     "code.global.js",
+    "code-worker.global.js",
     "plugins.global.js",
     "subformats.global.js",
 ];

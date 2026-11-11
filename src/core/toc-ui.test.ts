@@ -48,7 +48,7 @@ const flush = () => {
     pending = undefined;
     callback?.(0);
 };
-const pane = () => {
+const pane = (container = ".preview-pane") => {
     const header = {
         prepend: vi.fn(),
         getBoundingClientRect: () => ({ bottom: 36 }),
@@ -118,7 +118,8 @@ const pane = () => {
         classList: { toggle: vi.fn() },
         remove: vi.fn(),
         offsetHeight: 59,
-        closest: (selector: string) => (selector === "article" ? article : scroller),
+        closest: (selector: string) =>
+            selector === "article" ? article : selector === container ? scroller : null,
         querySelector: (selector: string) => (selector === ".toc-current" ? button : list),
         querySelectorAll: () => links,
     };
@@ -150,8 +151,11 @@ it("keeps the outline beside the title and tracks each pane independently", () =
     dispose();
 });
 
-it("tracks both ends, including a final heading that cannot reach the top of the viewport", () => {
-    const current = pane();
+it.each([
+    ".preview-pane",
+    "main",
+])("tracks both ends of %s even when the last heading cannot reach the top", (container) => {
+    const current = pane(container);
     const doc = documentFor([current]);
     const dispose = mountToc(doc);
     flush();

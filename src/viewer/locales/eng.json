@@ -35,6 +35,7 @@
     "Save (Ctrl+S)": "Save (Ctrl+S)",
     "View settings": "View settings",
     "Auto save": "Auto save",
+    "Wrap lines": "Wrap lines",
     "Front-matter fields": "Front-matter fields",
     "title": "title",
     "desc": "desc",
@@ -387,10 +388,17 @@
     "Remove page": "Remove page",
     "Rename page": "Rename page",
     "Remove this page from the sidebar? The records will be kept.": "Remove this page from the sidebar? The records will be kept.",
-    "Constraints": "Constraints",
-    "Semantic": "Semantic",
+    "Parameters": "Parameters",
     "Items": "Items",
     "Remove parameter": "Remove parameter",
     "Check the parameter value.": "Check the parameter value.",
-    "Download PDF": "Download PDF"
+    "Download PDF": "Download PDF",
+    "Choose date": "Choose date",
+    "Previous month": "Previous month",
+    "Next month": "Next month",
+    "Today": "Today",
+    "Clear": "Clear",
+    "Enter a valid date (YYYY-MM-DD).": "Enter a valid date (YYYY-MM-DD).",
+    "Load preview": "Load preview",
+    "Preview unavailable": "Preview unavailable"
 }

@@ -45,6 +45,7 @@ export const exportEntries = (root: string): ZipEntry[] => {
             add(file);
     };
     add(MANIFEST_FILE);
+    if (manifest.licence) add(manifest.licence);
     optional(CONFIG_FILE);
     for (const { id, subformat } of flattenTree(manifest.tree)) {
         const file = subformat ? undefined : docFile(id, manifest.files);

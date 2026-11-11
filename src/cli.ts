@@ -10,27 +10,34 @@ process.env.NODE_ENV = prebuilt ? "production" : "development";
 
 const USAGE = `usage: dooc <command>
 
-  edit [dooc.yaml] [port]                open dooc in edit mode
-  view [dooc.yaml] [port]                open dooc in view mode
-  --viewer-plugins <module>              inject an external viewer plugin module
-  build html [dooc.yaml] [out-dir]       build bundle.html (default <project>/dist)
-  export [dooc.yaml] [out-dir]           collect source dependencies into bundle.zip
-  build zip [dooc.yaml] [out-dir]        build bundle.zip (default <project>/dist)
-  --url_preview embed|network            URL handling for either format (default: embed)
-  --mode static|live                    HTML snapshot or runtime plugin API
-  --auth external                       host supplies live HTML authentication and transport
-  --source-url <url>                    source directory URL for card copy links in HTML
-  check [dooc.yaml] [options]            JSON consistency report (check --help for options)
-  plugin pack <built-dir> [zip]          package bundled JS and assets as a plugin ZIP
-  plugin add <zip> [dooc.yaml] [port]    install a local plugin and print login links
-  plugin login <id> [dooc.yaml] [port]   open a local login flow for an installed plugin
-  font add <file> [dooc.yaml]            register a font in the project (.dooc/fonts/)
-  font list [dooc.yaml]                  list registered project fonts
-  font remove <name> [dooc.yaml]         remove a registered project font
-  mcp [dooc.yaml]                        stdio MCP server (all read / write operations)
-  --git-origin <module>                  inject gitOrigin from an external viewer plugin module
-  help, --help, -h                       show this help
+commands:
+  ├─ edit [dooc.yaml] [port]              open dooc in edit mode
+  │  └─ --viewer-plugins <module>         inject an external viewer plugin module
+  ├─ view [dooc.yaml] [port]              open dooc in view mode
+  │  └─ --viewer-plugins <module>         inject an external viewer plugin module
+  ├─ build                                build the selected bundle (default <project>/dist)
+  │  ├─ html [dooc.yaml] [out-dir]        build bundle.html
+  │  │  ├─ --mode static|live             HTML snapshot or runtime plugin API
+  │  │  ├─ --auth external                host supplies live HTML authentication and transport
+  │  │  └─ --source-url <url>             source directory URL for card copy links
+  │  ├─ zip [dooc.yaml] [out-dir]         build bundle.zip
+  │  ├─ --url_preview embed|network       URL handling for either format (default: embed)
+  │  └─ --viewer-plugins <module>         inject an external build plugin module
+  ├─ export [dooc.yaml] [out-dir]         collect source dependencies into bundle.zip
+  ├─ check [dooc.yaml] [options]          JSON consistency report (check --help for options)
+  ├─ plugin                               manage local plugins
+  │  ├─ pack <built-dir> [zip]            package bundled JS and assets as a plugin ZIP
+  │  ├─ add <zip> [dooc.yaml] [port]      install a local plugin and print login links
+  │  └─ login <id> [dooc.yaml] [port]     open a local login flow for an installed plugin
+  ├─ font                                 manage project fonts (.dooc/fonts/)
+  │  ├─ add <file> [dooc.yaml]            register a font in the project
+  │  ├─ list [dooc.yaml]                  list registered project fonts
+  │  └─ remove <name> [dooc.yaml]         remove a registered project font
+  ├─ mcp [dooc.yaml]                      stdio MCP server (all read / write operations)
+  │  └─ --git-origin <module>             inject gitOrigin from an external viewer plugin module
+  └─ help, --help, -h                     show this help
 
+Details: dooc <command> --help (build, check, plugin, font, mcp).
 Default manifest: ./dooc.yaml. Paths and .dooc/ are relative to its directory.`;
 
 const fail = (message: string): never => {
@@ -54,17 +61,27 @@ switch (command) {
             });
             const [action, value, rootArg, portArg] = positionals;
             if (values.help) {
-                console.log(`usage: dooc plugin pack <built-dir> [output.zip]
-       dooc plugin add <zip> [dooc.yaml] [port]
-       dooc plugin login <plugin-id> [dooc.yaml] [port]
+                console.log(`usage: dooc plugin <command>
 
-ZIP root: package.json with name, version, type: module and main pointing to bundled .js/.mjs.
-Optional icon: path to a bundled SVG asset up to 64 KiB.
-Include relative assets (SVG, JSON, etc.); dependencies must already be bundled. Limit: 16 MiB / 256 files.
-Default output: <built-dir>.zip. Installed ZIPs: <project>/.dooc/plugins/.
-Personal logins and plugin approvals: ~/.dooc/plugins/ (override with DOOC_USER_DIR).
-Add/login starts a local editor and prints browser login links. Keep it running while signing in.
-Tokens stay on this computer and never enter exported documents.`);
+commands:
+  ├─ pack <built-dir> [output.zip]        package bundled JS and assets as a plugin ZIP
+  ├─ add <zip> [dooc.yaml] [port]         install a local plugin and print login links
+  └─ login <plugin-id> [dooc.yaml] [port]  open a local login flow for an installed plugin
+
+options:
+  --help, -h  show this help
+
+Package:
+  ZIP root: package.json with name, version, type: module and main pointing to bundled .js/.mjs.
+  Optional icon: path to a bundled SVG asset up to 64 KiB.
+  Include relative assets (SVG, JSON, etc.); dependencies must already be bundled.
+  Limit: 16 MiB / 256 files. Default output: <built-dir>.zip.
+
+Storage and login:
+  Installed ZIPs: <project>/.dooc/plugins/.
+  Personal logins and plugin approvals: ~/.dooc/plugins/ (override with DOOC_USER_DIR).
+  Add/login starts a local editor and prints browser login links. Keep it running while signing in.
+  Tokens stay on this computer and never enter exported documents.`);
                 break;
             }
             if (action === "pack" && value && positionals.length <= 3) {
@@ -121,9 +138,20 @@ Tokens stay on this computer and never enter exported documents.`);
                 options: { help: { type: "boolean", short: "h" } },
             });
             if (values.help) {
-                console.log(
-                    "usage: dooc font add <file> [dooc.yaml] | list [dooc.yaml] | remove <name> [dooc.yaml]\n\nFonts are copied to <project>/.dooc/fonts/ and included in ZIP and HTML bundles.\nSupported formats: TTF, OTF, WOFF, WOFF2. Existing names are never overwritten.\nReload the viewer after changing registered fonts. Default manifest: ./dooc.yaml.",
-                );
+                console.log(`usage: dooc font <command>
+
+commands:
+  ├─ add <file> [dooc.yaml]       register a font in the project
+  ├─ list [dooc.yaml]             list registered project fonts
+  └─ remove <name> [dooc.yaml]    remove a registered project font
+
+options:
+  --help, -h  show this help
+
+Fonts:
+  Fonts are copied to <project>/.dooc/fonts/ and included in ZIP and HTML bundles.
+  Supported formats: TTF, OTF, WOFF, WOFF2. Existing names are never overwritten.
+  Reload the viewer after changing registered fonts. Default manifest: ./dooc.yaml.`);
                 break;
             }
             const [action, value, rootArg] = positionals;
@@ -160,27 +188,31 @@ Tokens stay on this computer and never enter exported documents.`);
             if (values.help) {
                 console.log(`usage: dooc check [dooc.yaml] [options]
 
+options:
   --only render,languages,themes  select checks (default: all three)
                                  manifest validity is always checked
-  --allow-shared-svg        allow identical SVG bytes across themes (missing variants still fail)
-  --warnings-as-errors      fail on warnings as well as errors
-  --help, -h                show this help
+  --allow-shared-svg              allow identical SVG bytes across themes (missing variants still fail)
+  --warnings-as-errors            fail on warnings as well as errors
+  --help, -h                      show this help
 
 dooc.yaml example:
   defaultLang: jpn
   languages: [jpn, eng]
   themes: [light, dark]
 
-Translations: locales/<ISO 639-3>/<source path>.
-Theme variants: themes/<theme>/<asset path>.
-stdout: one JSON CheckReport with schemaVersion=1, checks, diagnostics, summary and exitCode.
-render uses the viewer compiler; languages checks availability and prose; themes checks variants.
-Site declarations determine the expected languages and themes, never CLI overrides.
-Diagnostic codes, relative file paths, sourceFile, language, theme and one-based lines are
-machine-readable; message text is for humans. Prose detection is heuristic and offline.
-Short text, unsupported formats and remote content are reported as unchecked/inconclusive.
-Exit codes: 0 passed; 1 errors (or warnings with --warnings-as-errors); 2 invocation/execution failure.
-Node API: import { checkSite } from "@dooc-dev/dooc/check".`);
+Checks:
+  render     uses the viewer compiler
+  languages  checks availability and prose; translations: locales/<ISO 639-3>/<source path>
+  themes     checks variants: themes/<theme>/<asset path>
+  Site declarations determine the expected languages and themes, never CLI overrides.
+
+Report:
+  stdout: one JSON CheckReport with schemaVersion=1, checks, diagnostics, summary and exitCode.
+  Diagnostic codes, relative file paths, sourceFile, language, theme and one-based lines are
+  machine-readable; message text is for humans. Prose detection is heuristic and offline.
+  Short text, unsupported formats and remote content are reported as unchecked/inconclusive.
+  Exit codes: 0 passed; 1 errors (or warnings with --warnings-as-errors); 2 invocation/execution failure.
+  Node API: import { checkSite } from "@dooc-dev/dooc/check".`);
                 break;
             }
             if (positionals.length > 1) throw new Error("check accepts at most one dooc.yaml path");
@@ -270,31 +302,45 @@ Node API: import { checkSite } from "@dooc-dev/dooc/check".`);
                 },
             });
             if (values.help) {
-                console.log(`usage: dooc build html [dooc.yaml] [out-dir] [--url_preview embed|network]
-       dooc build html [dooc.yaml] [out-dir] --mode static
-       dooc build html [dooc.yaml] [out-dir] --mode live --auth external
-       dooc build zip  [dooc.yaml] [out-dir] [--url_preview embed|network]
+                console.log(`usage: dooc build <html|zip> [dooc.yaml] [out-dir] [options]
 
-A bundle is dooc.yaml and its managed content. Builds only the selected format.
-Default output directory: <project>/dist. Source files are never rewritten.
-Static builds resolve enabled local plugins using build-time credentials and embed their views.
-Live HTML exposes window.dooc.setPluginTransport(request), without a login UI or credentials.
-Use --viewer-plugins <module> to inject trusted build plugins; installed, enabled packages are discovered automatically.
-Use dooc export for source dependencies without plugin execution or remote downloads.
-  --source-url <url>     inject an HTTP(S) directory URL for card copy links (HTML only)
-                        paths are relative to dooc.yaml; overrides GitHub origin/HEAD discovery
-  --url_preview embed    snapshot URL content and assets into the selected artifact (default)
-  --url_preview network  preserve URL references without downloading them at build time
+commands:
+  ├─ html [dooc.yaml] [out-dir]   build bundle.html
+  │  ├─ --mode static|live        HTML snapshot or runtime plugin API
+  │  ├─ --auth external           host supplies live HTML authentication and transport
+  │  └─ --source-url <url>        HTTP(S) directory URL for card copy links
+  │                               paths are relative to dooc.yaml; overrides GitHub origin/HEAD
+  └─ zip [dooc.yaml] [out-dir]    build bundle.zip
 
-HTML embed: no network when opened. HTML network: fetch URLs when opened (text requires CORS).
-ZIP embed: save URL content and rewrite references. ZIP network: keep the original URLs.
+options (html and zip):
+  --url_preview embed|network  URL handling (default: embed; live HTML: network)
+    embed                     snapshot URL content and assets into the selected artifact
+    network                   preserve URL references without downloading them at build time
+  --viewer-plugins <module>    inject trusted build plugins
+  --help, -h                  show this help
 
-Only embedded references such as ![](url) are downloaded; ordinary hyperlinks remain links.
-Snapshots use public HTTPS without credentials or redirects. Static HTML captures the server's
-HTML and declarative assets; it does not execute the source site's JavaScript or perform login.
-Remote files are limited to 2 MiB each and 64 MiB / 256 assets total.
-A failed download or invalid source stops the build before replacing the selected artifact.
-Use --url_preview network with either format to build without downloading URL content.`);
+Output:
+  A bundle is dooc.yaml and its managed content. Builds only the selected format.
+  Default output directory: <project>/dist. Source files are never rewritten.
+  Use dooc export for source dependencies without plugin execution or remote downloads.
+
+HTML modes:
+  static  resolve enabled local plugins using build-time credentials and embed their views
+          installed, enabled packages are discovered automatically
+  live    expose window.dooc.setPluginTransport(request), without a login UI or credentials
+  Examples:
+    dooc build html --mode static
+    dooc build html --mode live --auth external
+
+URL handling:
+  HTML embed: no network when opened. HTML network: fetch URLs when opened (text requires CORS).
+  ZIP embed: save URL content and rewrite references. ZIP network: keep the original URLs.
+  Only embedded references such as ![](url) are downloaded; ordinary hyperlinks remain links.
+  Snapshots use public HTTPS without credentials or redirects. Static HTML captures the server's
+  HTML and declarative assets; it does not execute the source site's JavaScript or perform login.
+  Remote files are limited to 2 MiB each and 64 MiB / 256 assets total.
+  A failed download or invalid source stops the build before replacing the selected artifact.
+  Use --url_preview network with either format to build without downloading URL content.`);
                 break;
             }
             const [format, rootArg, outArg] = positionals;
@@ -334,9 +380,20 @@ Use --url_preview network with either format to build without downloading URL co
                 },
             });
             if (values.help) {
-                console.log(
-                    "usage: dooc mcp [dooc.yaml] [--git-origin <module>]\n\nExposes docs, files, Statics, fonts, check, build and Git over stdio.\nBuild accepts format=html|zip and url_preview=embed|network (default embed).\nThe external module's default export must contain gitOrigin (the same provider used by edit/view).\nOnly gitOrigin is used; viewer setup and data plugins are not started. Authentication stays in the provider.",
-                );
+                console.log(`usage: dooc mcp [dooc.yaml] [options]
+
+options:
+  --git-origin <module>  inject gitOrigin from an external viewer plugin module
+  --help, -h            show this help
+
+Server:
+  Exposes docs, files, Statics, fonts, check, build and Git over stdio.
+  Build accepts format=html|zip and url_preview=embed|network (default embed).
+
+Git origin:
+  The external module's default export must contain gitOrigin (the same provider used by edit/view).
+  Only gitOrigin is used; viewer setup and data plugins are not started.
+  Authentication stays in the provider.`);
                 break;
             }
             if (positionals.length > 1) throw new Error("mcp accepts at most one dooc.yaml path");

@@ -811,6 +811,15 @@ window.testSubformatCards = async () => {
         opened = undefined;
         const picker = root.querySelector("[data-subformat-trigger]");
         picker.click();
+        assert(
+            [...root.querySelectorAll("[data-subformat-action]")].every(
+                (control) =>
+                    control.querySelector('svg[aria-hidden="true"]') &&
+                    !control.textContent.trim() &&
+                    control.title === control.getAttribute("aria-label"),
+            ),
+            "Subformat actions use icons with accessible names and tooltips",
+        );
         document.activeElement.dispatchEvent(
             new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }),
         );

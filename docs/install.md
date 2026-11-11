@@ -44,11 +44,24 @@ Use `brew update && brew upgrade dooc-dev/dooc/dooc` for upgrades.
 
 ```sh
 mise install
-mise run build:binary
+mise run dev edit
+mise run dev view
+mise run dooc --help
+mise run dooc view sample/dooc.yaml
+mise run dooc build html sample/dooc.yaml
+mise run binary
 ./build/bin/dooc --help
 mise run release dooc patch
 mise run release dooc-plugin patch
 ```
+
+`mise run dev edit` starts the sample editor; `mise run dev view` starts the read-only
+viewer. Both enable demo plugins and hot reload for content and application code.
+Omitting the mode defaults to `edit`. To use another workspace or port, run
+`mise run dev view ../my-docs/dooc.yaml 5180`.
+`mise run dooc ...` runs the current local source and forwards arguments to the CLI.
+Paths are relative to the directory where you invoke it; the default manifest is
+`./dooc.yaml`. `mise run binary` builds and tests the standalone executable.
 
 CI builds and tests the executable on all four platforms before release. The
 release workflow adds the archives, `SHA256SUMS`, and `install.sh` to GitHub

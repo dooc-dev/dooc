@@ -65,6 +65,7 @@ export const classifyChange = (rel: string): HmrKind | undefined => {
         p === "src/viewer/edit-code-highlight.ts" ||
         p === "src/viewer/edit-git-diff.ts" ||
         p === "src/viewer/code-tokens.ts" ||
+        p === "src/viewer/code-worker.ts" ||
         p === "src/viewer/i18n.ts" ||
         p === "src/viewer/language-picker.ts" ||
         p === "src/viewer/theme-picker.ts" ||
@@ -322,7 +323,7 @@ export const hmrClientScript = (mode: ServeMode): string => `
     const main = document.querySelector("main");
     const nextMain = next.querySelector("main");
     if (!main || !nextMain) { reload(); return; }
-    const y = window.scrollY;
+    const y = main.scrollTop;
     document.title = next.title;
     const title = document.getElementById("site-title");
     const nextTitle = next.getElementById("site-title");
@@ -342,7 +343,7 @@ export const hmrClientScript = (mode: ServeMode): string => `
       (${updateNav.toString()})(nav, nextNav.innerHTML);
       if (window.__docsNavRestore) window.__docsNavRestore();
     }
-    window.scrollTo(0, y);
+    main.scrollTo(0, y);
   };
 
   // Notification hooks for the edit client (src/viewer/edit-client.ts). edit-client.ts may run
@@ -364,7 +365,7 @@ export const hmrClientScript = (mode: ServeMode): string => `
   });
   es.addEventListener("change", (ev) => {
     const { kind, files } = JSON.parse(ev.data);
-    if (MODE === "preview") { if (kind === "content") void swap(); return; }
+    if (MODE === "preview" && kind === "content") { void swap(); return; }
     if (kind === "content") {
       const onContent = window.__docsHmr && window.__docsHmr.onContent;
       // If registered, leave it to the in-place update and don't reload (the editor swaps

@@ -83,9 +83,14 @@ describe("source-based CLI", () => {
         expect(help).toContain("edit [dooc.yaml] [port]");
         expect(help).toContain("view [dooc.yaml] [port]");
         expect(help).toContain("mcp [dooc.yaml]");
-        expect(help).not.toMatch(/(?:^|\n)\s+(?:preview|code-language|doc ls|figure ls)\b/);
-        expect(help).toContain("build html [dooc.yaml] [out-dir]");
-        expect(help).toContain("build zip [dooc.yaml] [out-dir]");
+        expect(help).not.toMatch(/(?:^|\n)[\s│├└─]+(?:preview|code-language|doc ls|figure ls)\b/);
+        expect(help).toMatch(/├─ build[^\n]*\n {2}│ {2}├─ html \[dooc.yaml\] \[out-dir\]/);
+        expect(help).toContain("  │  ├─ zip [dooc.yaml] [out-dir]");
+        expect(help).toMatch(/├─ plugin[^\n]*\n {2}│ {2}├─ pack <built-dir> \[zip\]/);
+        expect(help).toMatch(/├─ font[^\n]*\n {2}│ {2}├─ add <file> \[dooc.yaml\]/);
+        expect(help).toContain("  │  └─ --viewer-plugins <module>");
+        expect(help).toContain("  │  │  └─ --source-url <url>");
+        expect(help).toContain("  │  └─ --git-origin <module>");
         expect(help).toContain("--url_preview embed|network");
         expect(help).toContain("--mode static|live");
         expect(help).toContain("export [dooc.yaml] [out-dir]");

@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import { classifyChange, createHmrHub, hmrClientScript, sseFrame, watchProject } from "./hmr.js";
 
@@ -31,6 +32,7 @@ describe("classifyChange", () => {
         expect(classifyChange("src/viewer/edit-git-diff.ts")).toBe("client");
         expect(classifyChange("src/viewer/preview-update.ts")).toBe("client");
         expect(classifyChange("src/viewer/plugin-resize.ts")).toBe("client");
+        expect(classifyChange("src/viewer/code-worker.ts")).toBe("client");
         expect(classifyChange("src/viewer/subformats-ui.ts")).toBe("client");
         expect(classifyChange("src/core/schema-graph-global.tsx")).toBe("client");
         expect(classifyChange("src/core/schema-graph-flow.tsx")).toBe("client");
@@ -109,17 +111,35 @@ describe("hmrClientScript", () => {
         expect(script).toContain("Object.assign(window.__docsHmr || {}");
     });
 
-    it("edit: client bundle (edit-client.ts / *.tsx) changes and a hello bootId mismatch still reload", () => {
-        const script = hmrClientScript("edit");
-        expect(script).toContain("if (id !== bootId) reload();");
-        // The kind !== "content" (= "client") branch (end of the change handler) stays reload().
-        expect(script.endsWith("reload();\n  });\n})();")).toBe(true);
+    it.each([
+        "edit",
+        "preview",
+    ] as const)("%s: client bundle changes and server restarts reload the page", (mode) => {
+        const listeners = new Map<string, (event: { data: string }) => void>();
+        const reload = vi.fn();
+        runInNewContext(hmrClientScript(mode), {
+            window: {},
+            location: { reload },
+            EventSource: class {
+                addEventListener(event: string, listener: (event: { data: string }) => void) {
+                    listeners.set(event, listener);
+                }
+            },
+        });
+        listeners.get("hello")?.({ data: JSON.stringify({ bootId: "boot-1" }) });
+        expect(reload).not.toHaveBeenCalled();
+        listeners.get("change")?.({
+            data: JSON.stringify({ kind: "client", files: ["src/viewer/ui-client.ts"] }),
+        });
+        expect(reload).toHaveBeenCalledTimes(1);
+        listeners.get("hello")?.({ data: JSON.stringify({ bootId: "boot-2" }) });
+        expect(reload).toHaveBeenCalledTimes(2);
     });
 
     it("preview: content swaps the main view + nav via swap() (the MODE branch returns before the onContent branch)", () => {
         const script = hmrClientScript("preview");
         expect(script).toContain(
-            'if (MODE === "preview") { if (kind === "content") void swap(); return; }',
+            'if (MODE === "preview" && kind === "content") { void swap(); return; }',
         );
         expect(script).toContain('const MODE = "preview";');
     });

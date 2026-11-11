@@ -24,6 +24,7 @@ export interface ParsedManifest {
     title?: string;
     icon?: string;
     defaultLang?: string;
+    licence?: string;
     files?: FileLayout;
     /** Content languages offered by the site, including defaultLang; normalized to ISO 639-3. */
     languages?: string[];
@@ -283,9 +284,12 @@ const parseNestedManifest = (input: object): ParsedManifest => {
         );
         const system = object(
             root.system ?? {},
-            ["languages", "default_lang", "themes", "files"],
+            ["languages", "default_lang", "themes", "licence", "files"],
             "system",
         );
+        const licence = system.licence;
+        if (licence !== undefined && (!localFile(licence) || !licence.trim()))
+            throw new Error("system.licence must be a local file path");
         const sidebar = object(root.left_sidebar ?? {}, ["title", "icon"], "left_sidebar");
         const layout = object(system.files ?? {}, ["default_layout", "order"], "system.files");
         const titles: Record<string, string> = {};
@@ -404,6 +408,7 @@ const parseNestedManifest = (input: object): ParsedManifest => {
             ...parsed,
             format: "nested",
             tree,
+            ...(licence === undefined ? {} : { licence }),
             ...(sidebar.title === undefined ? {} : { titles }),
             ...(sidebar.icon === undefined ? {} : { themeIcons }),
         };
@@ -426,6 +431,7 @@ export const serializeManifest = (
         title,
         icon,
         defaultLang,
+        licence,
         files,
         languages,
         themes,
@@ -447,6 +453,7 @@ export const serializeManifest = (
                 system: {
                     ...(languages ? { languages } : {}),
                     default_lang: defaultLang ?? DEFAULT_LANG,
+                    ...(licence === undefined ? {} : { licence }),
                     ...(themes ? { themes } : {}),
                     ...(files
                         ? {

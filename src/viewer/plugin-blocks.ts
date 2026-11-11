@@ -1,5 +1,5 @@
 import type { Root, RootContent } from "mdast";
-import { escapeHtml } from "../core/html.js";
+import { escapeHtml } from "../core/escape-html.js";
 import { parseMdast } from "../core/markdown.js";
 import {
     type PluginBlock,

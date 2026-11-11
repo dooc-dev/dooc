@@ -11,7 +11,8 @@ import { parseDocLink } from "./routing.js";
 import { parseTermReference, termFileUrl } from "./term-reference.js";
 
 const processor = unified().use(remarkParse).use(remarkFrontmatter).use(remarkGfm);
-const inlinePrinter = unified().use(remarkGfm).use(remarkStringify);
+const createInlinePrinter = () => unified().use(remarkGfm).use(remarkStringify);
+let inlinePrinter: ReturnType<typeof createInlinePrinter> | undefined;
 
 export const parseMdast = (raw: string): Root => processor.parse(raw);
 
@@ -136,6 +137,7 @@ export const inlineToText = (nodes: PhrasingContent[]): string => {
             /* Reported by validation. */
         }
     });
+    inlinePrinter ??= createInlinePrinter();
     return inlinePrinter.stringify(root).replace(/\n$/, "");
 };
 

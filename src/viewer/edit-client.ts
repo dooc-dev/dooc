@@ -820,7 +820,6 @@ const editorExtensions: Extension[] = [
         override: [docsComplete],
         activateOnCompletion: (completion) => completion.type === "namespace",
     }),
-    EditorView.lineWrapping,
     theme,
     syntaxHighlighting(mdHighlight),
     editorCodeHighlight(),
@@ -1862,6 +1861,10 @@ bindToggle("opt-corr", CORR_KEY, false, (v) => {
 });
 bindToggle("opt-git-diff", "docs-edit:git-diff", true, (visible) => {
     document.body.classList.toggle("git-diff-hidden", !visible);
+});
+bindToggle("opt-line-wrap", "docs-edit:line-wrap", true, (enabled) => {
+    document.body.classList.toggle("line-wrap-off", !enabled);
+    document.dispatchEvent(new Event("docs:line-wrap"));
 });
 
 // The gear opens on hover / focus-within (CSS). Click / Enter also pins it open or closed (for

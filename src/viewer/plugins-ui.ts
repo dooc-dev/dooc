@@ -151,8 +151,27 @@ export const mountPlugins = (external = false): ((transport: PluginTransport | n
         channel.onmessage = (event: MessageEvent<unknown>) => {
             if (typeof event.data === "string") clear(event.data);
         };
+    const visible = new WeakSet<Element>();
+    const pending = new Set<HTMLElement>();
+    const visibility = new IntersectionObserver(
+        (entries) => {
+            for (const entry of entries) {
+                if (!entry.isIntersecting) continue;
+                visible.add(entry.target);
+                pending.delete(entry.target as HTMLElement);
+                visibility.unobserve(entry.target);
+            }
+            mount();
+        },
+        { rootMargin: "200px" },
+    );
     const mount = (): void => {
         if (!registration) return;
+        for (const host of pending)
+            if (!host.isConnected) {
+                visibility.unobserve(host);
+                pending.delete(host);
+            }
         for (const [section, dispose] of disposers)
             if (!section.isConnected) {
                 dispose();
@@ -162,6 +181,13 @@ export const mountPlugins = (external = false): ((transport: PluginTransport | n
         for (const host of document.querySelectorAll<HTMLElement>("main [data-embed-url]")) {
             const url = host.dataset.embedUrl ?? "";
             if (seen.get(host) === url) continue;
+            if (!visible.has(host)) {
+                if (!pending.has(host)) {
+                    pending.add(host);
+                    visibility.observe(host);
+                }
+                continue;
+            }
             seen.set(host, url);
             const version = registration;
             let match = resolved.get(url);

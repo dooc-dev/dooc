@@ -2,8 +2,26 @@ import { paintCode } from "./code-fold.js";
 import { codeGrammar, codeTheme, codeTokens } from "./code-tokens.js";
 
 const painted = new WeakMap<Element, string>();
+const visible = new Map<Element, boolean>();
+const visibility = new IntersectionObserver(
+    (entries) => {
+        for (const entry of entries) visible.set(entry.target, entry.isIntersecting);
+        highlight();
+    },
+    { rootMargin: "200px" },
+);
 const highlight = (): void => {
+    for (const block of visible.keys())
+        if (!block.isConnected) {
+            visibility.unobserve(block);
+            visible.delete(block);
+        }
     for (const block of document.querySelectorAll(".codeblk")) {
+        if (!visible.has(block)) {
+            visible.set(block, false);
+            visibility.observe(block);
+        }
+        if (!visible.get(block)) continue;
         const theme = codeTheme(block);
         const code = block.querySelector("pre code");
         const lang =

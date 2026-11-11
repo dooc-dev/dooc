@@ -1,5 +1,5 @@
+import { escapeHtml } from "../core/escape-html.js";
 import { defaultFilePath, localFile } from "../core/files.js";
-import { escapeHtml } from "../core/html.js";
 import { CHECK_ICON } from "../core/icons.js";
 import {
     SUBFORMAT_SCHEMA_TEMPLATE,
@@ -254,9 +254,10 @@ const syncSubformatPicker = (root: HTMLElement, select: HTMLSelectElement, state
                 control.type = "button";
                 control.tabIndex = -1;
                 control.dataset.subformatAction = action;
-                control.textContent = t(action === "edit" ? "Edit" : "Delete");
+                control.title = `${t(action === "edit" ? "Edit" : "Delete")}: ${collection.ext}`;
+                control.innerHTML = `<svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${action === "edit" ? "m13 3 4 4M3 17l4-1L17 6a2.8 2.8 0 0 0-4-4L3 12Z" : "m5 5 10 10M15 5 5 15"}"/></svg>`;
                 control.setAttribute("role", "menuitem");
-                control.setAttribute("aria-label", `${control.textContent}: ${collection.ext}`);
+                control.setAttribute("aria-label", control.title);
                 control.disabled = state.busy;
                 control.addEventListener("click", () => {
                     if (state.busy) return;

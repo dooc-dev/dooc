@@ -26,7 +26,7 @@ import {
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { LanguageRegistration } from "shiki/core";
 import { parseContentSource } from "../compiler/code-blocks.js";
@@ -39,7 +39,7 @@ import {
 } from "../compiler/compile.js";
 import { figureName } from "../compiler/figures.js";
 import { ICONS_DIR, squareSvg } from "../compiler/icons.js";
-import { ignoredFiles } from "../compiler/ignored-files.js";
+import { ignoredFiles, withIgnoredFilesCache } from "../compiler/ignored-files.js";
 import {
     contentLanguageCode,
     contentLanguages,
@@ -56,6 +56,7 @@ import { readManifest, writeManifest } from "../compiler/manifest.js";
 import { assembleDoc, createDocOps, isOpError, type OpResult } from "../compiler/ops.js";
 import { subformatResponse, validateSubformatFile } from "../compiler/subformats.js";
 import { type Block, type TocEntry, walkBlocks } from "../core/blocks.js";
+import { selectCodeGrammars, subformatCodeGrammars } from "../core/code-grammars.js";
 import { docIdOfFile, flattenTree } from "../core/content-metadata.js";
 import type { CompiledDoc, FigureEntry, TermEntry } from "../core/content-types.js";
 import { MAX_EXTENSION_BYTES } from "../core/extension-package.js";
@@ -94,6 +95,7 @@ import {
     validateTextfileCode,
 } from "./editor-tools.js";
 import { createExtensionManager, EXTENSIONS_DIR } from "./extensions.js";
+import { deferredFigureHtml, mountFigurePreviews } from "./figure-preview.js";
 import { type FilePreviewResults, fileReferences } from "./file-references.js";
 import { mountFontPickers } from "./font-picker.js";
 import { createFontSettings } from "./font-settings.js";
@@ -103,7 +105,7 @@ import { gitBaseBody, gitBaseText, setSubformatChanges } from "./git-diff.js";
 import { createHmrHub, HMR_PATH, hmrClientScript, watchProject } from "./hmr.js";
 import { translate } from "./i18n.js";
 import { DEFAULT_SITE_LANGUAGES, loadSiteLanguages, type SiteLanguages } from "./languages.js";
-import { loadGraphScript } from "./lazy-graph.js";
+import { loadPreviewScript } from "./lazy-preview.js";
 import { focusNavTree } from "./nav-focus.js";
 import { updateNav } from "./nav-update.js";
 import { loadViewerPlugins, type ViewerRuntime } from "./plugin-config.js";
@@ -246,10 +248,6 @@ export const siteFrom = (
     languages: readonly LanguageAdapter[] = DEFAULT_SITE_LANGUAGES.languages,
     code: Pick<SiteLanguages, "codeLanguages" | "codeGrammars"> = {},
 ): Site => {
-    const grammars = code.codeGrammars ?? [];
-    const registered = new Set(
-        grammars.flatMap((grammar) => [grammar.name, ...(grammar.aliases ?? [])]),
-    );
     return {
         previews,
         subformats,
@@ -259,16 +257,7 @@ export const siteFrom = (
                 ...(subformats ?? []).map(({ ext }) => `.${ext}`),
             ]),
         ],
-        codeGrammars: grammars.map((grammar) => ({
-            ...grammar,
-            aliases: [
-                ...(grammar.aliases ?? []),
-                ...(subformats ?? [])
-                    .filter(({ format }) => format === grammar.name)
-                    .flatMap(({ ext }) => [`.${ext}`, ext])
-                    .filter((alias) => !registered.has(alias)),
-            ],
-        })),
+        codeGrammars: subformatCodeGrammars(code.codeGrammars ?? [], subformats),
         ...(contentLanguages ? { contentLanguages } : {}),
         ...(themes ? { themes } : {}),
         ...(title === undefined ? {} : { title }),
@@ -324,59 +313,64 @@ const watchEntryTextfiles = (entries: readonly Entry[]): void => {
             ]),
     );
 };
-const loadSite = (locale?: string): Site => {
-    const previews = applicationPreviews;
-    const manifest = readManifest(root);
-    const source = contentLanguageCode(manifest.defaultLang ?? DEFAULT_LANG);
-    locale ??= source;
-    let selected = compiler;
-    if (locale !== source) {
-        selected = localeCompilers.get(locale) ?? createCompiler(root, { locale, previews });
-        localeCompilers.set(locale, selected);
-    }
-    const site = siteFrom(selected.compile(), siteLanguages.languages, siteLanguages);
-    const sourceLanguage = contentLanguageCode(site.defaultLang);
-    for (const entry of site.entries) {
-        entry.translatedLanguages = [sourceLanguage];
-        entry.iconFile = docIconFile(entry.id, manifest.files);
-    }
-    try {
-        const translated = new Set(translationFiles(root));
-        for (const language of siteContentLanguages(root, manifest).filter(
-            (language) => language !== sourceLanguage,
-        )) {
-            for (const entry of site.entries) {
-                if (
-                    translated.has(
-                        translationFile(sourceDocFile(entry.id, manifest.files), language),
-                    )
-                )
-                    entry.translatedLanguages?.push(language);
-            }
+const loadSite = (locale?: string): Site =>
+    withIgnoredFilesCache(() => {
+        const previews = applicationPreviews;
+        const manifest = readManifest(root);
+        const source = contentLanguageCode(manifest.defaultLang ?? DEFAULT_LANG);
+        locale ??= source;
+        let selected = compiler;
+        if (locale !== source) {
+            selected = localeCompilers.get(locale) ?? createCompiler(root, { locale, previews });
+            localeCompilers.set(locale, selected);
         }
-    } catch (error) {
-        site.errors.push(String(error));
-    }
-    watchEntryTextfiles(site.entries);
-    watchTextfiles?.(
-        [manifest.icon, ...Object.values(manifest.themeIcons ?? {})].filter(
-            (file): file is string => !!file,
-        ),
-    );
-    const workspace = workspaceSource ?? readWorkspaceSource(root);
-    const subformats = site.entries.flatMap((entry) => (entry.subformat ? [entry.subformat] : []));
-    if (workspace?.protocol === "git" && subformats.length) setSubformatChanges(root, subformats);
-    return {
-        ...site,
-        fonts: loadProjectFonts(root),
-        workspace,
-        sourceBase: sourceFileBase(root),
-        filePaths: manifest.errors.length
-            ? undefined
-            : filesSnapshot(root).files.map((file) => file.path),
-        contentLanguage: locale,
-    };
-};
+        const site = siteFrom(selected.compile(), siteLanguages.languages, siteLanguages);
+        const sourceLanguage = contentLanguageCode(site.defaultLang);
+        for (const entry of site.entries) {
+            entry.translatedLanguages = [sourceLanguage];
+            entry.iconFile = docIconFile(entry.id, manifest.files);
+        }
+        try {
+            const translated = new Set(translationFiles(root));
+            for (const language of siteContentLanguages(root, manifest).filter(
+                (language) => language !== sourceLanguage,
+            )) {
+                for (const entry of site.entries) {
+                    if (
+                        translated.has(
+                            translationFile(sourceDocFile(entry.id, manifest.files), language),
+                        )
+                    )
+                        entry.translatedLanguages?.push(language);
+                }
+            }
+        } catch (error) {
+            site.errors.push(String(error));
+        }
+        watchEntryTextfiles(site.entries);
+        watchTextfiles?.(
+            [manifest.icon, ...Object.values(manifest.themeIcons ?? {})].filter(
+                (file): file is string => !!file,
+            ),
+        );
+        const workspace = workspaceSource ?? readWorkspaceSource(root);
+        const subformats = site.entries.flatMap((entry) =>
+            entry.subformat ? [entry.subformat] : [],
+        );
+        if (workspace?.protocol === "git" && subformats.length)
+            setSubformatChanges(root, subformats);
+        return {
+            ...site,
+            ctx: { ...site.ctx, figurePreview: deferredFigureHtml },
+            fonts: loadProjectFonts(root),
+            workspace,
+            sourceBase: sourceFileBase(root),
+            filePaths: manifest.errors.length
+                ? undefined
+                : filesSnapshot(root).files.map((file) => file.path),
+            contentLanguage: locale,
+        };
+    });
 
 const draftContext = (site: Site): DraftContext => ({
     previews: site.previews,
@@ -526,6 +520,7 @@ const entryHtmlCache = new Map<
         blocks: Block[];
         sig: string;
         figures: RenderCtx["figures"];
+        figurePreview: RenderCtx["figurePreview"];
         value: { html: string; errors: string[] };
     }
 >();
@@ -553,7 +548,8 @@ export const renderEntryHtml = (site: Site, entry: Entry): { html: string; error
         cached &&
         cached.blocks === entry.blocks &&
         cached.sig === sig &&
-        cached.figures === site.ctx.figures
+        cached.figures === site.ctx.figures &&
+        cached.figurePreview === site.ctx.figurePreview
     ) {
         return cached.value;
     }
@@ -565,6 +561,7 @@ export const renderEntryHtml = (site: Site, entry: Entry): { html: string; error
         blocks: entry.blocks,
         sig,
         figures: site.ctx.figures,
+        figurePreview: site.ctx.figurePreview,
         value,
     });
     return value;
@@ -861,7 +858,8 @@ button { font-family: inherit; font-size: inherit; font-weight: var(--fw-body); 
 .search-status:empty { display: none; }
 .search-count { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden;
   clip-path: inset(50%); white-space: nowrap; }
-#doc-search-results { overflow-y: auto; scrollbar-gutter: stable; margin-right: -2px; padding-right: 2px;
+#doc-search-results { position: relative; z-index: 1; overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-gutter: stable; margin-right: -8px; padding-right: 8px;
   min-height: 0; display: flex; flex-direction: column; gap: 8px; }
 #doc-search-results:not(:empty) { margin-top: 6px; }
 #doc-search-results a { display: flex; flex: none; flex-direction: column; gap: 6px;
@@ -892,7 +890,7 @@ button { font-family: inherit; font-size: inherit; font-weight: var(--fw-body); 
   align-self: flex-start; width: 320px; min-width: 240px; height: 100vh; min-height: 0; max-height: none; margin: 0;
   padding: 8px 10px 10px; border: 0; border-left: 1px solid var(--c-line); border-radius: 0;
   background: var(--c-bg1); box-shadow: none; backdrop-filter: none; }
-.search-docked #doc-search-results { margin-right: -8px; padding-right: 8px; }
+.search-docked #doc-search-results { margin-right: -10px; padding-right: 10px; }
 /* Keep the preview readable; the editor panel gives up width before the search sidebar does. */
 body:has(#doc-search.search-docked[open]) main { min-width: 240px; }
 body:has(#doc-search.search-docked[open]) #panel { flex-shrink: 100; min-width: 240px; }
@@ -1087,6 +1085,7 @@ body.files-over #nav-files { background: color-mix(in srgb, var(--c-accent) 10%,
 
 /* ── main (document body) ── */
 main { flex: 1; min-width: 0; padding: 20px 24px 50vh; }
+main:not(.editor-workspace) { height: 100vh; overflow: auto; overscroll-behavior: contain; }
 article { max-width: 860px; margin: 0 auto; font-family: var(--viewer-font, system-ui, sans-serif); }
 .external-embed { margin: 18px 0; overflow-wrap: anywhere; }
 .plugin { position: relative; min-width: 0; border: 2px solid var(--doc-border); border-top: 0; }
@@ -1217,6 +1216,10 @@ pre code.code-foldable { display: block; padding-left: 18px; }
 .video-player [hidden] { display: none; }
 @container (max-width: 420px) { .video-controls .video-volume { display: none; } }
 .fig-frame { display: block; max-width: 100%; border: 0; background: transparent; }
+.figure-placeholder { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; min-height: 120px; padding: 20px; border: 1px solid var(--doc-border); background: var(--doc-bg-2); color: var(--doc-fg-2); overflow-wrap: anywhere; }
+.figure-placeholder button { font: inherit; padding: 6px 12px; border: 1px solid var(--doc-border); border-radius: 4px; background: var(--doc-bg); color: var(--doc-fg); cursor: pointer; }
+.figure-placeholder button:focus-visible { outline: 2px solid var(--doc-accent); outline-offset: 2px; }
+.figure-placeholder button:disabled { cursor: wait; }
 /* Code and file blocks share a border label; clicking it collapses the content. */
 .codeblk { position: relative; margin: 12px 0; border: 2px solid var(--doc-border); border-top: 0; }
 .codeblk > pre { margin: 0; background: transparent; padding: 8px 12px 6px; }
@@ -1471,7 +1474,7 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .subformat-picker-menu [data-subformat-add] { margin-top: 4px; border-top: 1px solid var(--c-line); font-size: 13px; }
 .subformat-picker-option { display: flex; }
 .subformat-picker-option > button:first-child { flex: 1; min-width: 0; }
-.subformat-picker-option > [data-subformat-action] { flex: none; width: auto; padding-inline: 8px; font-size: 12px; }
+.subformat-picker-option > [data-subformat-action] { flex: none; display: grid; place-items: center; width: 32px; padding: 0; }
 .subformat-picker-option > [data-subformat-action="delete"] { color: var(--c-danger); }
 .subformat-picker-option > button:disabled { opacity: .55; cursor: default; }
 
@@ -1624,6 +1627,7 @@ body:not(.edit) .subformat-page { padding-top: 64px; }
 // (autosave / correspondence display / fm visibility) are gathered in the header gear's hover
 // menu. Width is drag-resizable.
 const EDIT_CSS = `
+body.line-wrap-off .cm-content { white-space: pre; }
 body.git-diff-hidden .cm-lineNumbers :is(.cm-git-added, .cm-git-modified, .cm-git-deleted-start, .cm-git-deleted-end) { box-shadow: none; }
 body.git-diff-hidden .cm-line:is(.cm-git-added, .cm-git-modified, .cm-git-deleted-start, .cm-git-deleted-end) { background-color: transparent; }
 #site-title[role="button"] { cursor: text; position: relative; }
@@ -1697,7 +1701,7 @@ body.textfile-open #phead :is(.fm-language, #status, #validate, #save, #split-pr
 .schema-builder button:disabled { opacity: .45; cursor: default; }
 .schema-field { position: relative; min-width: 0; }
 .schema-builder > :is(.schema-field, .schema-add-field, .schema-draft-details) { max-width: 560px; }
-.schema-builder > .schema-field { margin-bottom: 8px; }
+.schema-builder > .schema-field { margin-bottom: 12px; }
 .schema-root-settings { max-width: 560px; margin-block: 12px; }
 .schema-root-settings > summary { cursor: pointer; }
 .schema-field-row, .schema-add-field { position: relative; display: grid; grid-template-columns: minmax(0, 260px) 112px minmax(128px, 1fr); align-items: center; gap: 8px; padding: 6px 0 2px; }
@@ -1723,7 +1727,7 @@ body.textfile-open #phead :is(.fm-language, #status, #validate, #save, #split-pr
 .schema-parameter-menu { width: 184px; overflow-y: auto; }
 .schema-parameter-menu .language-options button { height: auto; min-height: 28px; width: 100%; display: block; padding: 5px 8px; text-align: left; }
 .schema-parameter-menu .language-options button:focus-visible { background: var(--c-raised); outline: none; }
-.schema-parameter-group { margin: 4px 0 8px 6px; }
+.schema-parameter-group { margin: 10px 0 16px 24px; }
 .schema-parameter { display: grid; grid-template-columns: minmax(0, 1fr) 24px; align-items: center; gap: 2px; min-width: 0; grid-column: 1 / -1; }
 .schema-parameter[data-schema-bound="min"] { grid-column: 1; }
 .schema-parameter[data-schema-bound="max"] { grid-column: 2; }
@@ -1735,7 +1739,7 @@ body.textfile-open #phead :is(.fm-language, #status, #validate, #save, #split-pr
 .schema-parameter > button { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--c-fg-muted); }
 .schema-parameter:has(textarea) > button { align-self: start; }
 .schema-builder [hidden] { display: none; }
-.schema-constraints { display: grid; gap: 4px; }
+.schema-parameters { display: grid; gap: 6px; }
 .schema-parameter-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .schema-parameter-row:not(.schema-range) > .schema-parameter { grid-column: 1 / -1; }
 .schema-range { grid-template-columns: minmax(0, 1fr) minmax(48px, .7fr) minmax(0, 1fr); align-items: center; }
@@ -1767,6 +1771,25 @@ body.textfile-open #phead :is(.fm-language, #status, #validate, #save, #split-pr
 .subformat-value-form fieldset { min-width: 0; margin: 12px 0; padding: 0 12px; border: 1px solid var(--c-line); }
 .subformat-value-form legend { padding-inline: 4px; }
 .subformat-value-form small { overflow-wrap: anywhere; }
+.date-control { position: relative; }
+.schema-builder .date-control > input { padding-right: 34px; font-variant-numeric: tabular-nums; }
+.schema-builder .date-trigger { position: absolute; top: 0; right: 0; display: grid; place-items: center; width: 30px; height: 100%; padding: 0; border: 0; background: transparent; color: var(--c-fg-muted); }
+.schema-builder .date-picker { box-sizing: border-box; width: min(272px, calc(100vw - 16px)); padding: 10px; overflow-y: auto; }
+.date-picker-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.date-picker-header > span { color: var(--c-fg); font-weight: 500; }
+.schema-builder .date-picker button { display: grid; place-items: center; height: 32px; padding: 0; border: 0; border-radius: 3px; background: transparent; color: var(--c-fg); font: inherit; font-variant-numeric: tabular-nums; }
+.schema-builder .date-picker button:is(:hover, :focus-visible) { background: var(--c-raised); }
+.schema-builder .date-picker button:focus-visible { outline: 1px solid var(--c-accent); outline-offset: -1px; }
+.date-picker-header button { width: 32px; }
+.date-picker table { width: 100%; margin: 0; border: 0; border-collapse: collapse; table-layout: fixed; }
+.date-picker :is(th, td) { padding: 0; border: 0; text-align: center; }
+.date-picker th { height: 28px; color: var(--c-fg-muted); font-size: 11px; font-weight: inherit; }
+.date-picker td button { position: relative; width: 100%; }
+.schema-builder .date-picker [data-outside="true"] { color: var(--c-fg-muted); }
+.schema-builder .date-picker [aria-selected="true"] button { background: var(--c-raised); box-shadow: inset 0 0 0 1px var(--c-accent); }
+.date-picker [aria-current="date"]::after { content: ""; position: absolute; bottom: 3px; width: 3px; height: 3px; border-radius: 50%; background: var(--c-accent); }
+.date-picker-footer { display: flex; justify-content: space-between; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--c-line); }
+.schema-builder .date-picker-footer button { padding-inline: 8px; color: var(--c-fg-muted); }
 @container(max-width:440px) { .schema-field-row, .schema-add-field { grid-template-columns: minmax(0, 1fr) 128px; } .schema-field-row > :first-child, .schema-add-field > :first-child { grid-column: 1 / -1; } }
 @container(max-width:440px) { .schema-add-field { grid-template-columns: minmax(0, 1fr) auto; } }
 @container(max-width:440px) { .schema-range { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 8px; } .schema-range [data-schema-bound="max"] { grid-column: 2; } .schema-range > .schema-range-track { grid-column: 1 / -1; grid-row: 2; } .schema-range .schema-parameter label { grid-template-columns: minmax(0, 1fr); gap: 0; } }
@@ -2265,7 +2288,7 @@ const resourcePreview = (site: Site, r: Resource): string => {
         // embedded the theme).
         return f.kind === "image"
             ? f.markup.replace("<img ", '<img class="res-img" ')
-            : figureFrameHtml(f, `fig-frame res-${f.kind}`);
+            : (site.ctx.figurePreview ?? figureFrameHtml)(f, `fig-frame res-${f.kind}`);
     }
     const e = site.entries.find((x) => `${x.id}.svg` === r.file);
     return e?.icon ? svgImg(e.icon, "res-img res-icon") : "";
@@ -2537,7 +2560,7 @@ const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
               : `<main><div class="page-actions"><button class="pbtn" type="button" data-theme-picker="document" aria-label="Preview theme"></button>${fontButton("viewer")}</div>${opts.main}</main>`;
     const graphScript = opts.publish
         ? `<script>${inlineScript(opts.publish.graphJs)}</script>`
-        : `<script>(${loadGraphScript.toString()})();</script>`;
+        : `<script>(${loadPreviewScript.toString()})("/assets/graph.js", "svg[data-sg-layout], [data-mermaid]", "module");</script>`;
     return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 ${opts.publish ? `<meta name="referrer" content="no-referrer"><meta http-equiv="x-dns-prefetch-control" content="off">${opts.publish.network ? "" : `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' data:; img-src data: blob:; media-src data: blob:; object-src data:; font-src data: blob:; frame-src data: blob:; connect-src 'none'; base-uri 'none'; form-action 'none'">`}` : ""}
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -2552,8 +2575,8 @@ ${opts.publish ? `<meta name="referrer" content="no-referrer"><meta http-equiv="
 (${mountThemeVariants.toString()})(document);
 </script>
 ${bootScripts}${graphScript}
-<script id="code-grammars" type="application/json">${JSON.stringify(site.codeGrammars ?? []).replace(/</g, "\\u003c")}</script>
-${opts.publish ? `<script>${inlineScript(opts.publish.codeJs)}</script>` : '<script src="/assets/code.js" defer></script>'}
+<script id="code-grammars" type="application/json"${opts.publish ? "" : ' data-src="/assets/code-grammars.json"'}>${opts.publish ? JSON.stringify(site.codeGrammars ?? []).replace(/</g, "\\u003c") : "[]"}</script>
+${opts.publish ? `<script>${inlineScript(opts.publish.codeJs)}</script>` : `<script>(${loadPreviewScript.toString()})("/assets/code.js", ".codeblk");</script>`}
 <script>
 // Functions toString'd under tsx (esbuild keepNames) contain __name(...) calls; define a no-op.
 var __name = (f) => f;
@@ -2563,6 +2586,7 @@ const localeFetch = (url, init = {}) => fetch(url, { ...init, headers: { ...init
 (${mountTables.toString()})(document);
 (${mountToc.toString()})(document);
 (${mountVideos.toString()})(document);
+${opts.publish ? "" : `(${mountFigurePreviews.toString()})();`}
 void (${mountFontPickers.toString()})(${createFontSettings.toString()}, ${JSON.stringify(site.fonts ?? []).replace(/</g, "\\u003c")});
 (() => {
   const KEY = "docs:sidebar-open";
@@ -3170,7 +3194,7 @@ const publishRouterScript = (first: string): string => `
     (${focusNavTree.toString()})(document.getElementById("nav-groups"));
     const target = anchor && document.getElementById(anchor);
     requestAnimationFrame(() => {
-      if (target) target.scrollIntoView(); else window.scrollTo(0, 0);
+      if (target) target.scrollIntoView(); else main.scrollTo(0, 0);
     });
   };
   window.addEventListener("hashchange", show);
@@ -3377,6 +3401,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
 <label><input type="checkbox" id="opt-autosave"><span data-i18n="Auto save">Auto save</span></label>
 <label><input type="checkbox" id="opt-corr"><span data-i18n="Source mapping">Source mapping</span></label>
 <label><input type="checkbox" id="opt-git-diff"><span data-i18n="Show Git changes">Show Git changes</span></label>
+<label><input type="checkbox" id="opt-line-wrap" checked><span data-i18n="Wrap lines">Wrap lines</span></label>
 </div></div>
 </div>
 
@@ -3803,6 +3828,7 @@ const PREBUILT: Record<string, string> = {
     "viewer/edit-client.ts": "edit.global.js",
     "viewer/ui-client.ts": "ui.global.js",
     "viewer/code-highlight.ts": "code.global.js",
+    "viewer/code-worker.ts": "code-worker.global.js",
     "viewer/published-plugins.ts": "plugins.global.js",
     "viewer/published-subformats.ts": "subformats.global.js",
 };
@@ -3855,6 +3881,31 @@ export const startServer = async (
     // invalidate explicitly on the watcher's "client" notification (changes to edit-client.ts /
     // the schema graph interaction layer's src/*.tsx).
     const bundleCache = createBundleCache();
+    let graphChunks: Promise<Map<string, string>> | undefined;
+    const graphAsset = async (name: string): Promise<string> => {
+        if (usePrebuiltAssets) return readViewerAsset(`graph/${name}`).toString("utf8");
+        graphChunks ??= import("esbuild")
+            .then(async (esbuild) => {
+                const output = await esbuild.build({
+                    entryPoints: [join(pkgRoot, "src/core/schema-graph-global.tsx")],
+                    bundle: true,
+                    splitting: true,
+                    format: "esm",
+                    target: "es2022",
+                    outdir: join(pkgRoot, "dist/graph"),
+                    write: false,
+                    minify: true,
+                });
+                return new Map(output.outputFiles.map((file) => [basename(file.path), file.text]));
+            })
+            .catch((error) => {
+                graphChunks = undefined;
+                throw error;
+            });
+        const js = (await graphChunks).get(name);
+        if (js === undefined) throw new Error("Diagram asset not found");
+        return js;
+    };
 
     // HMR — bootId changes on every process start. It's how the client detects a tsx watch
     // restart.
@@ -3901,6 +3952,7 @@ export const startServer = async (
             console.log(`hmr: ${kind} (${files.join(", ")})`);
             if (kind === "client") {
                 bundleCache.clear();
+                graphChunks = undefined;
             }
             hub.broadcast(kind, files);
         });
@@ -3950,16 +4002,26 @@ export const startServer = async (
         const clientEntry =
             path === "/assets/code.js"
                 ? "viewer/code-highlight.ts"
-                : path === "/assets/graph.js"
-                  ? "core/schema-graph-global.tsx"
+                : path === "/assets/code-worker.js"
+                  ? "viewer/code-worker.ts"
                   : mode === "edit" && path === "/assets/edit.js"
                     ? "viewer/edit-client.ts"
                     : path === "/assets/ui.js"
                       ? "viewer/ui-client.ts"
                       : undefined;
-        if (req.method === "GET" && clientEntry != null) {
-            const { js, etag } = await bundleCache.get(clientEntry, () =>
-                bundleClient(clientEntry),
+        const graphName =
+            path === "/assets/graph.js"
+                ? "schema-graph-global.js"
+                : /^\/assets\/graph\/([\w-]+\.js)$/.exec(path)?.[1];
+        if (req.method === "GET" && (clientEntry != null || graphName)) {
+            const { js, etag } = await bundleCache.get(
+                graphName ? path : (clientEntry ?? ""),
+                () =>
+                    graphName
+                        ? path === "/assets/graph.js"
+                            ? Promise.resolve('import "/assets/graph/schema-graph-global.js";')
+                            : graphAsset(graphName)
+                        : bundleClient(clientEntry ?? ""),
             );
             if (req.headers["if-none-match"] === etag) {
                 res.writeHead(304, { etag, "cache-control": "no-cache" });
@@ -4374,7 +4436,47 @@ export const startServer = async (
             }
         }
 
+        if (req.method === "GET" && path === "/assets/code-grammars.json") {
+            const grammars = subformatCodeGrammars(
+                siteLanguages.codeGrammars ?? [],
+                readManifest(root).subformats,
+            );
+            const language = requestUrl.searchParams.get("language");
+            const json = JSON.stringify(
+                language === null ? grammars : selectCodeGrammars(grammars, [language]),
+            );
+            const etag = `"${createHash("sha256").update(json).digest("hex")}"`;
+            res.writeHead(req.headers["if-none-match"] === etag ? 304 : 200, {
+                "content-type": "application/json; charset=utf-8",
+                "cache-control": "no-cache",
+                etag,
+            });
+            res.end(req.headers["if-none-match"] === etag ? undefined : json);
+            return;
+        }
+
         const site = loadSite(locale);
+        if (req.method === "GET" && path === "/api/figure-preview") {
+            const figure = [...site.ctx.figures.values()].find(
+                (figure) => figure.file === requestUrl.searchParams.get("file"),
+            );
+            if (!figure) {
+                notFound(res, path);
+                return;
+            }
+            res.writeHead(200, {
+                "content-type": "text/html; charset=utf-8",
+                "cache-control": "no-store",
+            });
+            res.end(
+                figureFrameHtml(
+                    figure,
+                    `fig-frame res-${figure.kind}`,
+                    requestUrl.searchParams.get("label") ?? undefined,
+                ),
+            );
+            return;
+        }
         if (req.method === "GET" && path === "/api/search") {
             sendJson(
                 res,

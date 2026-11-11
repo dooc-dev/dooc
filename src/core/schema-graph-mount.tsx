@@ -72,18 +72,39 @@ export const watchSchemaGraphs = (
     root: (ParentNode & Node) | Document = document,
 ): SchemaGraphDispose => {
     const mounted = new Map<SVGSVGElement, SchemaGraphDispose>();
+    const pending = new Set<SVGSVGElement>();
+    const visibility = new IntersectionObserver(
+        (entries) => {
+            for (const entry of entries) {
+                if (!entry.isIntersecting) continue;
+                const svg = entry.target as SVGSVGElement;
+                visibility.unobserve(svg);
+                pending.delete(svg);
+                if (!root.contains(svg)) continue;
+                const dispose = mountOne(svg);
+                if (dispose) mounted.set(svg, dispose);
+            }
+        },
+        { rootMargin: "200px" },
+    );
     const mount = (node: ParentNode): void => {
         const svgs = [...node.querySelectorAll<SVGSVGElement>("svg[data-sg-layout]")];
         if (node instanceof SVGSVGElement && node.matches("svg[data-sg-layout]")) {
             svgs.unshift(node);
         }
         for (const svg of svgs) {
-            const dispose = mountOne(svg);
-            if (dispose) mounted.set(svg, dispose);
+            if (mounted.has(svg) || pending.has(svg)) continue;
+            pending.add(svg);
+            visibility.observe(svg);
         }
     };
     mount(root);
     const observer = new MutationObserver((records) => {
+        for (const svg of pending)
+            if (!root.contains(svg)) {
+                pending.delete(svg);
+                visibility.unobserve(svg);
+            }
         // Look only at added subtrees instead of scanning the whole document on every keystroke.
         for (const [svg, dispose] of mounted) {
             if (!root.contains(svg)) {
@@ -103,6 +124,8 @@ export const watchSchemaGraphs = (
     });
     return () => {
         observer.disconnect();
+        visibility.disconnect();
+        pending.clear();
         for (const dispose of mounted.values()) {
             dispose();
         }

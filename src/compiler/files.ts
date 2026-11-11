@@ -382,6 +382,7 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
     const yaml = isSeq(parsed.contents) ? new Document({ docs: parsed.toJS() }) : parsed;
     manifest.files = layout;
     if (manifest.icon && moves.has(manifest.icon)) manifest.icon = moves.get(manifest.icon);
+    if (manifest.licence) manifest.licence = moves.get(manifest.licence) ?? manifest.licence;
     if (manifest.themeIcons)
         for (const [theme, file] of Object.entries(manifest.themeIcons))
             manifest.themeIcons[theme] = moves.get(file) ?? file;

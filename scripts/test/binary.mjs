@@ -121,6 +121,10 @@ try {
         "assets/edit.js",
         "assets/ui.js",
         "assets/code.js",
+        "assets/code-worker.js",
+        "assets/code-grammars.json",
+        "assets/graph.js",
+        "assets/graph/schema-graph-global.js",
         "assets/fonts/udev-gothic-regular.woff2",
     ]) {
         const response = await fetch(new URL(path, url), { signal: AbortSignal.timeout(30_000) });

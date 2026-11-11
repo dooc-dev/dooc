@@ -11,6 +11,15 @@ dooc turns Markdown and local files into a document workspace. Keep diagrams, co
 - Keep navigation in `dooc.yaml` and source files in Git or storage.
 - Share the source folder or export a standalone HTML document.
 
+To reference your project's licence file, add its path relative to `dooc.yaml`:
+
+```yaml
+system:
+  licence: LICENSE.md
+```
+
+The path can also point to an extensionless file such as `LICENSE` or a text file such as `legal/LICENSE.txt`. The file must exist inside the project and is included in source ZIP exports.
+
 ## Explore the samples
 
 | Explore                                      | What you can try                                        |
