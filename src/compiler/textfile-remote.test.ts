@@ -6,9 +6,9 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { blocksHtml } from "../core/html.js";
 import { textfileName } from "../core/textfile.js";
 import { textfileResponse } from "../viewer/textfile.js";
-import { bundleEntries } from "./bundle.js";
 import { compileSite } from "./compile.js";
 import { collectRefs, parseDoc } from "./dialect.js";
+import { exportEntries } from "./export.js";
 import { formatMarkdown } from "./format.js";
 import { fetchPublicFile } from "./public-file.js";
 import { readTextfile } from "./textfile.js";
@@ -161,7 +161,7 @@ it("keeps external embeds as URLs without fetching or baking private service dat
     expect(html).toContain('href="https://example.com/export.rs?x=1&amp;y=2#L2"');
     expect(execFileSync).not.toHaveBeenCalled();
     expect(fetchPublicFile).not.toHaveBeenCalled();
-    expect(bundleEntries(root).map((entry) => entry.name)).toEqual([
+    expect(exportEntries(root).map((entry) => entry.name)).toEqual([
         "dooc.yaml",
         "content/sample.md",
     ]);

@@ -3,9 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { blocksHtml } from "../core/html.js";
-import { bundleEntries } from "./bundle.js";
 import { compileDraft, compileSite, createCompiler } from "./compile.js";
 import { collectRefs, parseDoc } from "./dialect.js";
+import { exportEntries } from "./export.js";
 import { formatMarkdown } from "./format.js";
 import { toBlocks } from "./from-mdast.js";
 import { parseTermSource } from "./terms.js";
@@ -99,7 +99,7 @@ describe("termth definitions and file links", () => {
             expect(built.terms).toHaveLength(1);
             expect(built.docs[0]?.refs.terms).toEqual(["terms/api.termth"]);
             expect(
-                bundleEntries(root)
+                exportEntries(root)
                     .find((entry) => entry.name === "terms/api.termth")
                     ?.data.toString(),
             ).toBe(yaml);

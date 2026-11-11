@@ -23,7 +23,9 @@ fn main() { println!("Hello, dooc!"); }
 ```python
 print("Hello, dooc!")
 ```
+
 ### Contents
+
 ![dooc — documentation slides](content/demo-panel.html)
 
 ![TaskApp — launch checklist](https://sample.dooc.invalid/tickets/DOC-42#overview)

@@ -10,7 +10,7 @@ import {
     unlinkSync,
     writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import {
     flattenTree,
     insertDoc,
@@ -19,17 +19,19 @@ import {
     type ParsedManifest,
     removeDoc,
     renameDoc,
+    subformatPageId,
 } from "../core/content-metadata.js";
 import {
     defaultFilePath,
     docIconFile,
+    fileDocumentId,
     isDocumentFileName,
     parseFileLayout,
 } from "../core/files.js";
 import { parseDocLink } from "../core/routing.js";
 import { collectDocLinks, compileSite } from "./compile.js";
 import { figureName, figureUploadName } from "./figures.js";
-import { projectFiles, rewriteFileLinks } from "./files.js";
+import { filesSnapshot, projectFiles, rewriteFileLinks, updateFiles } from "./files.js";
 import { translationFile, translationFiles, translationLanguages } from "./locales.js";
 import { docFile, readManifest, writeManifest } from "./manifest.js";
 import { assembleDoc } from "./serialize.js";
@@ -65,7 +67,10 @@ export const createDocOps = (root: string) => {
     };
 
     const existingDoc = (id: unknown): OpResult<{ id: string }> =>
-        typeof id === "string" && isDocId(id) && existsSync(docPath(id))
+        typeof id === "string" &&
+        isDocId(id) &&
+        !flattenTree(readManifest(root).tree).some((node) => node.id === id && node.subformat) &&
+        existsSync(docPath(id))
             ? { id }
             : { error: `doc "${String(id)}" not found`, status: 404 };
 
@@ -109,11 +114,23 @@ export const createDocOps = (root: string) => {
         if (isOpError(loaded)) {
             return loaded;
         }
+        if (loaded.format === "nested") {
+            const file =
+                loaded.files?.defaultLayout !== false
+                    ? defaultFilePath(filename ?? `${id}.md`)
+                    : `content/${filename ?? `${id}.md`}`;
+            id = fileDocumentId(file);
+            loaded.files ??= parseFileLayout({});
+            loaded.files.documents[id] = file;
+        }
         const tree = insertDoc(loaded.tree, id, parent);
         if (!tree) {
             return { error: `duplicate id "${id}" or missing parent "${parent}"`, status: 409 };
         }
-        if (filename !== undefined || loaded.files?.defaultLayout !== false) {
+        if (
+            loaded.format !== "nested" &&
+            (filename !== undefined || loaded.files?.defaultLayout !== false)
+        ) {
             loaded.files ??= parseFileLayout({});
             loaded.files.documents[id] = loaded.files.defaultLayout
                 ? defaultFilePath(filename ?? `${id}.md`)
@@ -144,6 +161,39 @@ export const createDocOps = (root: string) => {
         for (let index = 2; ids.has(id) || existsSync(docPath(id)); index++)
             id = `${stem}-${index}`;
         return add(id, title, parent, name);
+    };
+
+    const addSubformat = (
+        ext: string,
+        title: string,
+        parent?: string,
+    ): OpResult<{ id: string }> => {
+        const loaded = loadTree();
+        if (isOpError(loaded)) return loaded;
+        if (!loaded.subformats?.some((format) => format.ext === ext) || !title.trim())
+            return { error: "Choose an existing subformat and enter a title", status: 400 };
+        const id = subformatPageId(ext);
+        const tree = insertDoc(loaded.tree, id, parent, { subformat: ext, title: title.trim() });
+        if (!tree) return { error: "Page already exists or parent is missing", status: 409 };
+        writeManifest(root, tree, loaded);
+        return { id };
+    };
+
+    const renameSubformat = (id: string, title: string): OpResult<{ id: string }> => {
+        const loaded = loadTree();
+        if (isOpError(loaded)) return loaded;
+        if (!title.trim()) return { error: "title is required", status: 400 };
+        const visit = (nodes: typeof loaded.tree): boolean =>
+            nodes.some((node) => {
+                if (node.id === id && node.subformat) {
+                    node.title = title.trim();
+                    return true;
+                }
+                return visit(node.children);
+            });
+        if (!visit(loaded.tree)) return { error: "Subformat page not found", status: 404 };
+        writeManifest(root, loaded.tree, loaded);
+        return { id };
     };
 
     /**
@@ -183,6 +233,36 @@ export const createDocOps = (root: string) => {
         }
         if (newId === "" || newId === oldId) {
             return { id: oldId, updatedRefs: 0 };
+        }
+        const manifest = readManifest(root);
+        if (manifest.format === "nested") {
+            const name = newId.endsWith(".md") ? newId : `${newId}.md`;
+            if (!isDocumentFileName(name))
+                return { error: "Enter a Markdown file name", status: 400 };
+            try {
+                const file = docFile(oldId, manifest.files);
+                const next = posix.join(posix.dirname(file), name);
+                const moves = new Map([[file, next]]);
+                const updatedRefs = referenceFiles().filter((path) => {
+                    const raw = readFileSync(textfilePath(root, path), "utf8");
+                    return rewriteFileLinks(raw, moves) !== raw;
+                }).length;
+                updateFiles(root, {
+                    action: "rename",
+                    file,
+                    name,
+                    revision: filesSnapshot(root).revision,
+                });
+                return {
+                    id: fileDocumentId(next),
+                    updatedRefs,
+                };
+            } catch (error) {
+                return {
+                    error: error instanceof Error ? error.message : String(error),
+                    status: 409,
+                };
+            }
         }
         if (!isDocId(newId)) {
             return { error: "id must be a slug (lowercase alphanumerics, hyphens)", status: 400 };
@@ -257,6 +337,15 @@ export const createDocOps = (root: string) => {
         id: string,
         force = false,
     ): OpResult<{ parent: string | undefined; danglingRefs: number }> => {
+        const manifest = loadTree();
+        if (isOpError(manifest)) return manifest;
+        const page = flattenTree(manifest.tree).find((node) => node.id === id && node.subformat);
+        if (page) {
+            const tree = removeDoc(manifest.tree, id);
+            if (!tree) return { error: "doc has children (move / delete them first)", status: 409 };
+            writeManifest(root, tree, manifest);
+            return { parent: page.parent, danglingRefs: 0 };
+        }
         const target = existingDoc(id);
         if (isOpError(target)) {
             return target;
@@ -295,9 +384,6 @@ export const createDocOps = (root: string) => {
         if (loaded.files) {
             delete loaded.files.documents[id];
             if (loaded.files.icons) delete loaded.files.icons[id];
-            loaded.files.order = loaded.files.order.filter(
-                (file) => join(root, file) !== removedPath,
-            );
         }
         writeManifest(root, tree, loaded);
         unlinkSync(removedPath);
@@ -418,6 +504,8 @@ export const createDocOps = (root: string) => {
         figureFiles,
         add,
         addFile,
+        addSubformat,
+        renameSubformat,
         move,
         rename,
         remove,

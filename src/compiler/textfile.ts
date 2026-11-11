@@ -13,6 +13,7 @@ import {
 import { open, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isRemoteTextfile, parseTextfileRange } from "../core/textfile.js";
+import { assertNotIgnored } from "./ignored-files.js";
 
 import { readRemoteTextfile, readRemoteTextfileAsync } from "./textfile-remote.js";
 
@@ -72,6 +73,7 @@ export const readTextfile = (
         data = readRemoteTextfile(file, domains, refresh);
     } else {
         const path = textfilePath(root, file);
+        assertNotIgnored(root, file);
         if (!statSync(path).isFile()) throw new Error("expected a regular UTF-8 text file");
         data = readFileSync(path);
     }
@@ -94,6 +96,7 @@ export const readTextfileAsync = async (
         return decodeTextfile(await readRemoteTextfileAsync(file, domains, refresh));
     }
     const path = textfilePath(root, file);
+    assertNotIgnored(root, file);
     if (!(await stat(path)).isFile()) throw new Error("expected a regular UTF-8 text file");
     const handle = await open(path, "r");
     try {

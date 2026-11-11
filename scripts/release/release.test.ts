@@ -60,7 +60,7 @@ describe.each(["dooc", "dooc-plugin"])("release %s", (target) => {
     it("only publishes through workflow_dispatch", () => {
         const filename = target === "dooc" ? "release.yml" : "publish-plugin.yml";
         const workflow = parse(
-            readFileSync(new URL(`../.github/workflows/${filename}`, import.meta.url), "utf8"),
+            readFileSync(new URL(`../../.github/workflows/${filename}`, import.meta.url), "utf8"),
         );
         expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"]);
         expect(workflow.on.workflow_dispatch.inputs.bump.options).toEqual([

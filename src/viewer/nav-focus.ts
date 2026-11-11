@@ -10,8 +10,14 @@ export const focusNavTree = (root: HTMLElement | null): void => {
     ) {
         path.unshift(item);
     }
-    const width = root.clientWidth;
+    const closed = document.body.classList.contains("sidebar-closed");
+    const width = closed
+        ? Number(root.dataset.expandedWidth) ||
+          Number.parseFloat(getComputedStyle(root).getPropertyValue("--sidebar-width")) ||
+          260
+        : root.clientWidth;
     if (!width) return;
+    if (!closed) root.dataset.expandedWidth = String(width);
     const indent = 48 + Math.max(0, path.length - 2) * 29;
     const ancestors = new Set(path.length > 2 && width < indent + 150 ? path.slice(0, -1) : []);
     const items = [...root.querySelectorAll<HTMLElement>(".nav-item[data-doc-id]")];

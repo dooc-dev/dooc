@@ -98,6 +98,55 @@ describe("manifest", () => {
         }
     });
 
+    it("validates and preserves subformat definitions when rewriting the manifest", () => {
+        const subformats = [
+            { ext: "issue", format: "yaml", schema: "schemas/issue.json" },
+            { ext: "event", format: "json", schema: "schemas/event.json" },
+            { ext: "release", format: "toml", schema: "schemas/issue.json" },
+        ];
+        const manifest = parseManifest({ docs: ["a"], subformats });
+        expect(manifest.errors).toEqual([]);
+        expect(parseManifestText(serializeManifest(manifest.tree, manifest))).toEqual(manifest);
+        for (const invalid of [
+            null,
+            {},
+            [subformats[0], subformats[0]],
+            [{ ext: ".issue", format: "yaml", schema: "schema.json" }],
+            [{ ext: "issue", format: "xml", schema: "schema.json" }],
+            [{ ext: "issue", format: "json", schema: "../schema.json" }],
+            [{ ext: "issue", format: "json", schema: "https://example.com/schema.json" }],
+            [{ ext: "issue", format: "json", schema: "schema.json", extra: true }],
+        ])
+            expect(parseManifest({ docs: [], subformats: invalid }).errors.length).toBeGreaterThan(
+                0,
+            );
+    });
+
+    it("preserves the default subformat folder in both manifest formats", () => {
+        for (const value of [{ docs: [] }, { center_contents: [] }]) {
+            const manifest = parseManifest({
+                ...value,
+                default_subformat_folder: "records/issues",
+            });
+            expect(manifest.errors).toEqual([]);
+            expect(manifest.defaultSubformatFolder).toBe("records/issues");
+            expect(parseManifestText(serializeManifest(manifest.tree, manifest))).toEqual(manifest);
+            for (const folder of [
+                null,
+                "",
+                "../outside",
+                "/absolute",
+                ".private",
+                "node_modules/issues",
+                "dist/issues",
+                "https://example.com",
+            ])
+                expect(
+                    parseManifest({ ...value, default_subformat_folder: folder }).errors.length,
+                ).toBeGreaterThan(0);
+        }
+    });
+
     it("flattenTree yields pre-order + parent + depth", () => {
         expect(flattenTree(tree)).toEqual([
             { id: "a", depth: 0 },

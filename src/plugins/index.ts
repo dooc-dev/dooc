@@ -15,6 +15,7 @@ export type {
     PluginTone,
 } from "./blocks.js";
 export { PluginError, parseOAuthToken } from "./oauth.js";
+export type { PluginRequest, PluginResponse, PluginTransport } from "./transport.js";
 export type {
     DataPlugin,
     OAuthToken,

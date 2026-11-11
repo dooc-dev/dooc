@@ -1,20 +1,25 @@
-// The content/ contract. Doc bodies sit flat in content/<id>.md, and only dooc.yaml
-// holds the hierarchy and order (docs themselves have no root / child distinction; any doc can
-// have children). id = the file name stem is the resolution key for URLs / file links and is
-// unique site-wide. YAML reading/writing lives in compiler/manifest.ts; this file only does
-// browser-safe tree validation and manipulation.
+// dooc.yaml owns document hierarchy and display settings. Nested manifests identify documents
+// by complete source paths; legacy manifests retain their authored IDs during migration.
 
-import { docFile, type FileLayout, localFile, parseFileLayout } from "./files.js";
+import { stringify } from "yaml";
+import { docFile, type FileLayout, fileDocumentId, localFile, parseFileLayout } from "./files.js";
 import { contentLanguageCode, DEFAULT_LANG, isLangTag } from "./language.js";
+import { parseSubformats, type Subformat } from "./subformats.js";
 
 export const MANIFEST_FILE = "dooc.yaml";
 
 export interface DocNode {
     id: string;
+    file?: string;
+    subformat?: string;
+    title?: string;
     children: DocNode[];
 }
 
 export interface ParsedManifest {
+    format?: "nested";
+    titles?: Record<string, string>;
+    themeIcons?: Record<string, string>;
     tree: DocNode[];
     title?: string;
     icon?: string;
@@ -24,12 +29,16 @@ export interface ParsedManifest {
     languages?: string[];
     /** Color themes offered by the site, with authored variants for embedded files. */
     themes?: ("light" | "dark")[];
+    subformats?: Subformat[];
+    defaultSubformatFolder?: string;
     errors: string[];
 }
 
 export const DOC_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 
 export const isDocId = (s: string): boolean => DOC_ID_RE.test(s);
+
+export const subformatPageId = (ext: string): string => `subformat-${fileDocumentId(ext)}`;
 
 /** Doc file name directly under content/ (`<id>.md`) → id. undefined if the shape differs. */
 export const docIdOfFile = (name: string): string | undefined => {
@@ -43,6 +52,15 @@ export const docIdOfFile = (name: string): string | undefined => {
  * Validates id shape and duplicates.
  */
 export const parseManifest = (value: unknown): ParsedManifest => {
+    if (
+        value &&
+        typeof value === "object" &&
+        !Array.isArray(value) &&
+        ["system", "left_sidebar", "center_contents", "json_subformats"].some(
+            (key) => key in (value as object),
+        )
+    )
+        return parseNestedManifest(value);
     const errors: string[] = [];
     let title: string | undefined;
     let icon: string | undefined;
@@ -50,6 +68,8 @@ export const parseManifest = (value: unknown): ParsedManifest => {
     let files: FileLayout | undefined;
     let languages: string[] | undefined;
     let themes: ParsedManifest["themes"];
+    let subformats: Subformat[] | undefined;
+    let defaultSubformatFolder: string | undefined;
     if (value != null && typeof value === "object" && !Array.isArray(value)) {
         const manifest = value as Record<string, unknown>;
         for (const key of Object.keys(manifest))
@@ -60,7 +80,9 @@ export const parseManifest = (value: unknown): ParsedManifest => {
                 key !== "docs" &&
                 key !== "files" &&
                 key !== "languages" &&
-                key !== "themes"
+                key !== "themes" &&
+                key !== "subformats" &&
+                key !== "default_subformat_folder"
             )
                 errors.push(`${MANIFEST_FILE}: unknown field "${key}"`);
         if (manifest.title !== undefined) {
@@ -88,6 +110,26 @@ export const parseManifest = (value: unknown): ParsedManifest => {
             } catch (error) {
                 errors.push(`${MANIFEST_FILE}: ${error instanceof Error ? error.message : error}`);
             }
+        }
+        if (manifest.subformats !== undefined) {
+            try {
+                subformats = parseSubformats(manifest.subformats);
+            } catch (error) {
+                errors.push(`${MANIFEST_FILE}: ${error instanceof Error ? error.message : error}`);
+            }
+        }
+        if (manifest.default_subformat_folder !== undefined) {
+            const folder = manifest.default_subformat_folder;
+            if (
+                !localFile(folder) ||
+                ["node_modules", "dist", "locales", MANIFEST_FILE, "docs.config.mjs"].includes(
+                    folder.split("/")[0] ?? "",
+                )
+            )
+                errors.push(
+                    `${MANIFEST_FILE}: default_subformat_folder must be a local project folder`,
+                );
+            else defaultSubformatFolder = folder;
         }
         if (manifest.languages !== undefined) {
             try {
@@ -137,6 +179,35 @@ export const parseManifest = (value: unknown): ParsedManifest => {
             const at = `${path}[${i}]`;
             let id: unknown;
             let children: unknown;
+            if (item && typeof item === "object" && !Array.isArray(item) && "subformat" in item) {
+                const config = subformats?.find((format) => format.ext === item.subformat);
+                if (
+                    !config ||
+                    Object.keys(item).some(
+                        (key) => !["subformat", "title", "children"].includes(key),
+                    ) ||
+                    (item.title !== undefined &&
+                        (typeof item.title !== "string" || !item.title.trim()))
+                ) {
+                    errors.push(
+                        `${MANIFEST_FILE}: ${at} requires a registered subformat and a non-empty title`,
+                    );
+                    continue;
+                }
+                const id = subformatPageId(config.ext);
+                if (seen.has(id)) {
+                    errors.push(`${MANIFEST_FILE}: duplicate id "${id}"`);
+                    continue;
+                }
+                seen.add(id);
+                nodes.push({
+                    id,
+                    subformat: config.ext,
+                    title: item.title?.trim() ?? config.ext,
+                    children: walk(item.children, `${at}.children`),
+                });
+                continue;
+            }
             if (typeof item === "string") {
                 id = item;
             } else if (
@@ -170,7 +241,9 @@ export const parseManifest = (value: unknown): ParsedManifest => {
         for (const id of [...Object.keys(files.documents), ...Object.keys(files.icons ?? {})])
             if (!seen.has(id))
                 errors.push(`${MANIFEST_FILE}: files references unknown document "${id}"`);
-        const paths = [...seen].map((id) => docFile(id, files));
+        const paths = flattenTree(tree)
+            .filter((node) => !node.subformat)
+            .map(({ id }) => docFile(id, files));
         if (new Set(paths).size !== paths.length)
             errors.push(`${MANIFEST_FILE}: documents must use distinct files`);
     }
@@ -182,22 +255,256 @@ export const parseManifest = (value: unknown): ParsedManifest => {
         ...(files === undefined ? {} : { files }),
         ...(languages === undefined ? {} : { languages }),
         ...(themes === undefined ? {} : { themes }),
+        ...(subformats === undefined ? {} : { subformats }),
+        ...(defaultSubformatFolder === undefined ? {} : { defaultSubformatFolder }),
         errors,
     };
 };
 
-/** Tree → dooc.yaml text (serialized in the hand-written shape, keeping git diffs clean). */
+const parseNestedManifest = (input: object): ParsedManifest => {
+    try {
+        const object = (value: unknown, keys: string[], at: string): Record<string, unknown> => {
+            if (!value || typeof value !== "object" || Array.isArray(value))
+                throw new Error(`${at} must be an object`);
+            for (const key of Object.keys(value))
+                if (!keys.includes(key)) throw new Error(`${at}: unknown field "${key}"`);
+            return value as Record<string, unknown>;
+        };
+        const root = object(
+            input,
+            [
+                "system",
+                "left_sidebar",
+                "center_contents",
+                "json_subformats",
+                "default_subformat_folder",
+            ],
+            MANIFEST_FILE,
+        );
+        const system = object(
+            root.system ?? {},
+            ["languages", "default_lang", "themes", "files"],
+            "system",
+        );
+        const sidebar = object(root.left_sidebar ?? {}, ["title", "icon"], "left_sidebar");
+        const layout = object(system.files ?? {}, ["default_layout", "order"], "system.files");
+        const titles: Record<string, string> = {};
+        if (sidebar.title !== undefined) {
+            if (!sidebar.title || typeof sidebar.title !== "object" || Array.isArray(sidebar.title))
+                throw new Error("left_sidebar.title must map languages to titles");
+            for (const [tag, title] of Object.entries(sidebar.title)) {
+                if (!isLangTag(tag) || typeof title !== "string" || !title.trim())
+                    throw new Error("Invalid localized site title");
+                const code = contentLanguageCode(tag);
+                if (Object.hasOwn(titles, code))
+                    throw new Error(`Duplicate title language: ${code}`);
+                titles[code] = title.trim();
+            }
+        }
+        const themeIcons: Record<string, string> = {};
+        if (sidebar.icon !== undefined) {
+            const icons = object(sidebar.icon, ["light", "dark"], "left_sidebar.icon");
+            for (const [theme, file] of Object.entries(icons)) {
+                if (!localFile(file) || !file.endsWith(".svg"))
+                    throw new Error("Site icons must be local SVG files");
+                themeIcons[theme] = file;
+            }
+        }
+        const documents: Record<string, string> = {};
+        const icons: Record<string, string> = {};
+        const walk = (value: unknown): DocNode[] => {
+            if (!Array.isArray(value))
+                throw new Error("center_contents and children must be lists");
+            return value.map((entry) => {
+                const node = object(
+                    entry,
+                    ["file", "icon", "children", "subformat", "title"],
+                    "center_contents",
+                );
+                if (node.subformat !== undefined) {
+                    const config = parseSubformats(root.json_subformats ?? []).find(
+                        (format) => format.ext === node.subformat,
+                    );
+                    if (
+                        !config ||
+                        node.file !== undefined ||
+                        node.icon !== undefined ||
+                        (node.title !== undefined &&
+                            (typeof node.title !== "string" || !node.title.trim()))
+                    )
+                        throw new Error(
+                            "Subformat pages require a registered subformat and a non-empty title",
+                        );
+                    return {
+                        id: subformatPageId(config.ext),
+                        subformat: config.ext,
+                        title: typeof node.title === "string" ? node.title.trim() : config.ext,
+                        children: node.children === undefined ? [] : walk(node.children),
+                    };
+                }
+                if (!localFile(node.file) || !node.file.endsWith(".md"))
+                    throw new Error("Each document requires a local .md file");
+                const id = fileDocumentId(node.file);
+                if (Object.hasOwn(documents, id))
+                    throw new Error(`Duplicate document: ${node.file}`);
+                documents[id] = node.file;
+                if (node.icon !== undefined) {
+                    if (!localFile(node.icon) || !node.icon.endsWith(".svg"))
+                        throw new Error("Document icons must be local SVG files");
+                    icons[id] = node.icon;
+                }
+                return {
+                    id,
+                    file: node.file,
+                    children: node.children === undefined ? [] : walk(node.children),
+                };
+            });
+        };
+        const tree = walk(root.center_contents);
+        const language = system.default_lang ?? DEFAULT_LANG;
+        if (typeof language !== "string" || !isLangTag(language))
+            throw new Error("system.default_lang must be a language tag");
+        const source = contentLanguageCode(language);
+        if (sidebar.title !== undefined && !titles[source])
+            throw new Error("left_sidebar.title must include system.default_lang");
+        const legacyTree = (nodes: DocNode[]): unknown[] =>
+            nodes.map((node) =>
+                node.subformat
+                    ? {
+                          subformat: node.subformat,
+                          title: node.title,
+                          children: legacyTree(node.children),
+                      }
+                    : node.children.length
+                      ? { [node.id]: legacyTree(node.children) }
+                      : node.id,
+            );
+        const parsed = parseManifest({
+            docs: legacyTree(tree),
+            defaultLang: language,
+            ...(system.languages === undefined ? {} : { languages: system.languages }),
+            ...(system.themes === undefined ? {} : { themes: system.themes }),
+            ...(titles[source] ? { title: titles[source] } : {}),
+            ...(themeIcons.light || themeIcons.dark
+                ? { icon: themeIcons.light ?? themeIcons.dark }
+                : {}),
+            files: {
+                defaultLayout: layout.default_layout,
+                documents,
+                ...(Object.keys(icons).length ? { icons } : {}),
+            },
+            ...(root.json_subformats === undefined ? {} : { subformats: root.json_subformats }),
+            ...(root.default_subformat_folder === undefined
+                ? {}
+                : { default_subformat_folder: root.default_subformat_folder }),
+        });
+        return {
+            ...parsed,
+            format: "nested",
+            tree,
+            ...(sidebar.title === undefined ? {} : { titles }),
+            ...(sidebar.icon === undefined ? {} : { themeIcons }),
+        };
+    } catch (error) {
+        return {
+            format: "nested",
+            tree: [],
+            errors: [`${MANIFEST_FILE}: ${error instanceof Error ? error.message : error}`],
+        };
+    }
+};
+
+/** Serialize the authored format; legacy manifests remain readable during migration. */
 export const serializeManifest = (
     tree: readonly DocNode[],
     {
+        format,
+        titles,
+        themeIcons,
         title,
         icon,
         defaultLang,
         files,
         languages,
         themes,
+        subformats,
+        defaultSubformatFolder,
     }: Omit<ParsedManifest, "tree" | "errors"> = {},
 ): string => {
+    if (format === "nested") {
+        const contents = (nodes: readonly DocNode[]): unknown[] =>
+            nodes.map((node) => ({
+                ...(node.subformat
+                    ? { subformat: node.subformat, title: node.title }
+                    : { file: docFile(node.id, files) }),
+                ...(files?.icons?.[node.id] ? { icon: files.icons[node.id] } : {}),
+                ...(node.children.length ? { children: contents(node.children) } : {}),
+            }));
+        return stringify(
+            {
+                system: {
+                    ...(languages ? { languages } : {}),
+                    default_lang: defaultLang ?? DEFAULT_LANG,
+                    ...(themes ? { themes } : {}),
+                    ...(files
+                        ? {
+                              files: {
+                                  default_layout: files.defaultLayout,
+                              },
+                          }
+                        : {}),
+                },
+                ...(titles || title || themeIcons || icon
+                    ? {
+                          left_sidebar: {
+                              ...(titles || title
+                                  ? {
+                                        title: titles ?? {
+                                            [contentLanguageCode(defaultLang ?? DEFAULT_LANG)]:
+                                                title,
+                                        },
+                                    }
+                                  : {}),
+                              ...(themeIcons || icon
+                                  ? { icon: themeIcons ?? { light: icon, dark: icon } }
+                                  : {}),
+                          },
+                      }
+                    : {}),
+                center_contents: contents(tree),
+                ...(subformats ? { json_subformats: subformats } : {}),
+                ...(defaultSubformatFolder
+                    ? { default_subformat_folder: defaultSubformatFolder }
+                    : {}),
+            },
+            { lineWidth: 0 },
+        );
+    }
+    if (flattenTree(tree).some((node) => node.subformat)) {
+        const contents = (nodes: readonly DocNode[]): unknown[] =>
+            nodes.map((node) =>
+                node.subformat
+                    ? {
+                          subformat: node.subformat,
+                          title: node.title,
+                          ...(node.children.length ? { children: contents(node.children) } : {}),
+                      }
+                    : node.children.length
+                      ? { [node.id]: contents(node.children) }
+                      : node.id,
+            );
+        return stringify({
+            ...(title ? { title } : {}),
+            ...(icon ? { icon } : {}),
+            ...(defaultLang ? { defaultLang } : {}),
+            ...(files ? { files } : {}),
+            ...(languages ? { languages } : {}),
+            ...(themes ? { themes } : {}),
+            ...(subformats ? { subformats } : {}),
+            ...(defaultSubformatFolder ? { default_subformat_folder: defaultSubformatFolder } : {}),
+            docs: contents(tree),
+        });
+    }
     const write = (nodes: readonly DocNode[], indent: string): string[] =>
         nodes.flatMap((n) =>
             n.children.length > 0
@@ -210,11 +517,13 @@ export const serializeManifest = (
         defaultLang !== undefined ||
         files !== undefined ||
         languages !== undefined ||
-        themes !== undefined
+        themes !== undefined ||
+        subformats !== undefined ||
+        defaultSubformatFolder !== undefined
     ) {
         const lines = write(tree, "  ");
-        const metadata = `${title === undefined ? "" : `title: ${JSON.stringify(title)}\n`}${icon === undefined ? "" : `icon: ${JSON.stringify(icon)}\n`}${defaultLang === undefined ? "" : `defaultLang: ${JSON.stringify(defaultLang)}\n`}`;
-        return `${metadata}${files ? `files: ${JSON.stringify(files)}\n` : ""}${languages ? `languages: ${JSON.stringify(languages)}\n` : ""}${themes ? `themes: ${JSON.stringify(themes)}\n` : ""}docs:${lines.length ? `\n${lines.join("\n")}\n` : " []\n"}`;
+        const metadata = `${title === undefined ? "" : `title: ${JSON.stringify(title)}\n`}${icon === undefined ? "" : `icon: ${JSON.stringify(icon)}\n`}${defaultLang === undefined ? "" : `defaultLang: ${JSON.stringify(defaultLang)}\n`}${defaultSubformatFolder === undefined ? "" : `default_subformat_folder: ${JSON.stringify(defaultSubformatFolder)}\n`}`;
+        return `${metadata}${files ? `files: ${JSON.stringify(files)}\n` : ""}${languages ? `languages: ${JSON.stringify(languages)}\n` : ""}${themes ? `themes: ${JSON.stringify(themes)}\n` : ""}${subformats ? `subformats: ${JSON.stringify(subformats)}\n` : ""}docs:${lines.length ? `\n${lines.join("\n")}\n` : " []\n"}`;
     }
     const lines = write(tree, "");
     return `# Doc hierarchy and order (each id = content/<id>.md)\n${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`;
@@ -223,11 +532,17 @@ export const serializeManifest = (
 /** Flatten the tree into display order (pre-order). parent omitted = top level. */
 export const flattenTree = (
     tree: readonly DocNode[],
-): { id: string; parent?: string; depth: number }[] => {
-    const out: { id: string; parent?: string; depth: number }[] = [];
+): (Omit<DocNode, "children"> & { parent?: string; depth: number })[] => {
+    const out: (Omit<DocNode, "children"> & { parent?: string; depth: number })[] = [];
     const walk = (nodes: readonly DocNode[], parent: string | undefined, depth: number): void => {
         for (const n of nodes) {
-            out.push(parent == null ? { id: n.id, depth } : { id: n.id, parent, depth });
+            out.push({
+                id: n.id,
+                ...(n.file ? { file: n.file } : {}),
+                ...(n.subformat ? { subformat: n.subformat, title: n.title } : {}),
+                ...(parent == null ? {} : { parent }),
+                depth,
+            });
             walk(n.children, n.id, depth + 1);
         }
     };
@@ -236,7 +551,7 @@ export const flattenTree = (
 };
 
 const clone = (tree: readonly DocNode[]): DocNode[] =>
-    tree.map((n) => ({ id: n.id, children: clone(n.children) }));
+    tree.map((n) => ({ ...n, children: clone(n.children) }));
 
 const findNode = (tree: readonly DocNode[], id: string): DocNode | undefined => {
     for (const n of tree) {
@@ -275,13 +590,14 @@ export const insertDoc = (
     tree: readonly DocNode[],
     id: string,
     parent?: string,
+    page: Pick<DocNode, "subformat" | "title"> = {},
 ): DocNode[] | undefined => {
     const next = clone(tree);
     const list = childList(next, parent);
     if (!list || findNode(next, id)) {
         return undefined;
     }
-    list.push({ id, children: [] });
+    list.push({ id, ...page, children: [] });
     return next;
 };
 

@@ -1,7 +1,6 @@
 export interface FileLayout {
     defaultLayout: boolean;
     documents: Record<string, string>;
-    order: string[];
     icons?: Record<string, string>;
 }
 
@@ -35,6 +34,10 @@ export const fileExtension = (file: string): string => {
 export const defaultFilePath = (file: string): string =>
     `files/${fileExtension(file)}/${file.split("/").pop()}`;
 
+/** Internal keys are derived from the complete path, never authored in the manifest. */
+export const fileDocumentId = (file: string): string =>
+    `file-${Array.from(new TextEncoder().encode(file), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+
 export const docFile = (id: string, layout?: FileLayout): string =>
     layout && Object.hasOwn(layout.documents, id)
         ? (layout.documents[id] as string)
@@ -44,6 +47,7 @@ export const parseFileLayout = (value: unknown): FileLayout => {
     if (!value || typeof value !== "object" || Array.isArray(value))
         throw new Error("files must be an object");
     const v = value as Record<string, unknown>;
+    // Accept the retired order field when opening older manifests, without retaining it.
     if (
         Object.keys(v).some(
             (key) => !["defaultLayout", "documents", "order", "icons"].includes(key),
@@ -52,7 +56,6 @@ export const parseFileLayout = (value: unknown): FileLayout => {
     )
         throw new Error("Invalid file layout");
     const documents = v.documents ?? {};
-    const order = v.order ?? [];
     const icons = v.icons;
     if (
         icons !== undefined &&
@@ -73,16 +76,12 @@ export const parseFileLayout = (value: unknown): FileLayout => {
             ([id, file]) =>
                 !/^[a-z0-9][a-z0-9-]*$/.test(id) || !localFile(file) || !file.endsWith(".md"),
         ) ||
-        new Set(Object.values(documents)).size !== Object.keys(documents).length ||
-        !Array.isArray(order) ||
-        order.some((file) => !localFile(file)) ||
-        new Set(order).size !== order.length
+        new Set(Object.values(documents)).size !== Object.keys(documents).length
     )
-        throw new Error("Invalid file paths or order");
+        throw new Error("Invalid file paths");
     return {
         defaultLayout: v.defaultLayout !== false,
         documents: documents as Record<string, string>,
-        order,
         ...(icons ? { icons: icons as Record<string, string> } : {}),
     };
 };
@@ -90,4 +89,4 @@ export const parseFileLayout = (value: unknown): FileLayout => {
 export const docIconFile = (id: string, layout?: FileLayout): string =>
     layout?.icons && Object.hasOwn(layout.icons, id)
         ? (layout.icons[id] as string)
-        : `icons/${id}.svg`;
+        : `icons/${layout?.documents[id] && fileDocumentId(layout.documents[id] as string) === id ? layout.documents[id] : id}.svg`;

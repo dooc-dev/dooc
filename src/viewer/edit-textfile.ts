@@ -9,7 +9,10 @@ import { chooseConflict } from "./edit-conflict.js";
 import { previewSettingsState, setPreviewSettings } from "./edit-file-preview.js";
 import { createFoldButton } from "./edit-fold.js";
 import { gitBaseState, gitDiffState, gitDiffTheme, setGitBase } from "./edit-git-diff.js";
+import { jsonEditor } from "./edit-json.js";
+import { hasSchemaBuilderDraft, prepareSchemaBuilder } from "./edit-schema-builder.js";
 import { editorSetup } from "./edit-setup.js";
+import { hasSubformatFormDraft, subformatForm } from "./edit-subformat-form.js";
 import { type FilePreview, fileReferences } from "./file-references.js";
 import { t } from "./i18n.js";
 
@@ -30,6 +33,7 @@ interface FileDraft {
     open: boolean;
     error: string;
     errorAction?: "read" | "save";
+    invalid?: boolean;
     validation: "pending" | "checking" | "valid" | "error";
     validationMessage: string;
     listeners: Set<() => void>;
@@ -57,7 +61,8 @@ export const createTextfileEditors = (
     let previews: Record<string, FilePreview> = {};
     const cleanup = new WeakMap<HTMLElement, () => void>();
     const dirty = (draft: FileDraft): boolean =>
-        !!draft.state && draft.state.sliceDoc() !== (draft.base ?? "");
+        !!draft.state &&
+        (draft.state.sliceDoc() !== (draft.base ?? "") || hasSchemaBuilderDraft(draft.state));
     const notify = (draft: FileDraft): void => {
         for (const listener of draft.listeners) listener();
         onDirty();
@@ -65,7 +70,13 @@ export const createTextfileEditors = (
     const scheduleSave = (file: string, draft: FileDraft): void => {
         clearTimeout(draft.timer);
         draft.timer = undefined;
-        if (isRemoteTextfile(file) || !dirty(draft) || draft.error) return;
+        if (
+            isRemoteTextfile(file) ||
+            !dirty(draft) ||
+            draft.error ||
+            hasSchemaBuilderDraft(draft.state)
+        )
+            return;
         draft.timer = setTimeout(() => {
             draft.timer = undefined;
             void save(file, draft);
@@ -89,6 +100,9 @@ export const createTextfileEditors = (
             content: string | null;
             gitBase?: string | null;
             error?: string;
+            language?: string;
+            schema?: import("vscode-json-languageservice").JSONSchema;
+            schemaDocument?: boolean;
             findings?: { message: string; range: [number, number]; ruleId: string }[];
         };
         if (!response.ok)
@@ -100,6 +114,12 @@ export const createTextfileEditors = (
     const save = async (file: string, draft: FileDraft): Promise<void> => {
         if (isRemoteTextfile(file) || draft.operation || !draft.state || !dirty(draft)) return;
         clearTimeout(draft.timer);
+        if (!prepareSchemaBuilder(draft.state)) {
+            draft.error = t("Check the parameter value.");
+            draft.errorAction = "save";
+            notify(draft);
+            return;
+        }
         const content = draft.state.sliceDoc();
         draft.operation = "save";
         draft.error = "";
@@ -138,6 +158,7 @@ export const createTextfileEditors = (
             onRefresh(file);
         } catch (error) {
             draft.error = String(error);
+            draft.invalid = (error as { status?: number }).status === 400;
         } finally {
             if (useExternal) {
                 draft.operation = undefined;
@@ -148,6 +169,7 @@ export const createTextfileEditors = (
     };
     const validate = async (file: string, draft: FileDraft): Promise<void> => {
         if (isRemoteTextfile(file) || draft.operation || !draft.state) return;
+        if (!prepareSchemaBuilder(draft.state)) return;
         const doc = draft.state.doc;
         draft.operation = "validate";
         draft.validation = "checking";
@@ -191,7 +213,9 @@ export const createTextfileEditors = (
         draft.errorAction = "read";
         notify(draft);
         try {
-            const { content, gitBase } = await request(file, { action: "read" });
+            const { content, gitBase, language, schema, schemaDocument } = await request(file, {
+                action: "read",
+            });
             if (draft.state?.doc !== previousDoc) {
                 // The queued save compares against the old base and resolves any disk conflict.
                 return;
@@ -216,6 +240,7 @@ export const createTextfileEditors = (
                 return;
             }
             const filename = textfileName(file);
+            const codeLanguage = language ?? (filename.split(".").at(-1) || filename).toLowerCase();
             draft.state = EditorState.create({
                 doc: content ?? "",
                 extensions: [
@@ -245,7 +270,13 @@ export const createTextfileEditors = (
                     gitDiffState,
                     gitDiffTheme,
                     theme,
-                    editorCodeHighlight((filename.split(".").at(-1) || filename).toLowerCase()),
+                    editorCodeHighlight(codeLanguage),
+                    codeLanguage === "json" ? jsonEditor(schema, schemaDocument) : [],
+                    schema &&
+                    !schemaDocument &&
+                    (codeLanguage === "json" || codeLanguage === "yaml" || codeLanguage === "toml")
+                        ? subformatForm(schema, codeLanguage)
+                        : [],
                     EditorState.lineSeparator.of(content?.includes("\r\n") ? "\r\n" : "\n"),
                     EditorView.contentAttributes.of({
                         "aria-label": `${t(isRemoteTextfile(file) ? "View remote text file" : "Edit text file")}: ${file}`,
@@ -253,7 +284,26 @@ export const createTextfileEditors = (
                     }),
                     EditorView.updateListener.of((update) => {
                         draft.state = update.state;
-                        if (!update.docChanged) return;
+                        if (!update.docChanged) {
+                            if (
+                                hasSchemaBuilderDraft(update.state) ||
+                                hasSchemaBuilderDraft(update.startState)
+                            ) {
+                                draft.error = "";
+                                notify(draft);
+                                scheduleSave(file, draft);
+                            }
+                            if (
+                                hasSubformatFormDraft(update.state) !==
+                                hasSubformatFormDraft(update.startState)
+                            )
+                                notify(draft);
+                            return;
+                        }
+                        if (draft.invalid) {
+                            draft.error = "";
+                            draft.invalid = false;
+                        }
                         draft.validation = "pending";
                         draft.validationMessage = "";
                         notify(draft);
@@ -503,7 +553,10 @@ export const createTextfileEditors = (
         hasUnsavedChanges: () =>
             [...drafts.values()].some(
                 (draft) =>
-                    dirty(draft) || draft.operation === "save" || draft.operation === "conflict",
+                    dirty(draft) ||
+                    hasSubformatFormDraft(draft.state) ||
+                    draft.operation === "save" ||
+                    draft.operation === "conflict",
             ),
         setPreviews: (next: Record<string, FilePreview>): void => {
             previews = next;

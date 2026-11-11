@@ -14,8 +14,12 @@ const USAGE = `usage: dooc <command>
   view [dooc.yaml] [port]                open dooc in view mode
   --viewer-plugins <module>              inject an external viewer plugin module
   build html [dooc.yaml] [out-dir]       build bundle.html (default <project>/dist)
+  export [dooc.yaml] [out-dir]           collect source dependencies into bundle.zip
   build zip [dooc.yaml] [out-dir]        build bundle.zip (default <project>/dist)
   --url_preview embed|network            URL handling for either format (default: embed)
+  --mode static|live                    HTML snapshot or runtime plugin API
+  --auth external                       host supplies live HTML authentication and transport
+  --source-url <url>                    source directory URL for card copy links in HTML
   check [dooc.yaml] [options]            JSON consistency report (check --help for options)
   plugin pack <built-dir> [zip]          package bundled JS and assets as a plugin ZIP
   plugin add <zip> [dooc.yaml] [port]    install a local plugin and print login links
@@ -237,22 +241,48 @@ Node API: import { checkSite } from "@dooc-dev/dooc/check".`);
         }
         break;
     }
+    case "export": {
+        try {
+            if (args.length > 2)
+                throw new Error("export accepts a dooc.yaml path and an output directory");
+            const root = projectRoot(args[0]);
+            const out = join(resolve(args[1] ?? join(root, "dist")), "bundle.zip");
+            const { exportBundle } = await import("./compiler/export.js");
+            writeOut(out, exportBundle(root));
+            console.log(out);
+        } catch (error) {
+            fail(error instanceof Error ? error.message : String(error));
+        }
+        break;
+    }
     case "build": {
         try {
             const { positionals, values } = parseArgs({
                 args,
                 allowPositionals: true,
                 options: {
-                    url_preview: { type: "string", default: "embed" },
+                    url_preview: { type: "string" },
+                    mode: { type: "string" },
+                    auth: { type: "string" },
+                    "viewer-plugins": { type: "string" },
+                    "source-url": { type: "string" },
                     help: { type: "boolean", short: "h" },
                 },
             });
             if (values.help) {
                 console.log(`usage: dooc build html [dooc.yaml] [out-dir] [--url_preview embed|network]
+       dooc build html [dooc.yaml] [out-dir] --mode static
+       dooc build html [dooc.yaml] [out-dir] --mode live --auth external
        dooc build zip  [dooc.yaml] [out-dir] [--url_preview embed|network]
 
 A bundle is dooc.yaml and its managed content. Builds only the selected format.
 Default output directory: <project>/dist. Source files are never rewritten.
+Static builds resolve enabled local plugins using build-time credentials and embed their views.
+Live HTML exposes window.dooc.setPluginTransport(request), without a login UI or credentials.
+Use --viewer-plugins <module> to inject trusted build plugins; installed, enabled packages are discovered automatically.
+Use dooc export for source dependencies without plugin execution or remote downloads.
+  --source-url <url>     inject an HTTP(S) directory URL for card copy links (HTML only)
+                        paths are relative to dooc.yaml; overrides GitHub origin/HEAD discovery
   --url_preview embed    snapshot URL content and assets into the selected artifact (default)
   --url_preview network  preserve URL references without downloading them at build time
 
@@ -272,13 +302,20 @@ Use --url_preview network with either format to build without downloading URL co
                 throw new Error("build format must be html | zip");
             if (positionals.length > 3)
                 throw new Error(`build ${format} accepts a dooc.yaml path and an output directory`);
-            const urlPreview = values.url_preview;
+            const urlPreview = values.url_preview ?? (values.mode === "live" ? "network" : "embed");
             if (urlPreview !== "embed" && urlPreview !== "network")
                 throw new Error("--url_preview must be embed | network");
             const root = projectRoot(rootArg);
             const out = join(resolve(outArg ?? join(root, "dist")), `bundle.${format}`);
             const { buildBundle } = await import("./viewer/build.js");
-            const bundle = await buildBundle(root, { format, urlPreview });
+            const bundle = await buildBundle(root, {
+                format,
+                urlPreview,
+                mode: values.mode as "static" | "live" | undefined,
+                auth: values.auth as "external" | undefined,
+                pluginModule: values["viewer-plugins"],
+                sourceUrl: values["source-url"],
+            });
             writeOut(out, bundle.data);
             console.log(`${out} — ${bundle.docs} docs (url_preview=${urlPreview})`);
         } catch (error) {

@@ -13,10 +13,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
+import { serializeManifest } from "../core/content-metadata.js";
 import { suggestDocFileName } from "../core/files.js";
 import { docPath } from "../core/routing.js";
-import { bundleEntries } from "./bundle.js";
-import { compileSite } from "./compile.js";
+import { compileSite, createCompiler } from "./compile.js";
+import { exportEntries } from "./export.js";
 import {
     completeFilePaths,
     filesSnapshot,
@@ -27,7 +28,7 @@ import {
 import { setDocTranslation } from "./locales.js";
 import { readManifest } from "./manifest.js";
 import { createDocOps, isOpError } from "./ops.js";
-import { writeTextfile } from "./textfile.js";
+import { readTextfile, writeTextfile } from "./textfile.js";
 
 const roots: string[] = [];
 const fixture = () => {
@@ -61,6 +62,151 @@ const fixture = () => {
 };
 afterEach(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+it.each(["legacy", "nested"])("retires %s file order while preserving document order", (format) => {
+    const root = fixture();
+    writeFileSync(
+        join(root, "dooc.yaml"),
+        format === "legacy"
+            ? "docs: [b, a]\nfiles:\n  order: [content/b.md, missing.svg, content/a.md]\n"
+            : "system:\n  files:\n    order: [content/b.md, missing.svg, content/a.md]\ncenter_contents:\n  - file: content/b.md\n  - file: content/a.md\n",
+    );
+    const snapshot = filesSnapshot(root);
+    expect(
+        snapshot.files.filter((file) => file.extension === "md").map((file) => file.path),
+    ).toEqual(["content/a.md", "content/b.md"]);
+    expect(snapshot.layout).not.toHaveProperty("order");
+    const manifest = readManifest(root);
+    expect(manifest.errors).toEqual([]);
+    expect(serializeManifest(manifest.tree, manifest)).not.toMatch(/\border:/);
+    expect(compileSite(root).docs.map((doc) => doc.file)).toEqual(["content/b.md", "content/a.md"]);
+    updateFiles(root, {
+        action: "move",
+        paths: ["content/b.md"],
+        directory: "content",
+        revision: snapshot.revision,
+    });
+    expect(readFileSync(join(root, "dooc.yaml"), "utf8")).not.toMatch(/\border:/);
+});
+
+it("sorts folders first at every level and names in numeric order", () => {
+    const root = mkdtempSync(join(tmpdir(), "dooc-file-order-"));
+    roots.push(root);
+    mkdirSync(join(root, "z10"));
+    mkdirSync(join(root, "z2/nested"), { recursive: true });
+    writeFileSync(join(root, "dooc.yaml"), "docs: []\n");
+    for (const file of [
+        "z10/a.txt",
+        "z2/file10.txt",
+        "z2/file2.txt",
+        "z2/nested/z.txt",
+        "file10.txt",
+        "file2.txt",
+    ])
+        writeFileSync(join(root, file), "");
+    expect(filesSnapshot(root).files.map((file) => file.path)).toEqual([
+        "z2/nested/z.txt",
+        "z2/file2.txt",
+        "z2/file10.txt",
+        "z10/a.txt",
+        "file2.txt",
+        "file10.txt",
+    ]);
+    expect(completeFilePaths(root, "")).toEqual(["z2/", "z10/", "file2.txt", "file10.txt"]);
+    expect(completeFilePaths(root, "z2/")).toEqual(["z2/nested/", "z2/file2.txt", "z2/file10.txt"]);
+});
+
+it("uses nested ignore rules without a Git repository, including negations and excluded parents", () => {
+    const root = fixture();
+    mkdirSync(join(root, "private"));
+    writeFileSync(join(root, ".gitignore"), "*.txt\nprivate/\nexamples/hidden.ts\n");
+    writeFileSync(join(root, "examples/.gitignore"), "!keep.txt\n!hidden.ts\n");
+    writeFileSync(join(root, "private/.gitignore"), "!secret.txt\n");
+    for (const file of [
+        "examples/keep.txt",
+        "examples/hidden.ts",
+        "examples/secret.txt",
+        "private/secret.txt",
+    ])
+        writeFileSync(join(root, file), "private");
+    const files = filesSnapshot(root).files.map((file) => file.path);
+    expect(files).toContain("examples/keep.txt");
+    expect(files).toContain("examples/hidden.ts");
+    expect(files).not.toContain("examples/secret.txt");
+    expect(files).not.toContain("private/secret.txt");
+    expect(completeFilePaths(root, "examples/")).not.toContain("examples/secret.txt");
+});
+
+it("drops ignored assets from cached compilation and rejects aliases to ignored files", () => {
+    const root = fixture();
+    const compiler = createCompiler(root);
+    expect(compiler.compile().figures.some((figure) => figure.file === "figures/picture.svg")).toBe(
+        true,
+    );
+    writeFileSync(
+        join(root, ".gitignore"),
+        "figures/picture.svg\ncontent/private.md\nicons/private.svg\n",
+    );
+    writeFileSync(join(root, "content/private.md"), "PRIVATE-DOCUMENT");
+    writeFileSync(join(root, "icons/private.svg"), "PRIVATE-ICON");
+    const compiled = compiler.compile();
+    expect(compiled.figures.some((figure) => figure.file === "figures/picture.svg")).toBe(false);
+    expect(JSON.stringify(compiled)).not.toContain("PRIVATE-");
+    expect(compiled.errors.join("\n")).not.toContain("private");
+    symlinkSync(join(root, "figures/picture.svg"), join(root, "alias.svg"));
+    expect(() => readTextfile(root, "alias.svg")).toThrow(/ignored.*alias\.svg/);
+    writeFileSync(join(root, ".gitignore"), "");
+    expect(compiler.compile().figures.some((figure) => figure.file === "figures/picture.svg")).toBe(
+        true,
+    );
+});
+
+it("follows moves from HTML, SVG and CSS, including relative paths when the owner moves", () => {
+    const root = fixture();
+    mkdirSync(join(root, "assets"));
+    const html =
+        '<!-- keep -->\n<img src="../figures/picture.svg?v=1#mark" srcset="../figures/picture.svg 1x, ../figures/picture.svg 2x"><div style="background:url(../figures/picture.svg)"></div><iframe srcdoc="&lt;img src=&quot;../figures/picture.svg&quot;>"></iframe><script>const example = "../figures/picture.svg";</script>';
+    writeFileSync(join(root, "assets/card.html"), html);
+    writeFileSync(
+        join(root, "assets/card.svg"),
+        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><image xlink:href="../figures/picture.svg#mark"/></svg>',
+    );
+    writeFileSync(
+        join(root, "assets/card.css"),
+        '/* keep */\n@import "../examples/a.ts"; p {background: image-set("../figures/picture.svg" 1x, url(../figures/picture.svg) 2x)}',
+    );
+    updateFiles(root, {
+        action: "rename",
+        file: "figures/picture.svg",
+        name: "new picture.svg",
+        revision: filesSnapshot(root).revision,
+    });
+    const changed = readFileSync(join(root, "assets/card.html"), "utf8");
+    expect(changed).toContain('src="../figures/new%20picture.svg?v=1#mark"');
+    expect(changed).toContain(
+        'srcset="../figures/new%20picture.svg 1x, ../figures/new%20picture.svg 2x"',
+    );
+    expect(changed).toContain("&lt;img src=&quot;../figures/new%20picture.svg&quot;>");
+    expect(changed).toContain('<script>const example = "../figures/picture.svg";</script>');
+    expect(readFileSync(join(root, "assets/card.svg"), "utf8")).toContain(
+        'xlink:href="../figures/new%20picture.svg#mark"',
+    );
+    updateFiles(root, {
+        action: "move",
+        paths: ["assets"],
+        directory: "archive",
+        revision: filesSnapshot(root).revision,
+    });
+    expect(readFileSync(join(root, "archive/assets/card.html"), "utf8")).toContain(
+        "../../figures/new%20picture.svg?v=1#mark",
+    );
+    expect(readFileSync(join(root, "archive/assets/card.css"), "utf8")).toContain(
+        '@import "../../examples/a.ts"',
+    );
+    expect(readFileSync(join(root, "archive/assets/card.css"), "utf8")).toContain(
+        "../../figures/new%20picture.svg",
+    );
 });
 
 it("hides Git-ignored files while keeping tracked files and explicit re-inclusions", () => {
@@ -116,6 +262,42 @@ it("uses repository ignore rules when the document root is a subdirectory", () =
     expect(filesSnapshot(docs).files.map((file) => file.path)).toEqual(["public.txt"]);
 });
 
+it("keeps the default subformat folder subject to ignore rules and follows visible folder moves", () => {
+    const root = fixture();
+    execFileSync("git", ["-C", root, "init"], { stdio: "pipe" });
+    writeFileSync(
+        join(root, "dooc.yaml"),
+        "docs: []\ndefault_subformat_folder: records\nsubformats: [{ext: issue, format: json, schema: issue.schema.json}]\n",
+    );
+    writeFileSync(join(root, ".gitignore"), "records/\nelsewhere/\n");
+    mkdirSync(join(root, "records/nested"), { recursive: true });
+    mkdirSync(join(root, "elsewhere"));
+    writeFileSync(join(root, "issue.schema.json"), '{"type":"object"}');
+    for (const file of [
+        "records/a.issue",
+        "records/nested/b.issue",
+        "records/secret.txt",
+        "elsewhere/c.issue",
+    ])
+        writeFileSync(join(root, file), "{}");
+    symlinkSync(join(root, "elsewhere"), join(root, "records/linked"));
+    const snapshot = filesSnapshot(root);
+    expect(
+        snapshot.files
+            .map((file) => file.path)
+            .filter((file) => /^(issue.schema.json|records\/|elsewhere\/)/.test(file)),
+    ).toEqual(["issue.schema.json"]);
+    writeFileSync(join(root, ".gitignore"), "records/secret.txt\nelsewhere/\n");
+    updateFiles(root, {
+        action: "move",
+        paths: ["records"],
+        directory: "archive",
+        revision: filesSnapshot(root).revision,
+    });
+    expect(readManifest(root).defaultSubformatFolder).toBe("archive/records");
+    expect(existsSync(join(root, "archive/records/a.issue"))).toBe(true);
+});
+
 it.each([
     undefined,
     "docs: []\n",
@@ -140,7 +322,7 @@ it.each([
     expect(existsSync(join(root, "locales/jpn/files/md/guide.md"))).toBe(true);
     expect(compileSite(root).errors).toEqual([]);
     expect(compileSite(root, { locale: "jpn" }).errors).toEqual([]);
-    expect(bundleEntries(root).map((entry) => entry.name)).toEqual(
+    expect(exportEntries(root).map((entry) => entry.name)).toEqual(
         expect.arrayContaining([
             "dooc.yaml",
             "files/md/guide.md",
@@ -171,7 +353,7 @@ it("tracks, exports, and rewrites linked figures, including links in external ca
         status: 409,
         referencedBy: ["a", "b"],
     });
-    expect(bundleEntries(root).find((entry) => entry.name === "assets/photo.jpg")?.data).toEqual(
+    expect(exportEntries(root).find((entry) => entry.name === "assets/photo.jpg")?.data).toEqual(
         image,
     );
     updateFiles(root, {
@@ -202,7 +384,7 @@ it("updates links inside fenced and extracted callouts while preserving examples
         "[B](content/b.md#details) and [](terms/a.termth)\n",
     );
     expect(compileSite(root).errors).toEqual([]);
-    expect(bundleEntries(root).map((entry) => entry.name)).toEqual(
+    expect(exportEntries(root).map((entry) => entry.name)).toEqual(
         expect.arrayContaining(["notes.callouth", "terms/a.termth"]),
     );
     updateFiles(root, {
@@ -412,7 +594,7 @@ it("restructures documents and assets, keeping IDs, translations, icons and sour
     expect(ops.rename("a", "alpha")).toEqual({ id: "alpha", updatedRefs: 0 });
     expect(readManifest(root).files?.documents.alpha).toBe("files/md/a.md");
     expect(compileSite(root).errors).toEqual([]);
-    const exported = bundleEntries(root).map((e) => e.name);
+    const exported = exportEntries(root).map((e) => e.name);
     expect(exported).toContain("files/md/a.md");
     expect(exported).toContain("files/svg/a.svg");
     expect(exported).toContain("files/termth/a.termth");
@@ -442,7 +624,7 @@ it("rewrites Markdown destinations and definitions without touching literal exam
             .replace("<a%20b.ts>", "files/ts/a%20b.ts"),
     );
 });
-it("moves a selection with folders, preserves order, and blocks stale and unsafe changes", () => {
+it("moves a selection with folders, sorts by name, and blocks stale and unsafe changes", () => {
     const root = fixture();
     let snap = filesSnapshot(root);
     snap = updateFiles(root, {
@@ -457,10 +639,9 @@ it("moves a selection with folders, preserves order, and blocks stale and unsafe
         action: "move",
         paths: ["content/b.md"],
         directory: "content",
-        before: "content/a.md",
         revision: snap.revision,
     });
-    expect(snap.files.findIndex((f) => f.path === "content/b.md")).toBeLessThan(
+    expect(snap.files.findIndex((f) => f.path === "content/b.md")).toBeGreaterThan(
         snap.files.findIndex((f) => f.path === "content/a.md"),
     );
     expect(() =>

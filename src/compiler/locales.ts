@@ -5,6 +5,7 @@ import { isDocId, type ParsedManifest } from "../core/content-metadata.js";
 import { localFile } from "../core/files.js";
 import { contentLanguageCode, DEFAULT_LANG } from "../core/language.js";
 import { parseDoc } from "./dialect.js";
+import { ignoredFiles } from "./ignored-files.js";
 import { isContentLanguage } from "./language-codes.js";
 import { docFile, readManifest } from "./manifest.js";
 import { assembleDoc } from "./serialize.js";
@@ -38,8 +39,8 @@ export const siteContentLanguages = (
         ]),
     ];
 
-export const translationFiles = (root: string): string[] =>
-    translationLanguages(root).flatMap((language) => {
+export const translationFiles = (root: string): string[] => {
+    const files = translationLanguages(root).flatMap((language) => {
         const directory = `locales/${language}`;
         return readdirSync(textfilePath(root, directory), { recursive: true, withFileTypes: true })
             .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
@@ -49,6 +50,9 @@ export const translationFiles = (root: string): string[] =>
             .filter(localFile)
             .sort();
     });
+    const ignored = ignoredFiles(root, files);
+    return files.filter((file) => !ignored.has(file));
+};
 
 export const setDocTranslation = (
     root: string,

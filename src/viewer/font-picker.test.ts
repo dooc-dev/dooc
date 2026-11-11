@@ -39,7 +39,9 @@ class Node extends EventTarget {
     getBoundingClientRect() {
         return { left: 500, bottom: 40 };
     }
-    querySelector() {
+    querySelector(selector: string) {
+        if (selector === "[data-picker-value]")
+            return this.children.find((child) => Object.hasOwn(child.dataset, "pickerValue"));
         return this.children.find((child) => child.attributes.get("aria-checked") === "true");
     }
 }
@@ -47,6 +49,9 @@ class Node extends EventTarget {
 const setup = () => {
     const editor = new Node();
     editor.dataset.fontPicker = "editor";
+    const editorValue = new Node();
+    editorValue.dataset.pickerValue = "";
+    editor.append(editorValue);
     const viewer = new Node();
     viewer.dataset.fontPicker = "viewer";
     viewer.parent = new Node();
@@ -91,15 +96,16 @@ const setup = () => {
             { family: "code", name: "Code.woff2", source: "" },
             { family: "broken", name: "Broken.woff2", source: "" },
         ]);
-    return { editor, viewer, popup, doc, settings, click, mount };
+    return { editor, editorValue, viewer, popup, doc, settings, click, mount };
 };
 
 it("uses each trigger's theme and changes only its font target", async () => {
-    const { editor, viewer, popup, doc, settings, click, mount } = setup();
+    const { editor, editorValue, viewer, popup, doc, settings, click, mount } = setup();
     const ready = mount();
     expect(editor.disabled).toBe(true);
     await ready;
     expect(editor.disabled).toBe(false);
+    expect(editorValue.textContent).toBe("Default font");
     click(doc, editor);
     expect(popup.dataset.theme).toBe("dark");
     expect(popup.children.map((node) => node.textContent)).toEqual(["Default font", "Code.woff2"]);
@@ -107,6 +113,7 @@ it("uses each trigger's theme and changes only its font target", async () => {
     expect(settings.selected).toEqual({ editor: "code", viewer: "" });
     expect(popup.open).toBe(false);
     expect(editor.title).toBe("Editor font: Code.woff2");
+    expect(editorValue.textContent).toBe("Code.woff2");
     click(doc, viewer);
     expect(popup.dataset.theme).toBe("light");
     expect(popup.children[0]?.attributes.get("aria-checked")).toBe("true");

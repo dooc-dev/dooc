@@ -21,6 +21,7 @@ import { textfilePath } from "../compiler/textfile.js";
 import { MANIFEST_FILE } from "../core/content-metadata.js";
 import { isRemoteTextfile } from "../core/textfile.js";
 import { prebuilt } from "./assets.js";
+import { updateNav } from "./nav-update.js";
 import type { ServeMode } from "./serve.js";
 import { gitHeadFile } from "./workspace.js";
 
@@ -45,6 +46,7 @@ export const classifyChange = (rel: string): HmrKind | undefined => {
         p === "src/viewer/edit-client.ts" ||
         p === "src/viewer/files-ui.ts" ||
         p === "src/viewer/resource-library-ui.ts" ||
+        p === "src/viewer/subformats-ui.ts" ||
         p === "src/viewer/edit-code-file.ts" ||
         p === "src/core/code-file.ts" ||
         p === "src/core/files.ts" ||
@@ -75,6 +77,7 @@ export const classifyChange = (rel: string): HmrKind | undefined => {
         p === "src/viewer/preview-update.ts" ||
         p === "src/plugins/view.ts" ||
         p === "src/viewer/nav-focus.ts" ||
+        p === "src/viewer/nav-update.ts" ||
         p === "src/viewer/code-highlight.ts" ||
         (p.startsWith("src/viewer/locales/") && p.endsWith(".json")) ||
         (p.startsWith("src/core/") && p.endsWith(".tsx"))
@@ -336,7 +339,7 @@ export const hmrClientScript = (mode: ServeMode): string => `
     const nav = document.getElementById("nav-groups");
     const nextNav = next.getElementById("nav-groups");
     if (nav && nextNav) {
-      nav.innerHTML = nextNav.innerHTML;
+      (${updateNav.toString()})(nav, nextNav.innerHTML);
       if (window.__docsNavRestore) window.__docsNavRestore();
     }
     window.scrollTo(0, y);

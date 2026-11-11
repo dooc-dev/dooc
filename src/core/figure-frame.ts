@@ -85,6 +85,8 @@ export const figureFrameHtml = (fig: FigureEntry, cls = "fig-frame", label?: str
 export function mountFigureFrames(doc: Document): void {
     const SEL = "iframe[data-doc-figure-frame]";
     const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const watched = new WeakSet<Element>();
+    const loaded = new WeakSet<Element>();
     const theme = (element: Element): string => {
         const t =
             element.closest<HTMLElement>("[data-theme]")?.dataset.theme ??
@@ -92,14 +94,26 @@ export function mountFigureFrames(doc: Document): void {
         return t === "light" || t === "dark" ? t : media.matches ? "dark" : "light";
     };
     const apply = (f: Element): void => {
+        if (!watched.has(f)) {
+            watched.add(f);
+            f.removeAttribute("data-theme-ready");
+            f.addEventListener("load", () => {
+                loaded.add(f);
+                apply(f);
+            });
+        }
+        // Rewriting srcdoc during its initial load can leave the frame without layout.
+        if (!loaded.has(f)) return;
         const src = f.getAttribute("srcdoc") ?? "";
         const next = src.replace(
             /^(<!doctype html><html data-doc-theme=")[a-z]+"/,
             `$1${theme(f)}"`,
         );
         if (next !== src) {
+            loaded.delete(f);
+            f.removeAttribute("data-theme-ready");
             f.setAttribute("srcdoc", next);
-        }
+        } else f.setAttribute("data-theme-ready", "true");
     };
     const all = (): void => {
         for (const f of doc.querySelectorAll(SEL)) apply(f);
@@ -125,7 +139,8 @@ export function mountFigureFrames(doc: Document): void {
     media.addEventListener("change", all);
     window.addEventListener("message", (ev: MessageEvent) => {
         const h = (ev.data as { docFigureHeight?: unknown } | null)?.docFigureHeight;
-        if (typeof h !== "number") return;
+        // A frame can report zero before layout; keep its initial viewport until measured.
+        if (typeof h !== "number" || !Number.isFinite(h) || h <= 0) return;
         for (const f of doc.querySelectorAll<HTMLIFrameElement>(
             `${SEL}[data-doc-figure-frame="html"]`,
         )) {

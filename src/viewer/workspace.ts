@@ -1,5 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { WorkspaceSource } from "../core/workspace.js";
 
 /** Git worktrees use a .git file pointing at their own metadata directory. */
@@ -45,4 +46,55 @@ export const readWorkspaceSource = (root: string): WorkspaceSource => {
         }
     }
     return { protocol: "storage", folder: basename(resolve(root)) || root, service: "Local" };
+};
+
+/** Resolve source links locally; published HTML must not depend on Git or the build directory. */
+export const sourceFileBase = (root: string, sourceUrl?: string): string => {
+    if (sourceUrl !== undefined) {
+        const url = new URL(sourceUrl);
+        if (
+            !["https:", "http:"].includes(url.protocol) ||
+            url.username ||
+            url.password ||
+            url.search ||
+            url.hash
+        )
+            throw new Error(
+                "Source URL must be an HTTP(S) directory URL without credentials, query or fragment",
+            );
+        url.pathname = `${url.pathname.replace(/\/+$/, "")}/`;
+        return url.href;
+    }
+    const directory = realpathSync(root);
+    const metadata = gitMetadata(directory);
+    const workspace = readWorkspaceSource(directory);
+    const prefix = metadata ? relative(metadata.directory, directory).split(sep).join("/") : "";
+    const fallback = `${[
+        workspace.protocol === "git" ? workspace.repo : basename(metadata?.directory ?? directory),
+        prefix,
+    ]
+        .filter(Boolean)
+        .join("/")}/`;
+    if (!metadata) return fallback;
+    try {
+        const git = (...args: string[]) =>
+            execFileSync("git", ["-C", directory, ...args], {
+                encoding: "utf8",
+                stdio: ["ignore", "pipe", "ignore"],
+                timeout: 2_000,
+            }).trim();
+        const remote = new URL(
+            git("config", "--get", "remote.origin.url").replace(
+                /^git@github\.com:/,
+                "https://github.com/",
+            ),
+        );
+        const repository = /^\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(remote.pathname);
+        if (remote.hostname !== "github.com" || !repository) return fallback;
+        const head = git("rev-parse", "HEAD");
+        if (!/^(?:[a-f\d]{40}|[a-f\d]{64})$/i.test(head)) return fallback;
+        return `https://github.com/${repository[1]}/${repository[2]}/blob/${head}/${prefix ? `${prefix.split("/").map(encodeURIComponent).join("/")}/` : ""}`;
+    } catch {
+        return fallback;
+    }
 };

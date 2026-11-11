@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Issue",
+  "type": "object",
+  "required": ["title", "status", "due"],
+  "properties": {
+    "title": { "type": "string", "minLength": 1, "title": "Title" },
+    "status": { "type": "string", "enum": ["Todo", "Doing", "Done"], "title": "Status" },
+    "due": { "type": "string", "format": "date", "title": "Due date" },
+    "points": { "type": "integer", "minimum": 0, "title": "Points" },
+    "priority": { "type": "string", "enum": ["Low", "Normal", "High"], "title": "Priority" }
+  },
+  "additionalProperties": false
+}

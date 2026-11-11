@@ -1,3 +1,4 @@
+import { FOLDER_ICON_PATH, RELOAD_ICON_PATH, SEARCH_ICON_PATH } from "../core/icons.js";
 import { showNotice } from "./edit-dialog.js";
 import { t } from "./i18n.js";
 
@@ -10,7 +11,7 @@ type Row = { path: string; folder: boolean; depth: number };
 const parent = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 const icon = (path: string) =>
     `<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="${path}"/></svg>`;
-const folderIcon = icon("M2 5h6l2 2h8v10H2z");
+const folderIcon = icon(FOLDER_ICON_PATH);
 const fileIcon = icon("M4 2h8l4 4v12H4zM12 2v5h4");
 
 export const mountFiles = (openFile?: (file: string) => void): (() => void) | undefined => {
@@ -25,7 +26,7 @@ export const mountFiles = (openFile?: (file: string) => void): (() => void) | un
     let busy = false;
     let dragging = false;
     let refreshPending = false;
-    let drop: { directory: string; before?: string } | undefined;
+    let drop: { directory: string } | undefined;
     const toolbar = document.createElement("div");
     toolbar.className = "files-toolbar";
     const search = document.createElement("input");
@@ -44,12 +45,12 @@ export const mountFiles = (openFile?: (file: string) => void): (() => void) | un
         else b.textContent = t(label);
         return b;
     };
-    const refresh = makeButton("Reload", icon("M17 8a7 7 0 1 0 0 5M17 3v5h-5"));
+    const refresh = makeButton("Reload", icon(RELOAD_ICON_PATH));
     const name = document.createElement("span");
     name.textContent = t("Name");
     const searchLabel = document.createElement("label");
     searchLabel.className = "resource-search";
-    searchLabel.innerHTML = icon("M14 14l4 4M15 9a6 6 0 1 1-12 0 6 6 0 0 1 12 0");
+    searchLabel.innerHTML = icon(SEARCH_ICON_PATH);
     searchLabel.append(search);
     toolbar.append(name, searchLabel, suggestions, refresh);
     const table = document.createElement("table");
@@ -75,12 +76,6 @@ export const mountFiles = (openFile?: (file: string) => void): (() => void) | un
         if (!response.ok) throw new Error(data.error);
         return data as Snapshot;
     };
-    const pickedRows = () =>
-        rows.filter(
-            (row) =>
-                selected.has(row.path) &&
-                ![...selected].some((path) => row.path.startsWith(`${path}/`)),
-        );
     const state = () => {
         refresh.disabled = busy;
     };
@@ -282,20 +277,11 @@ export const mountFiles = (openFile?: (file: string) => void): (() => void) | un
             tr.ondragover = (e) => {
                 if (!dragging || busy) return;
                 e.preventDefault();
+                delete viewport.dataset.drop;
                 for (const node of body.querySelectorAll<HTMLElement>("[data-drop]"))
                     delete node.dataset.drop;
-                const rect = tr.getBoundingClientRect();
-                const fraction = (e.clientY - rect.top) / rect.height;
-                const into = row.folder && fraction > 0.25 && fraction < 0.75;
-                const after = fraction >= 0.5 && !into;
-                tr.dataset.drop = into ? "into" : after ? "after" : "before";
-                const siblings = rows.filter(
-                    (r) => parent(r.path) === parent(row.path) && !selected.has(r.path),
-                );
-                const next = siblings[siblings.findIndex((r) => r.path === row.path) + 1];
-                drop = into
-                    ? { directory: row.path }
-                    : { directory: parent(row.path), before: after ? next?.path : row.path };
+                tr.dataset.drop = "into";
+                drop = { directory: row.folder ? row.path : parent(row.path) };
             };
             tr.ondrop = (e) => {
                 if (!dragging || !drop) return;
@@ -306,6 +292,7 @@ export const mountFiles = (openFile?: (file: string) => void): (() => void) | un
             tr.ondragend = () => {
                 dragging = false;
                 drop = undefined;
+                delete viewport.dataset.drop;
                 for (const node of body.querySelectorAll<HTMLElement>("[data-drop]"))
                     delete node.dataset.drop;
                 if (refreshPending) refreshFiles();
@@ -325,22 +312,18 @@ export const mountFiles = (openFile?: (file: string) => void): (() => void) | un
     };
     search.oninput = render;
     refresh.onclick = () => void perform({ action: "read" });
-    const reorder = (direction: number) => {
-        const picked = pickedRows();
-        if (!picked.length) return;
-        const dir = parent(picked[0]?.path ?? "");
-        if (picked.some((r) => parent(r.path) !== dir)) return;
-        const siblings = rows.filter((r) => parent(r.path) === dir);
-        const edge = direction < 0 ? picked[0] : picked[picked.length - 1];
-        const index = siblings.findIndex((r) => r.path === edge?.path);
-        const adjacent = siblings[index + direction];
-        if (!adjacent) return;
-        void perform({
-            action: "move",
-            paths: picked.map((r) => r.path),
-            directory: dir,
-            before: direction < 0 ? adjacent.path : siblings[index + 2]?.path,
-        });
+    viewport.ondragover = (e) => {
+        if (!dragging || busy || (e.target as Element).closest("tr[data-path]")) return;
+        e.preventDefault();
+        for (const node of body.querySelectorAll<HTMLElement>("[data-drop]"))
+            delete node.dataset.drop;
+        viewport.dataset.drop = "into";
+        drop = { directory: "" };
+    };
+    viewport.ondrop = (e) => {
+        if (!dragging || !drop || (e.target as Element).closest("tr[data-path]")) return;
+        e.preventDefault();
+        void perform({ action: "move", paths: [...selected], ...drop });
     };
     table.onkeydown = (e) => {
         if (e.target === search) return;
@@ -352,10 +335,6 @@ export const mountFiles = (openFile?: (file: string) => void): (() => void) | un
         if (e.key === "Escape") {
             selected.clear();
             render();
-        }
-        if (e.altKey && ["ArrowUp", "ArrowDown"].includes(e.key)) {
-            e.preventDefault();
-            reorder(e.key === "ArrowUp" ? -1 : 1);
         }
     };
     let dispose = (): void => {

@@ -1,11 +1,52 @@
 import { CHECK_ICON } from "../core/icons.js";
+import type { PluginRequest, PluginResponse, PluginTransport } from "../plugins/transport.js";
 import type { PluginView } from "../plugins/view.js";
 import { t } from "./i18n.js";
 import { mountPluginActions } from "./plugin-actions.js";
 import { createPluginResize } from "./plugin-resize.js";
 import { pluginViewHtml } from "./plugin-view.js";
 
-export const mountPlugins = (): void => {
+export const mountPlugins = (external = false): ((transport: PluginTransport | null) => void) => {
+    let transport: PluginTransport | null = null;
+    let generation = 0;
+    const request = async (input: PluginRequest): Promise<PluginResponse> => {
+        if (external) {
+            if (!transport) throw new Error("Plugin transport is not connected");
+            const version = generation;
+            let result: PluginResponse;
+            try {
+                result = await transport(input);
+            } catch (error) {
+                if (
+                    version === generation &&
+                    input.plugin &&
+                    error &&
+                    typeof error === "object" &&
+                    "status" in error &&
+                    [401, 403].includes(Number(error.status))
+                )
+                    clear(input.plugin);
+                throw error;
+            }
+            if (version !== generation) throw new Error("Plugin connection changed");
+            if (!result || typeof result !== "object" || Array.isArray(result))
+                throw new Error("Invalid plugin response");
+            return result;
+        }
+        const response = await fetch("/api/plugins", {
+            method: "POST",
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(input),
+        });
+        const data = await response.json();
+        if (!response.ok)
+            throw Object.assign(new Error(data.error ?? "Plugin request failed"), {
+                status: response.status,
+            });
+        return data;
+    };
     const disposers = new Map<HTMLElement, () => void>();
     const syncIcons = () => {
         for (const image of document.querySelectorAll<HTMLImageElement>(
@@ -125,16 +166,10 @@ export const mountPlugins = (): void => {
             const version = registration;
             let match = resolved.get(url);
             if (!match) {
-                match = (async () => {
-                    const response = await fetch("/api/plugins", {
-                        method: "POST",
-                        headers: { "content-type": "application/json" },
-                        body: JSON.stringify({ action: "resolve", url }),
-                        cache: "no-store",
-                    });
-                    if (!response.ok) throw new Error("Plugin URL resolution failed");
-                    return response.json();
-                })();
+                match = request({ action: "resolve", url }).then((value) => ({
+                    ...value,
+                    autoConnect: !external && value.autoConnect,
+                }));
                 resolved.set(url, match);
             }
             const mountHost = async () => {
@@ -221,13 +256,15 @@ export const mountPlugins = (): void => {
                     const controls = document.createElement("div");
                     controls.dataset.pluginControls = "";
                     controls.hidden = Boolean(autoConnect);
-                    for (const [action, label] of autoConnect
-                        ? [["read", "Retry"]]
-                        : [
-                              ["read", "Load data"],
-                              ["connect", "Connect account"],
-                              ["disconnect", "Forget connection"],
-                          ]) {
+                    for (const [action, label] of external
+                        ? [["read", "Load data"]]
+                        : autoConnect
+                          ? [["read", "Retry"]]
+                          : [
+                                ["read", "Load data"],
+                                ["connect", "Connect account"],
+                                ["disconnect", "Forget connection"],
+                            ]) {
                         const button = document.createElement("button");
                         button.type = "button";
                         button.dataset.pluginAction = action;
@@ -254,10 +291,8 @@ export const mountPlugins = (): void => {
             void mountHost();
         }
     };
-    const events = new EventSource("/api/plugins/events");
-    events.onmessage = (event: MessageEvent<string>) => {
-        if (registration === event.data) return;
-        registration = event.data;
+    const reset = (next: string) => {
+        registration = next;
         for (const section of document.querySelectorAll<HTMLElement>("[data-plugin]"))
             clear(section.dataset.plugin ?? "");
         for (const [host, nodes] of originals) if (host.isConnected) host.replaceChildren(...nodes);
@@ -267,6 +302,12 @@ export const mountPlugins = (): void => {
         seen = new WeakMap();
         mount();
     };
+    if (!external) {
+        const events = new EventSource("/api/plugins/events");
+        events.onmessage = (event: MessageEvent<string>) => {
+            if (registration !== event.data) reset(event.data);
+        };
+    }
     new MutationObserver(mount).observe(document.querySelector("main") ?? document.body, {
         childList: true,
         subtree: true,
@@ -300,11 +341,11 @@ export const mountPlugins = (): void => {
         collapsed.replaceChildren();
         delete section.dataset.ready;
         const revision = revisions.get(plugin) ?? 0;
-        const request = {};
-        requests.set(section, request);
+        const pendingRequest = {};
+        requests.set(section, pendingRequest);
         const current = (): boolean =>
             section.isConnected &&
-            requests.get(section) === request &&
+            requests.get(section) === pendingRequest &&
             (revisions.get(plugin) ?? 0) === revision;
         if (button) button.disabled = true;
         section.setAttribute("aria-busy", "true");
@@ -349,21 +390,8 @@ export const mountPlugins = (): void => {
                 await connection;
                 if (!current()) return;
             }
-            const response = await fetch("/api/plugins", {
-                method: "POST",
-                credentials: "same-origin",
-                cache: "no-store",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ action, plugin, url: section.dataset.url }),
-            });
-            const data = (await response.json()) as {
-                error?: string;
-                url?: string;
-                view?: PluginView;
-                user?: { name: string };
-            };
+            const data = await request({ action, plugin, url: section.dataset.url });
             if (!current()) return;
-            if (!response.ok) throw new Error(data.error ?? "Plugin request failed");
             if (action === "connect" && data.url) {
                 const link = document.createElement("a");
                 link.href = data.url;
@@ -381,24 +409,13 @@ export const mountPlugins = (): void => {
                 let viewSignature = JSON.stringify(data.view);
                 const api = async (action: string, payload = {}) => {
                     if (!current()) throw new Error("Plugin connection changed");
-                    const response = await fetch("/api/plugins", {
-                        method: "POST",
-                        credentials: "same-origin",
-                        cache: "no-store",
-                        headers: { "content-type": "application/json" },
-                        body: JSON.stringify({
-                            action,
-                            plugin,
-                            url: section.dataset.url,
-                            ...payload,
-                        }),
+                    const data = await request({
+                        action,
+                        plugin,
+                        url: section.dataset.url,
+                        ...payload,
                     });
-                    const data = await response.json();
                     if (!current()) throw new Error("Plugin connection changed");
-                    if (!response.ok)
-                        throw Object.assign(new Error(data.error ?? "Plugin request failed"), {
-                            status: response.status,
-                        });
                     return data;
                 };
                 disposers.set(
@@ -408,6 +425,7 @@ export const mountPlugins = (): void => {
                         api,
                         async (ready, force) => {
                             const data = await api("read");
+                            if (!data.view) throw new Error("Plugin returned no view");
                             const signature = JSON.stringify(data.view);
                             if ((force || signature !== viewSignature) && ready()) {
                                 render(section, data.view);
@@ -428,7 +446,7 @@ export const mountPlugins = (): void => {
             }
         } finally {
             if (button) button.disabled = false;
-            if (requests.get(section) === request) section.removeAttribute("aria-busy");
+            if (requests.get(section) === pendingRequest) section.removeAttribute("aria-busy");
         }
     };
     window.addEventListener("focus", () => {
@@ -470,4 +488,12 @@ export const mountPlugins = (): void => {
             }
         } else if (action !== "edit") await run(section, action, button);
     });
+    return (next) => {
+        if (!external) throw new Error("Transport injection is only available in published HTML");
+        if (next !== null && typeof next !== "function")
+            throw new Error("Expected a plugin transport function or null");
+        transport = next;
+        generation++;
+        reset(next ? String(generation) : "");
+    };
 };

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { mountThemePickers } from "./theme-picker.js";
+import { initializeThemes, mountThemePickers } from "./theme-picker.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -23,7 +23,7 @@ it.each([
         createElement: () => ({ setAttribute: vi.fn(), addEventListener: vi.fn() }),
         addEventListener: vi.fn(),
         querySelectorAll: (selector: string) =>
-            selector === ".resources-pane"
+            selector === ".resources-pane, #sidebar, #panel"
                 ? [resource]
                 : selector === ".preview-pane:not(.resources-pane)"
                   ? [pane]
@@ -39,6 +39,8 @@ it.each([
             observe() {}
         },
     );
+    initializeThemes(themes);
+    expect(root.dataset.theme).toBe(expected);
     mountThemePickers({}, themes);
     expect(root.dataset.theme).toBe(expected);
     expect(pane.dataset.theme).toBe(expected);

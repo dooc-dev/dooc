@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { basename, extname } from "node:path";
 import { localFile } from "../core/files.js";
+import { ignoredFiles } from "./ignored-files.js";
 import { textfilePath } from "./textfile.js";
 
 export const PROJECT_FONTS_DIR = ".dooc/fonts";
@@ -27,10 +28,15 @@ const fontName = (name: string): string => {
 export const listProjectFonts = (root: string): string[] => {
     const directory = textfilePath(root, PROJECT_FONTS_DIR);
     if (!lstatSync(directory, { throwIfNoEntry: false })) return [];
-    return readdirSync(directory, { withFileTypes: true })
+    const names = readdirSync(directory, { withFileTypes: true })
         .filter((entry) => entry.isFile() && /\.(ttf|otf|woff2?)$/i.test(entry.name))
         .map((entry) => fontName(entry.name))
         .sort();
+    const ignored = ignoredFiles(
+        root,
+        names.map((name) => `${PROJECT_FONTS_DIR}/${name}`),
+    );
+    return names.filter((name) => !ignored.has(`${PROJECT_FONTS_DIR}/${name}`));
 };
 
 export const addProjectFont = (root: string, file: string): string => {

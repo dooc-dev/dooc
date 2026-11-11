@@ -3,6 +3,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { docIconFile, type FileLayout } from "../core/files.js";
+import { assertNotIgnored, ignoredFiles } from "./ignored-files.js";
 import { textfilePath } from "./textfile.js";
 
 export const ICONS_DIR = "icons";
@@ -58,17 +59,29 @@ export const loadIcons = (
     docIds: ReadonlySet<string>,
     siteIconFile?: string,
     layout?: FileLayout,
+    siteIcons: readonly string[] = [],
 ): { icons: Map<string, string>; errors: string[] } => {
     const dir = join(root, ICONS_DIR);
     const icons = new Map<string, string>();
     const errors: string[] = [];
-    for (const f of existsSync(dir) ? readdirSync(dir) : []) {
+    const files = existsSync(dir) ? readdirSync(dir) : [];
+    const ignored = ignoredFiles(
+        root,
+        files.map((file) => `${ICONS_DIR}/${file}`),
+    );
+    for (const f of files) {
+        if (ignored.has(`${ICONS_DIR}/${f}`)) continue;
         if (f.startsWith(".")) {
             continue;
         }
         const id = f.endsWith(".svg") ? f.slice(0, -4) : "";
         if (!docIds.has(id)) {
             if (siteIconFile?.replace(/^\.\//, "") === `${ICONS_DIR}/${f}`) continue;
+            if (
+                siteIcons.includes(`${ICONS_DIR}/${f}`) ||
+                Object.values(layout?.icons ?? {}).includes(`${ICONS_DIR}/${f}`)
+            )
+                continue;
             errors.push(`${ICONS_DIR}/${f}: no matching doc (content/${id || f}.md)`);
             continue;
         }
@@ -83,6 +96,7 @@ export const loadIcons = (
         if (layout?.icons?.[id]) {
             try {
                 const file = textfilePath(root, docIconFile(id, layout));
+                assertNotIgnored(root, docIconFile(id, layout));
                 if (!existsSync(file)) continue;
                 const svg = readFileSync(file, "utf8");
                 if (!ROOT_SVG_RE.test(svg)) throw new Error("not an svg");

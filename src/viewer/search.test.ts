@@ -91,13 +91,30 @@ describe("document search", () => {
         expect(searchSections(index, "api.md")[0]).toMatchObject({
             path: "/guide/api",
             file: "api.md",
-            folder: false,
+            kind: "file",
         });
-        expect(searchSections(index, "/guide")[0]).toMatchObject({ path: "/guide", folder: true });
+        expect(searchSections(index, "guid")[0]).toMatchObject({ kind: "folder", path: "/guide" });
+        expect(searchSections(index, "/guide")[0]).toMatchObject({
+            path: "/guide",
+            kind: "folder",
+        });
         const first = index[0];
         if (!first) throw new Error("Missing search fixture");
         const mention = { ...first, text: "See api.md for details" };
         expect(searchSections([mention, ...index.slice(1)], "api.md")[0]?.file).toBe("api.md");
+    });
+    it("matches extensions as file names and links workspace files", () => {
+        const withFiles = searchIndex(site, ["api.md", "src/app.ts"]);
+        for (const query of ["md", ".md"])
+            expect(searchSections(withFiles, query).map((hit) => [hit.kind, hit.file])).toEqual([
+                ["file", "guide.md"],
+                ["file", "api.md"],
+            ]);
+        expect(searchSections(withFiles, "ts")[0]).toMatchObject({
+            kind: "file",
+            path: "/_files/file/src%2Fapp.ts",
+            title: "app.ts",
+        });
     });
     it("puts a distant match in the excerpt and treats punctuation as literal text", () => {
         const first = index[0];

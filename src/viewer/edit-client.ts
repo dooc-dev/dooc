@@ -29,6 +29,7 @@ import { tags } from "@lezer/highlight";
 import type { TocEntry } from "../core/blocks.js";
 import type { TermEntry } from "../core/content-types.js";
 import { isDocumentFileName } from "../core/files.js";
+import { formatJson } from "../core/json-tools.js";
 import type { PreviewSettings } from "../core/previewers.js";
 import { CODE_LANGS, CODE_TEMPLATES } from "../core/taxonomy.js";
 import { isTermFile, termFileUrl } from "../core/term-reference.js";
@@ -44,7 +45,9 @@ import {
 } from "./edit-file-preview.js";
 import { inlineFoldButtons } from "./edit-fold.js";
 import { gitBaseState, gitDiffState, gitDiffTheme, setGitBase } from "./edit-git-diff.js";
+import { jsonEditor } from "./edit-json.js";
 import { filePathCompletion } from "./edit-path-completion.js";
+import { hasSchemaBuilderDraft, prepareSchemaBuilder } from "./edit-schema-builder.js";
 import { schemaCompletion } from "./edit-schema-completion.js";
 import { editorSetup } from "./edit-setup.js";
 import { createTextfileEditors } from "./edit-textfile.js";
@@ -56,10 +59,13 @@ import { mountFiles } from "./files-ui.js";
 import { mountGit } from "./git-ui.js";
 import type { HmrBridge } from "./hmr.js";
 import { applyUiLanguage, mountUiLanguage, t } from "./i18n.js";
+import { mountSelectPickers } from "./language-picker.js";
 import { focusNavTree } from "./nav-focus.js";
+import { updateNav } from "./nav-update.js";
 import { mountPlugins } from "./plugins-ui.js";
 import { createPreviewUpdater } from "./preview-update.js";
-import { mountResourceLibrary } from "./resource-library-ui.js";
+import { mountResourceLibrary, restoreResourceFilters } from "./resource-library-ui.js";
+import { hasSubformatDraft, showSubformatError } from "./subformats-ui.js";
 
 interface Boot {
     gitBase: string | null;
@@ -243,6 +249,9 @@ const updatePreview = (fragment: DocumentFragment): void => {
 mountUiLanguage();
 mountPlugins();
 mountResourceLibrary((file, line) => openFileEditor(file, line));
+document.addEventListener("docs:subformat-saved", (event) => {
+    void textfiles.reloadChanged([(event as CustomEvent<{ file: string }>).detail.file]);
+});
 
 const updateLanguageControls = (): void => {
     const lang = $<HTMLSelectElement>("fm-lang");
@@ -357,6 +366,7 @@ const setDirty = (v: boolean): void => {
     setSaveState(v ? (autosaveEl.checked ? "saving" : "pending") : "saved");
     hmr()?.setDirty?.(
         v ||
+            hasSubformatDraft() ||
             textfiles.hasUnsavedChanges() ||
             panes.some((pane) => pane !== activePane && pane.draft?.dirty),
     );
@@ -730,8 +740,8 @@ const theme = EditorView.theme({
         border: "1px solid var(--doc-border)",
     },
     ".cm-tooltip-autocomplete > ul > li[aria-selected]": {
-        backgroundColor: "var(--doc-accent)",
-        color: "var(--doc-accent-fg)",
+        backgroundColor: "var(--c-raised)",
+        color: "var(--c-fg)",
     },
     ".cm-completionDetail, .cm-completionSection": { color: "var(--doc-fg-3)" },
     ".cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionDetail": { color: "inherit" },
@@ -754,7 +764,7 @@ const theme = EditorView.theme({
 // @lezer/markdown 1.7.2, so not fixed upstream; omitting this rule is the minimal workaround.
 const mdHighlight = HighlightStyle.define([
     { tag: tags.heading, color: "var(--doc-accent-2)", fontWeight: "400" },
-    { tag: tags.link, color: "#e65100" },
+    { tag: tags.link, color: "var(--doc-accent)" },
     { tag: tags.url, color: "var(--doc-fg-3)" },
     { tag: tags.meta, color: "var(--doc-fg-3)" },
     { tag: tags.processingInstruction, color: "var(--doc-fg-3)" },
@@ -1021,7 +1031,8 @@ const post = async (url: string): Promise<DraftResponse> => {
 // Keep the active page, its live title and the ancestor breadcrumb in sync.
 const updateNavLocation = (): void => {
     const header = $("site-title");
-    if (!header.querySelector("form")) header.textContent = header.title = siteTitle ?? "dooc";
+    if (!header.querySelector("form") && header.textContent !== (siteTitle ?? "dooc"))
+        header.textContent = header.title = siteTitle ?? "dooc";
     header.dataset.title = siteTitle ?? "";
     const logo = $<HTMLImageElement>("site-icon");
     logo.hidden = !siteIcon;
@@ -1032,39 +1043,45 @@ const updateNavLocation = (): void => {
         resourceView?.title ??
         (docTitle === siteTitle ? docTitle : `${docTitle} — ${siteTitle ?? "dooc edit"}`);
     for (const link of document.querySelectorAll<HTMLAnchorElement>(
-        "#nav-files a, #nav-git a, #nav-statics a, #nav-extensions a",
+        "#nav-files a, #nav-git a, #nav-statics a, #nav-subformats a, #nav-extensions a",
     )) {
         const current =
             resourceView !== undefined &&
-            (["/_git", "/_extensions"].includes(link.pathname)
+            (["/_git", "/_extensions", "/_subformats"].includes(link.pathname)
                 ? resourceView.path === link.pathname
                 : link.pathname === "/_statics"
                   ? resourceView.path.startsWith("/_statics") ||
-                    /^\/_files\/(dictionary|code|urls)$/.test(resourceView.path)
+                    /^\/_files\/(codeblocks|urls|url-previews|dictionary|code)$/.test(
+                        resourceView.path,
+                    )
                   : resourceView.path.startsWith("/_files") &&
-                    !/^\/_files\/(dictionary|code|urls)$/.test(resourceView.path));
+                    !/^\/_files\/(codeblocks|urls|url-previews|dictionary|code)$/.test(
+                        resourceView.path,
+                    ));
         link.classList.toggle("cur", current);
         if (current) link.setAttribute("aria-current", "page");
         else link.removeAttribute("aria-current");
     }
-    const item = document.querySelector<HTMLElement>(
-        `#nav-groups .nav-item[data-doc-id="${CSS.escape(boot.docId)}"]`,
-    );
+    const item = resourceView
+        ? [...document.querySelectorAll<HTMLAnchorElement>("[data-subformat-nav] > .nav-row > a")]
+              .find((link) => link.pathname === resourceView?.path)
+              ?.closest<HTMLElement>("[data-doc-id]")
+        : document.querySelector<HTMLElement>(
+              `#nav-groups .nav-item[data-doc-id="${CSS.escape(boot.docId)}"]`,
+          );
     if (!item) {
         // Doc not in the list (e.g. right after a rename): leave it to the nav refresh
         // (refreshNav).
         return;
     }
-    for (const a of document.querySelectorAll("#nav-docs .nav-row a.cur")) {
-        a.classList.remove("cur");
-    }
     const cur = item.querySelector(":scope > .nav-row > a");
-    cur?.classList.add("cur");
+    for (const a of document.querySelectorAll("#nav-docs .nav-row > a"))
+        a.classList.toggle("cur", a === cur);
     // Reflect the current title (empty -> id, like the server's docDisplayName).
     const label = cur?.querySelector(".nav-label");
-    if (cur && label) {
-        label.textContent = boot.title.trim() || boot.docId;
-        cur.setAttribute("title", label.textContent);
+    if (cur && label && !resourceView) {
+        if (label.textContent !== docTitle) label.textContent = docTitle;
+        if (cur.getAttribute("title") !== docTitle) cur.setAttribute("title", docTitle);
     }
     for (
         let it = item.parentElement?.closest(".nav-item");
@@ -1191,9 +1208,15 @@ const render = async (): Promise<RenderSnapshot | undefined> => {
 // Refresh the tree and restore its expanded branches.
 const refreshNav = async (): Promise<void> => {
     const requestedBoot = boot;
+    const requestedResource = resourceView;
+    const pageId = [
+        ...document.querySelectorAll<HTMLAnchorElement>("[data-subformat-nav] > .nav-row > a"),
+    ]
+        .find((link) => link.pathname === requestedResource?.path)
+        ?.closest<HTMLElement>("[data-doc-id]")?.dataset.docId;
     try {
         const res = await localeFetch(
-            `/api/nav?current=${encodeURIComponent(boot.docId)}${resourceView ? `&res=${encodeURIComponent(resourceView.path.startsWith("/_statics") ? resourceView.path.slice(1) : ["/_git", "/_extensions"].includes(resourceView.path) ? resourceView.path.slice(1) : resourceView.path.slice("/_files".length).replace(/^\/|\/$/g, ""))}` : ""}`,
+            `/api/nav?current=${encodeURIComponent(boot.docId)}${resourceView ? `&res=${encodeURIComponent(resourceView.path.startsWith("/_statics") ? resourceView.path.slice(1) : ["/_git", "/_extensions", "/_subformats"].includes(resourceView.path) ? resourceView.path.slice(1) : resourceView.path.slice("/_files".length).replace(/^\/|\/$/g, ""))}` : ""}`,
         );
         if (!res.ok) {
             return;
@@ -1206,7 +1229,16 @@ const refreshNav = async (): Promise<void> => {
         updateLanguageControls();
         const navGroups = document.getElementById("nav-groups");
         if (navGroups) {
-            navGroups.innerHTML = data.html;
+            updateNav(navGroups, data.html);
+            if (resourceView && resourceView === requestedResource && pageId) {
+                const link = navGroups.querySelector<HTMLAnchorElement>(
+                    `[data-doc-id="${CSS.escape(pageId)}"] > .nav-row > a`,
+                );
+                if (link && resourceView.path !== link.pathname) {
+                    resourceView.path = link.pathname;
+                    history.replaceState(null, "", currentUrl(location.hash));
+                }
+            }
             for (const pane of panes) {
                 const state = pane === activePane ? boot : pane.draft?.boot;
                 if (!state) continue;
@@ -1220,7 +1252,6 @@ const refreshNav = async (): Promise<void> => {
                 history.replaceState(null, "", currentUrl(location.hash));
             }
         }
-        (window as unknown as { __docsNavRestore?: () => void }).__docsNavRestore?.();
         updateNavLocation();
         applyUiLanguage();
     } catch {
@@ -1848,7 +1879,9 @@ document.addEventListener("click", (ev) => {
 
 let leavingPage = false;
 const otherUnsaved = (): boolean =>
-    textfiles.hasUnsavedChanges() || panes.some((pane) => pane !== activePane && pane.draft?.dirty);
+    hasSubformatDraft() ||
+    textfiles.hasUnsavedChanges() ||
+    panes.some((pane) => pane !== activePane && pane.draft?.dirty);
 window.addEventListener("beforeunload", (ev) => {
     if (!leavingPage && (dirty || otherUnsaved())) {
         ev.preventDefault();
@@ -2079,6 +2112,105 @@ const openFileEditor = (file?: string, line?: number): void => {
         },
     };
 };
+document.addEventListener("docs:subformat-add", (event) => {
+    const form = (event as CustomEvent<HTMLFormElement>).detail;
+    if (fileEditor?.element === form) return;
+    closeFileEditor();
+    form.id = "file-editor";
+    const heading = document.createElement("div");
+    heading.className = "file-editor-heading";
+    const settings = form.querySelector(".subformat-register-fields") as HTMLFieldSetElement;
+    for (const control of [settings, ...settings.querySelectorAll("input, select")])
+        control.setAttribute("form", form.id);
+    heading.append(settings);
+    settings.addEventListener("input", () => form.dispatchEvent(new Event("input")));
+    $("phead").insertBefore(heading, $("gear"));
+    $("panel").append(form);
+    const storageFormat = form.elements.namedItem("format") as HTMLSelectElement;
+    const disposeFormatPicker = mountSelectPickers(t, [storageFormat]);
+    storageFormat.addEventListener("change", () => form.dispatchEvent(new Event("input")));
+    $("cm").hidden = true;
+    document.body.classList.add("textfile-open");
+    const content = form.elements.namedItem("content") as HTMLTextAreaElement;
+    form.oninput = () => setDirty(dirty);
+    const format = async () => {
+        if (!prepareSchemaBuilder(editor.state)) return;
+        try {
+            const original = editor.state.doc;
+            const value = formatJson(original.toString());
+            const response = await fetch("/api/subformat", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ action: "validate", content: value }),
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error);
+            if (editor.state.doc === original)
+                editor.dispatch({
+                    changes: { from: 0, to: original.length, insert: value },
+                    annotations: isolateHistory.of("full"),
+                });
+        } catch (error) {
+            showSubformatError(error);
+        }
+    };
+    const editor = new EditorView({
+        parent: form.querySelector<HTMLElement>("[data-subformat-schema-editor]") as HTMLElement,
+        doc: content.value,
+        extensions: [
+            editorSetup,
+            theme,
+            editorCodeHighlight("json"),
+            jsonEditor(undefined, true),
+            keymap.of([
+                {
+                    key: "Shift-Alt-f",
+                    run: () => {
+                        void format();
+                        return true;
+                    },
+                },
+                indentWithTab,
+            ]),
+            EditorView.contentAttributes.of({ "aria-label": "JSON Schema", spellcheck: "false" }),
+            EditorView.updateListener.of((update) => {
+                if (
+                    !update.docChanged &&
+                    !hasSchemaBuilderDraft(update.state) &&
+                    !hasSchemaBuilderDraft(update.startState)
+                )
+                    return;
+                content.value = update.state.doc.toString();
+                form.dataset.dirty = "true";
+                setDirty(dirty);
+            }),
+        ],
+    });
+    form.addEventListener(
+        "submit",
+        (event) => {
+            if (prepareSchemaBuilder(editor.state)) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+        },
+        true,
+    );
+    const button = form.querySelector<HTMLButtonElement>("[data-format]") as HTMLButtonElement;
+    button.onclick = () => void format();
+    fileEditor = {
+        file: "",
+        element: form,
+        dispose: () => {
+            editor.destroy();
+            disposeFormatPicker();
+            heading.remove();
+        },
+    };
+});
+document.addEventListener("docs:subformat-editor-close", (event) => {
+    if (fileEditor?.element === (event as CustomEvent).detail) closeFileEditor();
+    setDirty(dirty);
+});
 const refreshResourcePreview = async (): Promise<void> => {
     const current = resourceView;
     const file = current?.sourceFile;
@@ -2124,11 +2256,16 @@ const openLibraryFile = async (file: string): Promise<void> => {
     }
 };
 const showResource = (resource: ResourcePage): void => {
+    const previous = resource.path === resourceView?.path ? resourceView.element : undefined;
+    const focusedRecord = previous?.contains(document.activeElement)
+        ? document.activeElement?.closest<HTMLElement>(".subformat-card")?.dataset.recordFile
+        : undefined;
     const source = resource.path === resourceView?.path ? fileEditor?.file : undefined;
     resourceView?.dispose?.();
     resourceView?.element.remove();
     const element = document.createElement("section");
     element.className = "preview-pane resources-pane";
+    element.dataset.theme = document.documentElement.dataset.editorTheme ?? "auto";
     const content = document.createElement("div");
     content.className = "preview-content";
     content.innerHTML = resource.html;
@@ -2136,6 +2273,14 @@ const showResource = (resource: ResourcePage): void => {
     // Keep both the editor and its document panes mounted, including unsaved drafts and undo.
     paneHost.hidden = true;
     workspace.append(element);
+    restoreResourceFilters(previous, element);
+    if (focusedRecord) {
+        const card = element.querySelector(`[data-record-file="${CSS.escape(focusedRecord)}"]`);
+        (
+            card?.querySelector<HTMLElement>(".subformat-card-details:not([hidden]) select") ??
+            card?.querySelector<HTMLElement>(".subformat-card-open")
+        )?.focus();
+    }
     resourceView = {
         ...resource,
         element,
@@ -2320,6 +2465,10 @@ $("split-preview").addEventListener("click", () => {
                 capturePane();
                 const element = document.createElement("section");
                 element.className = "preview-pane";
+                element.dataset.theme =
+                    activePane.element.dataset.theme ??
+                    document.documentElement.dataset.theme ??
+                    "auto";
                 element.tabIndex = 0;
                 element.append(paneActions.cloneNode(true));
                 const content = document.createElement("div");
@@ -2442,7 +2591,11 @@ const scrollToAnchor = (hash: string): void => {
 };
 
 const isResourcePath = (path: string): boolean =>
+    [...document.querySelectorAll<HTMLAnchorElement>("[data-subformat-nav] > .nav-row > a")].some(
+        (link) => link.pathname === path,
+    ) ||
     path === "/_extensions" ||
+    path === "/_subformats" ||
     path === "/_git" ||
     path === "/_statics" ||
     path.startsWith("/_statics/") ||
@@ -2494,7 +2647,9 @@ if (initialAction) {
 
 // Document links stay in the editor; full navigation also checks drafts before leaving.
 const isDocPath = (path: string): boolean =>
-    /^\/(?:[a-z0-9][a-z0-9-]*\/)*[a-z0-9][a-z0-9-]*\/?$/.test(path);
+    [
+        ...document.querySelectorAll<HTMLAnchorElement>("#nav-groups [data-doc-id] > .nav-row > a"),
+    ].some((link) => new URL(link.href).pathname === path);
 
 document.addEventListener("click", (ev) => {
     if (

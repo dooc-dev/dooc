@@ -54,21 +54,21 @@ describe("mcp", () => {
     it("reads and writes the manifest's document paths", async () => {
         const root = fixture();
         const tools = createTools(root);
-        const file = docFile("guide", readManifest(root).files);
+        const id = (await call(tools, "list_docs")).docs.find(
+            (doc: { file: string }) => doc.file === "contents/md/guide.md",
+        ).id;
+        const file = docFile(id, readManifest(root).files);
         expect(file).toBe("contents/md/guide.md");
-        const original = await call(tools, "read_doc", { id: "guide" });
+        const original = await call(tools, "read_doc", { id });
         expect(original).toMatchObject({
             isError: false,
             file,
             raw: readFileSync(join(root, file), "utf8"),
         });
         expect(
-            (await call(tools, "write_doc", { id: "guide", content: `${original.raw}\nUpdated\n` }))
-                .isError,
+            (await call(tools, "write_doc", { id, content: `${original.raw}\nUpdated\n` })).isError,
         ).toBe(false);
-        expect((await call(tools, "read_doc", { id: "guide" })).raw).toBe(
-            `${original.raw}\nUpdated\n`,
-        );
+        expect((await call(tools, "read_doc", { id })).raw).toBe(`${original.raw}\nUpdated\n`);
         expect(await call(tools, "read_doc", { id: "missing" })).toMatchObject({
             isError: true,
             status: 404,
@@ -222,11 +222,30 @@ describe("mcp", () => {
 
     it("indexes Statics and manages project fonts", async () => {
         const root = fixture();
+        writeFileSync(
+            join(root, "resource-links.md"),
+            "[Link](https://example.com/)\n\n![Preview](https://example.com/)\n",
+        );
         const tools = createTools(root);
         const resources = await call(tools, "list_resources");
-        expect(resources.terms.length).toBeGreaterThan(0);
-        expect(resources.code.length).toBeGreaterThan(0);
+        expect(
+            resources.codeblocks.some((block: { language: string }) => block.language === "termth"),
+        ).toBe(true);
+        expect(resources.codeblocks.length).toBeGreaterThan(0);
         expect(resources.urls.length).toBeGreaterThan(0);
+        expect(resources.urlPreviews.length).toBeGreaterThan(0);
+        expect(resources.urls).toContainEqual({
+            url: "https://example.com/",
+            host: "example.com",
+            sources: [{ file: "resource-links.md", line: 1 }],
+        });
+        expect(resources.urlPreviews).toContainEqual({
+            url: "https://example.com/",
+            host: "example.com",
+            sources: [{ file: "resource-links.md", line: 3 }],
+        });
+        expect(resources).not.toHaveProperty("terms");
+        expect(resources).not.toHaveProperty("code");
         const path = new URL("./viewer/fonts/udev-gothic-regular.woff2", import.meta.url).pathname;
         expect(await call(tools, "add_font", { path })).toMatchObject({
             file: ".dooc/fonts/udev-gothic-regular.woff2",
@@ -414,39 +433,40 @@ describe("mcp", () => {
     it("doc create → write → move → rename → delete", async () => {
         const root = fixture();
         const tools = createTools(root);
-        expect(
-            (await call(tools, "add_doc", { id: "new", title: "New", parent: "guide" })).isError,
-        ).toBe(false);
+        const parent = (await call(tools, "list_docs")).docs[0].id;
+        const created = await call(tools, "add_doc", { id: "new", title: "New", parent });
+        expect(created.isError).toBe(false);
+        const id = created.id;
         expect((await call(tools, "add_doc", { id: "new", title: "dup" })).isError).toBe(true);
-        expect((await call(tools, "add_doc", { id: "target", title: "Target" })).isError).toBe(
-            false,
-        );
-        const targetFile = docFile("target", readManifest(root).files);
+        const target = await call(tools, "add_doc", { id: "target", title: "Target" });
+        expect(target.isError).toBe(false);
+        const targetFile = docFile(target.id, readManifest(root).files);
         const w = await call(tools, "write_doc", {
-            id: "new",
+            id,
             content: `---\ntitle: "New"\n---\n\nmcp-search-fixture [target](${targetFile})`,
         });
         expect(w.errors).toEqual([]);
         expect(await call(tools, "search_docs", { query: "mcp-search-fixture" })).toMatchObject({
-            0: { id: "new" },
+            0: { id },
         });
-        expect((await call(tools, "move_doc", { id: "new" })).isError).toBe(false);
+        expect((await call(tools, "move_doc", { id })).isError).toBe(false);
         expect((await call(tools, "list_docs", {})).docs.at(-1)).toMatchObject({
-            id: "new",
+            id,
             depth: 0,
         });
-        expect((await call(tools, "rename_doc", { id: "target", new_id: "b" })).updatedRefs).toBe(
-            1,
+        const renamed = await call(tools, "rename_doc", { id: target.id, new_id: "b" });
+        expect(renamed.updatedRefs).toBe(1);
+        expect(readFileSync(join(root, docFile(id, readManifest(root).files)), "utf8")).toContain(
+            docFile(renamed.id, readManifest(root).files),
         );
-        expect(
-            readFileSync(join(root, docFile("new", readManifest(root).files)), "utf8"),
-        ).toContain(docFile("b", readManifest(root).files));
-        const blocked = await call(tools, "delete_doc", { id: "b" });
+        const blocked = await call(tools, "delete_doc", { id: renamed.id });
         expect(blocked).toMatchObject({
             isError: true,
             referencedBy: ["new.md"],
         });
-        expect((await call(tools, "delete_doc", { id: "b", force: true })).isError).toBe(false);
+        expect((await call(tools, "delete_doc", { id: renamed.id, force: true })).isError).toBe(
+            false,
+        );
         expect(existsSync(join(root, targetFile))).toBe(false);
         expect((await call(tools, "check", {})).errors.length).toBeGreaterThan(0);
     });

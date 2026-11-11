@@ -5,10 +5,10 @@ import { afterEach, expect, it } from "vitest";
 import { parseManifest } from "../core/content-metadata.js";
 import { blocksHtml } from "../core/html.js";
 import { publishHtml, siteFrom } from "../viewer/serve.js";
-import { bundleEntries } from "./bundle.js";
 import { checkSite } from "./check.js";
 import { compileDraft, compileSite } from "./compile.js";
 import { parseDoc } from "./dialect.js";
+import { exportEntries } from "./export.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -56,7 +56,7 @@ it.each(["csv", "tsv"])("uses all %s rows unless a file reference explicitly has
             (match) => match[1],
         ),
     ).toEqual(["data", "header", "data"]);
-    expect(bundleEntries(root).filter((entry) => entry.name === file)).toHaveLength(1);
+    expect(exportEntries(root).filter((entry) => entry.name === file)).toHaveLength(1);
     expect(checkSite(root, { only: ["render"] }).exitCode).toBe(0);
 });
 

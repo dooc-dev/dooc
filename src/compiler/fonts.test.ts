@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { bundleEntries } from "./bundle.js";
+import { exportEntries } from "./export.js";
 import { addProjectFont, listProjectFonts, loadProjectFonts, removeProjectFont } from "./fonts.js";
 
 const roots: string[] = [];
@@ -18,6 +18,7 @@ const fontFile = new URL("../viewer/fonts/udev-gothic-regular.woff2", import.met
 
 it("registers project-local fonts, preserves existing names, and exports the registered bytes", () => {
     const root = fixture();
+    writeFileSync(join(root, "dooc.yaml"), "docs: []\n");
     const other = fixture();
     expect(listProjectFonts(root)).toEqual([]);
     const registered = addProjectFont(root, fontFile);
@@ -29,7 +30,7 @@ it("registers project-local fonts, preserves existing names, and exports the reg
     const fonts = loadProjectFonts(root);
     expect(fonts[0]?.source).toBe(`url(data:font/woff2;base64,${data.toString("base64")})`);
     expect(loadProjectFonts(root)[0]?.family).toBe(fonts[0]?.family);
-    expect(bundleEntries(root).find((entry) => entry.name === registered)?.data).toEqual(data);
+    expect(exportEntries(root).find((entry) => entry.name === registered)?.data).toEqual(data);
     removeProjectFont(root, "udev-gothic-regular.woff2");
     expect(listProjectFonts(root)).toEqual([]);
 });

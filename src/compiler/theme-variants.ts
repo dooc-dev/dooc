@@ -2,6 +2,7 @@ import { existsSync, readdirSync } from "node:fs";
 import type { ParsedManifest } from "../core/content-metadata.js";
 import { localFile } from "../core/files.js";
 import { themeVariantFile } from "../core/theme-variants.js";
+import { ignoredFiles } from "./ignored-files.js";
 import { readManifest } from "./manifest.js";
 import { textfilePath } from "./textfile.js";
 
@@ -23,9 +24,12 @@ export const themeVariants = (
     themes = siteThemes(root),
 ): Record<string, string> => {
     if (!localFile(file) || file.startsWith("themes/")) return {};
-    return Object.fromEntries(
-        themes
-            .map((theme): [string, string] => [theme, themeVariantFile(file, theme)])
-            .filter(([, path]) => existsSync(textfilePath(root, path))),
+    const variants = themes
+        .map((theme): [string, string] => [theme, themeVariantFile(file, theme)])
+        .filter(([, path]) => existsSync(textfilePath(root, path)));
+    const ignored = ignoredFiles(
+        root,
+        variants.map(([, path]) => path),
     );
+    return Object.fromEntries(variants.filter(([, path]) => !ignored.has(path)));
 };

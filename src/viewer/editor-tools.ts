@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { visit } from "unist-util-visit";
+import { formatJson } from "../core/json-tools.js";
 import { codeBlockAt, offsetAt, parseMdast } from "../core/markdown.js";
 
 export { codeBlockAt } from "../core/markdown.js";
@@ -75,18 +76,36 @@ export async function runCodeTool(
     let config: Record<string, unknown>;
     try {
         config = JSON.parse(await readFile(path, "utf8"));
-    } catch {
-        throw new Error(
-            `Create .dooc/editor-tools/${block.language}.json to configure this language`,
-        );
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        if (block.language !== "json")
+            throw new Error(
+                `Create .dooc/editor-tools/${block.language}.json to configure this language`,
+            );
+        config = {};
     }
     if (!config || typeof config !== "object") throw new Error("Invalid editor tool configuration");
-    const output = await execute(
-        command(config[action === "format" ? "formatter" : "linter"]),
-        root,
-        `${block.code}\n`,
-        action === "lint",
-    );
+    const tool = config[action === "format" ? "formatter" : "linter"];
+    let output: string;
+    if (block.language === "json" && tool == null) {
+        if (action === "lint") {
+            try {
+                JSON.parse(block.code);
+                return { findings: [] };
+            } catch (error) {
+                return {
+                    findings: [
+                        {
+                            range: [block.from, block.to] as [number, number],
+                            message: String(error),
+                            ruleId: "error",
+                        },
+                    ],
+                };
+            }
+        }
+        output = formatJson(block.code);
+    } else output = await execute(command(tool), root, `${block.code}\n`, action === "lint");
     if (action === "format") {
         const normalized = output.replace(/\r\n/g, "\n").replace(/\n$/, "");
         if (!normalized && block.code.trim())
@@ -172,13 +191,16 @@ export async function validateCodeTools(root: string, body: string) {
             try {
                 raw = await readFile(join(root, ".dooc/editor-tools", `${node.lang}.json`), "utf8");
             } catch (error) {
-                if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+                if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+                    if (node.lang === "json") blocks.push(node.position.start.offset);
+                    continue;
+                }
                 throw error;
             }
             const config = JSON.parse(raw);
             if (!config || typeof config !== "object")
                 throw new Error("Invalid editor tool configuration");
-            if (config[tool] != null)
+            if (config[tool] != null || node.lang === "json")
                 blocks.push(offsetAt(text, node.position.start.line, node.position.start.column));
         }
         return blocks;

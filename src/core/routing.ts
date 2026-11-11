@@ -2,16 +2,16 @@
 // through here and never build paths themselves — a consumer is a display-only wrapper, and this
 // package owns routing.
 //
-// Page URLs follow the manifest hierarchy; heading fragments stay separate.
-// Body links reference source files; page URLs use the manifest hierarchy.
+// File-based URLs use a reserved namespace; legacy URLs follow the manifest hierarchy.
+// Body links reference source files, and heading fragments stay separate.
 
 import { isDocId } from "./content-metadata.js";
 import type { CompiledDoc } from "./content-types.js";
-import { localFile } from "./files.js";
+import { fileDocumentId, localFile } from "./files.js";
 import { parseFileReference } from "./textfile.js";
 
 /** The minimal doc reference routing needs (a shape CompiledDoc satisfies). */
-export type DocRef = Pick<CompiledDoc, "id" | "parent">;
+export type DocRef = Pick<CompiledDoc, "id" | "parent"> & { file?: string; sourceFile?: string };
 
 /** Parse `<docId>` (leading/trailing `/` are ignored). undefined if the shape differs. */
 export const parseRoutePath = (path: string): string | undefined => {
@@ -60,12 +60,22 @@ export const ancestorsOf = <D extends DocRef>(docs: readonly D[], id: string): D
 /** DOM anchor id for a heading — namespaced by doc id. */
 export const headingAnchor = (docId: string, slug: string): string => `${docId}__${slug}`;
 
-/** Canonical page URL: manifest ancestors form the path; headings use a separate fragment. */
-export const docPath = (docs: readonly DocRef[], id: string): string =>
-    `/${[...ancestorsOf(docs, id).map((doc) => doc.id), id].join("/")}`;
+/** File routes cannot shadow API/tool routes; legacy IDs retain hierarchy paths. */
+export const docPath = (docs: readonly DocRef[], id: string): string => {
+    const doc = docs.find((item) => item.id === id);
+    const file = doc?.sourceFile ?? doc?.file;
+    if (file && fileDocumentId(file) === id)
+        return `/_docs/${file.split("/").map(encodeURIComponent).join("/")}`;
+    return `/${[...ancestorsOf(docs, id).map((doc) => doc.id), id].join("/")}`;
+};
 
 /** Resolve only the complete hierarchy path; no legacy single-id aliases. */
 export const resolveDocPath = (docs: readonly DocRef[], path: string): string | undefined => {
+    const fileDoc = docs.find((doc) => {
+        const file = doc.sourceFile ?? doc.file;
+        return file && fileDocumentId(file) === doc.id && docPath(docs, doc.id) === path;
+    });
+    if (fileDoc) return fileDoc.id;
     const parts = path.split("/").filter(Boolean);
     const id = parts.at(-1);
     if (!id || !parts.every(isDocId) || !docs.some((doc) => doc.id === id)) return undefined;

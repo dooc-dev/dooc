@@ -1,4 +1,4 @@
-// Generated — do not edit by hand (`pnpm run build:css` = build-flow-css.ts
+// Generated — do not edit by hand (`pnpm run build:css` = scripts/build/flow-css.ts
 // copies it from @xyflow/react/dist/base.css). A structure-only stylesheet; colors come from
 // `--doc-*` injected by the consumer (React Flow's default theme = style.css is not included).
 export const XYFLOW_BASE_CSS =

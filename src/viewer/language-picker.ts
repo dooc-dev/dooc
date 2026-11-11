@@ -1,6 +1,10 @@
-/** Keep the native select as the language enum and change-event source. */
-export const mountLanguagePickers = (t: (key: string) => string): void => {
-    for (const select of document.querySelectorAll<HTMLSelectElement>("#fm-lang, #ui-language")) {
+/** Keep the native select as the value and change-event source. */
+export const mountSelectPickers = (
+    t: (key: string) => string,
+    selects: Iterable<HTMLSelectElement> = document.querySelectorAll("#fm-lang, #ui-language"),
+): (() => void) => {
+    const disposers: (() => void)[] = [];
+    for (const select of selects) {
         const translations = select.id === "fm-lang";
         const trigger = select
             .closest(".fm-language")
@@ -119,7 +123,7 @@ export const mountLanguagePickers = (t: (key: string) => string): void => {
             input.readOnly = select.disabled;
             if (trigger) trigger.disabled = select.disabled;
             input.setAttribute("aria-disabled", String(select.disabled));
-            input.placeholder = t("Search languages");
+            input.placeholder = select.dataset.placeholder ?? t("Search languages");
             input.setAttribute("aria-label", select.getAttribute("aria-label") ?? t("Language"));
             if (translations)
                 input.setAttribute(
@@ -205,20 +209,35 @@ export const mountLanguagePickers = (t: (key: string) => string): void => {
             )
                 popup.hidePopover();
         });
-        document.addEventListener("pointerdown", (event) => {
+        const outside = (event: PointerEvent): void => {
             if (isOpen() && event.target instanceof Node && !wrapper.contains(event.target))
                 popup.hidePopover();
-        });
-        new ResizeObserver(() => {
+        };
+        document.addEventListener("pointerdown", outside);
+        const resize = new ResizeObserver(() => {
             if (isOpen()) position();
-        }).observe(input);
+        });
+        resize.observe(input);
         select.addEventListener("change", sync);
-        new MutationObserver(sync).observe(select, {
+        const observer = new MutationObserver(sync);
+        observer.observe(select, {
             childList: true,
             subtree: true,
             attributes: true,
         });
         document.addEventListener("docs:ui-language", sync);
+        disposers.push(() => {
+            document.removeEventListener("pointerdown", outside);
+            document.removeEventListener("docs:ui-language", sync);
+            select.removeEventListener("change", sync);
+            resize.disconnect();
+            observer.disconnect();
+            wrapper.replaceWith(select);
+            select.hidden = false;
+        });
         sync();
     }
+    return () => {
+        for (const dispose of disposers) dispose();
+    };
 };

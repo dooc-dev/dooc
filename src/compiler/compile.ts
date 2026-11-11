@@ -24,9 +24,11 @@ import { createFileCache, createSigCache, dirSig, fileSig } from "./file-cache.j
 import { projectFiles } from "./files.js";
 import { toBlocks } from "./from-mdast.js";
 import { loadIcons, squareSvg } from "./icons.js";
+import { assertNotIgnored, ignoredFiles } from "./ignored-files.js";
 import { contentLanguageCode, isContentLanguage } from "./language-codes.js";
 import { siteContentLanguages, translationFile } from "./locales.js";
 import { parseManifestText } from "./manifest.js";
+import { loadSubformat, parseSubformatRecord, validateSubformatRecord } from "./subformats.js";
 import { parseTermSource } from "./terms.js";
 import { readTextfile, selectTextfileRange } from "./textfile.js";
 import { TextfileUnavailable } from "./textfile-remote.js";
@@ -52,6 +54,8 @@ export const collectDocLinks = (body: string): string[] =>
 /** Source text and diagnostics for editing. key = CompiledDoc.file. */
 export interface DocSource {
     terms: TermEntry[];
+    /** Files already discovered during parsing, used by the viewer's change watcher. */
+    referencedFiles: string[];
     /**
      * Raw text on disk (including front-matter). The editor's initial value and the base for
      * detecting external changes.
@@ -72,9 +76,12 @@ export interface DocSource {
 }
 
 export interface Compiled {
+    subformats?: import("../core/subformats.js").Subformat[];
     previews: PreviewSettings;
     title?: string;
     icon?: string;
+    /** Theme name → site icon from themes/<theme>/<icon file>. */
+    iconVariants?: Record<string, string>;
     /** Display order follows dooc.yaml. Invalid sources retain their diagnostics for editing. */
     docs: CompiledDoc[];
     terms: TermEntry[];
@@ -124,6 +131,7 @@ export interface DraftContext {
 
 interface ParsedFile {
     raw: string;
+    referencedFiles: string[];
     parsed: ParsedDoc;
     blocks: Block[];
     toc: TocEntry[];
@@ -149,6 +157,7 @@ const parseFile = (raw: string, previews?: PreviewSettings, file?: string): Pars
     const figureFiles = refs.figures;
     return {
         raw,
+        referencedFiles: [...refs.textfiles, ...refs.figures, ...refs.terms],
         parsed,
         blocks,
         toc,
@@ -369,7 +378,8 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
         )
             throw new Error(`Language ${options.locale} is not declared in dooc.yaml languages`);
         const themes = siteThemes(root, manifest);
-        const visualFiles = projectFiles(root)
+        const paths = projectFiles(root);
+        const visualFiles = paths
             .map((file) => file.path)
             .filter((file) => /\.(svg|html|png|webp|gif|mp4|webm|jpe?g)$/.test(file));
         const { figures, errors: figErrors } = figuresCache.get(
@@ -384,9 +394,14 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
         const previews = parsePreviewSettings(options.previews ?? defaultPreviewSettings());
         let title: string | undefined;
         let icon: string | undefined;
+        let iconVariants: Record<string, string> | undefined;
         let iconFile: string | undefined;
         const files: { doc: CompiledDoc; parsed: ParsedFile }[] = [];
-        if (!existsSync(contentDir) && !manifest.files) {
+        if (
+            !existsSync(contentDir) &&
+            !manifest.files &&
+            !flattenTree(manifest.tree).some((node) => node.subformat)
+        ) {
             siteErrors.push(`${contentDir}: content/ is missing`);
         } else {
             const {
@@ -400,13 +415,29 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                 docCache = createFileCache<ParsedFile>();
                 previewKey = nextPreviewKey;
             }
-            title = manifestTitle;
+            title =
+                manifest.titles?.[options.locale ?? contentLanguageCode(defaultLang)] ??
+                manifestTitle;
             iconFile = manifestIcon;
             if (iconFile) {
                 try {
                     icon = squareSvg(readTextfile(root, iconFile));
                     if (!icon)
                         throw new Error("expected an SVG with a viewBox or width and height");
+                    const variants = Object.entries(
+                        manifest.themeIcons ?? themeVariants(root, iconFile, themes),
+                    );
+                    if (variants.length)
+                        iconVariants = Object.fromEntries(
+                            variants.map(([theme, file]) => {
+                                const svg = squareSvg(readTextfile(root, file));
+                                if (!svg)
+                                    throw new Error(
+                                        `${file}: expected an SVG with a viewBox or width and height`,
+                                    );
+                                return [theme, svg];
+                            }),
+                        );
                 } catch (error) {
                     siteErrors.push(
                         `${MANIFEST_FILE}: icon ${iconFile}: ${error instanceof Error ? error.message : error}`,
@@ -416,9 +447,15 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             siteErrors.push(...manifestErrors);
             // Directly under content/: flat <id>.md files only (no folders).
             const onDisk = new Set<string>();
-            for (const entry of existsSync(contentDir)
+            const contentEntries = existsSync(contentDir)
                 ? readdirSync(contentDir, { withFileTypes: true })
-                : []) {
+                : [];
+            const ignoredContent = ignoredFiles(
+                root,
+                contentEntries.map((entry) => `content/${entry.name}`),
+            );
+            for (const entry of contentEntries) {
+                if (ignoredContent.has(`content/${entry.name}`)) continue;
                 if (entry.name.startsWith(".")) {
                     continue;
                 }
@@ -433,7 +470,8 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                 onDisk.add(id);
             }
             // Manifest pre-order is the display order.
-            for (const { id, parent } of flattenTree(tree)) {
+            for (const { id, parent, subformat } of flattenTree(tree)) {
+                if (subformat) continue;
                 const rel = docFile(id, manifest.files);
                 if (rel.startsWith("content/")) {
                     const diskId = docIdOfFile(rel.slice("content/".length));
@@ -442,6 +480,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                 let path: string;
                 try {
                     path = textfilePath(root, rel);
+                    assertNotIgnored(root, rel);
                 } catch (error) {
                     siteErrors.push(`${rel}: ${error}`);
                     continue;
@@ -457,6 +496,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                     try {
                         const translated = textfilePath(root, file);
                         if (existsSync(translated)) {
+                            assertNotIgnored(root, file);
                             parsed = docCache.get(translated, (raw) =>
                                 parseFile(raw, previews, rel),
                             );
@@ -484,6 +524,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             new Set(files.map((f) => f.doc.id)),
             iconFile,
             manifest.files,
+            Object.values(manifest.themeIcons ?? {}),
         );
         siteErrors.push(...iconErrors);
         for (const { doc } of files) {
@@ -493,9 +534,6 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             }
         }
         const docs = files.map((f) => f.doc);
-        if (docs.length === 0) {
-            siteErrors.push(`${contentDir}: no docs`);
-        }
 
         const ctx: DraftContext = {
             docs,
@@ -509,18 +547,87 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             errors.push(...errs.map((e) => `${doc.file}: ${e}`));
             sources.set(doc.file, {
                 terms: parsed.parsed.terms,
+                referencedFiles: parsed.referencedFiles,
                 raw: parsed.raw,
                 frontmatter: parsed.parsed.frontmatter,
                 lines: parsed.lines,
                 errors: errs,
             });
         }
+        for (const node of flattenTree(manifest.tree).filter((node) => node.subformat)) {
+            const config = manifest.subformats?.find((format) => format.ext === node.subformat);
+            if (!config) continue;
+            const file = `subformat:${config.ext}`;
+            const title = node.title ?? config.ext;
+            const pageErrors: string[] = [];
+            const collection: NonNullable<CompiledDoc["subformat"]> = {
+                ...config,
+                fields: [],
+                records: [],
+            };
+            try {
+                assertNotIgnored(root, config.schema);
+                if (!paths.some((file) => file.path === config.schema))
+                    throw new Error("Subformat schema is not available in the workspace");
+                const loaded = loadSubformat(root, config);
+                collection.fields = loaded.fields;
+                collection.template = loaded.template;
+                collection.defaultFolder = manifest.defaultSubformatFolder;
+                for (const record of paths.filter(
+                    (file) => file.extension === config.ext && file.path !== config.schema,
+                )) {
+                    try {
+                        const content = readTextfile(root, record.path);
+                        const data = parseSubformatRecord(content, config.format);
+                        validateSubformatRecord(loaded, data);
+                        collection.records.push({ file: record.path, content, data });
+                    } catch (error) {
+                        pageErrors.push(
+                            `${record.path}: ${error instanceof Error ? error.message : error}`,
+                        );
+                    }
+                }
+            } catch (error) {
+                pageErrors.push(
+                    `${config.schema}: ${error instanceof Error ? error.message : error}`,
+                );
+            }
+            docs.push({
+                id: node.id,
+                parent: node.parent,
+                title,
+                file,
+                lang: defaultLang,
+                subformat: collection,
+                body: "",
+                blocks: [],
+                toc: [],
+                refs: { figures: [], terms: [] },
+            });
+            sources.set(file, {
+                terms: [],
+                referencedFiles: [],
+                raw: "",
+                frontmatter: { title },
+                lines: [],
+                errors: pageErrors,
+            });
+            errors.push(...pageErrors);
+        }
+        const order = flattenTree(manifest.tree).map((node) => node.id);
+        docs.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+        if (!docs.length) {
+            siteErrors.push(`${contentDir}: no docs`);
+            errors.push(`${contentDir}: no docs`);
+        }
         return {
             previews,
+            subformats: manifest.subformats,
             ...(manifest.languages ? { contentLanguages: manifest.languages } : {}),
             ...(manifest.themes ? { themes: manifest.themes } : {}),
             ...(title === undefined ? {} : { title }),
             ...(icon === undefined ? {} : { icon }),
+            ...(iconVariants === undefined ? {} : { iconVariants }),
             docs,
             terms: [...termMap(files.flatMap(({ parsed }) => parsed.parsed.terms)).values()],
             figures,
@@ -551,6 +658,7 @@ export const compileDraft = (
         doc: toDoc(known?.id ?? "", known?.parent, file, parsed, ctx.defaultLang ?? DEFAULT_LANG),
         source: {
             terms: parsed.parsed.terms,
+            referencedFiles: parsed.referencedFiles,
             raw,
             frontmatter: parsed.parsed.frontmatter,
             lines: parsed.lines,

@@ -1,23 +1,47 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { bundleEntries } from "../compiler/bundle.js";
 import { embedBundleUrls } from "../compiler/bundle-urls.js";
 import { compileSite } from "../compiler/compile.js";
+import { exportEntries } from "../compiler/export.js";
 import { loadProjectFonts } from "../compiler/fonts.js";
 import { textfilePath } from "../compiler/textfile.js";
 import { zip } from "../compiler/zip.js";
+import type { PluginTransport } from "../plugins/transport.js";
+import { loadBuildPlugins, pluginSnapshot } from "./build-plugins.js";
 import { loadSiteLanguages } from "./languages.js";
+import { sourceFileBase } from "./workspace.js";
 
 export interface BuildOptions {
     format: "html" | "zip";
     urlPreview?: "embed" | "network";
+    mode?: "static" | "live";
+    auth?: "external";
+    /** Public directory URL corresponding to the manifest directory, embedded in HTML. */
+    sourceUrl?: string;
+    /** Trusted server module used for static snapshots, never serialized into HTML. */
+    pluginModule?: string;
+    /** Build-time authenticated reads; live HTML receives its transport at runtime. */
+    pluginTransport?: PluginTransport;
 }
 
 /** Build one artifact from the manifest and its managed content. */
 export const buildBundle = async (root: string, options: BuildOptions) => {
     const { format } = options;
-    const urlPreview = options.urlPreview ?? "embed";
+    if (options.sourceUrl !== undefined && format !== "html")
+        throw new Error("Source URL applies to HTML builds only");
+    const sourceBase = format === "html" ? sourceFileBase(root, options.sourceUrl) : undefined;
+    const urlPreview = options.urlPreview ?? (options.mode === "live" ? "network" : "embed");
+    if (options.mode !== undefined && !["static", "live"].includes(options.mode))
+        throw new Error("build mode must be static | live");
+    if (options.mode && format !== "html")
+        throw new Error("Build modes apply to HTML; use export for source ZIPs");
+    if (options.auth !== undefined && (options.auth !== "external" || options.mode !== "live"))
+        throw new Error("External authentication requires live HTML");
+    if (options.mode === "static" && urlPreview !== "embed")
+        throw new Error("Static HTML requires embedded resources");
+    if (options.mode === "live" && urlPreview !== "network")
+        throw new Error("Live HTML requires network resources");
     if (format !== "html" && format !== "zip") throw new Error("build format must be html | zip");
     if (urlPreview !== "embed" && urlPreview !== "network")
         throw new Error("--url_preview must be embed | network");
@@ -27,10 +51,23 @@ export const buildBundle = async (root: string, options: BuildOptions) => {
             throw new Error(`Content validation failed:\n${compiled.errors.join("\n")}`);
         return compiled;
     };
+    let entries = exportEntries(root);
     let compiled = validate(root);
-    let entries = format === "zip" || urlPreview === "embed" ? bundleEntries(root) : [];
     if (urlPreview === "embed") {
-        entries = await embedBundleUrls(root, entries);
+        const plugins =
+            format === "html" && !options.pluginTransport
+                ? await loadBuildPlugins(root, options.pluginModule)
+                : undefined;
+        try {
+            const request = options.pluginTransport ?? plugins?.request;
+            entries = await embedBundleUrls(
+                root,
+                entries,
+                request ? pluginSnapshot(request) : undefined,
+            );
+        } finally {
+            plugins?.dispose();
+        }
         const temp = mkdtempSync(join(tmpdir(), "dooc-bundle-"));
         try {
             for (const entry of entries) {
@@ -50,14 +87,19 @@ export const buildBundle = async (root: string, options: BuildOptions) => {
         data: publishHtml(
             {
                 ...siteFrom(compiled, config.languages),
+                sourceBase,
                 fonts: loadProjectFonts(root),
                 codeLanguages: config.codeLanguages,
                 codeGrammars: config.codeGrammars,
             },
-            await bundleClient("core/schema-graph-global.tsx", true),
+            await bundleClient("core/schema-graph-global.tsx"),
             undefined,
-            await bundleClient("viewer/code-highlight.ts", true),
-            urlPreview === "embed" ? "static" : "network",
+            await bundleClient("viewer/code-highlight.ts"),
+            options.mode === "live" ? "live" : urlPreview === "embed" ? "static" : "network",
+            options.mode === "live" ? await bundleClient("viewer/published-plugins.ts") : "",
+            compiled.docs.some((doc) => doc.subformat)
+                ? await bundleClient("viewer/published-subformats.ts")
+                : "",
         ),
         docs: compiled.docs.length,
     };

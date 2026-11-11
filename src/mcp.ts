@@ -8,10 +8,13 @@ import { createInterface } from "node:readline";
 import { checkSite } from "./compiler/check.js";
 import { CHECK_KINDS, type CheckKind } from "./compiler/check-types.js";
 import { type CompileOptions, createCompiler } from "./compiler/compile.js";
+import { exportBundle } from "./compiler/export.js";
 import { filesSnapshot, updateFiles, uploadFile } from "./compiler/files.js";
 import { addProjectFont, listProjectFonts, removeProjectFont } from "./compiler/fonts.js";
 import { createDocOps, isOpError } from "./compiler/ops.js";
+import { validateSubformatFile } from "./compiler/subformats.js";
 import { readTextfile, textfilePath, writeTextfile } from "./compiler/textfile.js";
+import { MANIFEST_FILE } from "./core/content-metadata.js";
 import { localFile } from "./core/files.js";
 import { docDisplayName } from "./core/taxonomy.js";
 import { buildBundle } from "./viewer/build.js";
@@ -69,12 +72,39 @@ export const createTools = (root: string, options: McpOptions = {}): Record<stri
     };
 
     return {
+        export: {
+            description:
+                "Collect dooc.yaml and its source dependencies into dist/bundle.zip, without executing plugins or fetching remote data.",
+            props: {},
+            required: [],
+            run: () => {
+                const file = "dist/bundle.zip";
+                const data = exportBundle(root);
+                const path = textfilePath(root, file);
+                mkdirSync(dirname(path), { recursive: true });
+                const temp = join(dirname(path), `.export-${randomUUID()}.tmp`);
+                try {
+                    writeFileSync(temp, data, { flag: "wx" });
+                    renameSync(temp, path);
+                } finally {
+                    rmSync(temp, { force: true });
+                }
+                return { file, path, bytes: data.length };
+            },
+        },
         build: {
             description:
                 "Build dist/bundle.html or dist/bundle.zip. url_preview=embed snapshots embedded URL content; network preserves URL references. Defaults to embed. Returns the output path, byte count and document count.",
             props: {
                 format: { ...str, enum: ["html", "zip"] },
                 url_preview: { ...str, enum: ["embed", "network"] },
+                mode: { ...str, enum: ["static", "live"] },
+                auth: { ...str, enum: ["external"] },
+                source_url: {
+                    ...str,
+                    description:
+                        "Public source directory URL for card copy links in HTML, relative to dooc.yaml.",
+                },
             },
             required: ["format"],
             run: async (a) => {
@@ -82,7 +112,12 @@ export const createTools = (root: string, options: McpOptions = {}): Record<stri
                 textfilePath(root, file);
                 const bundle = await buildBundle(root, {
                     format: a.format as "html" | "zip",
-                    urlPreview: (a.url_preview ?? "embed") as "embed" | "network",
+                    urlPreview: (a.url_preview ?? (a.mode === "live" ? "network" : "embed")) as
+                        | "embed"
+                        | "network",
+                    mode: a.mode as "static" | "live" | undefined,
+                    auth: a.auth as "external" | undefined,
+                    sourceUrl: a.source_url as string | undefined,
                 });
                 const path = textfilePath(root, file);
                 mkdirSync(dirname(path), { recursive: true });
@@ -98,7 +133,7 @@ export const createTools = (root: string, options: McpOptions = {}): Record<stri
                     path,
                     bytes: Buffer.byteLength(bundle.data),
                     docs: bundle.docs,
-                    url_preview: a.url_preview ?? "embed",
+                    url_preview: a.url_preview ?? (a.mode === "live" ? "network" : "embed"),
                 };
             },
         },
@@ -120,10 +155,17 @@ export const createTools = (root: string, options: McpOptions = {}): Record<stri
                 "Create or update a local UTF-8 bundle file. base must equal the content from read_file, or null to create a new file. Conflicting edits are never overwritten.",
             props: { file: str, content: str, base: { type: ["string", "null"] } },
             required: ["file", "content", "base"],
-            run: (a) =>
-                writeTextfile(root, fileArg(a.file), a.content as string, a.base as string | null)
+            run: (a) => {
+                validateSubformatFile(root, fileArg(a.file), a.content as string);
+                return writeTextfile(
+                    root,
+                    fileArg(a.file),
+                    a.content as string,
+                    a.base as string | null,
+                )
                     ? { file: a.file, ok: true }
-                    : { error: "File changed. Read it again before writing.", status: 409 },
+                    : { error: "File changed. Read it again before writing.", status: 409 };
+            },
         },
         upload_file: {
             description:
@@ -134,7 +176,7 @@ export const createTools = (root: string, options: McpOptions = {}): Record<stri
         },
         update_files: {
             description:
-                "Rename a file (file, name), move files/folders (paths, directory, optional before), change automatic layout (enabled), or restructure by extension. Updates document references and variants. Requires revision from list_files.",
+                "Rename a file (file, name), move files/folders (paths, directory), change automatic layout (enabled), or restructure by extension. Updates document references and variants. Requires revision from list_files.",
             props: {
                 action: { ...str, enum: ["rename", "move", "layout", "restructure"] },
                 revision: str,
@@ -142,7 +184,6 @@ export const createTools = (root: string, options: McpOptions = {}): Record<stri
                 name: str,
                 paths: strings,
                 directory: str,
-                before: str,
                 enabled: bool,
             },
             required: ["action", "revision"],
@@ -150,7 +191,7 @@ export const createTools = (root: string, options: McpOptions = {}): Record<stri
         },
         list_resources: {
             description:
-                "List Statics: dictionary terms, code blocks and external URLs with their source files and line numbers.",
+                "List Statics: codeblocks (including term definitions and local text-file embeds, with normalized format and reference locations), URLs from Markdown links, and URL previews from Markdown images, with source files and line numbers.",
             props: {},
             run: () =>
                 resourceIndex(
@@ -234,7 +275,8 @@ export const createTools = (root: string, options: McpOptions = {}): Record<stri
                         depth.set(d.id, dep);
                         return {
                             id: d.id,
-                            file: d.file,
+                            file: d.subformat ? MANIFEST_FILE : d.file,
+                            ...(d.subformat ? { subformat: d.subformat.ext } : {}),
                             title: docDisplayName(d, d.id),
                             parent: d.parent,
                             depth: dep,
@@ -276,6 +318,12 @@ export const createTools = (root: string, options: McpOptions = {}): Record<stri
                 const id = String(a.id);
                 const compiled = compiler.compile();
                 const doc = compiled.docs.find((d) => d.id === id);
+                if (doc?.subformat)
+                    return {
+                        file: MANIFEST_FILE,
+                        subformat: doc.subformat,
+                        errors: compiled.sources.get(doc.file)?.errors ?? [],
+                    };
                 return doc
                     ? {
                           file: doc.file,

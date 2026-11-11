@@ -5,17 +5,18 @@ import { createHighlighterCore } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import { expect, it } from "vitest";
 import { CODE_LANGS } from "../core/taxonomy.js";
-import { bundleEntries } from "./bundle.js";
 import {
     addCodeLanguage,
     CODE_LANGUAGES_DIR,
     loadCodeGrammars,
     loadCodeLanguages,
 } from "./code-languages.js";
+import { exportEntries } from "./export.js";
 
 it("registers built-in and custom grammars outside content, keeps them in source exports, and refuses overwrite", async () => {
     const root = mkdtempSync(join(tmpdir(), "docs-code-languages-"));
     try {
+        writeFileSync(join(root, "dooc.yaml"), "docs: []\n");
         const input = join(root, "tdl.tmLanguage.json");
         writeFileSync(
             input,
@@ -36,7 +37,8 @@ it("registers built-in and custom grammars outside content, keeps them in source
         expect(loaded.codeGrammars.find((grammar) => grammar.name === "tdl")?.scopeName).toBe(
             "source.tdl",
         );
-        expect(bundleEntries(root).map((entry) => entry.name)).toEqual([
+        expect(exportEntries(root).map((entry) => entry.name)).toEqual([
+            "dooc.yaml",
             `${CODE_LANGUAGES_DIR}/lua.json`,
             `${CODE_LANGUAGES_DIR}/tdl.json`,
         ]);

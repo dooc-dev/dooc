@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { blocksHtml } from "../core/html.js";
 import { docDisplayName } from "../core/taxonomy.js";
-import { bundleEntries } from "./bundle.js";
 import { compileDraft, compileSite, createCompiler } from "./compile.js";
+import { exportEntries } from "./export.js";
 import { translationLanguages } from "./locales.js";
 import { writeTextfile } from "./textfile.js";
 
@@ -137,7 +137,7 @@ describe("createCompiler (incremental compile for the viewer)", () => {
         expect(html).toContain('data-doc-figure-frame="html" sandbox="allow-scripts"');
         expect(html).not.toContain("allow-same-origin");
         expect(
-            bundleEntries(root).find((entry) => entry.name === "figures/pixel.png")?.data,
+            exportEntries(root).find((entry) => entry.name === "figures/pixel.png")?.data,
         ).toEqual(png);
 
         const second = compiler.compile();

@@ -11,31 +11,28 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { parse } from "yaml";
 
 const root = mkdtempSync(join(tmpdir(), "dooc-install-"));
-const installer = resolve("install.sh");
-const prepare = resolve("scripts/prepare-release.mjs");
+const installer = resolve("scripts/release/install.sh");
+const workflow = parse(readFileSync(".github/workflows/release.yml", "utf8"));
+const checksums = workflow.jobs.release.steps.find((step) => step.name === "Prepare checksums");
+const checksumArgs = ["-e", "-c", checksums.run];
 try {
-    const releases = join(root, "build/releases");
+    const releases = join(root, checksums["working-directory"]);
     const mocks = join(root, "mocks");
     const installDir = join(root, "install with spaces");
     mkdirSync(releases, { recursive: true });
     mkdirSync(mocks);
-    writeFileSync(join(root, "package.json"), '{"version":"1.2.3"}');
     writeFileSync(join(root, "dooc"), "#!/bin/sh\necho fixture\n");
     chmodSync(join(root, "dooc"), 0o755);
     const archive = join(releases, "dooc-linux-x64.tar.gz");
     execFileSync("tar", ["-czf", archive, "-C", root, "dooc"]);
     for (const platform of ["linux-arm64", "darwin-arm64", "darwin-x64"])
         copyFileSync(archive, join(releases, `dooc-${platform}.tar.gz`));
-    execFileSync(process.execPath, [prepare], { cwd: root });
-    const formula = readFileSync(join(root, "Formula/dooc.rb"), "utf8");
-    assert.equal((formula.match(/sha256 "[a-f0-9]{64}"/g) ?? []).length, 4);
-    assert.match(
-        formula,
-        /dooc-dev\/dooc\/releases\/download\/dooc-v1\.2\.3\/dooc-darwin-arm64\.tar\.gz/,
-    );
-    assert.match(formula, /version_scheme 1/);
+    execFileSync("bash", checksumArgs, { cwd: releases });
+    const sums = readFileSync(join(releases, "SHA256SUMS"), "utf8");
+    assert.equal((sums.match(/^[a-f0-9]{64} {2}dooc-.+\.tar\.gz$/gm) ?? []).length, 4);
     writeFileSync(
         join(mocks, "uname"),
         '#!/bin/sh\ncase "$1" in -s) echo "$DOOC_TEST_OS";; -m) echo "$DOOC_TEST_ARCH";; esac\n',
@@ -100,8 +97,7 @@ cp "$DOOC_TEST_RELEASES/\${url##*/}" "$dest"
     assert.notEqual(install({ DOOC_TEST_ARCH: "riscv64" }).status, 0);
     assert.notEqual(install({ DOOC_VERSION: "../../invalid" }).status, 0);
     rmSync(archive);
-    assert.notEqual(spawnSync(process.execPath, [prepare], { cwd: root }).status, 0);
-    assert.equal(readFileSync(join(root, "Formula/dooc.rb"), "utf8"), formula);
+    assert.notEqual(spawnSync("bash", checksumArgs, { cwd: releases }).status, 0);
     console.log(
         "Installer checksums, platform selection, upgrades, and incomplete-release rejection passed.",
     );

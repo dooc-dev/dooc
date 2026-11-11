@@ -1,3 +1,4 @@
+import { RELOAD_ICON_PATH } from "../core/icons.js";
 import { confirmDialog } from "./edit-dialog.js";
 import { confirmBranchSwitch, gitRequest, updateWorkspaceLocation } from "./git-branches.js";
 import type { GitPullRequest, GitState } from "./git-types.js";
@@ -11,7 +12,7 @@ const element = <K extends keyof HTMLElementTagNameMap>(tag: K, className = "", 
 };
 
 const actionIcon: Record<string, string> = {
-    Reload: "M17 8a7 7 0 1 0 0 5M17 3v5h-5",
+    Reload: RELOAD_ICON_PATH,
     Stage: "M10 4v12M4 10h12",
     Unstage: "M4 10h12",
     Fetch: "M10 3v10m-4-4 4 4 4-4M4 16h12",

@@ -87,8 +87,8 @@ describe("source-based CLI", () => {
         expect(help).toContain("build html [dooc.yaml] [out-dir]");
         expect(help).toContain("build zip [dooc.yaml] [out-dir]");
         expect(help).toContain("--url_preview embed|network");
-        expect(help).not.toContain("--mode");
-        expect(help).not.toContain("export ");
+        expect(help).toContain("--mode static|live");
+        expect(help).toContain("export [dooc.yaml] [out-dir]");
         expect(help).not.toMatch(/export json|json-schema/);
         expect(result.stderr).not.toHaveBeenCalled();
         expect(result.exit).not.toHaveBeenCalled();
@@ -157,9 +157,6 @@ describe("source-based CLI", () => {
     });
 
     it.each([
-        ["export", "html"],
-        ["export", "zip"],
-        ["export", "json"],
         ["json-schema", "latest"],
         ["preview"],
         ["dev"],
@@ -172,6 +169,22 @@ describe("source-based CLI", () => {
         expect(result.exit).toHaveBeenCalledWith(1);
         expect(result.stdout).not.toHaveBeenCalled();
         expect(result.stderr).toHaveBeenCalledWith(expect.stringContaining("unknown command"));
+    });
+
+    it("exports sources without executing configuration or plugins", async () => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-export-"));
+        roots.push(root);
+        mkdirSync(join(root, "docs"));
+        writeFileSync(join(root, "dooc.yaml"), "center_contents:\n  - file: docs/guide.md\n");
+        writeFileSync(
+            join(root, "docs/guide.md"),
+            "---\ntitle: Guide\n---\n\n![](https://private.example/item)\n",
+        );
+        writeFileSync(join(root, "docs.config.mjs"), 'throw new Error("Do not execute");');
+        const result = cli("export", join(root, "dooc.yaml"));
+        await result.run();
+        expect(result.exit).not.toHaveBeenCalled();
+        expect(readFileSync(join(root, "dist/bundle.zip")).subarray(0, 2).toString()).toBe("PK");
     });
 
     it("rejects unsupported URL preview options without writing output", async () => {
@@ -227,6 +240,25 @@ describe("source-based CLI", () => {
         expect(readFileSync(join(out, `bundle.${format}`), "utf8")).toBe("Built artifact");
         expect(readFileSync(other, "utf8")).toBe("Keep existing artifact");
         expect(result.stdout).toHaveBeenCalledTimes(1);
+    });
+
+    it("passes an injected source URL to the HTML build", async () => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-source-"));
+        roots.push(root);
+        writeFileSync(join(root, "dooc.yaml"), "docs: []\n");
+        const buildBundle = vi.fn().mockResolvedValue({ data: "Built artifact", docs: 0 });
+        vi.doMock("./viewer/build.js", () => ({ buildBundle }));
+        await cli(
+            "build",
+            "html",
+            join(root, "dooc.yaml"),
+            "--source-url",
+            "https://example.com/source/",
+        ).run();
+        expect(buildBundle).toHaveBeenCalledWith(
+            root,
+            expect.objectContaining({ sourceUrl: "https://example.com/source/" }),
+        );
     });
 
     it.each([

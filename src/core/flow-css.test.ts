@@ -3,7 +3,7 @@
 //      (detects it going stale from a forgotten build:css run / a React Flow upgrade).
 //   2. No default theme is included; colors come from `--doc-*` (the palette the caller injects).
 import { describe, expect, it } from "vitest";
-import { readXyflowBaseCss } from "./build-flow-css.js";
+import { readXyflowBaseCss } from "../../scripts/build/flow-css.js";
 import { XYFLOW_BASE_CSS } from "./flow-base-css.generated.js";
 import { SCHEMA_GRAPH_FLOW_CSS } from "./flow-css.js";
 

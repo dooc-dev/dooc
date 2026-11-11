@@ -26,12 +26,17 @@ export const siteIconResponse = (
         const manifest = parseManifestText(raw ?? "[]");
         if (manifest.errors.length)
             return { status: 409, body: { error: manifest.errors.join("\n") } };
+        const theme = input?.theme ?? "light";
+        if (theme !== "light" && theme !== "dark")
+            throw new Error("Expected a light or dark theme");
         const file =
-            manifest.icon ??
+            (manifest.format === "nested" ? manifest.themeIcons?.[theme] : manifest.icon) ??
             (manifest.files?.defaultLayout !== false
-                ? defaultFilePath("_site.svg")
-                : `${ICONS_DIR}/_site.svg`);
-        if (!manifest.icon && existsSync(textfilePath(root, file)))
+                ? defaultFilePath(manifest.format === "nested" ? `_site-${theme}.svg` : "_site.svg")
+                : `${ICONS_DIR}/_site${manifest.format === "nested" ? `-${theme}` : ""}.svg`);
+        const configured =
+            manifest.format === "nested" ? manifest.themeIcons?.[theme] : manifest.icon;
+        if (!configured && existsSync(textfilePath(root, file)))
             return {
                 status: 409,
                 body: { error: `${file} already exists; set dooc.yaml's icon to use it` },
@@ -39,13 +44,14 @@ export const siteIconResponse = (
         const base = existsSync(textfilePath(root, file)) ? readTextfile(root, file) : null;
         if (!writeTextfile(root, file, svg, base))
             return { status: 409, body: { error: "Icon changed externally. Try again." } };
-        if (!manifest.icon) {
+        if (!configured) {
             const parsed = parseDocument(raw ?? "docs: []\n");
             const document =
                 isSeq(parsed.contents) || parsed.contents == null
                     ? new Document({ docs: parsed.toJS() ?? [] })
                     : parsed;
-            document.set("icon", file);
+            if (manifest.format === "nested") document.setIn(["left_sidebar", "icon", theme], file);
+            else document.set("icon", file);
             if (!writeTextfile(root, MANIFEST_FILE, document.toString(), raw))
                 return { status: 409, body: { error: "Manifest changed externally. Try again." } };
         }

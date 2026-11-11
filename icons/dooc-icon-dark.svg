@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 160 160">
+  <title>dooc</title>
+  <g fill="none" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="60.201" cy="60.201" r="18" stroke="#FFFFFF"/>
+    <path d="M 78.201 60.201 V 24.201" stroke="#FFFFFF"/>
+    <circle cx="119.598" cy="40.402" r="24" stroke="#FFFFFF"/>
+    <circle cx="40.402" cy="119.598" r="24" stroke="#FFFFFF"/>
+    <path d="M 113.5648 119.4586 A 24 24 0 1 1 113.5648 80.1393" stroke="#FFFFFF"/>
+  </g>
+</svg>

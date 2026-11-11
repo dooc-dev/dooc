@@ -25,3 +25,5 @@ title: "Data"
 ## XML
 
 ![](contents/xml/feed.xml)
+
+[JSON subformats](contents/md/json-subformats.md) adds schema-driven cards for YAML, JSON, and TOML records.

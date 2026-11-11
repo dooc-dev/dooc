@@ -1,5 +1,6 @@
 // In-memory content used by the compiler and renderers (browser-safe).
 import type { Block, TocEntry } from "./blocks.js";
+import type { SubformatCollection } from "./subformats.js";
 import type { Frontmatter } from "./taxonomy.js";
 
 export interface TermEntry {
@@ -29,9 +30,10 @@ export interface FigureEntry {
 // The display name is resolved via docDisplayName (taxonomy.ts).
 export type CompiledDoc = Frontmatter & {
     id: string;
+    subformat?: SubformatCollection;
     /** Parent doc id (SoT: dooc.yaml). Omitted = top level. docs[] is in pre-order. */
     parent?: string;
-    /** `content/<id>.md`. */
+    /** Project-relative Markdown source path, or subformat:<ext> for a display page. */
     file: string;
     /** Resolved language (BCP 47): front-matter `lang`, else the site default (language.ts). */
     lang: string;

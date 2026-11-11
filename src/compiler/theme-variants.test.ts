@@ -4,9 +4,9 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { blocksHtml } from "../core/html.js";
 import { themeVariantFile } from "../core/theme-variants.js";
-import { bundleEntries } from "./bundle.js";
 import { parseContentSource } from "./code-blocks.js";
 import { createCompiler } from "./compile.js";
+import { exportEntries } from "./export.js";
 import { filesSnapshot, updateFiles } from "./files.js";
 import { themeVariants } from "./theme-variants.js";
 
@@ -58,7 +58,7 @@ describe("theme variants", () => {
         expect(compiler.compile().docs[0]?.blocks[0]).toMatchObject({
             variants: { dark: { lines: ["Updated dark text"] } },
         });
-        expect(bundleEntries(root).map((entry) => entry.name)).toContain(
+        expect(exportEntries(root).map((entry) => entry.name)).toContain(
             "themes/dark/files/image.svg",
         );
     });

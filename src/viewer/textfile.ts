@@ -1,4 +1,11 @@
-import { readTextfileAsync, textfilePath, writeTextfile } from "../compiler/textfile.js";
+import { readManifest } from "../compiler/manifest.js";
+import { validateSubformatFile } from "../compiler/subformats.js";
+import {
+    readTextfile,
+    readTextfileAsync,
+    textfilePath,
+    writeTextfile,
+} from "../compiler/textfile.js";
 import { TextfileUnavailable } from "../compiler/textfile-remote.js";
 import { isRemoteTextfile } from "../core/textfile.js";
 
@@ -22,7 +29,14 @@ export const textfileResponse = async (
     domains: readonly string[] = [],
 ): Promise<{
     status: number;
-    body: { content?: string | null; error?: string; gitBase?: string | null };
+    body: {
+        content?: string | null;
+        error?: string;
+        gitBase?: string | null;
+        language?: string;
+        schema?: object;
+        schemaDocument?: boolean;
+    };
 }> => {
     if (typeof input?.file !== "string" || !["read", "save"].includes(String(input.action)))
         return { status: 400, body: { error: "Invalid text file request" } };
@@ -35,6 +49,7 @@ export const textfileResponse = async (
                 (input.base !== null && typeof input.base !== "string")
             )
                 return { status: 400, body: { error: "Content and original text are required" } };
+            validateSubformatFile(root, input.file, input.content);
             if (!writeTextfile(root, input.file, input.content, input.base))
                 return {
                     status: 409,
@@ -42,9 +57,23 @@ export const textfileResponse = async (
                 };
             return { status: 200, body: { content: input.content } };
         }
+        const configs = isRemoteTextfile(input.file) ? [] : (readManifest(root).subformats ?? []);
+        const extension = input.file.split(".").at(-1);
+        const format = configs.find((config) => config.ext === extension);
         return {
             status: 200,
-            body: { content: await readTextfileAsync(root, input.file, true, domains) },
+            body: {
+                content: await readTextfileAsync(root, input.file, true, domains),
+                ...(format
+                    ? {
+                          language: format.format,
+                          schema: JSON.parse(readTextfile(root, format.schema)),
+                      }
+                    : {}),
+                ...(configs.some((config) => config.schema === input.file)
+                    ? { schemaDocument: true }
+                    : {}),
+            },
         };
     } catch (error) {
         if (

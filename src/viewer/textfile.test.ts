@@ -24,6 +24,55 @@ afterEach(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
+it.each([
+    "yaml",
+    "json",
+    "toml",
+])("saves .issue only using its declared %s format and schema", async (format) => {
+    const root = fixture();
+    const sources = {
+        yaml: "title: One\npoints: 2\n",
+        json: '{"title":"One","points":2}\n',
+        toml: 'title = "One"\npoints = 2\n',
+    };
+    writeFileSync(
+        join(root, "dooc.yaml"),
+        `docs: []\nsubformats: [{ext: issue, format: ${format}, schema: issue.schema.json}]\n`,
+    );
+    writeFileSync(
+        join(root, "issue.schema.json"),
+        JSON.stringify({
+            type: "object",
+            required: ["title", "points"],
+            properties: { title: { type: "string" }, points: { type: "integer", minimum: 0 } },
+        }),
+    );
+    const content = sources[format as keyof typeof sources];
+    const save = (text: string, base: string | null) =>
+        textfileResponse(root, { action: "save", file: "one.issue", content: text, base });
+    expect((await save(content, null)).status).toBe(200);
+    const other = format === "yaml" ? sources.toml : sources.yaml;
+    expect((await save(other, content)).status).toBe(400);
+    expect((await save(content.replace("2", "-1"), content)).status).toBe(400);
+    expect(readFileSync(join(root, "one.issue"), "utf8")).toBe(content);
+    const updated = content.replace("One", "Two");
+    expect((await save(updated, content)).status).toBe(200);
+    expect(readFileSync(join(root, "one.issue"), "utf8")).toBe(updated);
+    expect(
+        (await textfileResponse(root, { action: "read", file: "one.issue" })).body,
+    ).toMatchObject({ language: format, schema: { type: "object" } });
+    const schemaRead = await textfileResponse(root, { action: "read", file: "issue.schema.json" });
+    expect(schemaRead.body.schemaDocument).toBe(true);
+    const invalid = await textfileResponse(root, {
+        action: "save",
+        file: "issue.schema.json",
+        base: schemaRead.body.content,
+        content: '{"type":"object","required":["missing"]}',
+    });
+    expect(invalid.status).toBe(400);
+    expect(readFileSync(join(root, "issue.schema.json"), "utf8")).toBe(schemaRead.body.content);
+});
+
 it("yields while reading a large local file and returns the complete source", async () => {
     const root = fixture();
     const source = "large file\n".repeat(200_000);

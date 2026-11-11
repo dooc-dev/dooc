@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { bundleEntries } from "../compiler/bundle.js";
+import { exportEntries } from "../compiler/export.js";
 import {
     codeBlockAt,
     isLocalToolRequest,
@@ -35,6 +35,17 @@ const body = "# Title\n\n```js\nconst x=1\n```\n\nAfter\n";
 const position = body.indexOf("const");
 
 describe("complete text file tools", () => {
+    it("formats JSON by default without rounding numbers, and preserves invalid input", async () => {
+        const root = await fixture("");
+        const source = '{"id":9007199254740993,"title":"A"}\r\n';
+        const result = await validateTextfileCode(root, "json", source);
+        expect(result.findings).toEqual([]);
+        expect(result.content).toBe('{\r\n  "id": 9007199254740993,\r\n  "title": "A"\r\n}\r\n');
+        const invalid = '{"title":';
+        const error = await validateTextfileCode(root, "json", invalid);
+        expect(error.content).toBe(invalid);
+        expect(error.findings[0]?.ruleId).toBe("error");
+    });
     it("uses the registered formatter and preserves line endings and embedded fence text", async () => {
         const root = await fixture(
             "const fs=require('node:fs');fs.writeSync(1,fs.readFileSync(0,'utf8').replace('x=1','x = 1;'))",
@@ -90,7 +101,9 @@ describe("code tool virtual blocks", () => {
 describe("external editor tools", () => {
     it("includes editor configuration and adapters in source exports", async () => {
         const root = await fixture("");
-        expect(bundleEntries(root).map((entry) => entry.name)).toEqual([
+        await writeFile(join(root, "dooc.yaml"), "docs: []\n");
+        expect(exportEntries(root).map((entry) => entry.name)).toEqual([
+            "dooc.yaml",
             ".dooc/editor-tools/format.cjs",
             ".dooc/editor-tools/js.json",
             ".dooc/editor-tools/lint.cjs",

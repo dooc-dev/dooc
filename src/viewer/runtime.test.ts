@@ -102,6 +102,9 @@ it("injects and replaces network policy at runtime without editor controls or pe
     );
     expect((await call("/api/files", { action: "complete", prefix: "../" })).status).toBe(409);
     expect(
+        (await call("/api/subformat", { file: "one.issue" }, "https://outside.example")).status,
+    ).toBe(403);
+    expect(
         (await call("/api/files", { action: "complete", prefix: "" }, "https://outside.example"))
             .status,
     ).toBe(403);
@@ -179,6 +182,13 @@ it("injects and replaces network policy at runtime without editor controls or pe
     expect(storage.body).toContain("host/documents");
     expect(storage.body).toContain("Injected storage");
     expect(storage.body).toContain('id="nav-statics"');
+    const subformats = await call("/_subformats");
+    expect(subformats.status).toBe(200);
+    expect(subformats.body).toContain('id="nav-subformats"');
+    expect(
+        subformats.body.match(/class="nav-link cur" href="\/_subformats(?:\?|")/),
+    ).not.toBeNull();
+    expect(subformats.body).toContain("No subformats configured. Add subformats to dooc.yaml.");
     expect(() => viewer.setWorkspace({ protocol: "storage" } as never)).toThrow("Workspace");
     viewer.setWorkspace({ protocol: "git", repo: "Injected repository", branch: "host/topic" });
     expect((await call("/guide")).body).toContain("Injected repository");

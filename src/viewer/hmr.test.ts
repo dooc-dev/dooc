@@ -25,11 +25,13 @@ describe("classifyChange", () => {
     it("the edit client bundle (edit-client.ts) and *.tsx (schema graph bundle sources) count as client (re-fetching the bundle needs a reload)", () => {
         expect(classifyChange("src/viewer/edit-client.ts")).toBe("client");
         expect(classifyChange("src/viewer/nav-focus.ts")).toBe("client");
+        expect(classifyChange("src/viewer/nav-update.ts")).toBe("client");
         expect(classifyChange("src/viewer/language-picker.ts")).toBe("client");
         expect(classifyChange("src/viewer/edit-schema-completion.ts")).toBe("client");
         expect(classifyChange("src/viewer/edit-git-diff.ts")).toBe("client");
         expect(classifyChange("src/viewer/preview-update.ts")).toBe("client");
         expect(classifyChange("src/viewer/plugin-resize.ts")).toBe("client");
+        expect(classifyChange("src/viewer/subformats-ui.ts")).toBe("client");
         expect(classifyChange("src/core/schema-graph-global.tsx")).toBe("client");
         expect(classifyChange("src/core/schema-graph-flow.tsx")).toBe("client");
         expect(classifyChange("src/core/schema-graph-mount.tsx")).toBe("client");

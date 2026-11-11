@@ -24,6 +24,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { FigureEntry } from "../core/content-types.js";
 import { extractMxfile, isDrawioSvg, normalizeDrawioSvg } from "./drawio.js";
+import { ignoredFiles } from "./ignored-files.js";
 import { textfilePath } from "./textfile.js";
 
 const EXT_RE = /\.(drawio\.svg|svg|html|png|webp|gif|mp4|webm|jpe?g)$/;
@@ -170,8 +171,10 @@ export const loadFigures = (
         // A missing figures/ is valid.
     }
     files = [...new Set([...files.map((file) => `figures/${file}`), ...extraFiles])];
+    const ignored = ignoredFiles(dirname(figuresDir), files);
     const keyframeOwner = new Map<string, { file: string; body: string }>();
     for (const file of files) {
+        if (ignored.has(file)) continue;
         if (
             file.startsWith("figures/") &&
             !file.slice(8).includes("/") &&

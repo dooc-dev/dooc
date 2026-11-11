@@ -1,0 +1,46 @@
+{
+  "title": "Desktop 2.4 release candidate",
+  "status": "Ready",
+  "version": "2.4.0",
+  "due": "2026-11-18",
+  "priority": "High",
+  "owner": {
+    "name": "Release team",
+    "email": "release@example.org"
+  },
+  "artifacts": [
+    {
+      "name": "Desktop installer",
+      "kind": "Binary",
+      "url": "https://example.org/releases/2.4.0/desktop.zip",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "name": "Migration guide",
+      "kind": "Documentation",
+      "url": "https://example.org/releases/2.4.0/guide",
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "checks": [
+    {
+      "name": "Upgrade from previous release",
+      "passed": true,
+      "evidence": "https://example.org/checks/upgrade-24"
+    },
+    {
+      "name": "Offline installation",
+      "passed": false,
+      "evidence": "https://example.org/checks/offline-24"
+    }
+  ],
+  "risk": {
+    "likelihood": 2,
+    "impact": 4,
+    "mitigation": "Keep the previous installer available for rollback."
+  },
+  "labels": [
+    "desktop",
+    "migration"
+  ]
+}

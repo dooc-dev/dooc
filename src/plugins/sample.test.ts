@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { bundleEntries } from "../compiler/bundle.js";
 import { createCompiler } from "../compiler/compile.js";
 import { loadDocsConfig } from "../compiler/config.js";
+import { exportEntries } from "../compiler/export.js";
 import { loadViewerPlugins } from "../viewer/plugin-config.js";
 import { pluginViewHtml } from "../viewer/plugin-view.js";
 import { publishHtml, siteFrom } from "../viewer/serve.js";
@@ -225,7 +225,7 @@ describe("sample plugin", () => {
         expect(output).not.toContain('data-plugin="sample"');
         expect(output).not.toContain('src="/assets/ui.js"');
         expect(output).not.toContain("secret-token");
-        const files = bundleEntries(root).map((entry) => entry.name);
+        const files = exportEntries(root).map((entry) => entry.name);
         expect(files).not.toContain("docs.config.mjs");
         expect(
             files.some((file) => /(?:mock|sample-plugin|plugin-card)\.(?:mjs|html)$/.test(file)),

@@ -60,7 +60,7 @@ arg "<bump>" {
   choices "patch" "minor" "major"
 }
 '''
-run = 'node --import tsx src/release.ts "$usage_package" "$usage_bump"'
+run = 'node --import tsx scripts/release/release.ts "$usage_package" "$usage_bump"'
 
 [tasks."build:binary"]
 description = "Build and test a standalone executable for this machine"

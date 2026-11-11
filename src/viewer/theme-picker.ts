@@ -1,10 +1,6 @@
-/** Self-contained because published viewers embed this function directly. */
-export const mountThemePickers = (
-    icons: Record<string, string>,
-    themes = ["light", "dark"],
-): void => {
+/** Run in the head before any themed content can be painted. */
+export const initializeThemes = (themes = ["light", "dark"]): void => {
     const root = document.documentElement;
-    const documentChoices = themes.length === 1 ? themes : ["auto", ...themes];
     const read = (key: string): string => {
         try {
             const value = localStorage.getItem(key);
@@ -13,10 +9,23 @@ export const mountThemePickers = (
             return "auto";
         }
     };
-    let documentDefault = read("docs-preview:theme");
+    const stored = read("docs-preview:theme");
+    root.dataset.theme =
+        themes.length === 1 ? (themes[0] ?? "auto") : themes.includes(stored) ? stored : "auto";
+    root.dataset.editorTheme = read("docs-editor:theme");
+};
+
+/** Self-contained because published viewers embed this function directly. */
+export const mountThemePickers = (
+    icons: Record<string, string>,
+    themes = ["light", "dark"],
+): void => {
+    const root = document.documentElement;
+    const documentChoices = themes.length === 1 ? themes : ["auto", ...themes];
+    let documentDefault = root.dataset.theme ?? "auto";
     if (!documentChoices.includes(documentDefault)) documentDefault = documentChoices[0] ?? "auto";
     root.dataset.theme = documentDefault;
-    root.dataset.editorTheme = read("docs-editor:theme");
+    root.dataset.editorTheme ??= "auto";
     const t = (key: string): string =>
         (window as Window & { __docsTranslate?: (key: string) => string }).__docsTranslate?.(key) ??
         key;
@@ -36,7 +45,9 @@ export const mountThemePickers = (
             ? (root.dataset.editorTheme ?? "auto")
             : (target(button).dataset.theme ?? "auto");
     const sync = (): void => {
-        for (const pane of document.querySelectorAll<HTMLElement>(".resources-pane"))
+        for (const pane of document.querySelectorAll<HTMLElement>(
+            ".resources-pane, #sidebar, #panel",
+        ))
             if (pane.dataset.theme !== root.dataset.editorTheme)
                 pane.dataset.theme = root.dataset.editorTheme;
         for (const pane of document.querySelectorAll<HTMLElement>(
@@ -47,14 +58,20 @@ export const mountThemePickers = (
         for (const button of document.querySelectorAll<HTMLButtonElement>("[data-theme-picker]")) {
             const value = current(button);
             const markup = icons[value === "auto" ? "" : value] ?? "";
+            const valueLabel = button.querySelector<HTMLElement>("[data-picker-value]");
             if (button.dataset.themeIcon !== value) {
-                button.innerHTML = markup;
+                const icon = valueLabel
+                    ? button.closest(".editor-setting")?.querySelector("[data-setting-theme-icon]")
+                    : button;
+                if (icon) icon.innerHTML = markup;
                 button.dataset.themeIcon = value;
             }
+            const name = t(value === "auto" ? "Auto" : value === "light" ? "Light" : "Dark");
+            if (valueLabel && valueLabel.textContent !== name) valueLabel.textContent = name;
             const label = t(
                 button.dataset.themePicker === "editor" ? "Editor theme" : "Preview theme",
             );
-            button.title = `${label}: ${t(value === "auto" ? "Auto" : value === "light" ? "Light" : "Dark")}`;
+            button.title = `${label}: ${name}`;
             button.setAttribute("aria-label", button.title);
             button.setAttribute("aria-haspopup", "menu");
             button.setAttribute("aria-controls", popup.id);

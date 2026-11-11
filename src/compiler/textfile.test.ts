@@ -4,9 +4,9 @@ import { dirname, join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { blocksHtml } from "../core/html.js";
 import { publishHtml, siteFrom } from "../viewer/serve.js";
-import { bundleEntries } from "./bundle.js";
 import { compileDraft, compileSite, createCompiler } from "./compile.js";
 import { collectRefs, parseDoc } from "./dialect.js";
+import { exportEntries } from "./export.js";
 import { formatMarkdown } from "./format.js";
 import { readTextfile, selectTextfileRange } from "./textfile.js";
 
@@ -25,6 +25,30 @@ const fixture = (body: string): string => {
 };
 afterEach(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+it("retains parsed watch references across cached builds and refreshes them for drafts and edits", () => {
+    const body =
+        "![](examples/missing.txt)\n\n![](figures/missing.svg)\n\n```md\n![](ignored.txt)\n```";
+    const root = fixture(body);
+    const compiler = createCompiler(root);
+    const first = compiler.compile();
+    const files = first.sources.get("content/sample.md")?.referencedFiles;
+    expect(files).toEqual(["examples/missing.txt", "figures/missing.svg"]);
+    expect(compiler.compile().sources.get("content/sample.md")?.referencedFiles).toBe(files);
+    expect(siteFrom(first).entries[0]?.referencedFiles).toBe(files);
+    const changed = source("![](examples/changed.txt)");
+    const draft = compileDraft(
+        { root, docs: [], figures: new Map() },
+        "content/sample.md",
+        changed,
+    );
+    expect(draft.source.referencedFiles).toEqual(["examples/changed.txt"]);
+    expect(compiler.compile().sources.get("content/sample.md")?.referencedFiles).toBe(files);
+    writeFileSync(join(root, "content/sample.md"), changed);
+    expect(compiler.compile().sources.get("content/sample.md")?.referencedFiles).toEqual([
+        "examples/changed.txt",
+    ]);
 });
 
 it("previews unsaved file contents and ranges without changing disk or later builds", () => {
@@ -83,7 +107,7 @@ it("decodes local URLs once and applies the filesystem boundary after decoding",
     const compiled = compileSite(root);
     expect(compiled.errors).toEqual([]);
     expect(compiled.docs[0]?.blocks[0]).toMatchObject({ filename: file, lines: ["two"] });
-    expect(bundleEntries(root).some((entry) => entry.name === file)).toBe(true);
+    expect(exportEntries(root).some((entry) => entry.name === file)).toBe(true);
     for (const url of ["%2e%2e/secret.txt", "%2Fetc/passwd", "..%5Csecret.txt"]) {
         writeFileSync(join(root, "content/sample.md"), source(`![](${url})`));
         expect(compileSite(root).errors.join()).toContain(
@@ -151,7 +175,7 @@ it("refreshes referenced content without reparsing Markdown and resolves unsaved
     expect(compiler.compile().docs[0]?.blocks[0]).not.toHaveProperty("unavailable");
 });
 
-it("renders missing files gracefully and keeps the document exportable", () => {
+it("renders missing files gracefully while refusing an incomplete source export", () => {
     const root = fixture("![Source & example](examples/missing.rs#L2-L4)\n\nAfter");
     const compiled = compileSite(root);
     expect(compiled.errors).toEqual([]);
@@ -162,7 +186,7 @@ it("renders missing files gracefully and keeps the document exportable", () => {
     expect(html).toContain("<p>After</p>");
     expect(html).not.toContain('class="codecopy"');
     expect(publishHtml(siteFrom(compiled), "")).toContain("File not found");
-    expect(bundleEntries(root).map((entry) => entry.name)).not.toContain("examples/missing.rs");
+    expect(() => exportEntries(root)).toThrow("examples/missing.rs");
 });
 
 it.each([
@@ -213,7 +237,7 @@ it("rejects traversal, outside symlinks, directories and invalid text without ex
     ])
         expect(() => readTextfile(root, file), file).toThrow();
     expect(compileSite(root).errors.join()).toContain("examples/invalid.txt:");
-    expect(() => bundleEntries(root)).toThrow();
+    expect(() => exportEntries(root)).toThrow();
 });
 
 it("keeps referenced source files and translated references in ZIP exports once each", () => {
@@ -226,7 +250,7 @@ it("keeps referenced source files and translated references in ZIP exports once 
         join(root, "locales/eng/content/sample.md"),
         source(embed("examples/translated.py")),
     );
-    const entries = bundleEntries(root);
+    const entries = exportEntries(root);
     expect(
         entries.filter((entry) => entry.name.startsWith("examples/")).map((entry) => entry.name),
     ).toEqual(["examples/model.tdl", "examples/translated.py"]);
@@ -268,7 +292,7 @@ it("preserves GitHub selectors, embeds only excerpts, and exports the complete s
         })),
     );
     expect(
-        bundleEntries(root)
+        exportEntries(root)
             .find((entry) => entry.name === "examples/source.txt")
             ?.data.toString(),
     ).toBe(text);

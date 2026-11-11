@@ -4,6 +4,7 @@ import { languageAliasNames, languageNames } from "@shikijs/langs";
 import type { LanguageRegistration } from "shiki/core";
 import { bundledLanguages } from "shiki/langs";
 import { CODE_LANGS, CODE_TEMPLATES } from "../core/taxonomy.js";
+import { ignoredFiles } from "./ignored-files.js";
 
 export const CODE_LANGUAGES_DIR = ".dooc/code-languages";
 const supported = new Set<string>([
@@ -96,9 +97,16 @@ export const loadCodeLanguages = async (
     codeGrammars: LanguageRegistration[];
 }> => {
     const directory = join(root, CODE_LANGUAGES_DIR);
+    const files = existsSync(directory)
+        ? readdirSync(directory).filter((file) => file.endsWith(".json"))
+        : [];
+    const ignored = ignoredFiles(
+        root,
+        files.map((file) => `${CODE_LANGUAGES_DIR}/${file}`),
+    );
     const extra = existsSync(directory)
-        ? readdirSync(directory)
-              .filter((file) => file.endsWith(".json"))
+        ? files
+              .filter((file) => !ignored.has(`${CODE_LANGUAGES_DIR}/${file}`))
               .sort()
               .flatMap((file) => readGrammars(join(directory, file)))
         : [];

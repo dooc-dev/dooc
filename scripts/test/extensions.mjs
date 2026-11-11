@@ -1,5 +1,5 @@
-import { browserExtensionRequest, extensionBase64 } from "../src/viewer/extensions-store.ts";
-import { mountExtensions } from "../src/viewer/extensions-ui.ts";
+import { browserExtensionRequest, extensionBase64 } from "../../src/viewer/extensions-store.ts";
+import { mountExtensions } from "../../src/viewer/extensions-ui.ts";
 
 const assert = (condition, message) => {
     if (!condition) throw new Error(message);

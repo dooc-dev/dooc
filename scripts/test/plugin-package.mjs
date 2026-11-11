@@ -4,10 +4,10 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { isPluginError, PluginError } from "../src/plugins/oauth.ts";
-import { createPluginRuntime } from "../src/plugins/runtime.ts";
+import { isPluginError, PluginError } from "../../src/plugins/oauth.ts";
+import { createPluginRuntime } from "../../src/plugins/runtime.ts";
 
-const root = resolve(import.meta.dirname, "..");
+const root = resolve(import.meta.dirname, "../..");
 const manifest = JSON.parse(readFileSync(join(root, "packages/dooc-plugin/package.json"), "utf8"));
 assert.equal(manifest.name, "@dooc-dev/dooc-plugin");
 assert.deepEqual(manifest.publishConfig, {
@@ -54,6 +54,8 @@ try {
             "dist/plugins/oauth.js",
             "dist/plugins/types.d.ts",
             "dist/plugins/types.js",
+            "dist/plugins/transport.d.ts",
+            "dist/plugins/transport.js",
             "package.json",
         ].sort(),
     );

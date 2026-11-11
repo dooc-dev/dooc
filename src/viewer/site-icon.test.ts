@@ -11,8 +11,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { parse } from "yaml";
-import { bundleEntries } from "../compiler/bundle.js";
 import { compileSite } from "../compiler/compile.js";
+import { exportEntries } from "../compiler/export.js";
+import { publishHtml, siteFrom } from "./serve.js";
 import { siteIconResponse } from "./site-icon.js";
 
 const roots: string[] = [];
@@ -44,7 +45,7 @@ it("saves a square site SVG while preserving title, docs, comments and language"
     expect(compiled.errors).toEqual([]);
     expect(compiled.icon).toContain('viewBox="0 -5 20 20"');
     expect(
-        bundleEntries(root).filter((entry) => entry.name === "files/svg/_site.svg"),
+        exportEntries(root).filter((entry) => entry.name === "files/svg/_site.svg"),
     ).toHaveLength(1);
     const next = Buffer.from('<svg viewBox="0 0 8 8"><circle r="3"/></svg>').toString("base64");
     expect(siteIconResponse(root, { data: next }).status).toBe(200);
@@ -72,6 +73,23 @@ it("keeps the explicit choice to disable format placement", () => {
     expect(siteIconResponse(root, { data }).status).toBe(200);
     expect(existsSync(join(root, "icons/_site.svg"))).toBe(true);
     expect(compileSite(root).errors).toEqual([]);
+});
+
+it("renders theme variants of the site icon next to the base icon", () => {
+    const root = fixture("icon: icons/logo.svg\ndocs: [one]\n");
+    mkdirSync(join(root, "icons"));
+    mkdirSync(join(root, "themes/dark/icons"), { recursive: true });
+    writeFileSync(join(root, "icons/logo.svg"), '<svg viewBox="0 0 8 8"><circle r="1"/></svg>');
+    writeFileSync(
+        join(root, "themes/dark/icons/logo.svg"),
+        '<svg viewBox="0 0 8 8"><circle r="2"/></svg>',
+    );
+    const compiled = compileSite(root);
+    expect(compiled.errors).toEqual([]);
+    expect(compiled.iconVariants?.dark).toContain('<circle r="2"/>');
+    const html = publishHtml(siteFrom(compiled), "");
+    expect(html).toContain('<span data-theme-variant=""><img id="site-icon"');
+    expect(html).toContain('<img data-theme-variant="dark" alt="" src="data:image/svg+xml');
 });
 
 it("rejects invalid uploads and broken manifests without changing files", () => {

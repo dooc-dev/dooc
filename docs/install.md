@@ -52,7 +52,10 @@ mise run release dooc-plugin patch
 
 CI builds and tests the executable on all four platforms before release. The
 release workflow adds the archives, `SHA256SUMS`, and `install.sh` to GitHub
-Releases, and commits the matching Homebrew formula with the version bump.
+Releases, and commits the package version bump.
+Maintain `Formula/dooc.rb` directly: after each dooc release, update its version,
+all four download URLs, and SHA-256 values from that release's `SHA256SUMS`, then
+commit and push the formula. Homebrew uses the previous version until this update.
 `mise run release dooc patch` bumps and publishes `@dooc-dev/dooc`, then waits
 until the binary assets and GitHub release have been published.
 `mise run release dooc-plugin patch` bumps and publishes `@dooc-dev/dooc-plugin`

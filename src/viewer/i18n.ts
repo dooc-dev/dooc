@@ -1,5 +1,5 @@
 import { iso6393To1 } from "iso-639-3";
-import { mountLanguagePickers } from "./language-picker.js";
+import { mountSelectPickers } from "./language-picker.js";
 import eng from "./locales/eng.json" with { type: "json" };
 import jpn from "./locales/jpn.json" with { type: "json" };
 import zho from "./locales/zho.json" with { type: "json" };
@@ -38,8 +38,9 @@ export const applyUiLanguage = (): void => {
         const marker = attr === "text" ? "data-i18n" : `data-i18n-${attr}`;
         for (const element of document.querySelectorAll(`[${marker}]`)) {
             const value = t(element.getAttribute(marker) ?? "");
-            if (attr === "text") element.textContent = value;
-            else element.setAttribute(attr, value);
+            if (attr === "text") {
+                if (element.textContent !== value) element.textContent = value;
+            } else if (element.getAttribute(attr) !== value) element.setAttribute(attr, value);
         }
     }
 };
@@ -70,5 +71,5 @@ export const mountUiLanguage = (): void => {
         }
     });
     document.addEventListener("docs:ui-refresh", applyUiLanguage);
-    mountLanguagePickers(t);
+    mountSelectPickers(t);
 };

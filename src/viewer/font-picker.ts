@@ -60,8 +60,11 @@ export const mountFontPickers = async (
         const names = choices();
         for (const button of document.querySelectorAll<HTMLButtonElement>("[data-font-picker]")) {
             const kind = target(button);
+            const name = names.get(settings.selected[kind]) ?? t("Default font");
+            const valueLabel = button.querySelector<HTMLElement>("[data-picker-value]");
+            if (valueLabel && valueLabel.textContent !== name) valueLabel.textContent = name;
             button.disabled = busy;
-            button.title = `${t(kind === "editor" ? "Editor font" : "Viewer font")}: ${names.get(settings.selected[kind]) ?? t("Default font")}`;
+            button.title = `${t(kind === "editor" ? "Editor font" : "Viewer font")}: ${name}`;
             button.setAttribute("aria-label", button.title);
             button.setAttribute("aria-controls", popup.id);
             button.setAttribute("popovertarget", popup.id);

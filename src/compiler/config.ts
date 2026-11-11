@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { isLangTag, type LanguageAdapter } from "../core/language.js";
+import { ignoredFiles } from "./ignored-files.js";
 
 export const CONFIG_FILE = "docs.config.mjs";
 
@@ -38,7 +39,7 @@ const checkAdapter = (value: unknown, i: number): LanguageAdapter => {
 /** Reads docs.config.mjs; defaults when absent. Throws with a readable message when invalid. */
 export const loadDocsConfig = async (root: string): Promise<ResolvedConfig> => {
     const file = join(root, CONFIG_FILE);
-    if (!existsSync(file)) {
+    if (!existsSync(file) || ignoredFiles(root, [CONFIG_FILE]).has(CONFIG_FILE)) {
         return {
             languages: [],
         };

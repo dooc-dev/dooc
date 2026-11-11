@@ -71,12 +71,16 @@ export const gitDiffState = StateField.define<RangeSet<GutterMarker>>({
 });
 
 export const gitDiffTheme = EditorView.baseTheme({
-    ".cm-lineNumbers .cm-git-added": { boxShadow: "inset -1.5px 0 #2ea043" },
-    ".cm-lineNumbers .cm-git-modified": { boxShadow: "inset -1.5px 0 #d88a18" },
-    ".cm-lineNumbers .cm-git-deleted-start, .cm-lineNumbers .cm-git-deleted-end": {
-        boxShadow: "inset -1.5px 0 #e5534b",
-    },
-    ".cm-line.cm-git-added": { backgroundColor: "#2ea04310" },
-    ".cm-line.cm-git-modified": { backgroundColor: "#d88a1814" },
-    ".cm-line.cm-git-deleted-start, .cm-line.cm-git-deleted-end": { backgroundColor: "#e5534b10" },
+    ".cm-git-added": { "--git-diff-color": "var(--c-ok)" },
+    ".cm-git-modified": { "--git-diff-color": "var(--c-accent)" },
+    ".cm-git-deleted-start, .cm-git-deleted-end": { "--git-diff-color": "var(--c-danger)" },
+    // CodeMirror also scopes commas inside :is(), which would override the hidden-diff styles.
+    ".cm-lineNumbers .cm-git-added, .cm-lineNumbers .cm-git-modified, .cm-lineNumbers .cm-git-deleted-start, .cm-lineNumbers .cm-git-deleted-end":
+        {
+            boxShadow: "inset -1.5px 0 var(--git-diff-color)",
+        },
+    ".cm-line.cm-git-added, .cm-line.cm-git-modified, .cm-line.cm-git-deleted-start, .cm-line.cm-git-deleted-end":
+        {
+            backgroundColor: "color-mix(in srgb, var(--git-diff-color) 8%, transparent)",
+        },
 });

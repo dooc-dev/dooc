@@ -47,7 +47,7 @@ it("starts each resource library view with tabs without repeating the Git branch
         filePaths: [],
     };
     expect(resourcesMain(site, "")?.main).not.toContain("resource-tabs");
-    for (const view of ["dictionary", "code", "urls"]) {
+    for (const view of ["codeblocks", "urls", "url-previews"]) {
         const html = resourcesMain(site, view)?.main ?? "";
         expect(html).toMatch(/^<article[^>]+><nav class="resource-tabs"/);
         expect(html).not.toContain("<h1");
@@ -337,7 +337,7 @@ describe("navGroupsHtml", () => {
         expect(edit.match(/class="new"/g)).toHaveLength(4);
         expect(edit).toContain('class="new" type="button" data-parent="b"');
         expect(edit.match(/class="nav-create"/g)).toHaveLength(1);
-        expect(edit).toContain('class="nav-item nav-placeholder nav-add-hover"');
+        expect(edit).toContain('class="nav-item nav-placeholder"');
         expect(edit).toContain('class="nav-create" type="button" data-parent=""');
         expect(edit.match(/class="nav-tree-toggle"/g)).toHaveLength(2);
         expect(edit).not.toContain('class="nav-rename"');
@@ -418,11 +418,11 @@ describe("navGroupsHtml", () => {
         expect(resourcesMain(site, "html/widget.html")?.main).toContain("Widget");
     });
 
-    it("groups Files and Statics below the workspace location in one resizable area", () => {
+    it("groups Files and Statics below the workspace location in one disclosure that fits its contents", () => {
         const site = fixtureSite();
         site.filePaths = ["files/ts/a.ts", "notes/draft.txt"];
         const html = navGroupsHtml("edit", site, undefined, "file/files%2Fts%2Fa.ts");
-        const card = html.slice(html.indexOf('<section id="nav-tools"'));
+        const card = html.slice(html.indexOf('<details id="nav-tools"'));
         expect(card.match(/href="\/_files"/g)).toHaveLength(1);
         expect(card).toContain('class="nav-link cur"');
         expect(card).not.toContain('class="nav-list');
@@ -431,14 +431,16 @@ describe("navGroupsHtml", () => {
         expect(card).not.toContain("notes/draft.txt");
         expect(card).toContain('class="files-drop-hint"');
         expect(html).not.toContain("nav-docs-resize");
-        expect(card).toContain('id="tools-resize" role="separator"');
+        expect(card).toContain('<details id="nav-tools" open>');
+        expect(card).not.toContain("tools-resize");
+        expect(card).toContain('<summary class="workspace-location"');
         expect(card).toContain('id="nav-storage"');
         expect(card).toContain('id="nav-statics"');
         expect(card.indexOf('id="nav-storage"')).toBeLessThan(card.indexOf('id="nav-files"'));
         expect(resourcesMain(site, "")?.main).toContain('id="files-manager"');
     });
 
-    it("shows a passive repository address and Git controls below Files and Statics", () => {
+    it("uses the repository address to toggle Git controls below Files and Statics", () => {
         const site = fixtureSite();
         site.workspace = { protocol: "git", repo: "my<repo>", branch: 'docs/<topic>&"' };
         const label = "docs/&lt;topic&gt;&amp;&quot;";
@@ -446,7 +448,7 @@ describe("navGroupsHtml", () => {
         expect(nav).toContain('data-workspace-protocol="git"');
         expect(nav).toContain('<span class="git-repo-name">my&lt;repo&gt;</span>');
         expect(nav).toContain(`<span class="git-branch-caption">[${label}]</span>`);
-        const address = nav.match(/<div class="workspace-location"[^>]*>.*?<\/div>/)?.[0];
+        const address = nav.match(/<summary class="workspace-location"[^>]*>.*?<\/summary>/)?.[0];
         expect(address).toBeDefined();
         expect(address).not.toMatch(/<button|<a |tabindex|aria-haspopup/);
         expect(nav).not.toContain("data-git-branch");
@@ -496,7 +498,12 @@ describe("navGroupsHtml", () => {
         const site = fixtureSite();
         site.filePaths = [];
         expect(resourcesMain(site, "")?.main).not.toContain("Dictionary");
-        for (const path of ["/_statics", "/_statics/code", "/_statics/urls"]) {
+        for (const path of [
+            "/_statics",
+            "/_statics/codeblocks",
+            "/_statics/urls",
+            "/_statics/url-previews",
+        ]) {
             const page = pageDataResponse(site, path);
             expect(page.status).toBe(200);
             expect(page.body).toMatchObject({
@@ -505,8 +512,20 @@ describe("navGroupsHtml", () => {
                 html: expect.stringContaining("resource-tabs"),
             });
             expect(JSON.stringify(page.body)).not.toContain("files-manager");
+            expect(JSON.stringify(page.body)).not.toContain("Dictionary");
         }
-        const nav = navGroupsHtml("edit", site, undefined, "_statics/code");
+        for (const path of [
+            "/_statics",
+            "/_statics/dictionary",
+            "/_statics/code",
+            "/_files/dictionary",
+            "/_files/code",
+        ]) {
+            expect(pageDataResponse(site, path).body).toMatchObject({
+                html: expect.stringContaining('href="/_statics/codeblocks" aria-current="page"'),
+            });
+        }
+        const nav = navGroupsHtml("edit", site, undefined, "_statics/codeblocks");
         expect(nav).toContain('class="nav-link cur" href="/_statics"');
         expect(nav).not.toContain('class="nav-link cur" href="/_files"');
         expect(resourcesMain(site, "_statics/file/anything")).toBeUndefined();
@@ -855,7 +874,7 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
                 `<template data-route="${docPath(site.entries, e.id).slice(1)}"`,
             );
         }
-        expect(html).toContain('href="#/guide/previews"');
+        expect(html).toContain('href="#/_docs/contents/md/previews.md"');
         expect(html).not.toMatch(/href="\/(?!\/)/);
     });
 
@@ -863,14 +882,18 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
         const emptyGuide = {
             ...site,
             entries: site.entries.map((entry) =>
-                entry.id === "guide" ? { ...entry, body: "", blocks: [], toc: [] } : entry,
+                entry.sourceFile === "contents/md/guide.md"
+                    ? { ...entry, body: "", blocks: [], toc: [] }
+                    : entry,
             ),
         };
         const output = publishHtml(emptyGuide, "");
         const guide =
-            /<template data-route="guide"[^>]*>(.*?)<\/template>/s.exec(output)?.[1] ?? "";
+            /<template data-route="_docs\/contents\/md\/guide.md"[^>]*>(.*?)<\/template>/s.exec(
+                output,
+            )?.[1] ?? "";
         expect(guide).toContain(
-            '<ul class="idx"><li><a href="#/guide/previews">File preview gallery</a>',
+            '<ul class="idx"><li><a href="#/_docs/contents/md/previews.md">File preview gallery</a>',
         );
     });
 
@@ -914,4 +937,21 @@ it("opens Plugins through full-page and client navigation and marks only its sid
     expect(nav).not.toContain('class="nav-link cur" href="/_files"');
     expect(nav).not.toMatch(/extensions-upload|extensions-status|nav-count|Add ZIP/);
     expect(nav).toContain('class="extensions-drop-hint"');
+});
+
+it("opens Subformats independently of Statics and Files with guidance when unconfigured", () => {
+    const site = emptySite();
+    site.filePaths = [];
+    const page = resourcesMain(site, "_subformats");
+    expect(page?.title).toBe("Subformats");
+    expect(page?.main).toContain("No subformats configured. Add subformats to dooc.yaml.");
+    expect(page?.main).not.toContain("resource-tabs");
+    expect(pageDataResponse(site, "/_subformats")).toMatchObject({
+        status: 200,
+        body: { resource: true, path: "/_subformats", html: page?.main },
+    });
+    const nav = navGroupsHtml("edit", site, undefined, "_subformats");
+    expect(nav).toContain('class="nav-link cur" href="/_subformats"');
+    expect(nav).not.toContain('class="nav-link cur" href="/_statics"');
+    expect(nav).not.toContain('class="nav-link cur" href="/_files"');
 });

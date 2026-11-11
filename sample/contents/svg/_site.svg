@@ -1,1 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="#7d91b0" stroke-width="1.4" stroke-linejoin="round"><path d="M5 2h7l4 4v12H5zM12 2v5h4M8 11h5M8 14h5"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 160 160">
+  <title>dooc</title>
+  <g fill="none" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="60.201" cy="60.201" r="18" stroke="#1a1e23"/>
+    <path d="M 78.201 60.201 V 24.201" stroke="#1a1e23"/>
+    <circle cx="119.598" cy="40.402" r="24" stroke="#1a1e23"/>
+    <circle cx="40.402" cy="119.598" r="24" stroke="#1a1e23"/>
+    <path d="M 113.5648 119.4586 A 24 24 0 1 1 113.5648 80.1393" stroke="#1a1e23"/>
+  </g>
+</svg>

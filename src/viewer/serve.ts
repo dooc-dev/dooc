@@ -39,6 +39,7 @@ import {
 } from "../compiler/compile.js";
 import { figureName } from "../compiler/figures.js";
 import { ICONS_DIR, squareSvg } from "../compiler/icons.js";
+import { ignoredFiles } from "../compiler/ignored-files.js";
 import {
     contentLanguageCode,
     contentLanguages,
@@ -53,13 +54,14 @@ import {
 } from "../compiler/locales.js";
 import { readManifest, writeManifest } from "../compiler/manifest.js";
 import { assembleDoc, createDocOps, isOpError, type OpResult } from "../compiler/ops.js";
+import { subformatResponse, validateSubformatFile } from "../compiler/subformats.js";
 import { type Block, type TocEntry, walkBlocks } from "../core/blocks.js";
-import { docIdOfFile } from "../core/content-metadata.js";
+import { docIdOfFile, flattenTree } from "../core/content-metadata.js";
 import type { CompiledDoc, FigureEntry, TermEntry } from "../core/content-types.js";
 import { MAX_EXTENSION_BYTES } from "../core/extension-package.js";
 import { figureFrameHtml, mountFigureFrames } from "../core/figure-frame.js";
 import { blocksHtml, docHtml, escapeHtml, type RenderCtx, termsHtml } from "../core/html.js";
-import { PLUGINS_ICON } from "../core/icons.js";
+import { FOLDER_ICON_PATH, PLUGINS_ICON } from "../core/icons.js";
 import {
     DEFAULT_LANG,
     isLangTag,
@@ -97,21 +99,24 @@ import { mountFontPickers } from "./font-picker.js";
 import { createFontSettings } from "./font-settings.js";
 import { fontCss, readFont } from "./fonts.js";
 import { createGitHandler, validateGitOrigin } from "./git.js";
-import { gitBaseBody, gitBaseText } from "./git-diff.js";
+import { gitBaseBody, gitBaseText, setSubformatChanges } from "./git-diff.js";
 import { createHmrHub, HMR_PATH, hmrClientScript, watchProject } from "./hmr.js";
 import { translate } from "./i18n.js";
 import { DEFAULT_SITE_LANGUAGES, loadSiteLanguages } from "./languages.js";
+import { loadGraphScript } from "./lazy-graph.js";
 import { focusNavTree } from "./nav-focus.js";
+import { updateNav } from "./nav-update.js";
 import { loadViewerPlugins, type ViewerRuntime } from "./plugin-config.js";
+import { PLUGIN_BLOCK_CSS } from "./plugin-style.js";
 import { createPluginHandler } from "./plugins.js";
-import { mountPanelResize, mountToolsResize } from "./resize.js";
+import { mountPanelResize } from "./resize.js";
 import { resourceIndex, resourceLibraryHtml, resourceTabs } from "./resource-library.js";
 import { mountSearch, SEARCH_LABELS, searchIndex, searchSections } from "./search.js";
 import { siteIconResponse } from "./site-icon.js";
 import { siteTitleResponse } from "./site-title.js";
 import { previewTextfiles, textfileResponse } from "./textfile.js";
-import { mountThemePickers } from "./theme-picker.js";
-import { readWorkspaceSource } from "./workspace.js";
+import { initializeThemes, mountThemePickers } from "./theme-picker.js";
+import { readWorkspaceSource, sourceFileBase } from "./workspace.js";
 
 export type ServeMode = "preview" | "edit";
 
@@ -128,6 +133,7 @@ const root = resolve(process.env.DOCS_ROOT ?? process.cwd());
  */
 export interface Entry {
     id: string;
+    subformat?: CompiledDoc["subformat"];
     translatedLanguages?: string[];
     /** Parent doc id (omitted = top level). */
     parent?: string;
@@ -159,15 +165,19 @@ export interface Entry {
     figureRefs?: string[];
     termRefs?: string[];
     terms?: TermEntry[];
+    referencedFiles?: string[];
 }
 
 export interface Site {
+    sourceBase?: string;
+    subformats?: Compiled["subformats"];
     fonts?: readonly ProjectFont[];
     workspace?: WorkspaceSource;
     filePaths?: readonly string[];
     previews?: PreviewSettings;
     title?: string;
     icon?: string;
+    iconVariants?: Record<string, string>;
     codeLanguages?: string[];
     codeGrammars?: LanguageRegistration[];
     contentLanguage?: string;
@@ -189,6 +199,7 @@ const CONTENT_PREFIX = "content/";
 
 const toEntry = (doc: CompiledDoc, source: DocSource): Entry => ({
     id: doc.id,
+    ...(doc.subformat ? { subformat: doc.subformat } : {}),
     ...(doc.parent == null ? {} : { parent: doc.parent }),
     file: `${doc.id}.md`,
     sourceFile: doc.file,
@@ -204,6 +215,7 @@ const toEntry = (doc: CompiledDoc, source: DocSource): Entry => ({
     figureRefs: doc.refs.figures,
     termRefs: doc.refs.terms,
     terms: source.terms,
+    referencedFiles: source.referencedFiles,
 });
 
 // Recompile source files on every request. The compiler's cache
@@ -219,6 +231,7 @@ export const siteFrom = (
     {
         title,
         icon,
+        iconVariants,
         docs,
         terms,
         figures,
@@ -228,15 +241,18 @@ export const siteFrom = (
         previews,
         contentLanguages,
         themes,
+        subformats,
     }: Compiled,
     languages: readonly LanguageAdapter[] = DEFAULT_SITE_LANGUAGES.languages,
 ): Site => {
     return {
         previews,
+        subformats,
         ...(contentLanguages ? { contentLanguages } : {}),
         ...(themes ? { themes } : {}),
         ...(title === undefined ? {} : { title }),
         ...(icon === undefined ? {} : { icon }),
+        ...(iconVariants === undefined ? {} : { iconVariants }),
         entries: docs.flatMap((doc) => {
             const source = sources.get(doc.file);
             return source ? [toEntry(doc, source)] : [];
@@ -279,10 +295,12 @@ let applicationPreviews = defaultPreviewSettings();
 let watchTextfiles: ((files: Iterable<string>) => void) | undefined;
 const watchEntryTextfiles = (entries: readonly Entry[]): void => {
     watchTextfiles?.(
-        entries.flatMap((entry) => [
-            entry.sourceFile ?? CONTENT_PREFIX + entry.file,
-            ...fileReferences(entry.body).map((reference) => reference.file),
-        ]),
+        entries
+            .filter((entry) => !entry.subformat)
+            .flatMap((entry) => [
+                entry.sourceFile ?? CONTENT_PREFIX + entry.file,
+                ...(entry.referencedFiles ?? []),
+            ]),
     );
 };
 const loadSite = (locale?: string): Site => {
@@ -319,12 +337,19 @@ const loadSite = (locale?: string): Site => {
         site.errors.push(String(error));
     }
     watchEntryTextfiles(site.entries);
-    const siteIconFile = manifest.icon;
-    if (siteIconFile) watchTextfiles?.([siteIconFile]);
+    watchTextfiles?.(
+        [manifest.icon, ...Object.values(manifest.themeIcons ?? {})].filter(
+            (file): file is string => !!file,
+        ),
+    );
+    const workspace = workspaceSource ?? readWorkspaceSource(root);
+    const subformats = site.entries.flatMap((entry) => (entry.subformat ? [entry.subformat] : []));
+    if (workspace?.protocol === "git" && subformats.length) setSubformatChanges(root, subformats);
     return {
         ...site,
         fonts: loadProjectFonts(root),
-        workspace: workspaceSource ?? readWorkspaceSource(root),
+        workspace,
+        sourceBase: sourceFileBase(root),
         filePaths: manifest.errors.length
             ? undefined
             : filesSnapshot(root).files.map((file) => file.path),
@@ -337,12 +362,14 @@ const loadSite = (locale?: string): Site => {
 const draftContext = (site: Site): DraftContext => ({
     previews: site.previews,
     root,
-    docs: site.entries.map((e) => ({
-        id: e.id,
-        ...(e.parent == null ? {} : { parent: e.parent }),
-        file: e.sourceFile ?? CONTENT_PREFIX + e.file,
-        toc: e.toc,
-    })),
+    docs: site.entries
+        .filter((e) => !e.subformat)
+        .map((e) => ({
+            id: e.id,
+            ...(e.parent == null ? {} : { parent: e.parent }),
+            file: e.sourceFile ?? CONTENT_PREFIX + e.file,
+            toc: e.toc,
+        })),
     figures: site.ctx.figures,
     defaultLang: site.defaultLang,
 });
@@ -486,6 +513,21 @@ const entryHtmlCache = new Map<
 
 /** Renders only the requested doc, not every doc in site.entries. */
 export const renderEntryHtml = (site: Site, entry: Entry): { html: string; errors: string[] } => {
+    if (entry.subformat)
+        return {
+            html: `<article class="res-page resource-library subformat-page">${resourceLibraryHtml(
+                {
+                    codeblocks: [],
+                    urls: [],
+                    urlPreviews: [],
+                    subformats: [entry.subformat],
+                    errors: [...site.errors, ...entry.errors],
+                },
+                "subformats",
+                docDisplayName(entry.frontmatter, entry.id),
+            )}</article>`,
+            errors: [...site.errors, ...entry.errors],
+        };
     const sig = renderSignature(site, entry);
     const cached = entryHtmlCache.get(entry.file);
     if (
@@ -591,12 +633,15 @@ export const resolveContentFile = (
     rel: unknown,
 ): { id: string; name: string; abs: string } | undefined => {
     const id = typeof rel === "string" ? docIdOfFile(rel) : undefined;
-    return id == null
+    if (flattenTree(readManifest(root).tree).some((node) => node.id === id && node.subformat))
+        return undefined;
+    const file = id == null ? undefined : sourceDocFile(id, readManifest(root).files);
+    return id == null || !file || ignoredFiles(root, [file]).has(file)
         ? undefined
         : {
               id,
               name: `${id}.md`,
-              abs: textfilePath(root, sourceDocFile(id, readManifest(root).files)),
+              abs: textfilePath(root, file),
           };
 };
 
@@ -649,18 +694,22 @@ const BOX_ICON = icon(
     '<path d="M3.5 6.5 10 3l6.5 3.5v7L10 17l-6.5-3.5v-7Z"/><path d="M3.5 6.5 10 10l6.5-3.5M10 10v7"/>',
 );
 const STATICS_ICON = icon('<path d="M3 3v14h14M7 13V9m4 4V5m4 8V7"/>');
+const SUBFORMATS_ICON = icon(
+    '<rect x="3" y="3" width="14" height="14" rx="1"/><rect x="6" y="8" width="6" height="6" rx="1"/>',
+);
 const GIT_ICON = icon(
     '<path d="M5.5 6.5v7M14.5 6.5v1a4 4 0 0 1-4 4h-5"/><circle cx="5.5" cy="4.5" r="2"/><circle cx="5.5" cy="15.5" r="2"/><circle cx="14.5" cy="4.5" r="2"/>',
 );
 const STORAGE_ICON = icon(
     '<path d="m3 12 2-8h10l2 8"/><rect x="3" y="12" width="14" height="5" rx="1"/><path d="M13 14.5h1"/>',
 );
+const FOLDER_ICON = icon(`<path d="${FOLDER_ICON_PATH}"/>`);
 const workspaceName = (site: Site): string =>
     site.workspace?.protocol === "storage" ? workspaceLabel(site.workspace) : "Files";
 const workspaceText = (site: Site): string =>
     `<span${site.workspace?.protocol === "storage" ? "" : ' data-i18n="Files"'}>${escapeHtml(workspaceName(site))}</span>`;
 const workspaceIcon = (site: Site): string => {
-    if (site.workspace?.protocol === "git") return icon('<path d="M2 5h6l2 2h8v10H2Z"/>');
+    if (site.workspace?.protocol === "git") return FOLDER_ICON;
     return site.workspace?.icon
         ? svgImg(site.workspace.icon, "nav-icon workspace-icon")
         : STORAGE_ICON;
@@ -700,22 +749,27 @@ const THEME_ICONS = {
     ),
     dark: icon('<path d="M15.5 12.4A6.2 6.2 0 0 1 7.6 4.5a6.5 6.5 0 1 0 7.9 7.9Z"/>'),
 };
+const FONT_ICON = icon(
+    '<path d="M2.5 15 7 4l4.5 11M4 11h6M13 10.5c0-2.5 5-2.5 5 0V15M18 12h-2.5c-3.5 0-3.5 4 0 3L18 13.5"/>',
+);
+const SELECT_ICON = icon('<path d="m5 7 5 5 5-5"/>', 12);
 
 const fontButton = (target: "editor" | "viewer"): string => {
     const label = target === "editor" ? "Editor font" : "Viewer font";
-    return `<button class="pbtn font-control" type="button" data-font-picker="${target}" aria-haspopup="menu" aria-expanded="false" aria-label="${label}" title="${label}" disabled>${icon('<path d="M2.5 15 7 4l4.5 11M4 11h6M13 10.5c0-2.5 5-2.5 5 0V15M18 12h-2.5c-3.5 0-3.5 4 0 3L18 13.5"/>')}</button>`;
+    return `<button class="pbtn font-control${target === "editor" ? " setting-picker" : ""}" type="button" data-font-picker="${target}" aria-haspopup="menu" aria-expanded="false" aria-label="${label}" title="${label}" disabled>${target === "editor" ? `<span data-picker-value></span>${SELECT_ICON}` : FONT_ICON}</button>`;
 };
 
 const CSS = `
 :root { ${DARK_C} ${DOC_FROM_C} --doc-mono: ${MONO_FONT}; --font-sans: ${SANS_FONT}; }
+html[data-theme] iframe[data-doc-figure-frame]:not([data-theme-ready]) { visibility: hidden; }
 @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { ${LIGHT_C} } }
 :root[data-theme="light"] { ${LIGHT_C} }
-body.edit :is(#sidebar, #panel, .resources-pane), .preview-pane[data-theme], .theme-picker[data-theme] { ${DARK_C} ${DOC_FROM_C} }
+body.edit :is(#sidebar, #panel, .resources-pane, .subformat-toast), .preview-pane[data-theme], .theme-picker[data-theme] { ${DARK_C} ${DOC_FROM_C} }
 @media (prefers-color-scheme: light) {
-  :root:not([data-editor-theme="dark"]) body.edit :is(#sidebar, #panel, .resources-pane),
+  :root:not([data-editor-theme="dark"]) body.edit :is(#sidebar, #panel, .resources-pane, .subformat-toast),
   :is(.preview-pane, .theme-picker)[data-theme="auto"] { ${LIGHT_C} }
 }
-:root[data-editor-theme="light"] body.edit :is(#sidebar, #panel, .resources-pane),
+:root[data-editor-theme="light"] body.edit :is(#sidebar, #panel, .resources-pane, .subformat-toast),
 :is(.preview-pane, .theme-picker)[data-theme="light"] { ${LIGHT_C} }
 .preview-pane { background: var(--c-bg0); color: var(--c-fg); }
 .theme-picker { position: fixed; margin: 0; padding: 5px; width: 148px; border: 1px solid var(--c-line);
@@ -761,44 +815,77 @@ button { font-family: inherit; font-size: inherit; font-weight: var(--fw-body); 
 :focus-visible { outline: 1px solid var(--c-accent); outline-offset: 1px; }
 
 #doc-search { position: fixed; top: 12px; left: 0; right: 0; z-index: 20;
-  width: min(600px, calc(100vw - 24px)); min-height: 56px; max-height: min(420px, calc(100dvh - 24px)); margin: 0 auto;
-  padding: 0 10px 10px; color: var(--c-fg); background: color-mix(in srgb, var(--c-bg1) 82%, transparent);
+  width: min(420px, calc(100vw - 24px)); min-height: 44px; max-height: min(420px, calc(100dvh - 24px)); margin: 0 auto;
+  padding: 0 8px 6px; color: var(--c-fg); background: color-mix(in srgb, var(--c-bg1) 82%, transparent);
   border: 1px solid color-mix(in srgb, var(--c-fg-muted) 55%, transparent);
   backdrop-filter: blur(16px); border-radius: 8px; box-shadow: 0 8px 24px #0003; overflow: hidden; }
 #doc-search[open] { display: flex; flex-direction: column; }
 #doc-search :focus-visible { outline-color: var(--c-fg-muted); }
-.search-head { display: flex; flex: none; align-items: center; gap: 10px; padding: 8px;
+.search-grip { position: relative; flex: none; height: 8px; margin: 0 -8px; cursor: grab; touch-action: none; }
+.search-grip:active { cursor: grabbing; }
+.search-grip::after { content: ""; position: absolute; top: 50%; left: 50%; width: 36px; height: 4px;
+  margin: -2px 0 0 -18px; border-radius: 2px; background: var(--c-line); }
+.search-grip:hover::after, .search-grip:focus-visible::after { background: var(--c-fg-muted); }
+.search-head { display: flex; flex: none; align-items: center; gap: 8px; padding: 0 0 0 4px;
   color: var(--c-fg-muted); }
 .search-head svg { flex: none; }
-#doc-search.search-filled .search-head svg { display: none; }
-#doc-search-input { width: 100%; min-width: 0; padding: 4px 0; font: inherit; font-size: 15px;
+#doc-search.search-filled .search-head > svg { display: none; }
+.search-head button, .search-copy { display: grid; place-items: center; width: 24px; height: 24px; padding: 0;
+  color: var(--c-fg-muted); background: none; border: 0; border-radius: 4px; cursor: pointer; }
+.search-head button { flex: none; }
+.search-head button + button { margin-left: -8px; }
+.search-head button:hover, .search-copy:hover { color: var(--c-fg); background: color-mix(in srgb, var(--c-fg-muted) 18%, transparent); }
+#doc-search-input { width: 100%; min-width: 0; padding: 3px 0; font: inherit; font-size: 14px;
   color: var(--c-fg); background: none; border: 0; outline: none; }
 #doc-search-input::-webkit-search-cancel-button { appearance: none; }
-.search-status { padding: 8px 16px; color: var(--c-fg-muted); font-size: 12px; }
+.search-status { padding: 6px 8px; color: var(--c-fg-muted); font-size: 12px; }
 .search-status:empty { display: none; }
 .search-count { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden;
   clip-path: inset(50%); white-space: nowrap; }
-#doc-search-results { overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+#doc-search-results { overflow-y: auto; scrollbar-gutter: stable; margin-right: -2px; padding-right: 2px;
+  min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+#doc-search-results:not(:empty) { margin-top: 6px; }
 #doc-search-results a { display: flex; flex: none; flex-direction: column; gap: 6px;
   border: 1px solid var(--c-line); border-radius: 5px; color: var(--c-fg); text-decoration: none;
   background: color-mix(in srgb, var(--c-bg0) 50%, transparent); overflow-wrap: anywhere; }
 #doc-search-results a:hover, #doc-search-results a[aria-selected="true"] { border-color: var(--c-fg-muted); }
-.search-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+#doc-search-results mark { color: inherit; background: color-mix(in srgb, var(--c-accent) 32%, transparent);
+  border-radius: 2px; }
+.search-meta { display: flex; align-items: center; gap: 6px;
   padding: 5px 10px; border-bottom: 1px solid var(--c-line); color: var(--c-fg-muted); }
-.search-path { text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-kind { display: grid; flex: none; }
+.search-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #doc-search-results strong { margin: 2px 10px 0; font-weight: 500; }
-#doc-search-results span { margin: 0 10px 10px; color: var(--c-fg-muted); }
-.search-grip { position: absolute; top: 8px; bottom: 18px; width: 10px; cursor: grab; touch-action: none; }
-.search-grip-left { left: 0; }
-.search-grip-right { right: 0; }
-.search-grip:active { cursor: grabbing; }
-.search-grip::after { content: ""; position: absolute; top: 35%; bottom: 35%; left: 4px;
-  width: 2px; border-radius: 2px; background: var(--c-line); }
-.search-grip:hover::after, .search-grip:focus-visible::after { background: var(--c-fg-muted); }
-.search-resize { position: absolute; bottom: 0; right: 0; width: 18px; height: 18px;
-  cursor: nwse-resize; touch-action: none; }
-.search-resize::after { content: ""; position: absolute; right: 4px; bottom: 4px; width: 7px; height: 7px;
-  border-right: 1px solid var(--c-fg-muted); border-bottom: 1px solid var(--c-fg-muted); }
+#doc-search-results strong:last-child { margin-bottom: 10px; }
+.search-snippet { margin: 0 10px 10px; color: var(--c-fg-muted); }
+.search-hit { position: relative; flex: none; }
+.search-name + .search-name { margin-top: -4px; }
+.search-name .search-meta { padding-right: 40px; border-bottom: 0; }
+.search-name .search-path { color: var(--c-fg); }
+.search-copy { position: absolute; top: 50%; right: 6px; margin-top: -12px; }
+.search-flash { animation: search-flash 2.6s ease-out; }
+@keyframes search-flash {
+  0%, 35% { background-color: color-mix(in srgb, var(--c-accent) 18%, transparent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--c-accent) 18%, transparent); }
+  100% { background-color: transparent; box-shadow: 0 0 0 4px transparent; } }
+/* Docked, the panel is a right sidebar like #panel. */
+#doc-search.search-docked { position: sticky; top: 0; left: auto; right: auto; z-index: auto; flex: 0 1 auto;
+  align-self: flex-start; width: 320px; min-width: 240px; height: 100vh; min-height: 0; max-height: none; margin: 0;
+  padding: 8px 10px 10px; border: 0; border-left: 1px solid var(--c-line); border-radius: 0;
+  background: var(--c-bg1); box-shadow: none; backdrop-filter: none; }
+.search-docked #doc-search-results { margin-right: -8px; padding-right: 8px; }
+/* Keep the preview readable; the editor panel gives up width before the search sidebar does. */
+body:has(#doc-search.search-docked[open]) main { min-width: 240px; }
+body:has(#doc-search.search-docked[open]) #panel { flex-shrink: 100; min-width: 240px; }
+.search-docked :is(.search-grip, .search-resize-x, .search-resize-y, .search-resize-xy),
+#doc-search:not(.search-docked) .search-resize-w { display: none; }
+/* Invisible edges: the right and bottom borders resize the window. */
+.search-resize { position: absolute; touch-action: none; }
+.search-resize:focus-visible { outline-offset: -2px; }
+.search-resize-x { top: 0; right: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+.search-resize-y { left: 0; right: 0; bottom: 0; height: 6px; cursor: ns-resize; }
+.search-resize-xy { right: 0; bottom: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+.search-resize-w { top: 0; left: 0; bottom: 0; width: 6px; cursor: ew-resize; }
 
 /* ── sidebar ── */
 #sidebar { width: var(--sidebar-width, 260px); height: 100vh; position: sticky; top: 0; flex: none;
@@ -825,8 +912,9 @@ body.sidebar-closed .site-title { display: none; }
   background: transparent; border: none; color: var(--c-fg-muted); cursor: pointer; }
 #sidebar-toggle:hover { color: var(--c-fg); }
 #site-icon-slot { position: relative; flex: none; width: 24px; height: 24px; margin: 0 8px 0 16px; color: var(--c-fg-muted); }
-#site-icon, #site-icon-slot > .nav-icon { display: block; width: 100%; height: 100%; object-fit: contain; }
-#site-icon[hidden], #site-icon-slot:has(#site-icon:not([hidden])) > .nav-icon { display: none; }
+#site-icon, #site-icon-slot > .nav-icon, .site-icon-variants > img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.site-icon-variants, .site-icon-variants > span { display: contents; }
+#site-icon[hidden], .site-icon-variants > [hidden], #site-icon-slot:has(#site-icon:not([hidden])) > .nav-icon { display: none; }
 body.sidebar-closed #site-icon-slot { margin: 0 auto; }
 body.sidebar-closed #sidebar-toggle { position: absolute; inset: 0; width: 100%; justify-content: center; padding: 0; }
 body.sidebar-closed #sidebar-toggle svg { visibility: hidden; }
@@ -845,6 +933,7 @@ body.sidebar-closed #sidebar-toggle svg { visibility: hidden; }
 .nav-link.cur { color: var(--c-fg); }
 .nav-link.cur::before { background: var(--c-accent); }
 .nav-icon { flex: none; }
+.nav-row :is(svg.nav-icon, .doc-icon-frame) { translate: 0 1px; }
 .workspace-icon { width: 18px; height: 18px; object-fit: contain; }
 .nav-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* The doc tree. Top-level docs are .nav-link with an icon,
@@ -921,35 +1010,37 @@ img.doc-icon { flex: none; width: 18px; height: 18px; object-fit: contain; }
 .nav-row > a.cur .doc-icon-frame > img, .nav-doc-row:has(> a.cur) > .nav-doc-icon .doc-icon-frame > img { visibility: hidden; }
 .nav-row > a.cur .doc-icon-frame::after, .nav-doc-row:has(> a.cur) > .nav-doc-icon .doc-icon-frame::after {
   content: ""; position: absolute; inset: 0; background: currentColor; mask: var(--doc-icon) center / contain no-repeat; }
-body.sidebar-closed #sidebar-content { display: block; overflow-y: auto; scrollbar-width: none; padding: 6px 0; }
-body.sidebar-closed #nav-groups { display: block; }
-body.sidebar-closed #nav-docs { scrollbar-width: none; }
-body.sidebar-closed #nav-groups :is(.nav-label, .nav-tree-toggle, .nav-tree-spacer, .nav-placeholder, .new, .nav-delete, .files-upload-status, .files-drop-hint, .extensions-drop-hint, input, .nav-icon-clear),
-body.sidebar-closed #nav-status { display: none; }
-body.sidebar-closed #nav-groups .nav-tree { display: block; padding: 0; margin: 0; }
-body.sidebar-closed #nav-groups .nav-row { position: relative; padding: 0; gap: 0; min-height: 36px; }
-body.sidebar-closed #nav-groups .nav-row > a { width: 100%; height: 36px; padding: 0; justify-content: center; }
-body.sidebar-closed #nav-groups .nav-doc-icon { position: absolute; left: 16px; z-index: 1; pointer-events: none; }
-body.sidebar-closed #nav-groups .nav-row > a .nav-icon, body.sidebar-closed #nav-groups .nav-row > a .doc-icon-frame { margin: 0; width: 18px; height: 18px; }
-body.sidebar-closed #nav-groups :is(.nav-item, .nav-tree, .nav-row, a)::before,
-body.sidebar-closed #nav-groups :is(.nav-item, .nav-tree, .nav-row, a)::after { display: none; }
-body.sidebar-closed :is(#nav-files, #nav-git) { border: 0; border-top: 1px solid var(--c-line); border-radius: 0; margin: 6px 0 0; padding: 6px 0 0; overflow: visible; }
+body.sidebar-closed :is(#sidebar-content, #nav-docs) { scrollbar-width: none; scrollbar-gutter: auto; }
+body.sidebar-closed #nav-groups { --nav-rail: 8px; }
+body.sidebar-closed #nav-groups .nav-label, body.sidebar-closed #nav-status { opacity: 0; pointer-events: none; }
+body.sidebar-closed #nav-groups .nav-placeholder { visibility: hidden; pointer-events: none; }
+body.sidebar-closed #nav-groups :is(.nav-tree-toggle, .nav-tree-spacer, .new, .nav-delete, .files-upload-status, .files-drop-hint, .extensions-drop-hint, input, .nav-icon-clear) { display: none; }
+body.sidebar-closed #nav-groups .nav-tree { --nav-pad: 18px; --nav-line: 8px; }
+body.sidebar-closed #nav-groups .nav-tree > .nav-item:not(.nav-ancestor) > .nav-row::before { width: calc(var(--nav-pad) - var(--nav-line) - 2px); }
+body.sidebar-closed #nav-groups .nav-ancestor.open > .nav-row::after { top: 50%; }
+body.sidebar-closed #nav-groups .nav-ancestor > .nav-tree > .nav-ancestor > .nav-row::before { height: 50%; }
+body.sidebar-closed #nav-groups :is(.nav-row > .nav-link, .nav-tree-link) { padding-left: 0; padding-right: 0; gap: 0; }
+body.sidebar-closed #nav-groups .nav-doc-row { padding-left: 0; gap: 0; }
+body.sidebar-closed #nav-groups .nav-doc-row > a { padding-left: 0; }
+body.sidebar-closed #nav-groups :is(.nav-doc-icon, .nav-row > a > .nav-icon, .nav-row > a > .doc-icon-frame) { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; }
+body.sidebar-closed #nav-groups .nav-doc-icon { z-index: 1; pointer-events: none; }
 body.edit #sidebar-content { display: flex; flex-direction: column; overflow: hidden; scrollbar-gutter: auto; }
 body.edit #nav-groups { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 #nav-docs { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
-#nav-tools { position: relative; flex: none; display: flex; flex-direction: column; min-height: 0; height: var(--tools-height, 220px); margin: 10px 8px 4px; padding: 12px 4px 4px; border: 1px solid var(--c-line); border-radius: 8px; background: var(--c-bg1); }
-#tools-resize { position: absolute; top: -4px; left: 0; right: 0; height: 8px; z-index: 2; cursor: row-resize; touch-action: none; border-radius: 6px; }
-#tools-resize::before { content: ""; position: absolute; inset: 3px 0; border-radius: 1px; }
-#tools-resize:hover::before, #tools-resize:focus-visible::before, body.resizing-tools #tools-resize::before { background: color-mix(in srgb, var(--c-fg-muted) 20%, transparent); }
-body.resizing-tools #tools-resize { outline: none; }
-body.resizing-tools, body.resizing-tools * { cursor: row-resize !important; user-select: none !important; }
-.nav-tool-cards { flex: 1; min-height: 0; overflow: auto; }
+#nav-tools { position: relative; flex: none; margin: 10px 8px 4px; padding: 12px 4px 4px; border: 1px solid var(--c-line); border-radius: 8px; background: var(--c-bg1); }
+.nav-tool-cards { max-height: max(36px, calc(50dvh - 40px)); overflow: auto; }
 #nav-tools .nav-resources { height: 36px; margin: 0; border: 0; border-radius: 4px; }
-.workspace-location { position: absolute; top: -1px; left: 10px; z-index: 3; transform: translateY(-50%); display: flex; align-items: center; gap: 4px; max-width: calc(100% - 32px); color: var(--c-fg-muted); font: 400 10px/16px var(--font-sans); cursor: default; }
-.workspace-location > .nav-icon { flex: none; width: 14px; height: 14px; padding: 1px; background: var(--c-bg1); }
-.workspace-address { min-width: 0; padding: 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--c-bg1); }
-body.sidebar-closed #nav-tools { height: auto; margin: 4px 0; padding: 0; border: 0; }
-body.sidebar-closed :is(#tools-resize, .workspace-location) { display: none; }
+.workspace-location { position: absolute; top: -1px; left: 10px; right: 6px; z-index: 3; transform: translateY(-50%); display: flex; align-items: center; gap: 4px; padding: 0 2px; color: var(--c-fg-muted); font: 600 10px/16px var(--font-sans); cursor: pointer; list-style: none; border-radius: 4px; }
+#nav-tools:not([open]) { padding-bottom: 0; border-color: transparent; border-top-color: var(--c-line); border-radius: 0; }
+.workspace-location::-webkit-details-marker { display: none; }
+.workspace-location:hover { color: var(--c-fg); }
+.workspace-location > .nav-icon { flex: none; width: 14px; height: 14px; background: var(--c-bg1); }
+.workspace-location > .nav-icon:last-child { margin-left: auto; }
+#nav-tools[open] > .workspace-location > .nav-icon:last-child { transform: rotate(90deg); }
+.workspace-address { min-width: 0; padding: 0 2px; background: var(--c-bg1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.sidebar-closed #nav-tools { margin-left: 4px; margin-right: 4px; padding-left: 0; padding-right: 0; }
+body.sidebar-closed .workspace-location { left: 2px; right: 2px; min-height: 16px; }
+body.sidebar-closed .workspace-address { display: none; }
 .nav-resources { position: relative; container-type: size; flex: none; height: 42px; margin: 8px 8px 4px;
   border: 1px solid var(--c-line); border-radius: 8px; overflow: hidden;
   background: var(--c-bg1); font-family: var(--font-sans); }
@@ -1011,9 +1102,6 @@ article { max-width: 860px; margin: 0 auto; font-family: var(--viewer-font, syst
 [data-plugin-controls] button:disabled { opacity: .55; cursor: wait; }
 .plugin-content { padding: 12px; overflow: auto; }
 .plugin-content:empty { display: none; }
-.plugin-content :is(th, td) { padding: 6px 8px; text-align: start; border-bottom: 1px solid var(--doc-border); }
-.plugin-content th { background: var(--doc-bg-2); color: var(--doc-fg-2); font-size: 12px; font-weight: 600; }
-.plugin-content tr:last-child td { border-bottom: 0; }
 .plugin-resize { display: none; height: 12px; align-items: center; justify-content: center;
   cursor: row-resize; touch-action: none; user-select: none; }
 .plugin[data-ready="true"]:not(.collapsed) > .plugin-resize { display: flex; }
@@ -1038,83 +1126,7 @@ body:has(.plugin-resize.drag) iframe { pointer-events: none; }
 .plugin-heading img { display: block; width: 16px; height: 16px; }
 .plugin-heading-context { color: var(--doc-fg-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .plugin-heading button { font: inherit; color: var(--doc-fg-2); background: transparent; border: 0; padding: 0; cursor: pointer; white-space: nowrap; }
-.plugin-blocks { font: inherit; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
-.plugin-blocks > :first-child, .plugin-block-columns > div > :first-child { margin-top: 0; }
-.plugin-blocks .plugin-block-heading { margin: 0 0 8px; padding: 0; border: 0; font: inherit; font-size: 17px; font-weight: 600; line-height: 1.4; color: var(--doc-fg); }
-.plugin-block-text { margin: 8px 0; white-space: pre-wrap; }
-.plugin-block-text:has(p, pre, ul, ol) { white-space: normal; }
-.plugin-blocks p { margin: 4px 0; white-space: pre-wrap; }
-.plugin-blocks :is(ul, ol) { margin: 6px 0; padding-left: 22px; }
-.plugin-blocks > :last-child { margin-bottom: 0; }
-.plugin-blocks strong { font-weight: 600; }
-.plugin-blocks a { color: var(--doc-accent); text-underline-offset: 3px; }
-.plugin-blocks code { font-family: var(--doc-mono); }
-.plugin-block-context { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; margin: 6px 0; color: var(--doc-fg-3); font-size: 11px; }
-.plugin-block-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 6px 16px; margin: 8px 0; }
-.plugin-block-fields > div { min-width: 0; }
-.plugin-block-fields dt { color: var(--doc-fg-3); font-size: 10px; margin-bottom: 1px; }
-.plugin-block-fields dd { margin: 0; min-height: 20px; font-size: 12px; }
-.plugin-block-columns { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 16px; }
-.plugin-block-columns > div, .plugin-block-columns aside { min-width: 0; }
-.plugin-block-columns aside { border-left: 1px solid var(--doc-border); padding-left: 12px; }
-.plugin-block-columns aside .plugin-block-fields { grid-template-columns: 1fr; margin-top: 0; }
-.plugin-block-section { border-top: 1px solid var(--doc-border); padding-top: 6px; margin: 10px 0 0; min-width: 0; }
-.plugin-block-section > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--doc-fg-2); padding: 4px 0; }
-.plugin-block-note { color: var(--doc-warn); font-size: 11px; border-left: 2px solid currentColor; padding-left: 10px; }
-.plugin-block-table { overflow: auto; width: 100%; margin: 8px 0; }
-.plugin-block-table table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.plugin-block-table :is(th, td) { padding: 5px 8px; min-width: 72px; max-width: 320px; vertical-align: top; }
-.plugin-blocks .plugin-block-code { font: 12px/1.65 var(--doc-mono); padding: 12px; margin: 10px 0; border: 1px solid var(--doc-border); border-radius: 6px; max-height: 400px; overflow: auto; white-space: pre-wrap; }
-.plugin-block-diff code > span { display: inline-block; min-width: 100%; }
-.plugin-block-diff [data-tone="success"] { color: var(--doc-ok); background: color-mix(in srgb, var(--doc-ok) 8%, transparent); }
-.plugin-block-diff [data-tone="danger"] { color: var(--doc-danger); background: color-mix(in srgb, var(--doc-danger) 8%, transparent); }
-.plugin-block-message { padding: 8px 0; border-bottom: 1px solid var(--doc-border); }
-.plugin-block-message:last-child { border-bottom: 0; }
-.plugin-message-byline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.plugin-message-byline > span:not(.plugin-avatar, .plugin-message-actions) { color: var(--doc-fg-3); font-size: 10px; }
-.plugin-avatar { display: grid; place-items: center; width: 24px; height: 24px; flex: none; border-radius: 7px; color: var(--doc-accent); background: color-mix(in srgb, var(--doc-accent) 12%, var(--doc-bg)); font-size: 10px; }
-.plugin-task { display: flex; align-items: baseline; gap: 8px; list-style: none; }
-.plugin-message-actions svg { display: block; width: 14px; height: 14px; }
-.plugin-message-actions .plugin-block-button { padding: 4px; border: 0; color: var(--doc-fg-3); }
-.plugin-message-actions { margin-left: auto; display: flex; gap: 4px; }
-.plugin-message-body, .plugin-reactions { margin: 4px 0 0 32px; }
-.plugin-reactions { display: flex; flex-wrap: wrap; gap: 5px; font-size: 11px; }
-.plugin-reactions button { font: inherit; padding: 2px 8px; border: 1px solid var(--doc-border); border-radius: 12px; background: transparent; color: var(--doc-fg-2); cursor: pointer; }
-.plugin-reactions [aria-pressed="true"] { border-color: var(--doc-accent); color: var(--doc-accent); background: color-mix(in srgb, var(--doc-accent) 8%, transparent); }
-.plugin-badge { display: inline-flex; padding: 1px 7px; border-radius: 5px; font-size: 11px; color: var(--doc-fg-2); background: var(--doc-bg-2); }
-.plugin-badge[data-tone="accent"] { color: var(--doc-accent); background: color-mix(in srgb, var(--doc-accent) 10%, var(--doc-bg)); }
-.plugin-badge[data-tone="success"] { color: var(--doc-ok); background: color-mix(in srgb, var(--doc-ok) 10%, var(--doc-bg)); }
-.plugin-badge[data-tone="warning"] { color: var(--doc-warn); background: color-mix(in srgb, var(--doc-warn) 10%, var(--doc-bg)); }
-.plugin-badge[data-tone="danger"] { color: var(--doc-danger); background: color-mix(in srgb, var(--doc-danger) 10%, var(--doc-bg)); }
-.plugin-copy-value { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; }
-.plugin-copy { width: 22px; height: 22px; padding: 3px; border: 0; background: transparent; color: var(--doc-fg-3); cursor: pointer; flex: none; }
-.plugin-copy svg { width: 14px; height: 14px; }
-.plugin-block-progress { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--doc-fg-3); margin: 12px 0; }
-.plugin-block-progress progress { flex: 1; width: 0; height: 6px; accent-color: var(--doc-accent); }
-.plugin-block-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
-.plugin-block-actions:has([data-block-composer]) { display: block; }
-.plugin-block-button { font: inherit; font-size: 12px; padding: 5px 10px; border: 1px solid var(--doc-border); border-radius: 5px; color: var(--doc-fg); background: transparent; cursor: pointer; }
-.plugin-block-button:hover { background: var(--doc-bg-2); }
-.plugin-block-button:disabled { opacity: .5; cursor: wait; }
-.plugin-action[aria-pressed="true"] { color: var(--doc-accent); background: var(--doc-bg-2); }
-.plugin-danger { color: var(--doc-danger); }
-.plugin [data-plugin-edit-trigger]:focus-visible, .plugin :is(button, summary, input, select, textarea):focus-visible, .plugin-block-table:focus-visible { outline: 2px solid var(--doc-accent); outline-offset: 2px; }
-.plugin-editor { display: grid; gap: 6px; margin: 0; padding: 0; border: 0; font: inherit; font-size: 12px; line-height: 1.5; color: var(--doc-fg); background: var(--doc-bg); min-width: 0; }
-.plugin-editor label { display: grid; gap: 0; font-size: 0; }
-.plugin-editor :is(input, textarea, select) { box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; padding: 3px 6px; border: 1px solid var(--doc-border); border-radius: 4px; color: var(--doc-fg); background: var(--doc-bg); font: inherit; font-size: 12px; line-height: 1.5; }
-.plugin-editor textarea { resize: vertical; min-height: 54px; max-height: 40vh; }
-.plugin-editor .plugin-submit { background: var(--doc-accent); color: var(--doc-accent-fg); border-color: transparent; }
-.plugin-editor-notice { color: var(--doc-danger); font-size: 11px; }
-.plugin-editor-notice:empty { display: none; }
-.plugin [hidden] { display: none !important; }
-@container (max-width: 600px) {
-  .plugin-block-columns { grid-template-columns: minmax(0, 1fr); gap: 14px; }
-  .plugin-block-columns aside { border-left: 0; border-top: 1px solid var(--doc-border); padding: 14px 0 0; }
-  .plugin-block-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .plugin-heading-context { display: none; }
-  .plugin-blocks .plugin-block-heading { font-size: 16px; }
-  .plugin-message-body, .plugin-reactions { margin-left: 0; }
-}
+${PLUGIN_BLOCK_CSS}
 
 article, article * { font-weight: 400; }
 h1, h2, h3 { font-weight: 400; }
@@ -1402,7 +1414,7 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .resource-tabs a { padding: 9px 15px; color: var(--doc-fg-3); text-decoration: none; white-space: nowrap; font-size: 13px; border-bottom: 2px solid transparent; }
 .resource-tabs a:hover { color: var(--doc-fg); background: color-mix(in srgb, var(--doc-fg) 4%, transparent); }
 .resource-tabs a[aria-current] { color: var(--doc-accent); border-bottom-color: currentColor; }
-.resource-toolbar { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 6px;
+.resource-toolbar { position: relative; display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 6px;
   border-bottom: 1px solid var(--c-line); color: var(--c-fg-muted); font-size: 11px; }
 .resource-toolbar > span { flex: none; }
 .resource-search {display:flex;align-items:center;gap:5px;flex:0 1 140px;min-width:0;height:24px;border-bottom:1px solid transparent;color:var(--c-fg-faint);}
@@ -1416,6 +1428,141 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .resource-toolbar select option { background: var(--c-bg1); color: var(--c-fg); }
 .resource-count { margin-left: auto; color: var(--doc-fg-3); font-variant-numeric: tabular-nums; }
 .resource-items { display: flex; flex-direction: column; }
+.resource-items[hidden], [data-subformat-board][hidden] { display: none; }
+.resource-results:has([data-subformat-board]:not([hidden])) { min-width: 0; font-family: var(--font-sans); }
+.resource-results:has([data-subformat-board]:not([hidden])) .resource-toolbar { position: relative; height: auto; flex-wrap: wrap; gap: 8px 12px; padding: 8px 0 12px; }
+.resource-results:has([data-subformat-board]:not([hidden])) .resource-toolbar > [data-i18n="Name"] { display: none; }
+.resource-results:has([data-subformat-board]:not([hidden])) .resource-search { flex: 1 1 160px; max-width: 260px; height: 30px; box-sizing: border-box; gap: 8px; padding: 0 8px; border: 1px solid var(--c-line); border-radius: 4px; background: var(--c-bg0); }
+.resource-results:has([data-subformat-board]:not([hidden])) .resource-search:focus-within { border-color: var(--c-accent); }
+.resource-results:has([data-subformat-board]:not([hidden])) .resource-count { display: none; }
+.resources-pane:has([data-subformat-board]:not([hidden])) :is(.preview-content, .resource-library, .resource-results, [data-subformat-board]) { display: flex; flex-direction: column; flex: 1; }
+.resources-pane:has([data-subformat-board]:not([hidden])) .preview-content { min-height: 100%; }
+.resource-results:has(> .resource-empty:not([hidden])) [data-subformat-board] { flex: none; }
+.resource-results:has(> .resource-empty:not([hidden])) .subformat-columns { display: none; }
+.resource-query { display: flex; align-items: center; gap: 8px; flex: 0 1 auto; min-width: 0; max-width: 400px; }
+.resource-query > select { flex: 0 1 auto; min-width: 64px; max-width: 140px; height: 30px; padding: 4px 8px; border: 1px solid var(--c-line); border-radius: 4px; background: var(--c-bg1); color: var(--c-fg); cursor: pointer; }
+.resource-query > select:focus-visible { outline-color: var(--c-fg-muted); }
+.subformat-picker { flex: 0 1 auto; min-width: 0; max-width: 220px; }
+[data-subformat-trigger] { display: block; max-width: 100%; height: 32px; padding: 0 2px; border: 0; border-bottom: 1px solid var(--c-line); background: transparent; color: var(--c-fg); font: 500 18px/30px var(--font-sans); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+[data-subformat-trigger]:is(:hover, :focus-visible) { border-bottom-color: var(--c-fg-muted); outline: none; }
+[data-subformat-trigger]:disabled { cursor: default; }
+.subformat-picker-menu { position: fixed; margin: 0; box-sizing: border-box; width: min(260px, calc(100vw - 16px)); padding: 4px; border: 1px solid var(--c-line); border-radius: 4px; background: var(--c-bg1); color: var(--c-fg); overflow-y: auto; font: 15px/1.6 var(--font-sans); }
+.subformat-picker-menu button { display: block; width: 100%; padding: 7px 10px; border: 0; background: transparent; color: var(--c-fg); font: inherit; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.subformat-picker-menu button:is(:hover, :focus-visible, [aria-checked="true"]) { background: var(--c-raised); outline: none; }
+.subformat-picker-menu [data-subformat-add] { margin-top: 4px; border-top: 1px solid var(--c-line); font-size: 13px; }
+
+.resource-results [data-subformat-change="added"] { color: var(--c-ok); }
+.resource-results [data-subformat-change="modified"] { color: var(--c-accent); }
+.subformat-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; min-width: 0; max-width: 100%; margin-left: auto; }
+.subformat-control { position: relative; min-width: 80px; max-width: 160px; margin-top: 6px; }
+.subformat-control-label { position: absolute; z-index: 1; top: -7px; left: 7px; padding: 0 4px; background: var(--c-bg1); color: var(--c-fg-muted); font: 11px/14px var(--font-sans); white-space: nowrap; pointer-events: none; }
+.subformat-control > button { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 34px; padding-top: 6px; text-align: left; }
+.subformat-control > button > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subformat-control > button > svg { flex: none; }
+.subformat-setting-menu { font-size: 13px; }
+.subformat-setting-option { display: flex; align-items: stretch; }
+.subformat-setting-option > button:first-child { flex: 1; min-width: 0; max-width: none; border: 0; border-radius: 0; text-align: left; background: transparent; }
+.subformat-setting-option > button[aria-checked="true"] { background: var(--c-raised); }
+.subformat-setting-option > .subformat-default { display: grid; flex: none; place-items: center; width: 32px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--c-fg-muted); }
+.subformat-default[data-is-default="false"] svg { opacity: .25; }
+.subformat-default[data-is-default="true"], .subformat-default:is(:hover, :focus-visible) { color: var(--c-fg); }
+.subformat-setting-option > .subformat-default[data-layout-changed="true"] { color: var(--c-ok); }
+.subformat-default:is(:hover, :focus-visible) svg { opacity: 1; }
+.subformat-default:disabled { cursor: default; }
+.subformat-controls label { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; white-space: nowrap; }
+.subformat-card label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--c-fg-muted); }
+.subformat-controls select, .subformat-controls button, .subformat-create-form select, .subformat-create-form button, .subformat-card select { box-sizing: border-box; min-width: 0; max-width: 100%; min-height: 30px; padding: 4px 8px; border: 1px solid var(--c-line); border-radius: 4px; background: var(--c-bg1); color: var(--c-fg); font: inherit; }
+.subformat-controls select { max-width: 140px; }
+.subformat-controls [data-subformat-direction] { display: grid; place-items: center; flex: none; width: 30px; height: 30px; padding: 0; }
+.subformat-controls :is(select, button) { cursor: pointer; }
+.subformat-controls :is(select, button):hover, .subformat-card select:enabled:hover { background: var(--c-raised); }
+.subformat-controls :is(select, button):focus-visible, .subformat-card select:focus-visible { outline-color: var(--c-fg-muted); }
+.subformat-card select:disabled { opacity: .55; cursor: default; }
+.subformat-toast { position: fixed; z-index: 1000; right: 20px; bottom: 20px; box-sizing: border-box;
+  max-width: min(420px, calc(100vw - 40px)); max-height: 40vh; overflow: auto; padding: 12px 16px;
+  border: 1px solid var(--c-danger); border-radius: 6px; background: var(--c-bg1); color: var(--c-danger);
+  font: 13px/1.5 var(--font-sans); white-space: pre-wrap; overflow-wrap: anywhere; }
+.subformat-columns { display: flex; flex: 1; gap: 20px; min-width: 0; overflow-x: auto; padding: 16px 2px 12px; scrollbar-width: thin; scrollbar-color: var(--c-line) transparent; }
+.subformat-column { display: flex; flex-direction: column; flex: 1 0 248px; min-width: 0; }
+.subformat-cards { flex: 1; min-height: 100px; border-radius: 6px; }
+.subformat-cards.is-drop-target { background: var(--c-raised); }
+.subformat-column > h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; padding: 0 2px 10px; border-bottom: 1px solid var(--c-line); color: var(--c-fg); font: 500 12px/20px var(--font-sans); overflow-wrap: anywhere; }
+.subformat-count > span { flex: none; min-width: 10px; padding: 0 5px; border-radius: 4px; background: var(--c-raised); color: var(--c-fg-muted); font-size: 11px; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+.subformat-card { max-width: none; margin: 0 0 12px; padding: 14px; border: 1px solid var(--c-line); border-radius: 6px; background: var(--c-bg0); color: var(--c-fg); font-family: var(--font-sans); overflow-wrap: anywhere; }
+.subformat-card:hover, .subformat-card:focus-within { border-color: var(--c-fg-faint); }
+.subformat-count { display: inline-flex; align-items: center; gap: 4px; }
+.resource-results [data-record-change="added"] { --record-color: var(--c-ok); }
+.resource-results [data-record-change="modified"] { --record-color: var(--c-accent); }
+.resource-results span[data-record-change] { color: var(--record-color); }
+.subformat-card[data-record-change] { border-color: var(--record-color); }
+.subformat-controls [data-subformat-create] { height: 30px; padding-inline: 12px; }
+.subformat-create-form { position: absolute; z-index: 5; top: calc(100% + 8px); right: 0; box-sizing: border-box; width: min(420px, 100%); max-height: 70vh; overflow: auto; padding: 16px; border: 1px solid var(--c-line); border-radius: 6px; background: var(--c-bg1); }
+.subformat-create-form fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.subformat-create-form label { display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin-bottom: 12px; }
+.subformat-create-form :is(input, textarea) { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--c-line); border-radius: 4px; background: var(--c-bg0); color: var(--c-fg); font: 12px/1.6 var(--doc-mono); }
+.subformat-create-form :is(input, textarea, select, button):focus-visible { outline-color: var(--c-fg-muted); }
+.subformat-create-form textarea { resize: vertical; }
+.subformat-create-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.subformat-card[draggable="true"] { cursor: grab; user-select: none; }
+.subformat-card[draggable="true"] :is(.subformat-card-open, .subformat-card-toggle) { cursor: inherit; }
+.subformat-card.is-dragging { opacity: .4; border-style: dashed; }
+.subformat-card-tools { display: flex; align-items: center; justify-content: flex-end; gap: 8px; box-sizing: border-box; width: fit-content; max-width: 100%; height: 20px; margin: -25px -4px 8px auto; padding: 0 6px; background: var(--c-bg0); }
+.subformat-card h3 { min-width: 0; margin: 0; font-size: 13px; line-height: 1.55; }
+.subformat-card-open, .subformat-card-toggle, .subformat-card-copy { padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.subformat-card :focus-visible { outline-color: var(--c-fg-muted); }
+.subformat-card .subformat-card-open:focus { outline: none; }
+.subformat-card-open:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
+.subformat-card-open, .subformat-drag-preview strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-align: left; font-weight: 500; overflow-wrap: anywhere; }
+.subformat-card-toggle, .subformat-card-copy { flex: none; display: grid; place-items: center; width: 20px; height: 20px; margin: 0; border-radius: 4px; color: var(--c-fg-muted); }
+.subformat-card-toggle:hover, .subformat-card-copy:hover { background: var(--c-raised); color: var(--c-fg); }
+.subformat-card-copy .ic-ok, .subformat-card-copy[data-copied] svg:not(.ic-ok) { display: none; }
+.subformat-card-copy[data-copied] .ic-ok { display: block; }
+.subformat-card-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+.subformat-card .subformat-card-file { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--c-fg-faint); font-family: var(--doc-mono); font-size: 11px; }
+.subformat-card-tools .subformat-card-file { flex: 1; max-width: 170px; }
+.subformat-drag-preview .subformat-card-file { margin-top: 6px; }
+.subformat-card-references { padding: 2px 0; border: 0; background: none; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; flex: none; color: var(--record-color, var(--c-fg-faint)); font-size: 11px; font-variant-numeric: tabular-nums; }
+.subformat-card-references:disabled { cursor: default; }
+.subformat-reference-list { position: fixed; margin: 0; box-sizing: border-box; width: min(320px, calc(100vw - 16px)); padding: 4px; border: 1px solid var(--c-line); border-radius: 4px; background: var(--c-bg1); color: var(--c-fg); overflow-y: auto; font: 12px/1.6 var(--font-sans); }
+.subformat-reference-list ul { margin: 0; padding: 0; list-style: none; }
+.subformat-reference-list a { display: flex; align-items: baseline; gap: 12px; padding: 7px 8px; color: inherit; text-decoration: none; }
+.subformat-reference-list a > span:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.subformat-reference-list a > span:last-child { flex: none; color: var(--c-fg-muted); font-variant-numeric: tabular-nums; }
+.subformat-reference-list a:is(:hover, :focus-visible) { background: var(--c-raised); outline-color: var(--c-fg-muted); }
+.subformat-card dl { margin: 12px 0 0; font-size: 12px; }
+.subformat-card dt, .subformat-detail dt { color: var(--c-fg-muted); font-size: 11px; }
+.subformat-card dd, .subformat-detail dd { margin: 4px 0 0; }
+.subformat-card-meta { display: flex; flex-wrap: wrap; gap: 12px 16px; padding-top: 12px; border-top: 1px solid var(--c-line-soft); }
+.subformat-card-meta:empty { display: none; }
+.subformat-card-meta > div { flex: 1 1 auto; min-width: 0; max-width: 100%; }
+.subformat-card-meta dd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.subformat-card-details { margin-top: 12px; border-top: 1px solid var(--c-line-soft); }
+.subformat-card-details dl { display: grid; gap: 12px; }
+.subformat-card-details dd, .subformat-detail dd { white-space: pre-wrap; overflow-wrap: anywhere; }
+.subformat-card-details label { margin-top: 12px; }
+.subformat-card [hidden] { display: none; }
+.subformat-drag-preview { position: fixed; left: -10000px; top: 0; box-sizing: border-box; pointer-events: none; border-color: var(--c-fg-faint); box-shadow: 0 8px 24px var(--c-shadow); }
+.subformat-drag-preview strong { font-size: 13px; }
+.app-dialog { width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 22px;
+  color: var(--c-fg); background: color-mix(in srgb, var(--c-bg1) 90%, transparent);
+  border: 1px solid var(--c-fg-faint); border-radius: 10px; box-shadow: 0 16px 48px #0004; backdrop-filter: blur(16px); }
+.app-dialog::backdrop { background: #0005; backdrop-filter: blur(2px); }
+.app-dialog h2 { margin: 0 0 14px; font-size: 16px; overflow-wrap: anywhere; }
+.app-dialog p { margin: 0 0 22px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--c-fg-muted); }
+.dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.app-dialog button { padding: 7px 14px; color: inherit; background: var(--c-bg0); border: 1px solid var(--c-line); border-radius: 5px; cursor: pointer; }
+.app-dialog button:hover { background: var(--c-raised); border-color: var(--c-fg-muted); }
+.app-dialog button:focus-visible { outline-color: var(--c-fg-muted); }
+.app-dialog button.danger { color: var(--c-danger); }
+.subformat-page-name { display: block; box-sizing: border-box; width: 100%; margin: 8px 0 20px; padding: 8px; color: var(--c-fg); background: var(--c-bg0); border: 1px solid var(--c-line); border-radius: 4px; font: inherit; }
+.subformat-page .resource-query { flex-wrap: wrap; max-width: none; }
+.subformat-page-title { flex: 1 1 100%; margin: 0 0 12px; color: var(--c-fg); font: 500 24px/1.3 var(--font-sans); overflow-wrap: anywhere; }
+.subformat-page .resource-toolbar { align-items: flex-end; }
+.subformat-page .subformat-columns { padding-top: 20px; }
+body:not(.edit) .subformat-page { padding-top: 64px; }
+.subformat-detail-path { color: var(--c-fg-muted); font: 11px var(--doc-mono); overflow-wrap: anywhere; }
+.subformat-detail dl { display: grid; gap: 14px; margin: 20px 0; }
+.subformat-detail dt { font-size: 12px; }
 .resource-item { min-width: 0; margin: 0; padding: 0; border: 0; }
 .resource-item[hidden], .resource-empty[hidden] { display: none; }
 .resource-item > summary { display: flex; align-items: center; gap: 8px; min-width: 0; height: 28px; padding: 0 6px;
@@ -1436,8 +1583,6 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .resource-source span { flex: none; opacity: .7; }
 .resource-source .resource-source-file { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; opacity: 1; }
 .resource-badge { flex: none; color: var(--doc-fg-2); font: 11px var(--doc-mono); }
-.resource-item .term-definition { margin: 0; white-space: pre-wrap; font-size: 13px; }
-.resource-description { color: var(--doc-fg-3); white-space: pre-wrap; font-size: 12px; margin: 6px 0 0; }
 .resource-item .codeblk { margin: 0; }
 .resource-item .codeblk > pre { max-height: 260px; overflow: auto; }
 .resource-usage { flex: none; margin-left: auto; color: var(--doc-fg-3); font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -1486,6 +1631,119 @@ body.textfile-open #phead :is(.fm-language, #status, #validate, #save, #split-pr
 #file-editor .cm-textfile-status { padding: 8px 12px; white-space: pre-wrap; }
 #file-editor .cm-textfile-status[hidden] { display: none; }
 #file-editor .cm-textfile-status.error { color: var(--doc-danger); }
+#file-editor[data-subformat-register] { position: static; width: auto; max-height: none; padding: 0; border: 0; border-radius: 0; overflow: hidden; }
+#file-editor[data-subformat-register] fieldset { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.subformat-register-fields { display: grid; flex: 1; min-width: 0; grid-template-columns: minmax(36px, .5fr) 60px minmax(50px, 1.5fr); gap: 6px; margin: 0; padding: 0; border: 0; }
+.subformat-register-fields :is(input, select) { width: 100%; min-width: 0; height: 28px; padding: 4px; background: transparent; color: var(--c-fg); border: 0; border-bottom: 1px solid var(--c-line); border-radius: 0; font: 12px/18px var(--font-sans); }
+.subformat-register-fields input:hover, .subformat-register-fields input:focus-visible { background: transparent; outline: none; border-bottom-color: var(--c-fg-muted); }
+.subformat-register-fields .language-select { min-width: 0; }
+.subformat-register-fields .subformat-control { align-self: center; min-width: 0; max-width: none; margin: 3px 0 0; }
+.subformat-register-fields .subformat-control-label { top: -5px; left: 5px; padding: 0 3px; font-size: 9px; line-height: 10px; }
+.subformat-register-fields .language-select-input { height: 24px; padding: 4px 18px 1px 6px; border: 1px solid var(--c-line); border-radius: 4px; background: var(--c-bg1); font-size: 11px; line-height: 16px; }
+.subformat-register-fields .language-select::after { right: 6px; top: 9px; width: 4px; height: 4px; }
+.subformat-register-fields :disabled { opacity: .5; }
+.subformat-register-fields input::placeholder { color: var(--c-fg-muted); opacity: 1; }
+.subformat-register-fields input[name="schema"]:not([placeholder="path"])::placeholder { opacity: .55; }
+#phead:has(.subformat-register-fields) { padding-inline: 6px; }
+.file-editor-heading:has(.subformat-register-fields) { gap: 4px; margin-left: 2px; }
+[data-subformat-schema-editor] { flex: 1; min-height: 0; }
+#file-editor[data-subformat-register] .subformat-create-actions { flex: none; padding: 10px 14px; border-top: 1px solid var(--c-line); }
+#file-editor[data-subformat-register] [hidden] { display: none; }
+.schema-editor-host { display: flex; flex-direction: column; min-height: 0; }
+.schema-editor-host > .cm-editor { flex: 1; min-height: 0; }
+.schema-editor-host > [hidden] { display: none !important; }
+.schema-mode-switch:focus-visible { outline: 1px solid var(--c-fg-muted); outline-offset: 1px; }
+.schema-builder { flex: 1; min-height: 0; overflow: auto; container-type: inline-size; padding: 8px 12px 24px; color: var(--c-fg); font: 12px/1.6 var(--font-sans); }
+.schema-builder label { display: flex; align-items: stretch; flex-direction: column; gap: 4px; min-width: 0; margin: 0; color: var(--c-fg-muted); font-size: 11px; }
+.schema-builder :is(input, select, textarea, button) { box-sizing: border-box; min-width: 0; min-height: 0; max-width: 100%; padding: 6px 7px; border: 1px solid var(--c-line); border-radius: 4px; background: var(--c-bg0); color: var(--c-fg); font: 12px/1.5 var(--font-sans); }
+.schema-builder :is(input:not([type="checkbox"]), select, textarea) { padding: 4px 6px; border: 0; border-radius: 3px; background: var(--c-bg1); }
+.schema-builder :is(input:not([type="checkbox"]), select, textarea):hover { background: var(--c-raised); }
+.schema-builder :is(input:not([type="checkbox"]), select, textarea):focus-visible { outline: 1px solid var(--c-fg-muted); outline-offset: 1px; }
+.schema-builder .schema-type-control { display: block; min-width: 0; max-width: none; margin: 0; }
+.schema-builder .schema-type-control .language-select-input { height: 28px; padding: 5px 22px 2px 8px; border: 1px solid var(--c-line); border-radius: 4px; background: var(--c-bg1); }
+.schema-type-control .language-select::after { right: 8px; top: 10px; width: 5px; height: 5px; }
+.schema-builder .schema-type-control > .subformat-control-label { padding: 0 4px; }
+.schema-builder :is(input, textarea) { width: 100%; }
+.schema-builder textarea { resize: vertical; }
+.schema-builder input[type="checkbox"] { flex: none; width: 14px; height: 14px; margin: 0; padding: 0; border-color: var(--c-fg-muted); border-radius: 3px; background: transparent; }
+.schema-builder input[type="checkbox"]:checked { border-color: var(--c-fg-muted); }
+.schema-builder input[type="checkbox"]:checked::after { left: 4px; top: 1px; width: 3px; height: 7px; border-color: var(--c-fg); border-width: 0 1.5px 1.5px 0; }
+.schema-builder input[type="checkbox"]:focus-visible { outline: 1px solid var(--c-fg-muted); outline-offset: 3px; }
+.schema-builder button { cursor: pointer; }
+.schema-builder button:hover { background: var(--c-raised); }
+.schema-builder button:disabled { opacity: .45; cursor: default; }
+.schema-field { position: relative; min-width: 0; }
+.schema-builder > :is(.schema-field, .schema-add-field, .schema-draft-details) { max-width: 560px; }
+.schema-builder > .schema-field { margin-bottom: 8px; }
+.schema-field-row, .schema-add-field { position: relative; display: grid; grid-template-columns: minmax(0, 260px) 112px minmax(128px, 1fr); align-items: center; gap: 8px; padding: 6px 0 2px; }
+.schema-field-name { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.schema-field-name > :first-child { flex: 1; min-width: 0; }
+.schema-field-name > label:first-child > span, .schema-add-field > label:first-child > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.schema-builder .schema-required { flex: none; display: flex; flex-direction: row-reverse; align-items: center; gap: 4px; padding-inline: 4px; white-space: nowrap; cursor: pointer; }
+.schema-field-row .language-select, .schema-add-field .language-select { flex: 1; min-width: 0; }
+.schema-children { container-type: inline-size; margin: 2px 0 0 8px; padding-left: 13px; }
+.schema-children > .schema-field::before { content: ""; position: absolute; left: -13px; top: 0; height: 20px; border-left: 1px solid var(--c-line-soft); }
+.schema-children > .schema-field:has(~ .schema-field, ~ .schema-add-field)::before { height: auto; bottom: 0; }
+.schema-children > .schema-field > .schema-field-row::before { content: ""; position: absolute; left: -13px; top: 20px; width: 9px; border-top: 1px solid var(--c-line-soft); }
+.schema-children > .schema-add-field::before { content: ""; position: absolute; left: -13px; top: 0; width: 8px; height: 22px; border-left: 1px solid var(--c-line-soft); border-bottom: 1px solid var(--c-line-soft); }
+.schema-builder .schema-extra-fields { flex-direction: row-reverse; align-items: center; justify-content: flex-end; gap: 8px; min-height: 28px; width: fit-content; cursor: pointer; }
+.schema-expand[aria-expanded="true"] svg { transform: rotate(180deg); }
+.schema-field-details { container-type: inline-size; }
+.schema-field-details[hidden] { display: none; }
+.schema-field-actions { justify-self: end; display: flex; gap: 2px; }
+.schema-field-actions button, .schema-field-name button { display: grid; place-items: center; width: 24px; height: 28px; padding: 0; border: 0; border-radius: 3px; background: transparent; color: var(--c-fg-muted); }
+.schema-field-name > button, .schema-field-name > div { flex: none; }
+.schema-expand:disabled { visibility: hidden; }
+.schema-item-name { padding-left: 6px; height: 28px; line-height: 28px; color: var(--c-fg-muted); }
+.schema-parameter-menu { width: 184px; overflow-y: auto; }
+.schema-parameter-menu .language-options button { height: auto; min-height: 28px; width: 100%; display: block; padding: 5px 8px; text-align: left; }
+.schema-parameter-menu .language-options button:focus-visible { background: var(--c-raised); outline: none; }
+.schema-parameter-group { margin: 4px 0 8px 6px; }
+.schema-parameter { display: grid; grid-template-columns: minmax(0, 1fr) 24px; align-items: center; gap: 2px; min-width: 0; grid-column: 1 / -1; }
+.schema-parameter[data-schema-bound="min"] { grid-column: 1; }
+.schema-parameter[data-schema-bound="max"] { grid-column: 2; }
+.schema-parameter label { display: grid; grid-template-columns: 100px minmax(0, 1fr); align-items: center; gap: 8px; }
+.schema-parameter label > span { overflow-wrap: anywhere; }
+.schema-parameter label:has(> textarea) { align-items: start; }
+.schema-parameter label:has(> input[type="checkbox"]) { display: flex; flex-direction: row-reverse; align-items: center; justify-content: flex-end; gap: 8px; min-height: 28px; cursor: pointer; }
+.schema-parameter > button { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--c-fg-muted); }
+.schema-parameter:has(textarea) > button { align-self: start; }
+.schema-builder [hidden] { display: none; }
+.schema-constraints { display: grid; gap: 4px; }
+.schema-parameter-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.schema-parameter-row:not(.schema-range) > .schema-parameter { grid-column: 1 / -1; }
+.schema-range { grid-template-columns: minmax(0, 1fr) minmax(48px, .7fr) minmax(0, 1fr); align-items: center; }
+.schema-range .schema-parameter { grid-row: 1; }
+.schema-range [data-schema-bound="max"] { grid-column: 3; }
+.schema-range .schema-parameter label { grid-template-columns: minmax(0, 1fr) 60px; gap: 4px; }
+.schema-range .schema-parameter input { font-variant-numeric: tabular-nums; }
+.schema-range-track { position: relative; grid-column: 1 / -1; height: 24px; }
+.schema-range > .schema-range-track { grid-column: 2; grid-row: 1; }
+.schema-range-track::before, .schema-range-track > span { content: ""; position: absolute; top: 11px; left: 5px; right: 5px; height: 2px; background: var(--c-line); }
+.schema-range-track > span { left: calc(5px + (100% - 10px) * var(--range-min)); right: calc(5px + (100% - 10px) * (1 - var(--range-max))); background: var(--c-fg-muted); }
+.schema-builder .schema-range-track input { appearance: none; position: absolute; inset: 0; width: 100%; height: 24px; margin: 0; padding: 0; border: 0; background: transparent; pointer-events: none; }
+.schema-range-track input::-webkit-slider-runnable-track { height: 2px; background: transparent; }
+.schema-range-track input::-webkit-slider-thumb { appearance: none; width: 10px; height: 10px; margin-top: -4px; border: 0; border-radius: 50%; background: var(--c-fg-muted); pointer-events: auto; cursor: ew-resize; }
+.schema-range-track input::-moz-range-track { height: 2px; background: transparent; }
+.schema-range-track input::-moz-range-thumb { width: 10px; height: 10px; border: 0; border-radius: 50%; background: var(--c-fg-muted); pointer-events: auto; cursor: ew-resize; }
+.schema-range-track input:focus-visible { z-index: 1; }
+.schema-range-track input:disabled { opacity: .45; }
+.schema-range-track input:disabled::-webkit-slider-thumb { pointer-events: none; }
+.schema-range-track input:disabled::-moz-range-thumb { pointer-events: none; }
+.schema-add-field { padding: 8px 0 4px; }
+.schema-add-actions { justify-self: end; display: flex; align-items: center; }
+.schema-add-actions > button { min-height: 28px; padding: 4px; white-space: nowrap; }
+.schema-add-actions > button + button { margin-left: 4px; border: 0; background: transparent; color: var(--c-fg-muted); }
+.schema-builder input[aria-invalid="true"], .schema-builder input[aria-invalid="true"]:focus-visible, .subformat-register-fields input:user-invalid { outline: 1px solid var(--c-danger); outline-offset: 1px; }
+.schema-json-note { margin: 8px 0 0; color: var(--c-fg-muted); font-size: 11px; }
+.schema-builder .schema-extra-fields { margin: 6px 0; }
+.subformat-value-form > label, .subformat-value-form fieldset > label { margin-block: 12px; }
+.subformat-value-form fieldset { min-width: 0; margin: 12px 0; padding: 0 12px; border: 1px solid var(--c-line); }
+.subformat-value-form legend { padding-inline: 4px; }
+.subformat-value-form small { overflow-wrap: anywhere; }
+@container(max-width:440px) { .schema-field-row, .schema-add-field { grid-template-columns: minmax(0, 1fr) 128px; } .schema-field-row > :first-child, .schema-add-field > :first-child { grid-column: 1 / -1; } }
+@container(max-width:440px) { .schema-add-field { grid-template-columns: minmax(0, 1fr) auto; } }
+@container(max-width:440px) { .schema-range { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 8px; } .schema-range [data-schema-bound="max"] { grid-column: 2; } .schema-range > .schema-range-track { grid-column: 1 / -1; grid-row: 2; } .schema-range .schema-parameter label { grid-template-columns: minmax(0, 1fr); gap: 0; } }
 
 /* header band (same height and rule as sidebar-head) */
 #phead { flex: none; display: flex; align-items: center; gap: 2px; height: 36px; padding: 0 10px 0 14px;
@@ -1529,17 +1787,6 @@ body.edit #nav-groups { --nav-rail: 22px; --nav-icon-half: 9px; }
 .cm-file-preview[data-state="loading"] svg { animation: preview-spin 1s linear infinite; }
 @keyframes preview-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .cm-file-preview[data-state="loading"] svg { animation: none; } }
-.app-dialog { width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 22px;
-  color: var(--c-fg); background: color-mix(in srgb, var(--c-bg1) 90%, transparent);
-  border: 1px solid var(--c-fg-faint); border-radius: 10px; box-shadow: 0 16px 48px #0004; backdrop-filter: blur(16px); }
-.app-dialog::backdrop { background: #0005; backdrop-filter: blur(2px); }
-.app-dialog h2 { margin: 0 0 14px; font-size: 16px; overflow-wrap: anywhere; }
-.app-dialog p { margin: 0 0 22px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--c-fg-muted); }
-.dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-.app-dialog button { padding: 7px 14px; color: inherit; background: var(--c-bg0); border: 1px solid var(--c-line); border-radius: 5px; cursor: pointer; }
-.app-dialog button:hover { background: var(--c-raised); border-color: var(--c-fg-muted); }
-.app-dialog button:focus-visible { outline-color: var(--c-fg-muted); }
-.app-dialog button.danger { color: var(--c-danger); }
 .app-dialog:has(.conflict-columns) { width: min(1000px, calc(100vw - 32px)); }
 .conflict-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
 .conflict-columns h3 { font-size: 13px; margin: 0; }
@@ -1550,11 +1797,22 @@ body.edit #nav-groups { --nav-rail: 22px; --nav-icon-half: 9px; }
   min-width: 220px; padding: 4px; flex-direction: column; gap: 1px; color: var(--c-fg);
   background: var(--c-surface); border: 1px solid var(--c-line); border-radius: 6px;
   box-shadow: 0 10px 28px var(--c-shadow); font-size: 12.5px; }
-#gear:hover #gearmenu, #gear:focus-within #gearmenu, #gear.open #gearmenu { display: flex; }
+#gear:hover #gearmenu, #gear:focus-within #gearmenu, #gear.open #gearmenu, #gear:has([aria-expanded="true"]) #gearmenu { display: flex; }
 #gearmenu label { display: flex; gap: 10px; align-items: center; cursor: pointer;
   padding: 7px 10px; border-radius: 4px; }
 #gearmenu label:hover { background: var(--c-raised); }
 #gearmenu input { accent-color: var(--c-accent); margin: 0; }
+.editor-setting { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 8px; padding: 8px 8px 4px; }
+.editor-setting > .nav-icon, .editor-setting-icon { color: var(--c-fg-muted); }
+.editor-setting-icon { display: grid; place-items: center; }
+.editor-setting .subformat-control { min-width: 0; max-width: none; margin: 0; }
+.editor-setting .subformat-control-label { background: var(--c-surface); }
+.editor-setting .setting-picker, .editor-setting .language-select-input { box-sizing: border-box; width: 100%; min-width: 0; height: 30px; min-height: 30px; padding: 4px 8px; border: 1px solid var(--c-line); border-radius: 4px; background: var(--c-surface); color: var(--c-fg); font: 12px/18px var(--font-sans); }
+.editor-setting .setting-picker { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; }
+.editor-setting .setting-picker > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-setting .setting-picker > svg { flex: none; }
+.editor-setting .language-select-input { padding-right: 26px; }
+.editor-setting .setting-picker:hover { background: var(--c-raised); }
 
 .fm-language { display: flex; align-items: center; flex: 0 1 220px; min-width: 0; gap: 4px; }
 .fm-language > .language-select { flex: 1; width: 0; min-width: 0; }
@@ -1609,8 +1867,8 @@ main.editor-workspace { padding: 0; height: 100vh; display: flex; flex-direction
 .language-option[aria-checked="true"]::before { content: "✓"; }
 .language-option:hover, .language-option:focus-visible { background: var(--c-raised); outline: none; }
 .language-option:disabled { opacity: .5; cursor: wait; }
-#language-setting { flex: none; display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-bottom: 1px solid var(--c-line); }
-#language-setting .language-select { width: 160px; }
+#language-setting { padding-bottom: 8px; margin-bottom: 4px; border-bottom: 1px solid var(--c-line); }
+#language-setting .language-select { width: 100%; }
 .cm-code-diagnostic { text-decoration:underline wavy var(--c-warn); text-underline-offset:3px; }
 #validate[data-state="error"], .cm-textfile-validate[data-state="error"] { color:var(--c-danger); }
 #validate[data-state="valid"], .cm-textfile-validate[data-state="valid"] { color:var(--c-ok); }
@@ -1682,7 +1940,7 @@ body.corr main article > [data-ln].corr-hi {
 .files-copy svg {width:14px;height:14px;color:var(--c-fg-faint);}
 .files-table tr:hover .files-copy,.files-table tr:focus-within .files-copy {opacity:1;}
 @media(hover:none){.files-copy{opacity:1;}}
-.files-table [data-drop=before] {box-shadow:inset 0 2px var(--c-accent);}.files-table [data-drop=after] {box-shadow:inset 0 -2px var(--c-accent);}.files-table [data-drop=into] {outline:2px solid var(--c-accent);outline-offset:-2px;}
+.files-table [data-drop=into], .files-viewport[data-drop=into] {outline:2px solid var(--c-accent);outline-offset:-2px;}
 .files-table .files-placeholder {height:96px;text-align:center;vertical-align:middle;}
 .app-dialog textarea {display:block;box-sizing:border-box;width:100%;min-height:64px;max-height:65vh;resize:both;font:inherit;}
 @media(max-width:600px){.files-table {min-width:0;}.files-table th:nth-child(2){width:65px;}.files-name{max-width:100%;}}
@@ -1744,14 +2002,31 @@ body.corr main article > [data-ln].corr-hi {
 .nav-tree-spacer { flex: none; height: 28px; }
 @media (hover: none) { .nav-row :is(.new, .nav-delete) { opacity: 1; } }
 .nav-row > .nav-create { margin: 7px 12px; opacity: 1; }
-.nav-add-hover { visibility: hidden; }
-#sidebar:hover .nav-add-hover, #sidebar:focus-within .nav-add-hover { visibility: visible; }
 #sidebar .nav-list:has(> .nav-new-item) > .nav-placeholder { display: none; }
+.nav-page-menu { position: fixed; inset: auto; margin: 0; padding: 4px; width: 200px;
+  max-width: calc(100vw - 16px); box-sizing: border-box; overflow: auto;
+  border: 1px solid var(--c-line); border-radius: 6px; background: var(--c-surface); color: var(--c-fg);
+  box-shadow: 0 8px 24px var(--c-shadow); font: 12px/1.5 var(--font-sans); }
+.nav-page-menu > button { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 36px;
+  padding: 7px 10px; border: 0; border-radius: 4px; background: transparent; color: inherit;
+  font: inherit; text-align: left; cursor: pointer; }
+.nav-page-menu > button svg { width: 16px; height: 16px; flex: none; color: var(--c-fg-muted); }
+.nav-page-menu > button:not(:disabled):hover { background: var(--c-raised); }
+.nav-page-menu :focus-visible { outline: 1px solid var(--c-fg-muted); outline-offset: -2px; }
+.nav-page-menu button:disabled { color: var(--c-fg-muted); cursor: default; }
+.nav-page-menu .nav-page-chevron { display: flex; margin-left: auto; transform: rotate(90deg); }
+.nav-page-menu .nav-page-chevron svg { width: 12px; height: 12px; }
+.nav-page-menu .subformat-setting-option > button:is(:hover, :focus-visible) { background: var(--c-raised); }
+.nav-page-menu .err { margin: 0; padding: 4px 10px; color: var(--c-danger); overflow-wrap: anywhere; }
+.nav-page-menu .err:empty { display: none; }
 /* Keep the title and filename together in a compact create form. */
 .nav-row > .nav-new { position: relative; display: flex; flex: 1; min-width: 0;
   flex-direction: column; justify-content: center; align-items: stretch; cursor: auto;
-  margin: 4px 0; height: 42px; padding: 5px 38px 5px 36px;
-  border: 1px dashed var(--c-line); border-radius: 6px; background: var(--c-raised); }
+  margin: 4px 0; gap: 10px; padding: 12px;
+  border: 1px solid var(--c-line); border-radius: 6px; background: var(--c-raised); }
+.nav-new-heading { margin: 0; color: var(--c-fg-muted); font-size: 11px; }
+.nav-new :is(input, button):focus-visible { outline: 1px solid var(--c-fg-muted); outline-offset: 2px; }
+.nav-new [hidden] { display: none; }
 .nav-tree .nav-new { margin-left: calc(var(--nav-pad) - 12px); }
 .nav-new > .nav-icon { position: absolute; left: 12px; top: 10px; color: var(--c-fg-faint); }
 .nav-new input { font: inherit; color: var(--c-fg); background: transparent; border: none;
@@ -1761,9 +2036,10 @@ body.corr main article > [data-ln].corr-hi {
 .nav-new-file { display: flex; align-items: center; color: var(--c-fg-faint);
   font: 10px/12px var(--doc-mono); }
 .nav-new-file input { flex: 1; font-family: inherit; font-size: inherit; color: var(--c-fg-muted); }
-.nav-new-go { position: absolute; right: 7px; top: 50%; transform: translateY(-50%);
-  display: flex; align-items: center; justify-content: center; width: 24px;
-  height: 24px; padding: 0; font-size: 11px; color: var(--c-fg-faint); background: none;
+.nav-new-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.nav-new-cancel { padding: 4px 8px; color: var(--c-fg-muted); background: none; border: 0; border-radius: 4px; font: inherit; cursor: pointer; }
+.nav-new-go { flex: none; display: flex; align-items: center; justify-content: center;
+  min-height: 30px; padding: 4px 10px; font: inherit; color: var(--c-fg); background: var(--c-bg0);
   border: 1px solid var(--c-line); border-radius: 4px; cursor: pointer; }
 .nav-new-go:hover { color: var(--c-accent); border-color: var(--c-accent); }
 .nav-new .err { position: absolute; top: 100%; left: 0; right: 0; z-index: 5; padding: 4px;
@@ -1795,11 +2071,19 @@ interface PageOpts {
      * When writing out a single static HTML file (publishHtml). Replaces every server-served
      * script with an inline one.
      */
-    publish?: { graphJs: string; codeJs: string; pages: string; first: string; network: boolean };
+    publish?: {
+        graphJs: string;
+        codeJs: string;
+        pages: string;
+        first: string;
+        network: boolean;
+        pluginJs?: string;
+        subformatJs?: string;
+    };
 }
 
 // Contents of #nav-groups (the doc tree). Used by both page()'s initial render and
-// `GET /api/nav` (edit mode; the client replaces just the innerHTML after an md change)
+// `GET /api/nav` (edit mode; the client reconciles changed nodes after an md change)
 // (= the same value isn't declared in two places).
 // Each item is a page row and its children list, emitted even when empty
 // (it's the insertion target for the sidebar create form / drag).
@@ -1824,14 +2108,16 @@ export const navGroupsHtml = (
                 // level and goes before the label below that.
                 let link =
                     depth === 0
-                        ? `<a class="nav-link${cur}" href="/${e.id}" title="${label}">${e.icon ? svgImg(e.icon, "nav-icon doc-icon") : DOCS_ICON}<span class="nav-label">${label}</span></a>`
-                        : `<a class="nav-tree-link${cur}" href="/${e.id}" title="${label}">${e.icon ? svgImg(e.icon, "doc-icon") : DOCS_ICON}<span class="nav-label">${label}</span></a>`;
+                        ? `<a class="nav-link${cur}" href="/${e.id}" title="${label}">${e.icon ? svgImg(e.icon, "nav-icon doc-icon") : e.subformat ? SUBFORMATS_ICON : DOCS_ICON}<span class="nav-label">${label}</span></a>`
+                        : `<a class="nav-tree-link${cur}" href="/${e.id}" title="${label}">${e.icon ? svgImg(e.icon, "doc-icon") : e.subformat ? SUBFORMATS_ICON : DOCS_ICON}<span class="nav-label">${label}</span></a>`;
                 let actions = "";
                 let editableIcon = "";
                 if (mode === "edit") {
                     link = `<a class="${depth === 0 ? "nav-link" : "nav-tree-link"}${cur}" href="/${e.id}" title="${label}" aria-keyshortcuts="F2"><span class="nav-doc-name"><span class="nav-label">${label}</span></span></a>`;
-                    editableIcon = `<span class="nav-doc-icon" title="icon" data-i18n-title="icon">${e.icon ? svgImg(e.icon, "doc-icon") : DOCS_ICON}<input type="file" accept=".svg,image/svg+xml" aria-label="icon" data-i18n-aria-label="icon">${e.icon ? '<button class="nav-icon-clear" type="button" title="Remove icon" data-i18n-title="Remove icon" aria-label="Remove icon" data-i18n-aria-label="Remove icon">×</button>' : ""}</span>`;
-                    actions = `<button class="new" type="button" data-parent="${escapeHtml(e.id)}" title="Add doc" data-i18n-title="Add doc" aria-label="Add doc" data-i18n-aria-label="Add doc">${PLUS_ICON}</button><button class="nav-delete" type="button" data-doc-action="delete" title="Delete doc" data-i18n-title="Delete doc" aria-label="Delete doc" data-i18n-aria-label="Delete doc">${DELETE_ICON}</button>`;
+                    editableIcon = e.subformat
+                        ? `<span class="nav-doc-icon">${SUBFORMATS_ICON}</span>`
+                        : `<span class="nav-doc-icon" title="icon" data-i18n-title="icon">${e.icon ? svgImg(e.icon, "doc-icon") : e.subformat ? SUBFORMATS_ICON : DOCS_ICON}<input type="file" accept=".svg,image/svg+xml" aria-label="icon" data-i18n-aria-label="icon">${e.icon ? '<button class="nav-icon-clear" type="button" title="Remove icon" data-i18n-title="Remove icon" aria-label="Remove icon" data-i18n-aria-label="Remove icon">×</button>' : ""}</span>`;
+                    actions = `<button class="new" type="button" data-parent="${escapeHtml(e.id)}" popovertarget="nav-page-menu" aria-haspopup="menu" title="Add doc" data-i18n-title="Add doc" aria-label="Add doc" data-i18n-aria-label="Add doc">${PLUS_ICON}</button><button class="nav-delete" type="button" data-doc-action="delete" title="Delete doc" data-i18n-title="Delete doc" aria-label="Delete doc" data-i18n-aria-label="Delete doc">${DELETE_ICON}</button>`;
                 }
                 const branch = childrenOf(site.entries, e.id).length > 0;
                 const toggle = branch
@@ -1839,18 +2125,22 @@ export const navGroupsHtml = (
                     : mode === "edit"
                       ? '<span class="nav-tree-spacer" aria-hidden="true"></span>'
                       : "";
-                return `<div class="nav-item${open.has(e.id) ? " open" : ""}" data-doc-id="${escapeHtml(e.id)}"><div class="nav-row${mode === "edit" ? " nav-doc-row" : ""}"${mode === "edit" ? ' draggable="true"' : ""}>${editableIcon}${link}${actions}${toggle}</div>${list(e.id, depth + 1)}</div>`;
+                return `<div class="nav-item${open.has(e.id) ? " open" : ""}" data-doc-id="${escapeHtml(e.id)}"${e.subformat ? " data-subformat-nav" : ""}><div class="nav-row${mode === "edit" ? " nav-doc-row" : ""}"${mode === "edit" ? ' draggable="true"' : ""}>${editableIcon}${link}${actions}${toggle}</div>${list(e.id, depth + 1)}</div>`;
             })
             .join("");
         const placeholder =
             mode === "edit" && depth === 0
-                ? `<div class="nav-item nav-placeholder${items ? " nav-add-hover" : ""}"><div class="nav-row"><button class="nav-create" type="button" data-parent="" title="Add doc" data-i18n-title="Add doc" aria-label="Add doc" data-i18n-aria-label="Add doc">${PLUS_ICON}</button></div></div>`
+                ? `<div class="nav-item nav-placeholder"><div class="nav-row"><button class="nav-create" type="button" data-parent="" popovertarget="nav-page-menu" aria-haspopup="menu" title="Add doc" data-i18n-title="Add doc" aria-label="Add doc" data-i18n-aria-label="Add doc">${PLUS_ICON}</button></div></div>`
                 : "";
         return depth === 0
             ? `<div class="nav-list nav-root" data-parent=""${mode === "edit" ? ' id="nav-docs"' : ""}>${items}${placeholder}</div>`
             : `<div class="nav-list nav-tree" data-parent="${escapeHtml(parent ?? "")}" style="--nav-depth:${depth + 1}">${items}${placeholder}</div>`;
     };
-    const html = list(undefined, 0) + (mode === "edit" ? navFilesHtml(site, currentRes) : "");
+    const html =
+        list(undefined, 0) +
+        (mode === "edit"
+            ? `<template data-page-subformats>${escapeHtml(JSON.stringify((site.subformats ?? []).filter((format) => !site.entries.some((entry) => entry.subformat?.ext === format.ext))))}</template>${navFilesHtml(site, currentRes)}`
+            : "");
     return docLinks(site, site.contentLanguage ? languageLinks(html, site.contentLanguage) : html);
 };
 
@@ -1867,11 +2157,13 @@ interface Resource {
     path: string;
 }
 const siteResources = (site: Site): Resource[] => [
-    ...site.entries.map((entry) => ({
-        kind: "markdown" as const,
-        file: entry.file,
-        path: entry.sourceFile ?? CONTENT_PREFIX + entry.file,
-    })),
+    ...site.entries
+        .filter((entry) => !entry.subformat)
+        .map((entry) => ({
+            kind: "markdown" as const,
+            file: entry.file,
+            path: entry.sourceFile ?? CONTENT_PREFIX + entry.file,
+        })),
     ...site.ctx.terms.map((term) => ({
         kind: "terms" as const,
         file: term.id,
@@ -1902,19 +2194,19 @@ const navFilesHtml = (site: Site, currentRes?: string): string => {
     const source = site.workspace;
     const statics =
         currentRes?.startsWith("_statics") ||
-        ["dictionary", "code", "urls"].includes(currentRes ?? "");
-    const folderIcon = icon('<path d="M2 5h6l2 2h8v10H2Z"/>');
+        ["codeblocks", "urls", "url-previews", "dictionary", "code"].includes(currentRes ?? "");
     const hint = `<div class="files-drop-hint" aria-hidden="true">${UPLOAD_ICON}<span data-i18n="Upload files">Upload files</span></div>`;
     const location =
         source?.protocol === "git"
-            ? `<div class="workspace-location" data-workspace-protocol="git" title="${escapeHtml(`${source.repo ?? "repo"}[${source.branch}]`)}">${GIT_ICON}<span class="workspace-address"><span class="git-repo-name">${escapeHtml(source.repo ?? "repo")}</span><span class="git-branch-caption">[${escapeHtml(source.branch)}]</span></span></div>`
-            : `<div class="workspace-location" id="nav-storage" data-workspace-protocol="storage" title="${escapeHtml(workspaceName(site))}">${workspaceIcon(site)}<span class="workspace-address">${escapeHtml(source?.folder ?? "Files")} / ${escapeHtml(source?.service ?? "Local")}</span></div>`;
+            ? `<summary class="workspace-location" aria-label="Workspace tools" data-i18n-aria-label="Workspace tools" data-workspace-protocol="git" title="${escapeHtml(`${source.repo ?? "repo"}[${source.branch}]`)}">${GIT_ICON}<span class="workspace-address"><span class="git-repo-name">${escapeHtml(source.repo ?? "repo")}</span><span class="git-branch-caption">[${escapeHtml(source.branch)}]</span></span>${CHEVRON_ICON}</summary>`
+            : `<summary class="workspace-location" aria-label="Workspace tools" data-i18n-aria-label="Workspace tools" id="nav-storage" data-workspace-protocol="storage" title="${escapeHtml(workspaceName(site))}">${workspaceIcon(site)}<span class="workspace-address">${escapeHtml(source?.folder ?? "Files")} / ${escapeHtml(source?.service ?? "Local")}</span>${CHEVRON_ICON}</summary>`;
     const git =
         source?.protocol === "git"
             ? `<div class="nav-resources" id="nav-git"><div class="nav-item" data-node-id="_git"><div class="nav-row"><a class="nav-link${currentRes === "_git" ? " cur" : ""}" href="/_git" title="Git controls" data-i18n-title="Git controls">${GIT_ICON}<span class="nav-label">Git</span></a></div></div></div>`
             : "";
     const extensions = `<div class="nav-resources" id="nav-extensions" data-scope="${createHash("sha256").update(root).digest("hex")}"><div class="nav-item" data-node-id="_extensions"><div class="nav-row"><a class="nav-link${currentRes === "_extensions" ? " cur" : ""}" href="/_extensions" title="Plugins" data-i18n-title="Plugins">${PLUGINS_ICON}<span class="nav-label" data-i18n="Plugins">Plugins</span></a></div></div><div class="extensions-drop-hint" aria-hidden="true">${PLUGINS_ICON}<span data-i18n="Add plugins">Add plugins</span></div></div>`;
-    return `<section id="nav-tools" aria-label="Workspace tools" data-i18n-aria-label="Workspace tools"><div id="tools-resize" role="separator" tabindex="0" aria-orientation="horizontal" aria-controls="nav-tools" aria-label="Resize workspace tools" data-i18n-aria-label="Resize workspace tools"></div>${location}<div class="nav-tool-cards"><div class="nav-resources" id="nav-files"><div class="nav-item" data-node-id="_files"><div class="nav-row"><a class="nav-link${currentRes !== undefined && currentRes !== "_git" && currentRes !== "_extensions" && !statics ? " cur" : ""}" href="/_files" title="Files" data-i18n-title="Files">${folderIcon}<span class="nav-label" data-i18n="Files">Files</span></a><span class="files-upload-status" role="status"></span></div></div>${hint}</div><div class="nav-resources" id="nav-statics"><div class="nav-item" data-node-id="_statics"><div class="nav-row"><a class="nav-link${statics ? " cur" : ""}" href="/_statics" title="Statics" data-i18n-title="Statics">${STATICS_ICON}<span class="nav-label" data-i18n="Statics">Statics</span></a></div></div></div>${git}${extensions}</div></section>`;
+    const subformats = `<div class="nav-resources" id="nav-subformats"><div class="nav-item" data-node-id="_subformats"><div class="nav-row"><a class="nav-link${currentRes === "_subformats" ? " cur" : ""}" href="/_subformats" title="Subformats" data-i18n-title="Subformats">${SUBFORMATS_ICON}<span class="nav-label" data-i18n="Subformats">Subformats</span></a></div></div></div>`;
+    return `<details id="nav-tools" open>${location}<div class="nav-tool-cards"><div class="nav-resources" id="nav-files"><div class="nav-item" data-node-id="_files"><div class="nav-row"><a class="nav-link${currentRes !== undefined && currentRes !== "_git" && currentRes !== "_extensions" && currentRes !== "_subformats" && !statics ? " cur" : ""}" href="/_files" title="Files" data-i18n-title="Files">${FOLDER_ICON}<span class="nav-label" data-i18n="Files">Files</span></a><span class="files-upload-status" role="status"></span></div></div>${hint}</div><div class="nav-resources" id="nav-statics"><div class="nav-item" data-node-id="_statics"><div class="nav-row"><a class="nav-link${statics ? " cur" : ""}" href="/_statics" title="Statics" data-i18n-title="Statics">${STATICS_ICON}<span class="nav-label" data-i18n="Statics">Statics</span></a></div></div></div>${subformats}${git}${extensions}</div></details>`;
 };
 
 const formatSize = (bytes: number): string =>
@@ -2006,6 +2298,11 @@ export const textfilePreviewHtml = (site: Site, file: string, source: string): s
 };
 export const textfilePreviewErrors = (site: Site, file: string, source: string): string[] => {
     const errors = textfilePreview(site, file, source).errors;
+    try {
+        validateSubformatFile(root, file, source);
+    } catch (error) {
+        errors.push(error instanceof Error ? error.message : String(error));
+    }
     if (/\.(md|markdown)$/i.test(file)) {
         const { doc, source: parsed } = compileDraft(draftContext(site), file, source);
         errors.push(...parsed.errors);
@@ -2035,8 +2332,8 @@ export const resourcesMain = (
               }
             : undefined;
     if (rest === "_statics" || rest.startsWith("_statics/")) {
-        const view = rest.slice("_statics".length).replace(/^\//, "") || "dictionary";
-        return ["dictionary", "code", "urls"].includes(view)
+        const view = rest.slice("_statics".length).replace(/^\//, "") || "codeblocks";
+        return ["codeblocks", "urls", "url-previews", "dictionary", "code"].includes(view)
             ? resourcesMain(site, view)
             : undefined;
     }
@@ -2049,14 +2346,24 @@ export const resourcesMain = (
             main: `<article class="res-page files-page resource-library"><div id="files-manager"></div></article>`,
         };
     }
-    if (!file && (kind === "dictionary" || kind === "code" || kind === "urls")) {
+    if (!file && (kind === "dictionary" || kind === "code"))
+        return resourcesMain(site, "codeblocks");
+    if (
+        !file &&
+        (kind === "codeblocks" ||
+            kind === "urls" ||
+            kind === "url-previews" ||
+            kind === "_subformats")
+    ) {
         const index = resourceIndex(
             root,
             site.filePaths ?? filesSnapshot(root).files.map((item) => item.path),
         );
+        if (site.workspace?.protocol === "git" && index.subformats.length)
+            setSubformatChanges(root, index.subformats);
         return {
-            title: "Statics",
-            main: `<article class="res-page files-page resource-library">${resourceTabs(kind)}${resourceLibraryHtml(index, kind)}</article>`,
+            title: kind === "_subformats" ? "Subformats" : "Statics",
+            main: `<article class="res-page files-page resource-library">${kind === "_subformats" ? "" : resourceTabs(kind)}${resourceLibraryHtml(index, kind === "_subformats" ? "subformats" : kind)}</article>`,
         };
     }
     if (kind === "file" && file) {
@@ -2174,14 +2481,22 @@ const pageTitle = (mode: ServeMode, title: string, siteTitle?: string): string =
 const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
     const nav = navGroupsHtml(mode, site, opts.currentId, opts.currentRes);
     const siteTitle = escapeHtml(site.title ?? "dooc");
-    const siteIcon = `<span id="site-icon-slot"${mode === "edit" ? ' title="Change site icon" data-i18n-title="Change site icon"' : ""}><img id="site-icon" alt=""${site.icon ? ` src="${svgDataUri(site.icon)}"` : " hidden"}>${DOCS_ICON}${mode === "edit" ? '<input type="file" accept=".svg,image/svg+xml" aria-label="Change site icon" data-i18n-aria-label="Change site icon">' : ""}</span>`;
+    const iconImg = `<img id="site-icon" alt=""${site.icon ? ` src="${svgDataUri(site.icon)}"` : " hidden"}>`;
+    const iconVariants = Object.entries(site.iconVariants ?? {});
+    // The base image sits in a wrapper so theme switching and edit-client's #site-icon.hidden never fight.
+    const iconHtml = iconVariants.length
+        ? `<span class="site-icon-variants" data-theme-variants><span data-theme-variant="">${iconImg}</span>${iconVariants.map(([theme, svg]) => `<img data-theme-variant="${escapeHtml(theme)}" alt="" src="${svgDataUri(svg)}" hidden>`).join("")}</span>`
+        : iconImg;
+    const siteIcon = `<span id="site-icon-slot"${mode === "edit" ? ' title="Change site icon" data-i18n-title="Change site icon"' : ""}>${iconHtml}${DOCS_ICON}${mode === "edit" ? '<input type="file" accept=".svg,image/svg+xml" aria-label="Change site icon" data-i18n-aria-label="Change site icon">' : ""}</span>`;
     const bootScripts =
         opts.boot != null
             ? `<script id="boot" type="application/json">${JSON.stringify(opts.boot).replace(/</g, "\\u003c")}</script>
 <script src="/assets/edit.js"></script>`
             : !opts.publish
               ? '<script src="/assets/ui.js"></script>'
-              : "";
+              : opts.publish.subformatJs
+                ? `<script>${inlineScript(opts.publish.subformatJs)}</script>`
+                : "";
     // Interaction layer of the schema graph (zoom / pan / box drag / enlarged view). Shared by
     // preview / edit. Figures are readable without JS, so defer is enough (= progressive
     // enhancement).
@@ -2191,20 +2506,26 @@ const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
 
 
 <div id="preview-language-menu" role="menu" aria-label="Change language" data-i18n-aria-label="Change language" hidden></div>
-<div id="preview-panes"><section class="preview-pane active" tabindex="0" aria-label="Active pane" data-i18n-aria-label="Active pane"><div class="pane-actions"><button class="pbtn" type="button" data-theme-picker="document" aria-label="Preview theme"></button>${fontButton("viewer")}<button class="pbtn pane-language" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="preview-language-menu" aria-label="Change language" data-i18n-aria-label="Change language" title="Change language" data-i18n-title="Change language">${GLOBE_ICON}</button></div><div class="preview-content">${opts.main}</div></section></div></main>`
+<div id="preview-panes"${opts.currentRes !== undefined ? " hidden" : ""}><section class="preview-pane active" tabindex="0" aria-label="Active pane" data-i18n-aria-label="Active pane"><div class="pane-actions"><button class="pbtn" type="button" data-theme-picker="document" aria-label="Preview theme"></button>${fontButton("viewer")}<button class="pbtn pane-language" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="preview-language-menu" aria-label="Change language" data-i18n-aria-label="Change language" title="Change language" data-i18n-title="Change language">${GLOBE_ICON}</button></div><div class="preview-content">${opts.main}</div></section></div></main>`
             : mode === "edit" && opts.currentRes !== undefined
               ? `<main class="resources-pane">${opts.main}</main>`
               : `<main><div class="page-actions"><button class="pbtn" type="button" data-theme-picker="document" aria-label="Preview theme"></button>${fontButton("viewer")}</div>${opts.main}</main>`;
     const graphScript = opts.publish
         ? `<script>${inlineScript(opts.publish.graphJs)}</script>`
-        : '<script src="/assets/graph.js" defer></script>';
+        : `<script>(${loadGraphScript.toString()})();</script>`;
     return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 ${opts.publish ? `<meta name="referrer" content="no-referrer"><meta http-equiv="x-dns-prefetch-control" content="off">${opts.publish.network ? "" : `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' data:; img-src data: blob:; media-src data: blob:; font-src data: blob:; frame-src data: blob:; connect-src 'none'; base-uri 'none'; form-action 'none'">`}` : ""}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(pageTitle(mode, opts.title, site.title))}</title>
-<script>try{const t=localStorage.getItem("docs-preview:theme");if(t)document.documentElement.dataset.theme=t;const e=localStorage.getItem("docs-editor:theme");if(e)document.documentElement.dataset.editorTheme=e}catch{}</script>
+<script>var __name = (f) => f;
+(${initializeThemes.toString()})(${JSON.stringify(site.themes)});
+(${mountFigureFrames.toString()})(document);</script>
 <style>${fontCss(Boolean(opts.publish))}${CSS}${mode === "edit" ? EDIT_CSS : ""}</style></head>
-<body${mode === "edit" ? ' class="edit"' : ""}><nav id="sidebar"><div id="sidebar-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" data-i18n-aria-label="Resize sidebar" title="Resize sidebar" data-i18n-title="Resize sidebar"></div><div id="sidebar-head">${siteIcon}<div id="site-title" class="site-title" title="${siteTitle}"${mode === "edit" ? ` data-title="${escapeHtml(site.title ?? "")}" tabindex="0" role="button" aria-label="Edit site title" data-i18n-aria-label="Edit site title"` : ""}>${siteTitle}</div><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button></div><div id="sidebar-content"><div id="nav-groups">${nav}</div><div id="nav-status" role="status" aria-live="polite"></div></div></nav>${main}${opts.aside ?? ""}
+<body${mode === "edit" ? ' class="edit"' : ""}${site.sourceBase ? ` data-source-base="${escapeHtml(site.sourceBase)}"` : ""}><nav id="sidebar"><div id="sidebar-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" data-i18n-aria-label="Resize sidebar" title="Resize sidebar" data-i18n-title="Resize sidebar"></div><div id="sidebar-head">${siteIcon}<div id="site-title" class="site-title" title="${siteTitle}"${mode === "edit" ? ` data-title="${escapeHtml(site.title ?? "")}" tabindex="0" role="button" aria-label="Edit site title" data-i18n-aria-label="Edit site title"` : ""}>${siteTitle}</div><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button></div><div id="sidebar-content"><div id="nav-groups">${nav}</div><div id="nav-status" role="status" aria-live="polite"></div></div></nav>${main}${opts.aside ?? ""}
+<script>
+(${mountThemePickers.toString()})(${JSON.stringify(THEME_ICONS)}, ${JSON.stringify(site.themes)});
+(${mountThemeVariants.toString()})(document);
+</script>
 ${bootScripts}${graphScript}
 <script id="code-grammars" type="application/json">${JSON.stringify(site.codeGrammars ?? []).replace(/</g, "\\u003c")}</script>
 ${opts.publish ? `<script>${inlineScript(opts.publish.codeJs)}</script>` : '<script src="/assets/code.js" defer></script>'}
@@ -2217,9 +2538,6 @@ const localeFetch = (url, init = {}) => fetch(url, { ...init, headers: { ...init
 (${mountTables.toString()})(document);
 (${mountToc.toString()})(document);
 (${mountVideos.toString()})(document);
-(${mountFigureFrames.toString()})(document);
-(${mountThemeVariants.toString()})(document);
-(${mountThemePickers.toString()})(${JSON.stringify(THEME_ICONS)}, ${JSON.stringify(site.themes)});
 void (${mountFontPickers.toString()})(${createFontSettings.toString()}, ${JSON.stringify(site.fonts ?? []).replace(/</g, "\\u003c")});
 (() => {
   const KEY = "docs:sidebar-open";
@@ -2251,7 +2569,6 @@ void (${mountFontPickers.toString()})(${createFontSettings.toString()}, ${JSON.s
   }, true);
 })();
 (${mountPanelResize.toString()})();
-(${mountToolsResize.toString()})();
 (() => {
   // Open/close: by default "the branch containing the current doc is open" (the server adds
   // .open), overridden by explicit user actions (sessionStorage = per tab only).
@@ -2259,6 +2576,8 @@ void (${mountFontPickers.toString()})(${createFontSettings.toString()}, ${JSON.s
   const readOpen = () => { try { return JSON.parse(sessionStorage.getItem(OPEN_KEY) || "{}"); } catch { return {}; } };
   const applyOpen = () => {
     const o = readOpen();
+    const tools = document.getElementById("nav-tools");
+    if (tools) tools.open = o._tools !== false;
     for (const it of document.querySelectorAll("#nav-groups .nav-item")) {
       const key = it.dataset.docId || it.dataset.nodeId;
       if (key in o) it.classList.toggle("open", o[key]);
@@ -2279,6 +2598,11 @@ void (${mountFontPickers.toString()})(${createFontSettings.toString()}, ${JSON.s
     const it = t.closest(".nav-item");
     window.__docsNavOpen(it.dataset.docId || it.dataset.nodeId, !it.classList.contains("open"));
   });
+  document.addEventListener("toggle", (event) => {
+    const tools = event.target;
+    if (tools instanceof HTMLDetailsElement && tools.id === "nav-tools" && tools.isConnected)
+      window.__docsNavOpen("_tools", tools.open);
+  }, true);
   applyOpen();
   window.__docsNavRestore = applyOpen;
   const nav = document.getElementById("nav-groups");
@@ -2287,12 +2611,12 @@ void (${mountFontPickers.toString()})(${createFontSettings.toString()}, ${JSON.s
 ${
     mode === "edit"
         ? `(() => {
-  // Sidebar tree editing (delegated to document — keeps working when HMR swaps #nav-groups).
+  // Sidebar tree editing stays delegated while navigation nodes are reconciled.
   //   drag: top 1/4 of a row = before, bottom 1/4 = after, middle = move into that doc's children
   //         (at the end). The DOM isn't moved, only a marker is shown; on drop, POST /api/move →
   //         re-fetch the nav regardless of the outcome (= the display is always a copy of
   //         dooc.yaml; no rollback logic).
-  // The root placeholder and row buttons open the create form.
+  // The root placeholder and row buttons open the page type menu.
   const t = (key) => window.__docsTranslate?.(key) ?? key;
   const status = document.getElementById("nav-status");
   const setStatus = (message, error) => {
@@ -2304,11 +2628,13 @@ ${
     if (window.__docsRefreshNav) return window.__docsRefreshNav();
     const cur = document.querySelector("#nav-groups .nav-row a.cur");
     const id = (cur && cur.closest(".nav-item").dataset.docId) || "";
-    const rp = location.pathname.startsWith("/_statics") ? location.pathname.slice(1) : ["/_git", "/_extensions"].includes(location.pathname) ? location.pathname.slice(1) : location.pathname.startsWith("/_files") ? location.pathname.slice(8).replace(/^\\/|\\/$/g, "") : null;
+    const rp = location.pathname.startsWith("/_statics") ? location.pathname.slice(1) : ["/_git", "/_extensions", "/_subformats"].includes(location.pathname) ? location.pathname.slice(1) : location.pathname.startsWith("/_files") ? location.pathname.slice(8).replace(/^\\/|\\/$/g, "") : null;
     const res = await localeFetch("/api/nav?current=" + encodeURIComponent(id) + (rp == null ? "" : "&res=" + encodeURIComponent(rp)));
     if (res.ok) {
       const data = await res.json();
-      document.getElementById("nav-groups").innerHTML = data.html;
+      (${updateNav.toString()})(document.getElementById("nav-groups"), data.html);
+      const currentPage = document.querySelector('[data-subformat-nav][data-doc-id="' + CSS.escape(id) + '"] > .nav-row > a');
+      if (currentPage && currentPage.pathname !== location.pathname) history.replaceState(null, "", currentPage.href);
       const label = document.getElementById("site-title");
       if (!label.querySelector("form")) label.textContent = label.title = data.siteTitle || "dooc";
       label.dataset.title = data.siteTitle || "";
@@ -2325,6 +2651,10 @@ ${
   };
 
   const docAction = (item, action) => {
+    if (item.hasAttribute("data-subformat-nav")) {
+      document.dispatchEvent(new CustomEvent("docs:subformat-page-action", { detail: { id: item.dataset.docId, action } }));
+      return;
+    }
     if (window.__docsDocAction) {
       void window.__docsDocAction(item.dataset.docId, action);
     } else {
@@ -2384,7 +2714,7 @@ ${
       busy = true;
       input.readOnly = true;
       try {
-        const result = await post("/api/site-title", { title: input.value, baseTitle });
+        const result = await post("/api/site-title", { title: input.value, baseTitle, language: new URL(location.href).searchParams.get("lang") });
         closed = true;
         form.remove();
         label.textContent = label.title = result.title;
@@ -2426,7 +2756,7 @@ ${
     const id = slot.closest(".nav-item")?.dataset.docId;
     try {
       const data = file ? btoa(Array.from(new Uint8Array(await file.arrayBuffer()), (byte) => String.fromCharCode(byte)).join("")) : null;
-      const result = await post(id ? "/api/icon" : "/api/site-icon", { file: id ? id + ".md" : undefined, data });
+      const result = await post(id ? "/api/icon" : "/api/site-icon", { file: id ? id + ".md" : undefined, data, theme: getComputedStyle(document.documentElement).colorScheme === "dark" ? "dark" : "light" });
       if (!id) {
         const logo = document.getElementById("site-icon");
         logo.src = result.icon;
@@ -2540,18 +2870,18 @@ ${
 
   document.addEventListener("docs:files-changed", () => { void refresh(); });
 
-  // ── In-sidebar create form ──
+  // ── Page type menu and in-sidebar create form ──
   const suggestFileName = ${suggestDocFileName.toString()};
+  const availableSubformats = () => JSON.parse(document.querySelector("[data-page-subformats]")?.content.textContent || "[]");
   const closeForm = () => { for (const f of document.querySelectorAll(".nav-new-item")) f.remove(); };
-  const openForm = (parent) => {
+  const openForm = (trigger) => {
     closeForm();
+    const parent = trigger.dataset.parent || "";
     const host = parent
       ? document.querySelector('#nav-groups .nav-item[data-doc-id="' + CSS.escape(parent) + '"] > .nav-list')
       : document.querySelector("#nav-groups > .nav-list");
     if (!host) return;
-    if (parent) {
-      window.__docsNavOpen(parent, true);
-    }
+    if (parent) window.__docsNavOpen(parent, true);
     const item = document.createElement("div");
     item.className = "nav-item nav-new-item";
     const row = document.createElement("div");
@@ -2559,11 +2889,11 @@ ${
     const form = document.createElement("form");
     form.className = "nav-new";
     form.innerHTML =
-      ${JSON.stringify(DOCS_ICON)} +
-      '<input name="title" placeholder="title" data-i18n-placeholder="title" required autocomplete="off">' +
-      '<div class="nav-new-file"><input name="name" placeholder="File name" data-i18n-placeholder="File name" aria-label="File name" data-i18n-aria-label="File name" required autocomplete="off" spellcheck="false">' +
-      '<button class="nav-new-go" type="submit" title="Create" data-i18n-title="Create" aria-label="Create" data-i18n-aria-label="Create">↵</button></div>' +
-      '<div class="err"></div>';
+      '<p class="nav-new-heading" data-i18n="Markdown page">Markdown page</p>' +
+      '<input name="title" placeholder="title" data-i18n-placeholder="title" aria-label="title" data-i18n-aria-label="title" required autocomplete="off">' +
+      '<div class="nav-new-file"><input name="name" placeholder="File name" data-i18n-placeholder="File name" aria-label="File name" data-i18n-aria-label="File name" required autocomplete="off" spellcheck="false"></div>' +
+      '<div class="nav-new-actions"><button type="button" class="nav-new-cancel" data-i18n="Cancel">Cancel</button><button class="nav-new-go" type="submit" data-i18n="Create">Create</button></div>' +
+      '<div class="err" role="alert"></div>';
     row.append(form);
     item.append(row);
     host.append(item);
@@ -2574,11 +2904,18 @@ ${
     const err = form.querySelector(".err");
     let nameTouched = false;
     let busy = false;
+    const cancel = () => {
+      if (busy) return;
+      closeForm();
+      trigger.focus();
+    };
+    form.querySelector(".nav-new-cancel").addEventListener("click", cancel);
     title.addEventListener("input", () => { if (!nameTouched) nameInput.value = suggestFileName(title.value); });
     nameInput.addEventListener("input", () => { nameTouched = true; });
-    form.addEventListener("keydown", (e) => { if (e.key === "Escape" && !busy) closeForm(); });
-    // Close when focus moves out with nothing typed (keep partially filled forms).
-    // (remove itself fires focusout, so defer one tick and close only if still there)
+    form.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { e.preventDefault(); cancel(); }
+    });
+    // Keep partially filled forms when focus moves elsewhere.
     form.addEventListener("focusout", (e) => {
       if (busy || form.contains(e.relatedTarget) || title.value.trim() || nameInput.value.trim()) return;
       setTimeout(() => { if (item.isConnected && !item.contains(document.activeElement)) item.remove(); }, 0);
@@ -2590,7 +2927,7 @@ ${
       submit.setAttribute("aria-busy", "true");
       err.textContent = "";
       try {
-        await post("/api/create", { parent: parent || undefined, name: nameInput.value.trim(), title: title.value.trim() });
+        await post("/api/create", { parent: parent || undefined, title: title.value.trim(), name: nameInput.value.trim() });
         closeForm();
         await refresh();
       } catch (error) {
@@ -2603,11 +2940,121 @@ ${
     item.scrollIntoView({ block: "nearest" });
     title.focus();
   };
+  const menu = document.createElement("div");
+  menu.id = "nav-page-menu";
+  menu.className = "nav-page-menu";
+  menu.popover = "auto";
+  menu.setAttribute("role", "menu");
+  menu.setAttribute("aria-label", t("Page type"));
+  menu.dataset.i18nAriaLabel = "Page type";
+  menu.innerHTML = '<button type="button" role="menuitem" tabindex="-1" data-page-type="markdown">${DOCS_ICON}Markdown</button><button type="button" role="menuitem" tabindex="-1" data-page-type="subformat" aria-haspopup="menu" popovertarget="nav-subformat-menu">${SUBFORMATS_ICON}Subformat<span class="nav-page-chevron">${CHEVRON_ICON}</span></button><div id="nav-subformat-menu" class="subformat-picker-menu subformat-setting-menu" role="menu" aria-label="Subformat" popover="auto"></div><p class="err" role="alert"></p>';
+  document.body.append(menu);
+  const formatsMenu = menu.querySelector("#nav-subformat-menu");
+  const formatTrigger = menu.querySelector('[data-page-type="subformat"]');
+  const markdownTrigger = menu.querySelector('[data-page-type="markdown"]');
+  const menuError = menu.querySelector(".err");
+  let menuTrigger;
+  let addingPage = false;
+  const showMenu = (popup, trigger) => {
+    popup.style.maxHeight = "";
+    popup.showPopover();
+    const rect = trigger.getBoundingClientRect();
+    const top = popup === menu ? rect.top : rect.bottom + 4;
+    const bottom = popup === menu ? rect.bottom : rect.top - 4;
+    const above = innerHeight - top < popup.offsetHeight + 8 && bottom > innerHeight - top;
+    Object.assign(popup.style, {
+      left: Math.max(8, Math.min(rect.left, innerWidth - popup.offsetWidth - 8)) + "px",
+      top: above ? "auto" : top + "px",
+      bottom: above ? innerHeight - bottom + "px" : "auto",
+      maxHeight: Math.max(80, (above ? bottom : innerHeight - top) - 8) + "px",
+    });
+    popup.querySelector("button:not(:disabled)")?.focus();
+  };
+  markdownTrigger.addEventListener("click", () => {
+    if (addingPage) return;
+    menu.hidePopover();
+    openForm(menuTrigger);
+  });
+  formatTrigger.addEventListener("click", (event) => {
+    event.preventDefault();
+    if (addingPage) return;
+    if (formatsMenu.matches(":popover-open")) { formatsMenu.hidePopover(); return; }
+    formatsMenu.replaceChildren();
+    for (const format of availableSubformats()) {
+      const row = document.createElement("div");
+      row.className = "subformat-setting-option";
+      row.setAttribute("role", "none");
+      const option = document.createElement("button");
+      option.type = "button";
+      option.tabIndex = -1;
+      option.setAttribute("role", "menuitem");
+      option.dataset.subformat = format.ext;
+      option.textContent = format.ext;
+      row.append(option);
+      formatsMenu.append(row);
+    }
+    showMenu(formatsMenu, formatTrigger);
+  });
+  formatsMenu.addEventListener("click", async (event) => {
+    const option = event.target.closest("button[data-subformat]");
+    if (!option || addingPage) return;
+    const parent = menuTrigger.dataset.parent || undefined;
+    const subformat = option.dataset.subformat;
+    addingPage = markdownTrigger.disabled = formatTrigger.disabled = true;
+    menu.setAttribute("aria-busy", "true");
+    menuError.textContent = "";
+    setStatus("", false);
+    formatsMenu.hidePopover();
+    try {
+      const result = await post("/api/create", { parent, subformat, title: subformat });
+      menu.hidePopover();
+      await refresh();
+      if (result.path) {
+        if (window.__docsNavigate) await window.__docsNavigate(result.path);
+        else location.href = result.path;
+      }
+    } catch (error) {
+      menuError.textContent = error.message;
+      if (!menu.matches(":popover-open")) setStatus(error.message, true);
+    } finally {
+      addingPage = markdownTrigger.disabled = false;
+      formatTrigger.disabled = !availableSubformats().length;
+      menu.removeAttribute("aria-busy");
+      if (menu.matches(":popover-open")) formatTrigger.focus();
+    }
+  });
+  menu.addEventListener("keydown", (event) => {
+    const popup = event.target.closest('[role="menu"]');
+    const options = [...popup.querySelectorAll("button:not(:disabled)")].filter((button) => button.closest('[role="menu"]') === popup);
+    const index = options.indexOf(document.activeElement);
+    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+      event.preventDefault();
+      const next = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1 : (index + (event.key === "ArrowDown" ? 1 : options.length - 1)) % options.length;
+      options[next]?.focus();
+    }
+    if (event.key === "Escape" || event.key === "Tab") {
+      const dismiss = event.key === "Tab" ? menu : popup;
+      dismiss.hidePopover();
+      (dismiss === menu ? menuTrigger : formatTrigger)?.focus();
+      if (event.key === "Escape") event.preventDefault();
+    }
+  });
   document.addEventListener("click", (event) => {
     const btn = event.target instanceof Element ? event.target.closest("#sidebar .new, #sidebar .nav-create") : null;
     if (!btn) return;
     event.preventDefault();
-    openForm(btn.dataset.parent || "");
+    if (addingPage) return;
+    if (menu.matches(":popover-open")) {
+      menu.hidePopover();
+      if (menuTrigger === btn) return;
+    }
+    menuTrigger = btn;
+    const unavailable = !availableSubformats().length;
+    formatTrigger.disabled = unavailable;
+    formatTrigger.title = unavailable ? t("No subformats available to add.") : "";
+    menuError.textContent = "";
+    menu.setAttribute("aria-label", t("Page type"));
+    showMenu(menu, btn);
   });
 })();`
         : ""
@@ -2663,7 +3110,7 @@ document.addEventListener("click", (ev) => {
 });
 </script>
 <script>${inlineScript(`(${mountSearch.toString()})(${JSON.stringify(opts.publish ? searchIndex(site) : []).replace(/</g, "\\u003c")}, ${searchSections.toString()}, ${JSON.stringify(Object.fromEntries(SEARCH_LABELS.map((key) => [key, translate(site.defaultLang, key)]))).replace(/</g, "\\u003c")}, ${Boolean(opts.publish)});`)}</script>
-${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publish.first)}${opts.publish.network ? `\n(${mountBundleNetwork.toString()})();` : ""}</script>` : `<script>${hmrClientScript(mode)}</script>`}</body></html>`;
+${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publish.first)}${opts.publish.network && !opts.publish.pluginJs ? `\n(${mountBundleNetwork.toString()})();` : ""}</script>${opts.publish.pluginJs ? `<script>${inlineScript(opts.publish.pluginJs)}</script>` : ""}` : `<script>${hmrClientScript(mode)}</script>`}</body></html>`;
 };
 
 // A `</script` inside an inline <script> would close the script early, so escape it.
@@ -2685,6 +3132,7 @@ const publishRouterScript = (first: string): string => `
     const page = pages.get(route);
     const actions = main.querySelector(":scope > .page-actions");
     main.innerHTML = page.innerHTML;
+    document.dispatchEvent(new Event("docs:page-shown"));
     if (actions) main.prepend(actions);
     document.title = page.dataset.title;
     for (const a of document.querySelectorAll("#nav-groups a")) {
@@ -2721,7 +3169,9 @@ export const publishHtml = (
     graphJs: string,
     title = site.title ?? "dooc",
     codeJs = "",
-    mode: "static" | "network" = "static",
+    mode: "static" | "network" | "live" = "static",
+    pluginJs = "",
+    subformatJs = "",
 ): string => {
     const pages = site.entries.map((e) => ({
         route: docPath(site.entries, e.id).slice(1),
@@ -2753,7 +3203,15 @@ export const publishHtml = (
             {
                 title,
                 main: "",
-                publish: { graphJs, codeJs, pages: templates, first, network: mode === "network" },
+                publish: {
+                    graphJs,
+                    codeJs,
+                    pages: templates,
+                    first,
+                    network: mode !== "static",
+                    pluginJs: mode === "live" ? pluginJs : undefined,
+                    subformatJs,
+                },
             },
         ),
         first,
@@ -2765,7 +3223,7 @@ export const publishHtml = (
 const entryMain = (site: Site, e: Entry): string => {
     const html = renderEntryHtml(site, e).html;
     const kids = childrenOf(site.entries, e.id);
-    if (e.blocks.length > 0 || kids.length === 0) {
+    if (e.subformat || e.blocks.length > 0 || kids.length === 0) {
         return html;
     }
     const items = kids
@@ -2839,10 +3297,12 @@ export const languageFieldHtml = (
 export const editorBoot = (entry: Entry, site: Site): EditorBoot => {
     // Completion candidates are files in the figures/ catalog.
     const figures = [...site.ctx.figures.values()].map((f) => f.file);
-    const docs = site.entries.map((e) => ({
-        ref: e.sourceFile ?? CONTENT_PREFIX + e.file,
-        title: docDisplayName(e.frontmatter, e.id),
-    }));
+    const docs = site.entries
+        .filter((e) => !e.subformat)
+        .map((e) => ({
+            ref: e.sourceFile ?? CONTENT_PREFIX + e.file,
+            title: docDisplayName(e.frontmatter, e.id),
+        }));
     return {
         gitBase: entryGitBase(entry, site),
         ...(site.title === undefined ? {} : { siteTitle: site.title }),
@@ -2879,15 +3339,15 @@ export const editorBoot = (entry: Entry, site: Site): EditorBoot => {
 const editorAside = (entry: Entry, site: Site): { aside: string; boot: EditorBoot } => {
     const aside = `<aside id="panel"><div id="resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="panel" aria-label="Resize editor" data-i18n-aria-label="Resize editor" title="Resize editor" data-i18n-title="Resize editor"></div>
 <div id="phead">
-<button class="pbtn" type="button" data-theme-picker="editor" aria-label="Editor theme"></button>
-${fontButton("editor")}
 ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLanguages, site.contentLanguages)}
 <span id="status"></span>
 <button id="validate" class="pbtn" type="button" title="Validate and apply" data-i18n-title="Validate and apply" aria-label="Validate and apply" data-i18n-aria-label="Validate and apply">${icon('<path d="M5 5l-4 5 4 5M15 5l4 5-4 5M7 10l2 2 4-5"/>')}</button>
 <button id="save" class="pbtn" data-state="saved" type="button" title="Save (Ctrl+S)" data-i18n-title="Save (Ctrl+S)" aria-label="Save" data-i18n-aria-label="Save">${icon('<path d="M3 3h11l3 3v11H3z"/><path d="M6 3v5h7V3M6 17v-6h8v6"/>')}</button>
 <button id="split-preview" class="pbtn" type="button" aria-pressed="false" aria-label="Split view" data-i18n-aria-label="Split view" title="Split view" data-i18n-title="Split view">${icon('<rect x="3" y="3" width="14" height="14" rx="2"/><path d="M10 3v14"/>')}</button>
 <div id="gear"><button class="pbtn" type="button" aria-haspopup="true" aria-label="View settings" data-i18n-aria-label="View settings" title="View settings" data-i18n-title="View settings">${GEAR_ICON}</button><div id="gearmenu">
-<div id="language-setting"><select id="ui-language" aria-label="Editor language" data-i18n-aria-label="Language"><option value="eng">English</option><option value="jpn">日本語</option><option value="zho">中文</option></select></div>
+<div class="editor-setting"><span class="editor-setting-icon" data-setting-theme-icon aria-hidden="true"></span><div class="subformat-control"><span class="subformat-control-label" data-i18n="Editor theme">Editor theme</span><button class="setting-picker" type="button" data-theme-picker="editor" aria-label="Editor theme"><span data-picker-value></span>${SELECT_ICON}</button></div></div>
+<div class="editor-setting"><span class="editor-setting-icon" aria-hidden="true">${FONT_ICON}</span><div class="subformat-control"><span class="subformat-control-label" data-i18n="Editor font">Editor font</span>${fontButton("editor")}</div></div>
+<div id="language-setting" class="editor-setting">${GLOBE_ICON}<div class="subformat-control"><span class="subformat-control-label" data-i18n="Language">Editor language</span><select id="ui-language" aria-label="Editor language" data-i18n-aria-label="Language"><option value="eng">English</option><option value="jpn">日本語</option><option value="zho">中文</option></select></div></div>
 <label><input type="checkbox" id="opt-autovalidate"><span data-i18n="Auto validate">Auto validate</span></label>
 <label><input type="checkbox" id="opt-autosave"><span data-i18n="Auto save">Auto save</span></label>
 <label><input type="checkbox" id="opt-corr"><span data-i18n="Source mapping">Source mapping</span></label>
@@ -2914,6 +3374,7 @@ export const pageDataResponse = (site: Site, path: unknown): { status: number; b
     }
     if (
         path === "/_extensions" ||
+        path === "/_subformats" ||
         path === "/_git" ||
         path === "/_statics" ||
         path.startsWith("/_statics/") ||
@@ -2925,7 +3386,7 @@ export const pageDataResponse = (site: Site, path: unknown): { status: number; b
                 site,
                 path.startsWith("/_statics")
                     ? path.slice(1)
-                    : ["/_git", "/_extensions"].includes(path)
+                    : ["/_git", "/_extensions", "/_subformats"].includes(path)
                       ? path.slice(1)
                       : path.slice("/_files".length).replace(/^\/|\/$/g, ""),
             );
@@ -2951,6 +3412,16 @@ export const pageDataResponse = (site: Site, path: unknown): { status: number; b
         return { status: 404, body: { error: `${path} is not a doc route` } };
     }
     const html = entryMain(site, doc);
+    if (doc.subformat)
+        return {
+            status: 200,
+            body: {
+                resource: true,
+                path,
+                title: pageTitle("edit", docDisplayName(doc.frontmatter, doc.id), site.title),
+                html,
+            },
+        };
     const errors = [...site.errors, ...doc.errors];
     return {
         status: 200,
@@ -3094,7 +3565,7 @@ const handleDraft = async (
             }
         }
     }
-    const draft = renderDraft(loadSite(locale), target.name, raw, fileDrafts);
+    const draft = renderDraft(save ? loadSite(locale) : site, target.name, raw, fileDrafts);
     sendJson(res, 200, { ...draft, saved: save, conflict: false, raw });
 };
 
@@ -3125,7 +3596,10 @@ const handleCreate = async (req: IncomingMessage, res: ServerResponse): Promise<
     const name = typeof body?.name === "string" ? body.name.trim() : "";
     const title = typeof body?.title === "string" ? body.title.trim() : "";
     const parent = typeof body?.parent === "string" && body.parent !== "" ? body.parent : undefined;
-    const result = ops.addFile(name, title, parent);
+    const result =
+        typeof body?.subformat === "string"
+            ? ops.addSubformat(body.subformat, title, parent)
+            : ops.addFile(name, title, parent);
     sendOp(
         res,
         isOpError(result) ? result : { ...result, path: docPath(loadSite().entries, result.id) },
@@ -3163,6 +3637,7 @@ const handleIcon = async (req: IncomingMessage, res: ServerResponse): Promise<vo
     }
     const previous = docIconFile(target.id, manifest.files);
     const file =
+        manifest.format !== "nested" &&
         manifest.files?.defaultLayout !== false &&
         !Object.hasOwn(manifest.files?.icons ?? {}, target.id) &&
         !existsSync(textfilePath(root, previous))
@@ -3294,10 +3769,12 @@ const PREBUILT: Record<string, string> = {
     "viewer/edit-client.ts": "edit.global.js",
     "viewer/ui-client.ts": "ui.global.js",
     "viewer/code-highlight.ts": "code.global.js",
+    "viewer/published-plugins.ts": "plugins.global.js",
+    "viewer/published-subformats.ts": "subformats.global.js",
 };
 
-/** Client bundle (src/<entry> as an IIFE). Sourcemap for the server, minified for publish. */
-export const bundleClient = async (entry: string, publish = false): Promise<string> => {
+/** Minified client bundle shared by local viewing and published HTML. */
+export const bundleClient = async (entry: string): Promise<string> => {
     const prebuilt = PREBUILT[entry];
     if (usePrebuiltAssets && prebuilt) {
         return readViewerAsset(prebuilt).toString("utf8");
@@ -3309,7 +3786,7 @@ export const bundleClient = async (entry: string, publish = false): Promise<stri
         format: "iife",
         target: "es2022",
         write: false,
-        ...(publish ? { minify: true } : { sourcemap: "inline" as const }),
+        minify: true,
     });
     return out.outputFiles?.[0]?.text ?? "";
 };
@@ -3567,6 +4044,23 @@ export const startServer = async (
                 }
                 return;
             }
+            if (path === "/api/subformat") {
+                if (
+                    !isLocalToolRequest(
+                        req.headers.host ?? "",
+                        req.headers.origin,
+                        req.headers["content-type"],
+                    )
+                ) {
+                    sendJson(res, 403, {
+                        error: "Record changes require a same-origin local editor request",
+                    });
+                    return;
+                }
+                const result = subformatResponse(root, await readJson(req));
+                sendJson(res, result.status, result.body);
+                return;
+            }
             if (path === "/api/code-file") {
                 if (
                     !isLocalToolRequest(
@@ -3632,7 +4126,11 @@ export const startServer = async (
                             join(root, ".dooc/editor-tools", `${extension}.json`),
                         )
                             ? extension
-                            : (grammar?.name ?? extension);
+                            : (readManifest(root).subformats?.find(
+                                  (config) => config.ext === extension,
+                              )?.format ??
+                              grammar?.name ??
+                              extension);
                         const result = await validateTextfileCode(root, language, input.content);
                         for (const message of textfilePreviewErrors(
                             loadSite(locale),
@@ -3766,6 +4264,35 @@ export const startServer = async (
                 await handleCreate(req, res);
                 return;
             }
+            if (path === "/api/subformat-page") {
+                if (
+                    !isLocalToolRequest(
+                        req.headers.host ?? "",
+                        req.headers.origin,
+                        req.headers["content-type"],
+                    )
+                ) {
+                    sendJson(res, 403, {
+                        error: "Page changes require a same-origin local editor request",
+                    });
+                    return;
+                }
+                const body = await readJson(req);
+                const id = typeof body?.id === "string" ? body.id : "";
+                if (!loadSite().entries.some((entry) => entry.id === id && entry.subformat)) {
+                    sendJson(res, 404, { error: "Subformat page not found" });
+                    return;
+                }
+                sendOp(
+                    res,
+                    body?.action === "delete"
+                        ? ops.remove(id)
+                        : body?.action === "rename" && typeof body.title === "string"
+                          ? ops.renameSubformat(id, body.title)
+                          : { status: 400, error: "Unknown page action" },
+                );
+                return;
+            }
             if (path === "/api/icon") {
                 await handleIcon(req, res);
                 return;
@@ -3811,7 +4338,16 @@ export const startServer = async (
 
         const site = loadSite(locale);
         if (req.method === "GET" && path === "/api/search") {
-            sendJson(res, 200, searchIndex(site));
+            sendJson(
+                res,
+                200,
+                searchIndex(
+                    site,
+                    mode === "edit"
+                        ? (site.filePaths ?? filesSnapshot(root).files.map((file) => file.path))
+                        : [],
+                ),
+            );
             return;
         }
         // edit-mode-only APIs (used by edit-client.ts). handle() strips the query from path, so
@@ -3879,6 +4415,7 @@ export const startServer = async (
         if (
             (mode === "edit" &&
                 (path === "/_extensions" ||
+                    path === "/_subformats" ||
                     path === "/_git" ||
                     path === "/_statics" ||
                     path.startsWith("/_statics/") ||
@@ -3888,7 +4425,7 @@ export const startServer = async (
         ) {
             const rest = path.startsWith("/_statics")
                 ? path.slice(1)
-                : ["/_git", "/_extensions"].includes(path)
+                : ["/_git", "/_extensions", "/_subformats"].includes(path)
                   ? path.slice(1)
                   : requestUrl.pathname.slice("/_files".length).replace(/^\/|\/$/g, "");
             const page = resourcesMain(site, rest);
@@ -3899,8 +4436,10 @@ export const startServer = async (
             const editor =
                 mode === "edit"
                     ? (site.entries.find(
-                          (entry) => entry.id === requestUrl.searchParams.get("editor"),
-                      ) ?? site.entries[0])
+                          (entry) =>
+                              !entry.subformat &&
+                              entry.id === requestUrl.searchParams.get("editor"),
+                      ) ?? site.entries.find((entry) => !entry.subformat))
                     : undefined;
             if (editor) {
                 const { aside, boot } = editorAside(editor, site);
@@ -3925,7 +4464,7 @@ export const startServer = async (
             sendPage(res, mode, site, { ...page, currentRes: rest });
             return;
         }
-        const id = resolveDocPath(site.entries, path);
+        const id = resolveDocPath(site.entries, requestUrl.pathname);
         const doc = site.entries.find((e) => e.id === id);
         if (!doc) {
             notFound(res, path);
@@ -3936,8 +4475,27 @@ export const startServer = async (
             main: entryMain(site, doc),
             currentId: doc.id,
         };
-        if (mode === "edit") {
+        if (mode === "edit" && !doc.subformat) {
             Object.assign(opts, editorAside(doc, site));
+        }
+        if (mode === "edit" && doc.subformat) {
+            const editor = site.entries.find((entry) => !entry.subformat);
+            if (editor) {
+                const { aside, boot } = editorAside(editor, site);
+                Object.assign(opts, {
+                    aside,
+                    main: entryMain(site, editor),
+                    currentRes: path,
+                    boot: {
+                        ...boot,
+                        resource: {
+                            path,
+                            title: pageTitle(mode, opts.title, site.title),
+                            html: entryMain(site, doc),
+                        },
+                    },
+                });
+            }
         }
         sendPage(res, mode, site, opts);
     };

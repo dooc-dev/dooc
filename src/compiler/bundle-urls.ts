@@ -7,6 +7,7 @@ import valueParser from "postcss-value-parser";
 import { embeddedImages, parseMdast } from "../core/markdown.js";
 import { isRemoteTextfile } from "../core/textfile.js";
 import { collectRefs } from "./dialect.js";
+import { assertNotIgnored } from "./ignored-files.js";
 import { readManifest } from "./manifest.js";
 import { fetchPublicFile } from "./public-file.js";
 import { textfilePath } from "./textfile.js";
@@ -39,6 +40,7 @@ const decode = (data: Buffer): string => new TextDecoder("utf-8", { fatal: true 
 export const embedBundleUrls = async (
     root: string,
     entries: readonly ZipEntry[],
+    resolvePlugin?: (url: string) => Promise<string | undefined>,
 ): Promise<ZipEntry[]> => {
     const result = new Map(entries.map((entry) => [entry.name, { ...entry }]));
     const figures = new Set(
@@ -46,8 +48,9 @@ export const embedBundleUrls = async (
             .filter((entry) => /\.(md|callouth)$/.test(entry.name))
             .flatMap((entry) => collectRefs(parseMdast(decode(entry.data))).figures),
     );
-    const siteIcon = readManifest(root).icon;
-    if (siteIcon) figures.add(siteIcon);
+    const manifest = readManifest(root);
+    for (const file of [manifest.icon, ...Object.values(manifest.themeIcons ?? {})])
+        if (file) figures.add(file);
     const cache = new Map<string, { data: Buffer; type: string }>();
     const sources = new Map<string, { data: Buffer; type: string }>();
     const pending = new Set<string>();
@@ -81,6 +84,8 @@ export const embedBundleUrls = async (
         try {
             let source = sources.get(key);
             if (!source) {
+                if (url.protocol === "bundle:")
+                    assertNotIgnored(root, decodeURIComponent(url.pathname.slice(1)));
                 if (url.protocol === "https:" && ++downloads > 256)
                     throw new Error("Bundle exceeds 256 remote assets");
                 let type = "";
@@ -275,7 +280,14 @@ export const embedBundleUrls = async (
             const remote = remoteTextfileSource(image.url);
             if (remote.ref) throw new Error("Git URL embeds require a public HTTPS file URL");
             const url = keyOf(remote.url, image.url);
-            const asset = await resource(url, false);
+            const plugin = await resolvePlugin?.(url.href);
+            const asset =
+                plugin === undefined
+                    ? await resource(url, false)
+                    : {
+                          data: Buffer.from(await markup(plugin, url.href)),
+                          type: "text/html",
+                      };
             const ext =
                 Object.entries(types).find(([, type]) => type === asset.type)?.[0] ??
                 (extension(url.href) || "txt");

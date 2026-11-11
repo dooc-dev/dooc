@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { figureFrameHtml, figureSrcdoc } from "./figure-frame.js";
+import { describe, expect, it, vi } from "vitest";
+import { figureFrameHtml, figureSrcdoc, mountFigureFrames } from "./figure-frame.js";
 
 const svg = {
     name: "a",
@@ -16,6 +16,65 @@ const html = {
 };
 
 describe("figureFrameHtml (figure isolation)", () => {
+    it("waits for loading before applying the theme and ignores invalid frame heights", () => {
+        let message: (event: Partial<MessageEvent>) => void = () => {};
+        let onLoad = () => {};
+        let srcdoc = figureSrcdoc(html);
+        let ready = false;
+        const frame = {
+            contentWindow: {},
+            style: { height: "120px" },
+            getAttribute: () => srcdoc,
+            setAttribute: (name: string, value: string) => {
+                if (name === "srcdoc") srcdoc = value;
+                if (name === "data-theme-ready") ready = true;
+            },
+            removeAttribute: () => {
+                ready = false;
+            },
+            closest: () => null,
+            addEventListener: (_name: string, listener: typeof onLoad) => {
+                onLoad = listener;
+            },
+        };
+        vi.stubGlobal("window", {
+            matchMedia: () => ({ matches: false, addEventListener() {} }),
+            addEventListener: (_type: string, listener: typeof message) => {
+                message = listener;
+            },
+        });
+        vi.stubGlobal(
+            "MutationObserver",
+            class {
+                observe() {}
+            },
+        );
+        try {
+            mountFigureFrames({
+                documentElement: { dataset: {} },
+                querySelectorAll: () => [frame],
+            } as unknown as Document);
+            expect(srcdoc).toContain('data-doc-theme="auto"');
+            expect(ready).toBe(false);
+            onLoad();
+            expect(srcdoc).toContain('data-doc-theme="light"');
+            expect(ready).toBe(false);
+            onLoad();
+            expect(ready).toBe(true);
+            for (const height of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, "20"])
+                message({
+                    data: { docFigureHeight: height },
+                    source: frame.contentWindow as Window,
+                });
+            message({ data: { docFigureHeight: 300 }, source: {} as Window });
+            expect(frame.style.height).toBe("120px");
+            message({ data: { docFigureHeight: 48 }, source: frame.contentWindow as Window });
+            expect(frame.style.height).toBe("48px");
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
     it("svg goes in a no-script iframe; display width = width attribute / ratio = viewBox", () => {
         const out = figureFrameHtml(svg);
         expect(out).toContain('sandbox=""');

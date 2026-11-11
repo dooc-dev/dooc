@@ -251,7 +251,9 @@ export const checkSite = (root: string, options: CheckOptions = {}): CheckReport
                 );
         }
         const docs = new Map(
-            flattenTree(manifest.tree).map(({ id }) => [docFile(id, manifest.files), id]),
+            flattenTree(manifest.tree)
+                .filter((node) => !node.subformat)
+                .map(({ id }) => [docFile(id, manifest.files), id]),
         );
         const visited = new Set<string>();
         const checkedThemes = new Set<string>();
@@ -535,9 +537,11 @@ export const checkSite = (root: string, options: CheckOptions = {}): CheckReport
                     add("FILE_UNREADABLE", "error", file, messageOf(error));
                 }
             }
-        for (const file of manifest.files?.order ?? [])
-            if (!docs.has(file)) checkAsset(file, { language: sourceLanguage });
-        for (const file of [manifest.icon, ...Object.values(manifest.files?.icons ?? {})])
+        for (const file of [
+            manifest.icon,
+            ...Object.values(manifest.themeIcons ?? {}),
+            ...Object.values(manifest.files?.icons ?? {}),
+        ])
             if (file) checkAsset(file, { language: sourceLanguage }, false);
         if (has("render")) {
             // Resolve with the viewer's compiler, including translated links and theme-specific assets.

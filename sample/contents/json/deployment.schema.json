@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Deployment",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "Staged",
+        "Approved",
+        "Rolling out",
+        "Live"
+      ],
+      "title": "Status"
+    },
+    "environment": {
+      "type": "string",
+      "enum": [
+        "Development",
+        "Staging",
+        "Production"
+      ],
+      "title": "Environment"
+    },
+    "scheduled": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Scheduled"
+    },
+    "approved": {
+      "type": "boolean"
+    },
+    "region": {
+      "type": "string",
+      "enum": [
+        "us-east",
+        "eu-west",
+        "ap-northeast"
+      ]
+    },
+    "replicas": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 20,
+      "title": "Replicas"
+    },
+    "strategy": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "Rolling",
+            "Blue-green",
+            "Canary"
+          ]
+        },
+        "batch_size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "health_path": {
+          "type": "string",
+          "pattern": "^/"
+        }
+      },
+      "required": [
+        "mode",
+        "batch_size",
+        "health_path"
+      ],
+      "additionalProperties": false
+    },
+    "services": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/service"
+      }
+    },
+    "rollback": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "string",
+          "minLength": 1
+        },
+        "automatic": {
+          "type": "boolean"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 30
+        }
+      },
+      "required": [
+        "image",
+        "automatic",
+        "timeout_seconds"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "title",
+    "status",
+    "environment",
+    "scheduled",
+    "approved",
+    "region",
+    "replicas",
+    "strategy",
+    "services",
+    "rollback"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "service": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "image": {
+          "type": "string",
+          "pattern": "^[a-z0-9./-]+:[a-zA-Z0-9._-]+$"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "resources": {
+          "type": "object",
+          "properties": {
+            "cpu": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "memory_mib": {
+              "type": "integer",
+              "minimum": 64
+            }
+          },
+          "required": [
+            "cpu",
+            "memory_mib"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "name",
+        "image",
+        "port",
+        "resources"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "if": {
+    "properties": {
+      "environment": {
+        "const": "Production"
+      }
+    },
+    "required": [
+      "environment"
+    ]
+  },
+  "then": {
+    "properties": {
+      "approved": {
+        "const": true
+      }
+    }
+  },
+  "examples": [
+    {
+      "title": "Production search service canary",
+      "status": "Rolling out",
+      "environment": "Production",
+      "scheduled": "2026-11-12T03:00:00Z",
+      "approved": true,
+      "region": "ap-northeast",
+      "replicas": 6,
+      "strategy": {
+        "mode": "Canary",
+        "batch_size": 1,
+        "health_path": "/health/ready"
+      },
+      "services": [
+        {
+          "name": "search",
+          "image": "example/search:2.4.0",
+          "port": 8080,
+          "resources": {
+            "cpu": 2,
+            "memory_mib": 2048
+          }
+        },
+        {
+          "name": "indexer",
+          "image": "example/indexer:1.8.1",
+          "port": 9090,
+          "resources": {
+            "cpu": 1,
+            "memory_mib": 1024
+          }
+        }
+      ],
+      "rollback": {
+        "image": "example/search:2.3.2",
+        "automatic": true,
+        "timeout_seconds": 180
+      }
+    }
+  ]
+}

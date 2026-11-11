@@ -1,0 +1,203 @@
+import { undo } from "@codemirror/commands";
+import { EditorView } from "@codemirror/view";
+import { parseSubformatRecord } from "../../src/core/subformat-record.ts";
+import { createTextfileEditors } from "../../src/viewer/edit-textfile.ts";
+
+// Bundle with esbuild and run testSubformatForm() in a browser on a local HTTP origin.
+window.testSubformatForm = async () => {
+    const assert = (value, message) => {
+        if (!value) throw new Error(message);
+    };
+    const wait = async (check) => {
+        for (let i = 0; i < 200; i++) {
+            if (check()) return;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        throw new Error(`Timed out: ${check}`);
+    };
+    const schema = {
+        type: "object",
+        required: ["title", "status"],
+        $defs: { status: { type: "string", enum: ["Todo", "Done"] } },
+        properties: {
+            title: { type: "string", title: "Title", minLength: 1 },
+            status: { $ref: "#/$defs/status" },
+            count: { type: "integer" },
+            active: { type: "boolean" },
+            locked: { type: "string", readOnly: true },
+            owner: { type: "object", properties: { name: { type: "string" } } },
+            tags: { type: "array", items: { type: "string" } },
+        },
+    };
+    const sources = {
+        json: '{"title":"Original","status":"Todo","count":2,"active":false,"locked":"Keep","owner":{"name":"A"},"tags":["one"],"extra":{"keep":true}}\n',
+        yaml: "# Keep\ntitle: Original\nstatus: Todo\ncount: 2\nactive: false\nlocked: Keep\ntags: [one]\nowner:\n  name: A\nextra: {keep: true}\n",
+        toml: '# Keep\ntitle = "Original"\nstatus = "Todo"\ncount = 2\nactive = false\nlocked = "Keep"\ntags = ["one"]\n[owner]\nname = "A"\n[extra]\nkeep = true\n',
+    };
+    const originalFetch = window.fetch;
+    try {
+        for (const [format, initial] of Object.entries(sources)) {
+            let content = initial;
+            let saves = 0;
+            window.fetch = async (_url, options) => {
+                const input = JSON.parse(options.body);
+                if (input.action === "save") {
+                    assert(input.base === content, "Saves compare against the loaded base");
+                    try {
+                        parseSubformatRecord(input.content, format);
+                    } catch {
+                        return Response.json({ error: "Invalid record" }, { status: 400 });
+                    }
+                    content = input.content;
+                    saves++;
+                }
+                return Response.json({ content, schema, language: format });
+            };
+            const host = document.createElement("div");
+            host.style.cssText = "height:600px;width:360px";
+            document.body.append(host);
+            const outer = new EditorView();
+            const editors = createTextfileEditors(
+                [],
+                () => {},
+                () => {},
+            );
+            const file = `record.${format}`;
+            let dispose = editors.mount(file, host, outer);
+            const mode = () => host.querySelector("[data-record-mode]");
+            const field = (...path) =>
+                [...host.querySelectorAll("[data-record-path]")].find(
+                    (node) => node.dataset.recordPath === JSON.stringify(path),
+                );
+            const edit = (input, value) => {
+                input.focus();
+                input.value = value;
+                input.dispatchEvent(
+                    new Event(input instanceof HTMLSelectElement ? "change" : "input", {
+                        bubbles: true,
+                    }),
+                );
+            };
+            try {
+                await wait(() => mode()?.dataset.recordMode === "form");
+                const inner = EditorView.findFromDOM(
+                    host.querySelector(".cm-textfile-editor .cm-content"),
+                );
+                assert(
+                    inner.dom.hidden && mode().getAttribute("aria-pressed") === "true",
+                    `${format}: form opens by default`,
+                );
+                assert(
+                    field("title").value === "Original" && field("locked").disabled,
+                    "Values, labels and read-only fields follow the schema",
+                );
+                mode().click();
+                assert(
+                    !inner.dom.hidden && editors.content(file) === initial && saves === 0,
+                    "Switching modes leaves the source unchanged",
+                );
+                mode().click();
+                edit(field("title"), "Edited");
+                assert(
+                    document.activeElement !== inner.contentDOM,
+                    "Form edits do not focus the hidden code editor",
+                );
+                edit(field("status"), "1");
+                edit(field("count"), "0");
+                edit(field("active"), "0");
+                edit(field("owner", "name"), "B");
+                edit(field("tags"), '["one", "two"]');
+                await editors.flush();
+                const data = parseSubformatRecord(content, format);
+                assert(
+                    data.title === "Edited" &&
+                        data.status === "Done" &&
+                        data.count === 0 &&
+                        data.active === true &&
+                        data.owner.name === "B",
+                    "Typed form edits use the shared autosave draft",
+                );
+                assert(
+                    data.extra.keep && data.tags.length === 2 && data.locked === "Keep",
+                    "Other fields remain intact",
+                );
+                if (format !== "json")
+                    assert(content.includes("# Keep"), "Comments survive form edits");
+                undo(inner);
+                await editors.flush();
+                assert(
+                    parseSubformatRecord(content, format).tags.length === 1,
+                    "Form edits share code undo history",
+                );
+                mode().click();
+                const changed = inner.state.doc.toString().replace("Edited", "From text");
+                inner.dispatch({
+                    changes: { from: 0, to: inner.state.doc.length, insert: changed },
+                });
+                mode().click();
+                assert(field("title").value === "From text", "Text edits reach the form");
+                edit(field("tags"), "[");
+                mode().click();
+                assert(
+                    inner.dom.hidden && field("tags").value === "[",
+                    "Invalid field JSON stays visible until corrected",
+                );
+                await editors.flush();
+                assert(
+                    editors.hasUnsavedChanges(),
+                    "Incomplete form fields count as unsaved drafts",
+                );
+                dispose();
+                host.replaceChildren();
+                dispose = editors.mount(file, host, outer);
+                await wait(() => mode()?.dataset.recordMode === "form");
+                assert(
+                    field("tags").value === "[" && !field("tags").checkValidity(),
+                    "Remounting preserves incomplete field text and its error",
+                );
+                edit(field("tags"), '["recovered"]');
+                await editors.flush();
+                assert(
+                    !editors.hasUnsavedChanges(),
+                    "Correcting the field clears the unsaved form draft",
+                );
+                assert(
+                    field("title").value === "From text",
+                    "Remounting retains the draft and selected mode",
+                );
+                const reopened = EditorView.findFromDOM(
+                    host.querySelector(".cm-textfile-editor .cm-content"),
+                );
+                mode().click();
+                reopened.dispatch({
+                    changes: { from: 0, to: reopened.state.doc.length, insert: "[" },
+                });
+                mode().click();
+                assert(
+                    !reopened.dom.hidden && editors.content(file) === "[",
+                    "Invalid source cannot be discarded by switching to the form",
+                );
+                await editors.flush();
+                assert(editors.hasUnsavedChanges(), "Failed validation retains the unsaved draft");
+                const external = content.replace("From text", "External");
+                reopened.dispatch({
+                    changes: { from: 0, to: reopened.state.doc.length, insert: content },
+                });
+                await editors.flush();
+                content = external;
+                await editors.reloadChanged([file]);
+                await wait(() => mode());
+                mode().click();
+                assert(field("title").value === "External", "External file changes reach the form");
+            } finally {
+                dispose();
+                outer.destroy();
+                host.remove();
+                document.querySelector(".subformat-toast")?.remove();
+            }
+        }
+        return "Passed: JSON/YAML/TOML form/text switching, typed and nested fields, local refs, read-only fields, autosave, comments, undo, remount, invalid drafts and external changes";
+    } finally {
+        window.fetch = originalFetch;
+    }
+};

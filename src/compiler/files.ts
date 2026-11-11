@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
     existsSync,
@@ -15,7 +14,7 @@ import {
 import { dirname, join, posix } from "node:path";
 import { visit } from "unist-util-visit";
 import { Document, isSeq, parseDocument } from "yaml";
-import { flattenTree, MANIFEST_FILE } from "../core/content-metadata.js";
+import { flattenTree, MANIFEST_FILE, serializeManifest } from "../core/content-metadata.js";
 import {
     defaultFilePath,
     docFile,
@@ -31,7 +30,9 @@ import { codeBlockAt, parseMdast } from "../core/markdown.js";
 import { docPath } from "../core/routing.js";
 import { termFileUrl } from "../core/term-reference.js";
 import { isRemoteTextfile, parseFileReference } from "../core/textfile.js";
+import { assetReferences } from "./asset-references.js";
 import { fileSig } from "./file-cache.js";
+import { ignoredFiles } from "./ignored-files.js";
 import { translationFile, translationFiles, translationLanguages } from "./locales.js";
 import { readManifest } from "./manifest.js";
 import { textfilePath, writeTextfile } from "./textfile.js";
@@ -48,6 +49,23 @@ export interface ProjectFile {
     extension: string;
 }
 
+const names = new Intl.Collator("en", { numeric: true });
+const compareFilePaths = (a: string, b: string): number => {
+    const left = a.split("/");
+    const right = b.split("/");
+    for (let i = 0; i < Math.min(left.length, right.length); i++) {
+        const first = left[i] as string;
+        const second = right[i] as string;
+        if (first === second) continue;
+        return (
+            Number(i < right.length - 1) - Number(i < left.length - 1) ||
+            names.compare(first, second) ||
+            (first < second ? -1 : 1)
+        );
+    }
+    return left.length - right.length;
+};
+
 export const completeFilePaths = (root: string, prefix: unknown): string[] => {
     if (typeof prefix !== "string" || prefix.length > 4096) throw new Error("Invalid file prefix");
     const slash = prefix.lastIndexOf("/");
@@ -56,7 +74,7 @@ export const completeFilePaths = (root: string, prefix: unknown): string[] => {
         throw new Error("Expected a relative project path");
     const path = directory ? textfilePath(root, directory) : root;
     if (!existsSync(path)) return [];
-    return readdirSync(path, { withFileTypes: true })
+    const entries = readdirSync(path, { withFileTypes: true })
         .filter(
             (entry) =>
                 !entry.isSymbolicLink() &&
@@ -64,8 +82,11 @@ export const completeFilePaths = (root: string, prefix: unknown): string[] => {
                 managedFile(directory + entry.name) &&
                 (directory + entry.name).toLowerCase().startsWith(prefix.toLowerCase()),
         )
-        .map((entry) => directory + entry.name + (entry.isDirectory() ? "/" : ""))
-        .sort((a, b) => Number(b.endsWith("/")) - Number(a.endsWith("/")) || a.localeCompare(b))
+        .map((entry) => directory + entry.name + (entry.isDirectory() ? "/" : ""));
+    const ignored = ignoredFiles(root, entries);
+    return entries
+        .filter((file) => !ignored.has(file))
+        .sort(compareFilePaths)
         .slice(0, 200);
 };
 export const projectFiles = (root: string): ProjectFile[] => {
@@ -84,33 +105,20 @@ export const projectFiles = (root: string): ProjectFile[] => {
         }
     };
     walk("");
-    return result.sort((a, b) => a.path.localeCompare(b.path));
+    const ignored = ignoredFiles(
+        root,
+        result.map((file) => file.path),
+    );
+    return result
+        .filter((file) => !ignored.has(file.path))
+        .sort((a, b) => compareFilePaths(a.path, b.path));
 };
 
 export const filesSnapshot = (root: string) => {
     const manifest = readManifest(root);
     if (manifest.errors.length) throw new Error(manifest.errors.join("\n"));
-    let files = projectFiles(root);
-    if (files.length) {
-        const ignored = spawnSync("git", ["-C", root, "check-ignore", "--stdin", "-z"], {
-            input: `${files.map((file) => file.path).join("\0")}\0`,
-            encoding: "utf8",
-            timeout: 2_000,
-            maxBuffer: 5_000_000,
-            windowsHide: true,
-        });
-        if (ignored.status === 0) {
-            const paths = new Set(ignored.stdout.split("\0"));
-            files = files.filter((file) => !paths.has(file.path));
-        }
-    }
+    const files = projectFiles(root);
     const layout: FileLayout = manifest.files ?? parseFileLayout({});
-    const rank = new Map(layout.order.map((path, index) => [path, index]));
-    files.sort(
-        (a, b) =>
-            (rank.get(a.path) ?? Infinity) - (rank.get(b.path) ?? Infinity) ||
-            a.path.localeCompare(b.path),
-    );
     const hash = createHash("sha256");
     hash.update(
         existsSync(join(root, MANIFEST_FILE)) ? readFileSync(join(root, MANIFEST_FILE)) : "",
@@ -127,7 +135,9 @@ export const filesSnapshot = (root: string) => {
         layout,
         revision: hash.digest("hex"),
         documents: Object.fromEntries(
-            docs.map(({ id }) => [docFile(id, layout), docPath(docs, id)]),
+            docs
+                .filter((node) => !node.subformat)
+                .map(({ id }) => [docFile(id, layout), docPath(docs, id)]),
         ),
     };
 };
@@ -265,7 +275,6 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
     const layout = snapshot.layout;
     const paths = snapshot.files.map((file) => file.path);
     const moves = new Map<string, string>();
-    let order = [...paths];
     if (input.action === "layout") {
         if (typeof input.enabled !== "boolean") throw new Error("Invalid layout setting");
         layout.defaultLayout = input.enabled;
@@ -287,7 +296,9 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
         if (!localFile(input.name) || input.name.includes("/"))
             throw new Error("Invalid file name");
         if (
-            flattenTree(manifest.tree).some(({ id }) => docFile(id, layout) === input.file) &&
+            flattenTree(manifest.tree).some(
+                ({ id, subformat }) => !subformat && docFile(id, layout) === input.file,
+            ) &&
             !isDocumentFileName(input.name)
         )
             throw new Error("Enter a file name ending in .md");
@@ -323,6 +334,12 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
             const target = directory
                 ? `${directory}/${posix.basename(item)}`
                 : posix.basename(item);
+            if (
+                manifest.defaultSubformatFolder === item ||
+                manifest.defaultSubformatFolder?.startsWith(`${item}/`)
+            )
+                manifest.defaultSubformatFolder =
+                    target + manifest.defaultSubformatFolder.slice(item.length);
             for (const file of picked.filter(
                 (path) => path === item || path.startsWith(`${item}/`),
             )) {
@@ -330,14 +347,6 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
                 if (next !== file) moves.set(file, next);
             }
         }
-        order = paths.filter((path) => !picked.includes(path));
-        const before = input.before;
-        const index =
-            before === undefined
-                ? order.length
-                : order.findIndex((path) => path === before || path.startsWith(`${before}/`));
-        if (index < 0) throw new Error("Invalid drop position");
-        order.splice(index, 0, ...picked);
     } else throw new Error("Unknown file action");
     for (const [source, target] of [...moves]) {
         for (const [theme, file] of Object.entries(themeVariants(root, source, themeNames(root))))
@@ -356,7 +365,8 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
         const path = textfilePath(root, target);
         if (existsSync(path)) throw new Error(`File already exists: ${target}`);
     }
-    for (const { id } of flattenTree(manifest.tree)) {
+    for (const { id, subformat } of flattenTree(manifest.tree)) {
+        if (subformat) continue;
         const file = docFile(id, layout);
         if (moves.has(file)) layout.documents[id] = moves.get(file) as string;
         const icon = docIconFile(id, layout);
@@ -365,22 +375,51 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
             layout.icons[id] = moves.get(icon) as string;
         }
     }
-    layout.order = order.map((file) => moves.get(file) ?? file);
     const rawManifest = existsSync(join(root, MANIFEST_FILE))
         ? readFileSync(join(root, MANIFEST_FILE), "utf8")
         : null;
     const parsed = parseDocument(rawManifest ?? "docs: []\n");
     const yaml = isSeq(parsed.contents) ? new Document({ docs: parsed.toJS() }) : parsed;
-    yaml.set("files", layout);
-    if (manifest.icon && moves.has(manifest.icon)) yaml.set("icon", moves.get(manifest.icon));
+    manifest.files = layout;
+    if (manifest.icon && moves.has(manifest.icon)) manifest.icon = moves.get(manifest.icon);
+    if (manifest.themeIcons)
+        for (const [theme, file] of Object.entries(manifest.themeIcons))
+            manifest.themeIcons[theme] = moves.get(file) ?? file;
+    for (const subformat of manifest.subformats ?? [])
+        subformat.schema = moves.get(subformat.schema) ?? subformat.schema;
+    if (manifest.format !== "nested") {
+        yaml.set("files", layout);
+        if (manifest.icon) yaml.set("icon", manifest.icon);
+        if (manifest.subformats) yaml.set("subformats", manifest.subformats);
+        if (manifest.defaultSubformatFolder)
+            yaml.set("default_subformat_folder", manifest.defaultSubformatFolder);
+    }
     const writes: { file: string; data: Buffer; base: Buffer | null; mode?: number }[] = [];
     const links = new Map(moves);
-    for (const file of [...paths, ...translated].filter((file) => /\.(md|callouth)$/.test(file))) {
+    for (const file of [...paths, ...translated].filter((file) =>
+        /\.(md|callouth|html|htm|svg|css)$/.test(file),
+    )) {
         const base = readFileSync(textfilePath(root, file));
-        const next = rewriteFileLinks(
-            new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(base),
-            moves,
-        );
+        const raw = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(base);
+        const next = /\.(md|callouth)$/.test(file)
+            ? rewriteFileLinks(raw, moves)
+            : moves.size
+              ? assetReferences(raw, fileExtension(file), (url) => {
+                    if (!url || /^(?:[a-z][\w+.-]*:|[/#])/i.test(url)) return url;
+                    const path = decodeURIComponent(url.split(/[?#]/)[0] ?? "");
+                    if (!path) return url;
+                    const source = posix.normalize(posix.join(posix.dirname(file), path));
+                    const target = moves.get(source) ?? source;
+                    const owner = moves.get(file) ?? file;
+                    if (target === source && posix.dirname(owner) === posix.dirname(file))
+                        return url;
+                    const relative = posix.relative(posix.dirname(owner), target);
+                    return (
+                        relative.split("/").map(encodeURIComponent).join("/") +
+                        url.slice(url.search(/[?#]|$/))
+                    );
+                })
+              : raw;
         const data = Buffer.from(next);
         if (base.equals(data)) continue;
         links.delete(file);
@@ -395,7 +434,11 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
     writes.push({
         file: MANIFEST_FILE,
         base: rawManifest === null ? null : Buffer.from(rawManifest),
-        data: Buffer.from(yaml.toString()),
+        data: Buffer.from(
+            manifest.format === "nested"
+                ? serializeManifest(manifest.tree, manifest)
+                : yaml.toString(),
+        ),
     });
     const originalModes = new Map(
         [...moves.keys()].map((file) => [file, statSync(textfilePath(root, file)).mode]),

@@ -1,0 +1,27 @@
+title: Measure direct schema editing
+status: Complete
+hypothesis: Editing a schema beside its records reduces setup mistakes.
+started: 2026-11-02
+confidence: 0.94
+effort: 8
+owners:
+  - name: Research team
+    email: research@example.org
+design:
+  primary_metric: Setup errors per participant
+  variants:
+    - name: Separate files
+      allocation: 0.5
+    - name: Side editor
+      allocation: 0.5
+results:
+  sample_size: 240
+  effect: -0.31
+  interval:
+    - -0.42
+    - -0.2
+assets:
+  - kind: Dataset
+    url: https://example.org/research/schema-editing/data
+  - kind: Report
+    url: https://example.org/research/schema-editing/report

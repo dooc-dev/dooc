@@ -36,6 +36,8 @@ export const mountPanelResize = (): void => {
         const property = options.direction === 1 ? "--sidebar-width" : "--panel-width";
         const requested = (): number =>
             preferred ?? (options.direction === 1 ? 260 : Math.min(760, window.innerWidth * 0.52));
+        if (options.direction === 1 && closed())
+            element.style.setProperty(property, `${requested()}px`);
         const apply = (width: number): void => {
             const other = options.direction === 1 ? editor : sidebar;
             const max = Math.max(
@@ -142,103 +144,4 @@ export const mountPanelResize = (): void => {
         right.persist();
     });
     layout();
-};
-
-/** The navigation is replaced on refresh; keep listeners and height on its stable sidebar. */
-export const mountToolsResize = (): (() => void) => {
-    const sidebar = document.getElementById("sidebar");
-    if (!sidebar || !document.getElementById("nav-tools")) return () => {};
-    const key = "docs:tools-height";
-    let preferred: number | undefined;
-    try {
-        const saved = Number(localStorage.getItem(key));
-        if (Number.isFinite(saved) && saved > 0) preferred = saved;
-    } catch {
-        /* Persistence is optional. */
-    }
-    // Without a saved height, fit the cards so the panel shows no empty band below them.
-    const fittedHeight = (): number => {
-        const tools = document.getElementById("nav-tools");
-        const cards = tools?.querySelector(".nav-tool-cards");
-        const last = cards?.lastElementChild;
-        if (!tools || !cards || !last) return 220;
-        // The card list stretches to the panel, so measure its content rather than scrollHeight.
-        const content =
-            last.getBoundingClientRect().bottom -
-            cards.getBoundingClientRect().top +
-            cards.scrollTop;
-        return tools.offsetHeight - cards.clientHeight + content;
-    };
-    const apply = (height = preferred ?? Math.min(fittedHeight(), innerHeight * 0.4)): void => {
-        const handle = document.getElementById("tools-resize");
-        if (!handle) return;
-        const max = Math.max(80, sidebar.clientHeight - 100);
-        const min = Math.min(144, max);
-        const value = Math.round(Math.max(min, Math.min(height, max)));
-        sidebar.style.setProperty("--tools-height", `${value}px`);
-        handle.setAttribute("aria-valuemin", String(min));
-        handle.setAttribute("aria-valuemax", String(max));
-        handle.setAttribute("aria-valuenow", String(value));
-    };
-    const persist = (): void => {
-        preferred = Number.parseFloat(sidebar.style.getPropertyValue("--tools-height"));
-        try {
-            localStorage.setItem(key, String(preferred));
-        } catch {
-            /* Optional. */
-        }
-    };
-    const isHandle = (event: Event): boolean =>
-        event.target instanceof Element && !!event.target.closest("#tools-resize");
-    const height = (): number =>
-        document.getElementById("nav-tools")?.getBoundingClientRect().height ?? 0;
-    let drag: { id: number; y: number; height: number; handle: HTMLElement } | undefined;
-    sidebar.addEventListener("pointerdown", (event) => {
-        if (!isHandle(event) || event.button !== 0 || drag) return;
-        const handle = document.getElementById("tools-resize");
-        if (!handle) return;
-        event.preventDefault();
-        handle.focus({ preventScroll: true });
-        drag = { id: event.pointerId, y: event.clientY, height: height(), handle };
-        handle.setPointerCapture(event.pointerId);
-        document.body.classList.add("resizing-tools");
-    });
-    sidebar.addEventListener("pointermove", (event) => {
-        if (drag?.id === event.pointerId) apply(drag.height + drag.y - event.clientY);
-    });
-    const stop = (): void => {
-        if (!drag) return;
-        drag = undefined;
-        document.body.classList.remove("resizing-tools");
-        persist();
-    };
-    for (const type of ["pointerup", "pointercancel", "lostpointercapture"] as const)
-        sidebar.addEventListener(type, (event) => {
-            if (drag?.id === event.pointerId) stop();
-        });
-    sidebar.addEventListener("keydown", (event) => {
-        if (!isHandle(event) || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
-        event.preventDefault();
-        apply(height() + (event.key === "ArrowUp" ? 20 : -20));
-        persist();
-    });
-    sidebar.addEventListener("dblclick", (event) => {
-        if (!isHandle(event)) return;
-        preferred = undefined;
-        try {
-            localStorage.removeItem(key);
-        } catch {
-            /* Optional. */
-        }
-        apply();
-    });
-    window.addEventListener("resize", () => apply());
-    const restore = () => {
-        if (drag && !drag.handle.isConnected) stop();
-        apply();
-    };
-    const nav = document.getElementById("nav-groups");
-    if (nav) new MutationObserver(restore).observe(nav, { childList: true });
-    restore();
-    return restore;
 };

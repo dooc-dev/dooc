@@ -1,0 +1,21 @@
+title: Compare compact and detailed cards
+status: Running
+hypothesis: A compact summary helps people find the next task more quickly.
+started: 2026-11-09
+confidence: 0.62
+effort: 5
+owners:
+  - name: Research team
+    email: research@example.org
+  - name: Design team
+    email: design@example.org
+design:
+  primary_metric: Median time to select a task
+  variants:
+    - name: Compact
+      allocation: 0.5
+    - name: Detailed
+      allocation: 0.5
+assets:
+  - kind: Notebook
+    url: https://example.org/research/card-density

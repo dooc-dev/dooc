@@ -19,6 +19,8 @@ const assets = [
     "edit.global.js",
     "ui.global.js",
     "code.global.js",
+    "plugins.global.js",
+    "subformats.global.js",
 ];
 const files = [
     ...assets.map((name) => resolve("dist", name.startsWith("fonts/") ? `viewer/${name}` : name)),

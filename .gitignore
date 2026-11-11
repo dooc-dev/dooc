@@ -1,6 +1,6 @@
 node_modules/
 dist/
-build/
+/build/
 .aws/
 .codex/
 .agents/
@@ -9,3 +9,15 @@ build/
 .env
 .env.*
 *.tgz
+# empty placeholders left by the Claude Code sandbox
+/.bash_profile
+/.bashrc
+/.gitconfig
+/.gitmodules
+/.idea
+/.mcp.json
+/.profile
+/.ripgreprc
+/.vscode
+/.zprofile
+/.zshrc
