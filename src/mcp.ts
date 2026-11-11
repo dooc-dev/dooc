@@ -334,7 +334,8 @@ export const createTools = (root: string, options: McpOptions = {}): Record<stri
             },
         },
         read_figure: {
-            description: "A figure's markup (SVG / HTML; raster images as an <img> data URI).",
+            description:
+                "A figure's markup (SVG / HTML / DXF geometry; images, video and PDF embedded as data URIs).",
             props: { name: { ...str, description: "Figure name (without extension)" } },
             required: ["name"],
             run: (a) =>
@@ -426,7 +427,7 @@ export const createTools = (root: string, options: McpOptions = {}): Record<stri
         },
         add_figure: {
             description:
-                "Add a figure to figures/ (svg / drawio.svg / html / png / webp / jpg). Give either path (a local file) or text (svg / html source). If the name is taken, -2 etc. is appended.",
+                "Add a figure to figures/ (svg / drawio.svg / html / png / webp / jpg / gif / mp4 / webm / pdf / dxf). Give either path (a local file) or text (svg / html / dxf source). If the name is taken, -2 etc. is appended.",
             props: {
                 file: {
                     ...str,

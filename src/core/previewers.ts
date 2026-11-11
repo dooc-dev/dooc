@@ -44,6 +44,8 @@ export const PREVIEWERS = [
         ],
     },
     { id: "video", label: "Video", extensions: ["mp4", "webm"] },
+    { id: "pdf", label: "PDF", extensions: ["pdf"] },
+    { id: "dxf", label: "DXF", extensions: ["dxf"] },
 ] as const;
 
 export type PreviewerId = (typeof PREVIEWERS)[number]["id"];

@@ -1,0 +1,131 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 7 0 R >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 8 0 R >>
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+7 0 obj
+<< /Length 2856 >>
+stream
+0.12 0.16 0.21 rg BT /F2 27 Tf 48 782 Td (Team meeting notes) Tj ET
+0.12 0.16 0.21 rg BT /F1 11 Tf 48 754 Td (7 October 2026  |  10:00-10:45  |  Weekly project review) Tj ET
+0.79 0.82 0.86 RG 0.6 w 48 736 m 547 736 l S
+0.12 0.16 0.21 rg BT /F2 15 Tf 48 708 Td (Summary) Tj ET
+0.12 0.16 0.21 rg BT /F1 11 Tf 48 685 Td (The team reviewed progress on the autumn website update and agreed) Tj ET
+0.12 0.16 0.21 rg BT /F1 11 Tf 48 669 Td (to focus this week on content review, accessibility checks, and launch) Tj ET
+0.12 0.16 0.21 rg BT /F1 11 Tf 48 653 Td (preparation. No changes were made to the planned release date.) Tj ET
+0.12 0.16 0.21 rg BT /F2 15 Tf 48 617 Td (Participants) Tj ET
+0.12 0.16 0.21 rg BT /F1 11 Tf 48 594 Td (Design, Engineering, Content, and Support representatives) Tj ET
+0.12 0.16 0.21 rg BT /F2 15 Tf 48 554 Td (Agenda) Tj ET
+0.93 0.95 0.97 rg 48 515 499 24 re f
+0.12 0.16 0.21 rg BT /F2 10 Tf 58 523 Td (Time) Tj ET
+0.12 0.16 0.21 rg BT /F2 10 Tf 125 523 Td (Topic) Tj ET
+0.12 0.16 0.21 rg BT /F2 10 Tf 420 523 Td (Lead) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 58 495 Td (10:00) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 125 495 Td (Progress and open questions) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 420 495 Td (Engineering) Tj ET
+0.79 0.82 0.86 RG 0.6 w 48 485 m 547 485 l S
+0.12 0.16 0.21 rg BT /F1 10 Tf 58 466 Td (10:10) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 125 466 Td (Content and navigation review) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 420 466 Td (Content) Tj ET
+0.79 0.82 0.86 RG 0.6 w 48 456 m 547 456 l S
+0.12 0.16 0.21 rg BT /F1 10 Tf 58 437 Td (10:25) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 125 437 Td (Accessibility and testing) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 420 437 Td (Design) Tj ET
+0.79 0.82 0.86 RG 0.6 w 48 427 m 547 427 l S
+0.12 0.16 0.21 rg BT /F1 10 Tf 58 408 Td (10:35) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 125 408 Td (Launch preparation) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 420 408 Td (Support) Tj ET
+0.79 0.82 0.86 RG 0.6 w 48 398 m 547 398 l S
+0.12 0.16 0.21 rg BT /F2 15 Tf 48 360 Td (Decisions) Tj ET
+0.12 0.16 0.21 rg BT /F1 11 Tf 48 336 Td (1. Keep the current navigation structure for the initial release.) Tj ET
+0.12 0.16 0.21 rg BT /F1 11 Tf 48 312 Td (2. Finish the remaining copy review before the end of the week.) Tj ET
+0.12 0.16 0.21 rg BT /F1 11 Tf 48 288 Td (3. Run one final review on a phone and a desktop browser.) Tj ET
+0.12 0.16 0.21 rg BT /F1 11 Tf 48 264 Td (4. Publish a short support note together with the release.) Tj ET
+0.12 0.16 0.21 rg BT /F2 15 Tf 48 214 Td (Next meeting) Tj ET
+0.12 0.16 0.21 rg BT /F1 11 Tf 48 191 Td (14 October 2026, 10:00-10:30. Bring the completed review checklist.) Tj ET
+0.79 0.82 0.86 RG 0.6 w 48 60 m 547 60 l S
+0.12 0.16 0.21 rg BT /F1 9 Tf 48 43 Td (Sample document / fictional meeting notes) Tj ET
+0.12 0.16 0.21 rg BT /F1 9 Tf 500 43 Td (1 / 2) Tj ET
+endstream
+endobj
+8 0 obj
+<< /Length 2887 >>
+stream
+0.12 0.16 0.21 rg BT /F2 27 Tf 48 782 Td (Actions and next steps) Tj ET
+0.12 0.16 0.21 rg BT /F1 11 Tf 48 754 Td (Follow-up to the weekly project review) Tj ET
+0.79 0.82 0.86 RG 0.6 w 48 736 m 547 736 l S
+0.12 0.16 0.21 rg BT /F2 15 Tf 48 708 Td (Action items) Tj ET
+0.93 0.95 0.97 rg 48 665 499 25 re f
+0.12 0.16 0.21 rg BT /F2 10 Tf 58 674 Td (Task) Tj ET
+0.12 0.16 0.21 rg BT /F2 10 Tf 370 674 Td (Owner) Tj ET
+0.12 0.16 0.21 rg BT /F2 10 Tf 470 674 Td (Due) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 58 644 Td (Review help-page copy) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 370 644 Td (Content) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 470 644 Td (9 Oct) Tj ET
+0.79 0.82 0.86 RG 0.6 w 48 632 m 547 632 l S
+0.12 0.16 0.21 rg BT /F1 10 Tf 58 611 Td (Check keyboard navigation) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 370 611 Td (Design) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 470 611 Td (9 Oct) Tj ET
+0.79 0.82 0.86 RG 0.6 w 48 599 m 547 599 l S
+0.12 0.16 0.21 rg BT /F1 10 Tf 58 578 Td (Resolve remaining test failures) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 370 578 Td (Engineering) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 470 578 Td (12 Oct) Tj ET
+0.79 0.82 0.86 RG 0.6 w 48 566 m 547 566 l S
+0.12 0.16 0.21 rg BT /F1 10 Tf 58 545 Td (Prepare support announcement) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 370 545 Td (Support) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 470 545 Td (13 Oct) Tj ET
+0.79 0.82 0.86 RG 0.6 w 48 533 m 547 533 l S
+0.12 0.16 0.21 rg BT /F1 10 Tf 58 512 Td (Complete launch checklist) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 370 512 Td (Engineering) Tj ET
+0.12 0.16 0.21 rg BT /F1 10 Tf 470 512 Td (13 Oct) Tj ET
+0.79 0.82 0.86 RG 0.6 w 48 500 m 547 500 l S
+0.12 0.16 0.21 rg BT /F2 15 Tf 48 458 Td (Open questions) Tj ET
+0.12 0.16 0.21 rg BT /F1 11 Tf 48 434 Td (- Should the release note include a short walkthrough video?) Tj ET
+0.12 0.16 0.21 rg BT /F1 11 Tf 48 412 Td (- Which help topics should be reviewed again after launch?) Tj ET
+0.12 0.16 0.21 rg BT /F2 15 Tf 48 364 Td (Review checklist) Tj ET
+0.12 0.16 0.21 rg BT /F1 11 Tf 48 340 Td ([ ] All action items have an owner and a due date.) Tj ET
+0.12 0.16 0.21 rg BT /F1 11 Tf 48 316 Td ([ ] Links and attachments are accessible to the team.) Tj ET
+0.12 0.16 0.21 rg BT /F1 11 Tf 48 292 Td ([ ] Open questions are included in the next meeting agenda.) Tj ET
+0.12 0.16 0.21 rg BT /F1 11 Tf 48 268 Td ([ ] The final announcement has been reviewed by Support.) Tj ET
+0.12 0.16 0.21 rg BT /F2 15 Tf 48 214 Td (Notes) Tj ET
+0.12 0.16 0.21 rg BT /F1 11 Tf 48 190 Td (This memo is an example for document preview. Names, dates, and) Tj ET
+0.12 0.16 0.21 rg BT /F1 11 Tf 48 174 Td (project details are fictional and are not an actual team record.) Tj ET
+0.79 0.82 0.86 RG 0.6 w 48 60 m 547 60 l S
+0.12 0.16 0.21 rg BT /F1 9 Tf 48 43 Td (Sample document / fictional meeting notes) Tj ET
+0.12 0.16 0.21 rg BT /F1 9 Tf 500 43 Td (2 / 2) Tj ET
+endstream
+endobj
+9 0 obj
+<< /Title (Team meeting notes) /Author (dooc sample) >>
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000121 00000 n 
+0000000257 00000 n 
+0000000393 00000 n 
+0000000463 00000 n 
+0000000538 00000 n 
+0000003445 00000 n 
+0000006383 00000 n 
+trailer
+<< /Size 10 /Root 1 0 R /Info 9 0 R >>
+startxref
+6454
+%%EOF

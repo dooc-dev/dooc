@@ -19,9 +19,11 @@ center_contents:
           - file: contents/md/code.md
           - file: contents/md/diagrams.md
           - file: contents/md/documents.md
+          - file: contents/md/dxf.md
+          - file: contents/md/pdf.md
           - file: contents/md/video.md
-      - file: contents/md/plugins.md
   - file: contents/md/themes.md
+  - file: contents/md/plugins.md
   - subformat: issue
     title: issue
   - file: content/demo-page.md

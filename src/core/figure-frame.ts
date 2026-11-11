@@ -58,7 +58,7 @@ const svgBox = (markup: string): { width: number; w: number; h: number } | undef
 
 /** One figure → an isolated iframe (rasters stay as <img>). */
 export const figureFrameHtml = (fig: FigureEntry, cls = "fig-frame", label?: string): string => {
-    if (fig.kind === "video")
+    if (fig.kind === "video" || fig.kind === "pdf")
         return label
             ? fig.markup.replace(/\baria-label="[^"]*"/, () => `aria-label="${esc(label)}"`)
             : fig.markup;

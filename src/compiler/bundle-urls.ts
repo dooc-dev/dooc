@@ -26,6 +26,8 @@ const types: Record<string, string> = {
     webp: "image/webp",
     mp4: "video/mp4",
     webm: "video/webm",
+    pdf: "application/pdf",
+    dxf: "image/vnd.dxf",
     woff: "font/woff",
     woff2: "font/woff2",
     ttf: "font/ttf",

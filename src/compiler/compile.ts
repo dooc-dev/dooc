@@ -381,7 +381,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
         const paths = projectFiles(root);
         const visualFiles = paths
             .map((file) => file.path)
-            .filter((file) => /\.(svg|html|png|webp|gif|mp4|webm|jpe?g)$/.test(file));
+            .filter((file) => /\.(svg|html|png|webp|gif|mp4|webm|jpe?g|pdf|dxf)$/i.test(file));
         const { figures, errors: figErrors } = figuresCache.get(
             dirSig(figuresDir) +
                 visualFiles.map((file) => `${file}:${fileSig(textfilePath(root, file))}`).join("|"),

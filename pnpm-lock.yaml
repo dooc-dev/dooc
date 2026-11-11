@@ -29,6 +29,9 @@ importers:
       ajv-formats:
         specifier: 3.0.1
         version: 3.0.1(ajv@8.20.0)
+      dxf:
+        specifier: 5.3.1
+        version: 5.3.1
       franc:
         specifier: ^6.2.0
         version: 6.2.0
@@ -129,6 +132,9 @@ importers:
       '@shikijs/themes':
         specifier: ^4.5.0
         version: 4.5.0
+      '@types/dxf':
+        specifier: 4.6.10
+        version: 4.6.10
       '@types/mdast':
         specifier: ^4.0.4
         version: 4.0.4
@@ -1063,6 +1069,9 @@ packages:
   '@types/debug@4.1.13':
     resolution: {integrity: sha512-KSVgmQmzMwPlmtljOomayoR89W4FynCAi3E8PPs7vmDVPe84hT+vGPKkJfThkmXs0x0jAaa9U8uW8bbfyS2fWw==}
 
+  '@types/dxf@4.6.10':
+    resolution: {integrity: sha512-qcTN2/fjnDM6vqg3oNzxcx5XURYPkpFZhjht5IU8jbp7HeUSI2+q/Jd5M4UPuFSl65aFO5Xrce0ogCw5lEy3XA==}
+
   '@types/estree@1.0.10':
     resolution: {integrity: sha512-lTyOMnOcmRBzdCv6/4zUZCrEhV0xrqQiUZBZtVcbmLHBXKLnN8q89v/wKRF/Q0HbwVsqbIG3o5HDoFl9sduM+g==}
 
@@ -1341,6 +1350,9 @@ packages:
   commander@15.0.0:
     resolution: {integrity: sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==}
     engines: {node: '>=22.12.0'}
+
+  commander@2.20.3:
+    resolution: {integrity: sha512-GpVkmM8vF2vQUkj2LvZmD35JxeJOLCwJ9cUkugyk2nuhbv3+mJvpLYYt+0+USMxE+oj+ey/lJEnhZw75x/OMcQ==}
 
   commander@7.2.0:
     resolution: {integrity: sha512-QrWXB+ZQSVPmIWIhtEO9H+gwHaMGYiF5ChvoJ+K9ZGHG/sVsa6yiesAD1GC/x46sET00Xlwo1u49RVVVzvcSkw==}
@@ -1635,6 +1647,11 @@ packages:
   dunder-proto@1.0.1:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
     engines: {node: '>= 0.4'}
+
+  dxf@5.3.1:
+    resolution: {integrity: sha512-20X9WaPisX6ssBoJ0Ek+efGUKBHL5j+VwiyBUrbEN6/dISediyrLDFk98KybqzSMw4EPtH5cHKUFBDgQASx3SQ==}
+    engines: {node: '>=8.9.0'}
+    hasBin: true
 
   elkjs@0.12.1:
     resolution: {integrity: sha512-IhMYKHE4S2vtx0QrhBP3lYOIKDeIiJXBrdq9MGYkuB8ZHqhrBnHNfSUndjXFewrX1CPK8chwq+2NA0K0hliYuw==}
@@ -3000,6 +3017,9 @@ packages:
   validate-npm-package-license@3.0.4:
     resolution: {integrity: sha512-DpKm2Ui/xN7/HQKCtpZxoRWBhZ9Z0kqtygG8XCgNQ8ZlDnxuQmWhj566j8fN4Cu3/JmbhsDo7fcAJq4s9h27Ew==}
 
+  vecks@3.9.2:
+    resolution: {integrity: sha512-ubOo1KoOrPu3llYmlE4SH60JWcR+YDaObP+1Kzpbcl09dKIf0fbBweW8Xyg+6Nk2Rrnyit6Jxw9bx2LOYpMQMA==}
+
   vfile-message@2.0.4:
     resolution: {integrity: sha512-DjssxRGkMvifUOJre00juHoP9DPWuzjxKuMDrhNbk2TdaYYBNMStsNhEOt3idrtI12VQYM/1+iM0KOzXi4pxwQ==}
 
@@ -4040,6 +4060,8 @@ snapshots:
     dependencies:
       '@types/ms': 2.1.0
 
+  '@types/dxf@4.6.10': {}
+
   '@types/estree@1.0.10': {}
 
   '@types/estree@1.0.9': {}
@@ -4323,6 +4345,8 @@ snapshots:
   commander@14.0.3: {}
 
   commander@15.0.0: {}
+
+  commander@2.20.3: {}
 
   commander@7.2.0: {}
 
@@ -4639,6 +4663,12 @@ snapshots:
       call-bind-apply-helpers: 1.0.2
       es-errors: 1.3.0
       gopd: 1.2.0
+
+  dxf@5.3.1:
+    dependencies:
+      commander: 2.20.3
+      lodash: 4.18.1
+      vecks: 3.9.2
 
   elkjs@0.12.1: {}
 
@@ -6692,6 +6722,8 @@ snapshots:
     dependencies:
       spdx-correct: 3.2.0
       spdx-expression-parse: 3.0.1
+
+  vecks@3.9.2: {}
 
   vfile-message@2.0.4:
     dependencies:

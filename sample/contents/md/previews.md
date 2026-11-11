@@ -11,6 +11,8 @@ Small, local examples of the formats dooc can display. Each page keeps its sourc
 | [Code](contents/md/code.md)                 | TypeScript, JavaScript, Python, Rust, SQL, CSS, shell, text |
 | [Diagrams](contents/md/diagrams.md)         | Mermaid, graphth, schemath                                  |
 | [Document blocks](contents/md/documents.md) | Markdown, callouth, termth, HTML                            |
+| [DXF](contents/md/dxf.md)                   | Dimensioned drawings, numeric labels, notes                |
+| [PDF](contents/md/pdf.md)                   | Multipage documents                                       |
 | [Video](contents/md/video.md)               | MP4, WebM                                                   |
 
 An embed stores a path, not a copy of the file. Edit the original to update every place that references it.

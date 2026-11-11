@@ -6,7 +6,7 @@ import { parseFileReference } from "./textfile.js";
 export const parseFigureLink = (source: string): { file: string; fragment: string } | undefined => {
     if (/^(?:[a-z][a-z\d+.-]*:|\/)/i.test(source)) return undefined;
     const path = decodeURIComponent(source.split(/[?#]/)[0] ?? "");
-    if (!/\.(svg|html|png|webp|gif|mp4|webm|jpe?g)$/.test(path)) return undefined;
+    if (!/\.(svg|html|png|webp|gif|mp4|webm|jpe?g|pdf|dxf)$/i.test(path)) return undefined;
     const ref = parseFileReference(source);
     const file = ref.file.replace(/^(\.\/)+/, "");
     if (!localFile(file)) throw new Error("Figure links require a file inside the docs root");
@@ -41,11 +41,15 @@ export const parseFileEmbed = (
     }
     if (
         ref.range !== undefined ||
-        (previewer !== "image" && previewer !== "html" && previewer !== "video")
+        (previewer !== "image" &&
+            previewer !== "html" &&
+            previewer !== "video" &&
+            previewer !== "pdf" &&
+            previewer !== "dxf")
     )
         return { ...ref, kind: "textfile" };
     const file = ref.file.replace(/^(\.\/)+/, "");
     if (!localFile(file))
-        throw new Error("Image and HTML previews require a local file inside the docs root");
+        throw new Error("Visual previews require a local file inside the docs root");
     return { file, kind: previewer === "html" ? "html" : "figure" };
 };

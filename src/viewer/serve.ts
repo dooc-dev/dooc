@@ -2512,7 +2512,7 @@ const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
         ? `<script>${inlineScript(opts.publish.graphJs)}</script>`
         : `<script>(${loadGraphScript.toString()})();</script>`;
     return `<!doctype html><html lang="en"><head><meta charset="utf-8">
-${opts.publish ? `<meta name="referrer" content="no-referrer"><meta http-equiv="x-dns-prefetch-control" content="off">${opts.publish.network ? "" : `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' data:; img-src data: blob:; media-src data: blob:; font-src data: blob:; frame-src data: blob:; connect-src 'none'; base-uri 'none'; form-action 'none'">`}` : ""}
+${opts.publish ? `<meta name="referrer" content="no-referrer"><meta http-equiv="x-dns-prefetch-control" content="off">${opts.publish.network ? "" : `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' data:; img-src data: blob:; media-src data: blob:; object-src data:; font-src data: blob:; frame-src data: blob:; connect-src 'none'; base-uri 'none'; form-action 'none'">`}` : ""}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(pageTitle(mode, opts.title, site.title))}</title>
 <script>var __name = (f) => f;

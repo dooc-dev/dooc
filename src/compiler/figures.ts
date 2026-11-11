@@ -23,12 +23,14 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { FigureEntry } from "../core/content-types.js";
+import { escapeHtml } from "../core/html.js";
 import { extractMxfile, isDrawioSvg, normalizeDrawioSvg } from "./drawio.js";
+import { dxfSvg } from "./dxf.js";
 import { ignoredFiles } from "./ignored-files.js";
 import { textfilePath } from "./textfile.js";
 
-const EXT_RE = /\.(drawio\.svg|svg|html|png|webp|gif|mp4|webm|jpe?g)$/;
-const FILE_RE = /^[a-z0-9][a-z0-9_-]*\.(drawio\.svg|svg|html|png|webp|gif|mp4|webm|jpe?g)$/;
+const EXT_RE = /\.(drawio\.svg|svg|html|png|webp|gif|mp4|webm|jpe?g|pdf|dxf)$/i;
+const FILE_RE = /^[a-z0-9][a-z0-9_-]*\.(drawio\.svg|svg|html|png|webp|gif|mp4|webm|jpe?g|pdf|dxf)$/;
 const IMAGE_MIME: Record<string, string> = {
     png: "image/png",
     webp: "image/webp",
@@ -50,7 +52,7 @@ export const figureName = (file: string): string =>
  */
 export const figureUploadName = (raw: string): string | undefined => {
     const lower = raw.toLowerCase().split(/[\\/]/).pop() ?? "";
-    const ext = /\.(drawio\.svg|svg|html|png|webp|gif|mp4|webm|jpe?g)$/.exec(lower)?.[1];
+    const ext = EXT_RE.exec(lower)?.[1];
     if (ext == null) {
         return undefined;
     }
@@ -165,7 +167,7 @@ export const loadFigures = (
     let files: string[] = [];
     try {
         files = readdirSync(figuresDir)
-            .filter((f) => /\.(svg|html|png|webp|gif|mp4|webm|jpe?g)$/.test(f))
+            .filter((f) => EXT_RE.test(f))
             .sort();
     } catch {
         // A missing figures/ is valid.
@@ -181,7 +183,7 @@ export const loadFigures = (
             !FILE_RE.test(file.slice(8))
         ) {
             errors.push(
-                `${file}: file name must be <name>.svg|.drawio.svg|.html|.png|.webp|.jpg|.jpeg ([a-z0-9_-])`,
+                `${file}: file name must be <name>.<extension> using [a-z0-9_-] and a supported image, html, video, pdf or dxf extension`,
             );
             continue;
         }
@@ -191,7 +193,34 @@ export const loadFigures = (
             errors.push(`${file}: duplicate name "${name}" (also used by ${dup.file})`);
             continue;
         }
-        if (/\.(mp4|webm)$/.test(file)) {
+        if (/\.(pdf|dxf)$/i.test(file)) {
+            try {
+                const data = readFileSync(
+                    file.startsWith("figures/")
+                        ? textfilePath(figuresDir, file.slice(8))
+                        : textfilePath(dirname(figuresDir), file),
+                );
+                if (/\.dxf$/i.test(file)) {
+                    const raw = new TextDecoder("utf-8", { fatal: true }).decode(data);
+                    figures.push({ name, file, ...parseSvg(file, dxfSvg(raw), errors) });
+                } else {
+                    if (data.subarray(0, 5).toString("ascii") !== "%PDF-")
+                        throw new Error("Expected a PDF file beginning with %PDF-");
+                    const uri = `data:application/pdf;base64,${data.toString("base64")}`;
+                    const download = `<a href="${uri}" download="${escapeHtml(file.split("/").at(-1) ?? "document.pdf")}" data-i18n="Download PDF">Download PDF</a>`;
+                    figures.push({
+                        name,
+                        file,
+                        kind: "pdf",
+                        markup: `<object type="application/pdf" data="${uri}" aria-label="PDF preview" style="display:block;width:100%;height:640px;max-height:80vh;min-height:320px">${download}</object>${download}`,
+                    });
+                }
+            } catch (error) {
+                errors.push(`${file}: ${error instanceof Error ? error.message : String(error)}`);
+            }
+            continue;
+        }
+        if (/\.(mp4|webm)$/i.test(file)) {
             const data = readFileSync(
                 file.startsWith("figures/")
                     ? textfilePath(figuresDir, file.slice(8))
@@ -201,11 +230,11 @@ export const loadFigures = (
                 name,
                 file,
                 kind: "video",
-                markup: `<video data-dooc-video controls playsinline preload="metadata" aria-label="Video preview" src="data:video/${file.endsWith(".mp4") ? "mp4" : "webm"};base64,${data.toString("base64")}"></video>`,
+                markup: `<video data-dooc-video controls playsinline preload="metadata" aria-label="Video preview" src="data:video/${file.toLowerCase().endsWith(".mp4") ? "mp4" : "webm"};base64,${data.toString("base64")}"></video>`,
             });
             continue;
         }
-        const mime = IMAGE_MIME[file.slice(file.lastIndexOf(".") + 1)];
+        const mime = IMAGE_MIME[file.slice(file.lastIndexOf(".") + 1).toLowerCase()];
         if (mime != null) {
             // Rasters are inlined as data URIs; Markdown embeds supply their alternative text.
             const data = readFileSync(
@@ -229,13 +258,13 @@ export const loadFigures = (
         );
         // The point of .drawio.svg is "can be reopened in draw.io", so the mxfile copy is required
         // (rejects an Export as > SVG output without the copy that was merely renamed).
-        const editable = file.endsWith(".drawio.svg");
+        const editable = file.toLowerCase().endsWith(".drawio.svg");
         if (editable && !extractMxfile(raw)) {
             errors.push(
                 `${file}: .drawio.svg doubles as the editable source, so it requires a copy of the mxfile (content=) (save it as .drawio.svg via File > Save as in draw.io)`,
             );
         }
-        const parsed = file.endsWith(".svg")
+        const parsed = file.toLowerCase().endsWith(".svg")
             ? parseSvg(
                   file,
                   editable || isDrawioSvg(raw) ? normalizeDrawioSvg(name, raw).markup : raw,

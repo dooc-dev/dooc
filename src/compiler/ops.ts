@@ -419,7 +419,7 @@ export const createDocOps = (root: string) => {
     const addFigure = (file: string, data: Buffer): OpResult<{ file: string; path?: string }> => {
         const upload = figureUploadName(file);
         if (!upload) {
-            return { error: "specify an svg / png / webp / jpeg / html file", status: 400 };
+            return { error: "specify an image / html / video / pdf / dxf file", status: 400 };
         }
         if (
             data.length === 0 ||

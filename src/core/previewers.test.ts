@@ -18,6 +18,8 @@ describe("preview registration", () => {
         ["a.ts", "code"],
         ["a%20b.ts#L10-L20", "code"],
         ["a.webm", "video"],
+        ["drawing.DXF", "dxf"],
+        ["document.pdf", "pdf"],
         ["a.bin", undefined],
     ])("selects %s without reading the file", (file, kind) => {
         expect(resolvePreviewer(file)).toBe(kind);
