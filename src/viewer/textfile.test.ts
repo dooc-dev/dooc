@@ -48,6 +48,15 @@ it.each([
         }),
     );
     const content = sources[format as keyof typeof sources];
+    const draft = await textfileResponse(root, { action: "read", file: "new.issue" });
+    expect(draft.status).toBe(200);
+    expect(draft.body).toMatchObject({
+        content: null,
+        language: format,
+        schema: { type: "object" },
+        schemaContext: { schemas: expect.any(Object) },
+    });
+    expect(existsSync(join(root, "new.issue"))).toBe(false);
     const save = (text: string, base: string | null) =>
         textfileResponse(root, { action: "save", file: "one.issue", content: text, base });
     expect((await save(content, null)).status).toBe(200);

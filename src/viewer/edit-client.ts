@@ -22,7 +22,13 @@ import {
 import { indentWithTab, isolateHistory } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from "@codemirror/language";
-import { EditorState, type Extension, StateEffect, StateField } from "@codemirror/state";
+import {
+    Compartment,
+    EditorState,
+    type Extension,
+    StateEffect,
+    StateField,
+} from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, keymap } from "@codemirror/view";
 import type { SyntaxNode } from "@lezer/common";
 import { tags } from "@lezer/highlight";
@@ -50,6 +56,7 @@ import { filePathCompletion } from "./edit-path-completion.js";
 import { hasSchemaBuilderDraft, prepareSchemaBuilder } from "./edit-schema-builder.js";
 import { schemaCompletion } from "./edit-schema-completion.js";
 import { editorSetup } from "./edit-setup.js";
+import { hasSubformatFormDraft, subformatForm } from "./edit-subformat-form.js";
 import { createTextfileEditors } from "./edit-textfile.js";
 import { CODE_BLOCK_NODE_NAMES, isEditingCodeBlock } from "./edit-validation.js";
 import { mountExtensions } from "./extensions-ui.js";
@@ -2112,8 +2119,7 @@ const openFileEditor = (file?: string, line?: number): void => {
         },
     };
 };
-document.addEventListener("docs:subformat-add", (event) => {
-    const form = (event as CustomEvent<HTMLFormElement>).detail;
+const openSubformatEditor = (form: HTMLFormElement): void => {
     if (fileEditor?.element === form) return;
     closeFileEditor();
     form.id = "file-editor";
@@ -2123,15 +2129,21 @@ document.addEventListener("docs:subformat-add", (event) => {
     for (const control of [settings, ...settings.querySelectorAll("input, select")])
         control.setAttribute("form", form.id);
     heading.append(settings);
-    settings.addEventListener("input", () => form.dispatchEvent(new Event("input")));
+    settings.oninput = () => form.dispatchEvent(new Event("input"));
     $("phead").insertBefore(heading, $("gear"));
     $("panel").append(form);
     const storageFormat = form.elements.namedItem("format") as HTMLSelectElement;
-    const disposeFormatPicker = mountSelectPickers(t, [storageFormat]);
-    storageFormat.addEventListener("change", () => form.dispatchEvent(new Event("input")));
+    const disposeFormatPicker = storageFormat ? mountSelectPickers(t, [storageFormat]) : undefined;
+    if (storageFormat) storageFormat.onchange = () => form.dispatchEvent(new Event("input"));
     $("cm").hidden = true;
     document.body.classList.add("textfile-open");
     const content = form.elements.namedItem("content") as HTMLTextAreaElement;
+    const recordFormat = form.dataset.subformatRecord as "json" | "yaml" | "toml" | undefined;
+    const recordSchema = new Compartment();
+    let disposed = false;
+    const schemaFile = () =>
+        (form.elements.namedItem("schema") as HTMLInputElement).value.trim() ||
+        `${(form.elements.namedItem("ext") as HTMLInputElement).value.trim() || "subformat"}.schema.json`;
     form.oninput = () => setDirty(dirty);
     const format = async () => {
         if (!prepareSchemaBuilder(editor.state)) return;
@@ -2141,7 +2153,7 @@ document.addEventListener("docs:subformat-add", (event) => {
             const response = await fetch("/api/subformat", {
                 method: "POST",
                 headers: { "content-type": "application/json" },
-                body: JSON.stringify({ action: "validate", content: value }),
+                body: JSON.stringify({ action: "validate", content: value, file: schemaFile() }),
             });
             const result = await response.json();
             if (!response.ok) throw new Error(result.error);
@@ -2160,22 +2172,28 @@ document.addEventListener("docs:subformat-add", (event) => {
         extensions: [
             editorSetup,
             theme,
-            editorCodeHighlight("json"),
-            jsonEditor(undefined, true),
+            editorCodeHighlight(recordFormat ?? "json"),
+            recordSchema.of(recordFormat ? [] : jsonEditor(undefined, true, schemaFile)),
             keymap.of([
                 {
                     key: "Shift-Alt-f",
                     run: () => {
+                        if (recordFormat) return false;
                         void format();
                         return true;
                     },
                 },
                 indentWithTab,
             ]),
-            EditorView.contentAttributes.of({ "aria-label": "JSON Schema", spellcheck: "false" }),
+            EditorView.contentAttributes.of({
+                "aria-label": recordFormat ? t("Contents") : "JSON Schema",
+                spellcheck: "false",
+            }),
             EditorView.updateListener.of((update) => {
                 if (
                     !update.docChanged &&
+                    !hasSubformatFormDraft(update.state) &&
+                    !hasSubformatFormDraft(update.startState) &&
                     !hasSchemaBuilderDraft(update.state) &&
                     !hasSchemaBuilderDraft(update.startState)
                 )
@@ -2186,27 +2204,61 @@ document.addEventListener("docs:subformat-add", (event) => {
             }),
         ],
     });
-    form.addEventListener(
-        "submit",
-        (event) => {
-            if (prepareSchemaBuilder(editor.state)) return;
-            event.preventDefault();
-            event.stopImmediatePropagation();
-        },
-        true,
-    );
+    const prepare = (event: SubmitEvent) => {
+        if (
+            recordFormat ? !hasSubformatFormDraft(editor.state) : prepareSchemaBuilder(editor.state)
+        )
+            return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        form.querySelector<HTMLInputElement>(":invalid")?.reportValidity();
+    };
+    form.addEventListener("submit", prepare, true);
     const button = form.querySelector<HTMLButtonElement>("[data-format]") as HTMLButtonElement;
-    button.onclick = () => void format();
+    if (button) button.onclick = () => void format();
+    if (recordFormat) {
+        const file = (form.elements.namedItem("file") as HTMLInputElement).value;
+        void fetch("/api/textfile", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ action: "read", file }),
+        })
+            .then(async (response) => {
+                const result = await response.json();
+                if (disposed) return;
+                if (!response.ok) throw new Error(result.error ?? t("Save failed"));
+                editor.dispatch({
+                    effects: recordSchema.reconfigure([
+                        recordFormat === "json"
+                            ? jsonEditor(result.schema, false, file, result.schemaContext)
+                            : [],
+                        result.schema
+                            ? subformatForm(result.schema, recordFormat, result.schemaContext)
+                            : [],
+                    ]),
+                });
+            })
+            .catch((error) => {
+                if (!disposed) showSubformatError(error);
+            });
+    }
     fileEditor = {
         file: "",
         element: form,
         dispose: () => {
+            disposed = true;
+            form.removeEventListener("submit", prepare, true);
             editor.destroy();
-            disposeFormatPicker();
+            disposeFormatPicker?.();
+            form.prepend(settings);
             heading.remove();
         },
     };
-});
+};
+for (const name of ["docs:subformat-add", "docs:subformat-create"])
+    document.addEventListener(name, (event) =>
+        openSubformatEditor((event as CustomEvent<HTMLFormElement>).detail),
+    );
 document.addEventListener("docs:subformat-editor-close", (event) => {
     if (fileEditor?.element === (event as CustomEvent).detail) closeFileEditor();
     setDirty(dirty);
@@ -2257,6 +2309,8 @@ const openLibraryFile = async (file: string): Promise<void> => {
 };
 const showResource = (resource: ResourcePage): void => {
     const previous = resource.path === resourceView?.path ? resourceView.element : undefined;
+    const scrollTop = previous?.scrollTop ?? 0;
+    const scrollLeft = previous?.querySelector(".subformat-columns")?.scrollLeft ?? 0;
     const focusedRecord = previous?.contains(document.activeElement)
         ? document.activeElement?.closest<HTMLElement>(".subformat-card")?.dataset.recordFile
         : undefined;
@@ -2274,12 +2328,15 @@ const showResource = (resource: ResourcePage): void => {
     paneHost.hidden = true;
     workspace.append(element);
     restoreResourceFilters(previous, element);
+    element.scrollTop = scrollTop;
+    const columns = element.querySelector(".subformat-columns");
+    if (columns) columns.scrollLeft = scrollLeft;
     if (focusedRecord) {
         const card = element.querySelector(`[data-record-file="${CSS.escape(focusedRecord)}"]`);
         (
             card?.querySelector<HTMLElement>(".subformat-card-details:not([hidden]) select") ??
             card?.querySelector<HTMLElement>(".subformat-card-open")
-        )?.focus();
+        )?.focus({ preventScroll: true });
     }
     resourceView = {
         ...resource,

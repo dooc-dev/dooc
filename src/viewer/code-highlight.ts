@@ -1,5 +1,5 @@
 import { paintCode } from "./code-fold.js";
-import { codeTheme, codeTokens } from "./code-tokens.js";
+import { codeGrammar, codeTheme, codeTokens } from "./code-tokens.js";
 
 const painted = new WeakMap<Element, string>();
 const highlight = (): void => {
@@ -18,7 +18,7 @@ const highlight = (): void => {
         void codeTokens(source, lang, theme)
             .then((tokens) => {
                 if (!code.isConnected || painted.get(code) !== signature) return;
-                paintCode(code, source, lang, tokens);
+                paintCode(code, source, codeGrammar(lang)?.name ?? lang, tokens);
             })
             .catch(() => {
                 /* Unsupported grammar features leave the original text readable. */

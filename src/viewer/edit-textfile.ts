@@ -103,6 +103,7 @@ export const createTextfileEditors = (
             language?: string;
             schema?: import("vscode-json-languageservice").JSONSchema;
             schemaDocument?: boolean;
+            schemaContext?: import("../core/schema-refs.js").SchemaContext;
             findings?: { message: string; range: [number, number]; ruleId: string }[];
         };
         if (!response.ok)
@@ -213,9 +214,10 @@ export const createTextfileEditors = (
         draft.errorAction = "read";
         notify(draft);
         try {
-            const { content, gitBase, language, schema, schemaDocument } = await request(file, {
-                action: "read",
-            });
+            const { content, gitBase, language, schema, schemaDocument, schemaContext } =
+                await request(file, {
+                    action: "read",
+                });
             if (draft.state?.doc !== previousDoc) {
                 // The queued save compares against the old base and resolves any disk conflict.
                 return;
@@ -271,11 +273,13 @@ export const createTextfileEditors = (
                     gitDiffTheme,
                     theme,
                     editorCodeHighlight(codeLanguage),
-                    codeLanguage === "json" ? jsonEditor(schema, schemaDocument) : [],
+                    codeLanguage === "json"
+                        ? jsonEditor(schema, schemaDocument, file, schemaContext)
+                        : [],
                     schema &&
                     !schemaDocument &&
                     (codeLanguage === "json" || codeLanguage === "yaml" || codeLanguage === "toml")
-                        ? subformatForm(schema, codeLanguage)
+                        ? subformatForm(schema, codeLanguage, schemaContext)
                         : [],
                     EditorState.lineSeparator.of(content?.includes("\r\n") ? "\r\n" : "\n"),
                     EditorView.contentAttributes.of({

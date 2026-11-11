@@ -1,7 +1,9 @@
 import { expect, it } from "vitest";
 import { compileSubformatSchema } from "../compiler/subformats.js";
 import {
+    formatSchemaChoices,
     parseFieldSchema,
+    parseSchemaParameter,
     renameSchemaField,
     type SchemaObject,
     schemaChoices,
@@ -78,12 +80,17 @@ it("keeps references and conditional schemas intact and locks linked field names
     expect(schemaFieldNamesLocked(schema)).toBe(true);
     expect(parseFieldSchema(JSON.stringify(schema))).toEqual(schema);
     expect(schemaFieldNamesLocked(JSON.parse(SUBFORMAT_SCHEMA_TEMPLATE))).toBe(false);
+    expect(
+        schemaFieldNamesLocked({
+            type: "object",
+            properties: { value: { enum: [{ $ref: "literal data" }] } },
+        }),
+    ).toBe(false);
 });
 
 it("keeps incomplete, unsupported and imprecise JSON in text mode", () => {
     for (const source of [
         '{"type":',
-        '{"type":"string"}',
         '{"type":"object","default":9007199254740993}',
         '{"$schema":"http://json-schema.org/draft-07/schema#"}',
     ])
@@ -96,4 +103,54 @@ it("parses enum controls with the selected type and rejects duplicates or mixed 
     expect(schemaChoices("true\nfalse", "boolean")).toEqual([true, false]);
     expect(() => schemaChoices("one\none", "string")).toThrow("unique");
     expect(() => schemaChoices("1\n1.5", "integer")).toThrow("field type");
+});
+
+it("roundtrips every JSON enum value without losing empty, multiline or quoted strings", () => {
+    for (const [type, values] of [
+        ["string", ["", "a\nb", "a\rb", '"quoted"', "  space  ", "Todo"]],
+        ["number", [0, -1.5, 2]],
+        ["boolean", [true, false]],
+        ["null", [null]],
+        ["array", [[1], ["a", null]]],
+        ["object", [{ a: 1 }, { b: [true] }]],
+        [undefined, ["text", 1, false, null, [], {}]],
+        [
+            ["string", "null"],
+            ["", null],
+        ],
+    ] as const) {
+        const choices = [...values];
+        expect(schemaChoices(formatSchemaChoices(choices, type), type)).toEqual(choices);
+    }
+    expect(() =>
+        schemaChoices('{"a":1,"b":{"x":2,"y":3}}\n{"b":{"y":3,"x":2},"a":1}', "object"),
+    ).toThrow("unique");
+    for (const invalid of ["\n", "1e400", "9007199254740993", '"a","type":"object"'])
+        expect(() => schemaChoices(invalid, undefined)).toThrow();
+});
+
+it("edits constants and composed schemas without accepting malformed parameter shapes", () => {
+    expect(parseSchemaParameter("const", '""', "string")).toBe("");
+    expect(parseSchemaParameter("const", "null", ["string", "null"])).toBeNull();
+    for (const key of ["oneOf", "anyOf", "allOf"]) {
+        expect(parseSchemaParameter(key, '[{"type":"string"},false]', undefined)).toEqual([
+            { type: "string" },
+            false,
+        ]);
+        for (const invalid of ["[]", "{}", "[null]", "[1]"])
+            expect(() => parseSchemaParameter(key, invalid, undefined)).toThrow();
+    }
+    expect(parseSchemaParameter("$defs", '{"status":{"enum":["Todo","Done"]}}', undefined)).toEqual(
+        { status: { enum: ["Todo", "Done"] } },
+    );
+    expect(() => parseSchemaParameter("$defs", '{"status":null}', undefined)).toThrow();
+    expect(() => parseSchemaParameter("not", "[]", undefined)).toThrow();
+    expect(() => parseSchemaParameter("const", "1", "string")).toThrow("field type");
+    expect(() => parseSchemaParameter("default", "1e400", undefined)).toThrow();
+    const schema = { type: "string", enum: ["a"] };
+    setSchemaType(schema, "");
+    expect(schema).toEqual({ enum: ["a"] });
+    const reference = { type: "string", $ref: "common.schema.json", oneOf: [{ type: "number" }] };
+    setSchemaType(reference, "");
+    expect(reference).toEqual({ $ref: "common.schema.json", oneOf: [{ type: "number" }] });
 });

@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { readManifest } from "../compiler/manifest.js";
+import { validateSubformatFile } from "../compiler/subformats.js";
 import { textfilePath, writeTextfile } from "../compiler/textfile.js";
 import { codeFileName, codeFilePlan } from "../core/code-file.js";
 import { isDocId } from "../core/content-metadata.js";
@@ -24,9 +25,11 @@ export const codeFileResponse = (
             ? defaultFilePath(codeFileName(input.body, input.position, input.documentId as string))
             : (input.file as string);
         let plan = codeFilePlan(input.body, input.position, target, previews);
-        const create = () =>
-            !existsSync(textfilePath(root, plan.file)) &&
-            writeTextfile(root, plan.file, plan.content, null);
+        const create = () => {
+            if (existsSync(textfilePath(root, plan.file))) return false;
+            validateSubformatFile(root, plan.file, plan.content, previews?.domains);
+            return writeTextfile(root, plan.file, plan.content, null);
+        };
         if (automatic) {
             for (let index = 2; !create(); index++) {
                 const dot = target.lastIndexOf(".");

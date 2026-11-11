@@ -3,18 +3,30 @@ import { linter } from "@codemirror/lint";
 import { EditorState } from "@codemirror/state";
 import { getLanguageService, type JSONSchema } from "vscode-json-languageservice";
 import { TextDocument } from "vscode-languageserver-textdocument";
+import type { SchemaContext } from "../core/schema-refs.js";
 import { SUBFORMAT_SCHEMA_VERSION } from "../core/subformats.js";
 import { schemaBuilder } from "./edit-schema-builder.js";
 
-export const jsonCompletion = (schema?: JSONSchema, schemaDocument = false) => {
-    const service = getLanguageService({});
+export const jsonCompletion = (
+    schema?: JSONSchema,
+    schemaDocument = false,
+    context?: SchemaContext,
+) => {
+    const service = getLanguageService({
+        workspaceContext: { resolveRelativePath: (path, resource) => new URL(path, resource).href },
+    });
     const uri = "file:///document.json";
     service.configure({
         allowComments: false,
         schemas: schemaDocument
             ? [{ uri: SUBFORMAT_SCHEMA_VERSION, fileMatch: [uri] }]
             : schema
-              ? [{ uri: "file:///record.schema.json", fileMatch: [uri], schema }]
+              ? [
+                    { uri: context?.uri ?? "file:///record.schema.json", fileMatch: [uri], schema },
+                    ...Object.entries(context?.schemas ?? {})
+                        .filter(([key]) => key !== context?.uri)
+                        .map(([uri, schema]) => ({ uri, schema: schema as JSONSchema })),
+                ]
               : [],
     });
     return async (context: CompletionContext) => {
@@ -69,8 +81,13 @@ export const jsonCompletion = (schema?: JSONSchema, schemaDocument = false) => {
     };
 };
 
-export const jsonEditor = (schema?: JSONSchema, schemaDocument = false) => {
-    const completion = jsonCompletion(schema, schemaDocument);
+export const jsonEditor = (
+    schema?: JSONSchema,
+    schemaDocument = false,
+    file?: string | (() => string),
+    context?: SchemaContext,
+) => {
+    const completion = jsonCompletion(schema, schemaDocument, context);
     return [
         schemaDocument ? schemaBuilder : [],
         EditorState.languageData.of(() => [{ autocomplete: completion }]),
@@ -83,7 +100,11 @@ export const jsonEditor = (schema?: JSONSchema, schemaDocument = false) => {
                     const response = await fetch("/api/subformat", {
                         method: "POST",
                         headers: { "content-type": "application/json" },
-                        body: JSON.stringify({ action: "validate", content }),
+                        body: JSON.stringify({
+                            action: "validate",
+                            content,
+                            file: typeof file === "function" ? file() : file,
+                        }),
                     });
                     const result = await response.json();
                     if (!response.ok) message = result.error;

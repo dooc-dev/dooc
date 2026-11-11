@@ -3,7 +3,7 @@ import {
     mountResourceLibrary,
     restoreResourceFilters,
 } from "../../src/viewer/resource-library-ui.ts";
-import { filterSubformats } from "../../src/viewer/subformats-ui.ts";
+import { filterSubformats, hasSubformatDraft } from "../../src/viewer/subformats-ui.ts";
 
 // Bundle with esbuild and run testSubformatCards() on a local HTTP origin with viewer styles.
 window.testSubformatCards = async () => {
@@ -68,8 +68,12 @@ window.testSubformatCards = async () => {
     let opened;
     let openedLine;
     let failSave = false;
+    let finishSave;
+    let delaySave = false;
     let failCreate = false;
     let failRegister = false;
+    let failDelete = false;
+    const deletions = [];
     let failLayout = false;
     let delayLayout = false;
     let finishLayout;
@@ -77,6 +81,7 @@ window.testSubformatCards = async () => {
     let saves = 0;
     const openRegistration = (event) => host.append(event.detail);
     document.addEventListener("docs:subformat-add", openRegistration);
+    document.addEventListener("docs:subformat-create", openRegistration);
     mountResourceLibrary((file, line) => {
         opened = file;
         openedLine = line;
@@ -92,6 +97,7 @@ window.testSubformatCards = async () => {
             {
                 ...collection,
                 ext: "note",
+                schema: "note.schema.json",
                 records: [{ ...collection.records[0], file: "note.note" }],
             },
         ]);
@@ -116,6 +122,11 @@ window.testSubformatCards = async () => {
     window.fetch = async (url, options) => {
         if (url !== "/api/subformat") return originalFetch(url, options);
         const input = JSON.parse(options.body);
+        if (input.action === "delete") {
+            deletions.push(input);
+            if (failDelete) return Response.json({ error: "Save failed" }, { status: 409 });
+            return Response.json({});
+        }
         if (input.action === "layouts") {
             layouts.push(input);
             if (delayLayout)
@@ -157,6 +168,10 @@ window.testSubformatCards = async () => {
         }
         saves++;
         assert(input.base === "original", "Moves must retain the conflict guard");
+        if (delaySave)
+            await new Promise((resolve) => {
+                finishSave = resolve;
+            });
         if (failSave) return Response.json({ error: "Save failed" }, { status: 409 });
         return Response.json({
             content: "saved",
@@ -169,6 +184,10 @@ window.testSubformatCards = async () => {
         const details = () => card().querySelector(".subformat-card-details");
         const title = () => card().querySelector(".subformat-card-open");
         assert(details().hidden, "Cards start collapsed");
+        assert(
+            getComputedStyle(card()).backgroundColor === "rgba(0, 0, 0, 0)",
+            "Card backgrounds are transparent",
+        );
         card().querySelector(".subformat-card-copy").click();
         await wait(() => copied !== undefined);
         assert(
@@ -441,33 +460,83 @@ window.testSubformatCards = async () => {
             card().dispatchEvent(new DragEvent("dragend", { bubbles: true }));
         }
         const transfer = new DataTransfer();
-        let preview;
+        let dragImage;
         transfer.setDragImage = (element) => {
-            preview = element;
+            dragImage = element;
         };
-        card().dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer: transfer }));
+        const rect = card().getBoundingClientRect();
+        const startDrag = () =>
+            card().dispatchEvent(
+                new DragEvent("dragstart", {
+                    bubbles: true,
+                    dataTransfer: transfer,
+                    clientX: rect.left + 60,
+                    clientY: rect.top + 30,
+                }),
+            );
+        startDrag();
+        const preview = root.querySelector(".subformat-drag-preview");
         assert(
-            preview?.textContent.includes("Review <b>cards</b>"),
-            "Dragging uses a card preview",
+            preview?.innerHTML.replace(/ id="[^"]*"/g, "") ===
+                card().innerHTML.replace(/ id="[^"]*"/g, ""),
+            "Dragging preserves the entire card, including tools and expanded details",
         );
-        await wait(() => !preview.isConnected);
+        assert(
+            dragImage instanceof HTMLCanvasElement && dragImage.width === 1,
+            "The browser's faded drag image is replaced with a blank image",
+        );
+        assert(
+            preview.inert && !preview.querySelector("[id]") && !preview.dataset.recordFile,
+            "The preview adds no focus targets or duplicate record and element IDs",
+        );
+        await wait(() => card().classList.contains("is-dragging"));
+        const previewRect = preview.getBoundingClientRect();
+        assert(
+            previewRect.width === rect.width &&
+                previewRect.height === rect.height &&
+                previewRect.left === rect.left &&
+                previewRect.top === rect.top,
+            "Dragging keeps the exact card size and initial position",
+        );
+        assert(
+            getComputedStyle(preview).opacity === "1" &&
+                getComputedStyle(preview).backgroundColor ===
+                    getComputedStyle(preview.querySelector(".subformat-card-tools"))
+                        .backgroundColor &&
+                getComputedStyle(preview).backgroundColor !== "rgba(0, 0, 0, 0)" &&
+                getComputedStyle(card()).visibility === "hidden" &&
+                card().getBoundingClientRect().height === rect.height,
+            "Only the opaque dragged card is visible, with its original space preserved",
+        );
         const source = card().parentElement;
         const sourceDrag = new DragEvent("dragover", {
             bubbles: true,
             cancelable: true,
             dataTransfer: transfer,
+            clientX: rect.left + 110,
+            clientY: rect.top + 70,
         });
         source.dispatchEvent(sourceDrag);
+        await new Promise(requestAnimationFrame);
+        assert(
+            preview.getBoundingClientRect().left === rect.left + 50 &&
+                preview.getBoundingClientRect().top === rect.top + 40,
+            "The card follows the pointer without changing the grab offset",
+        );
         assert(
             sourceDrag.defaultPrevented && !source.classList.contains("is-drop-target"),
             "The current column accepts dragging without a false move highlight",
         );
         source.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
         assert(saves === 0, "Dropping in the current column does not save");
+        assert(!preview.isConnected, "Dropping removes the preview immediately");
         const destination = root.querySelector(
             '.subformat-column[aria-label="Done"] .subformat-cards',
         );
         const heading = destination.previousElementSibling;
+        destination.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
+        assert(saves === 0, "A drop without an active card drag does not save");
+        startDrag();
         const headerDrag = new DragEvent("dragover", {
             bubbles: true,
             cancelable: true,
@@ -476,6 +545,7 @@ window.testSubformatCards = async () => {
         heading.dispatchEvent(headerDrag);
         heading.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
         assert(!headerDrag.defaultPrevented && saves === 0, "Column headings do not accept drops");
+        startDrag();
         destination.dispatchEvent(
             new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: transfer }),
         );
@@ -484,9 +554,19 @@ window.testSubformatCards = async () => {
             !destination.parentElement.classList.contains("is-drop-target"),
             "Highlighting is confined to the card area",
         );
+        destination.dispatchEvent(new DragEvent("dragleave", { bubbles: true }));
+        assert(
+            destination.classList.contains("is-drop-target"),
+            "Crossing children does not flash the destination highlight",
+        );
+        document.body.dispatchEvent(new DragEvent("dragover", { bubbles: true }));
+        assert(
+            !destination.classList.contains("is-drop-target"),
+            "Leaving the board clears the target",
+        );
         card().dispatchEvent(new DragEvent("dragend", { bubbles: true, dataTransfer: transfer }));
         assert(
-            !root.querySelector(".is-dragging, .is-drop-target"),
+            !root.querySelector(".is-dragging, .is-drop-target, .subformat-drag-preview"),
             "Cancelled drags clear feedback",
         );
         title().click();
@@ -494,6 +574,12 @@ window.testSubformatCards = async () => {
         assert(
             !opened && !document.querySelector("dialog") && !details().hidden,
             "Releasing a drag does not open details, edit, or toggle the card",
+        );
+        startDrag();
+        filterSubformats(root, []);
+        assert(
+            !root.querySelector(".is-dragging, .subformat-drag-preview"),
+            "Rerendering during a drag clears the preview and restores the card",
         );
         const selectMove = () => {
             const select = card().querySelector("select");
@@ -507,6 +593,7 @@ window.testSubformatCards = async () => {
         const focus = document.activeElement;
         selectMove();
         await wait(() => root.querySelector('[data-subformat-board][aria-busy="false"]'));
+        await wait(() => card().getAnimations().length === 0);
         assert(
             card().closest(".subformat-column").getAttribute("aria-label") === "Todo",
             "Failed moves keep their original group",
@@ -519,13 +606,32 @@ window.testSubformatCards = async () => {
         await new Promise((resolve) => setTimeout(resolve, 6100));
         assert(!toast.isConnected, "Error toasts disappear automatically");
         failSave = false;
-        selectMove();
+        delaySave = true;
+        const movingCard = card();
+        const movingColumns = movingCard.closest(".subformat-columns");
+        movingColumns.style.maxWidth = "300px";
+        movingColumns.scrollLeft = 120;
+        startDrag();
+        transfer.clearData();
+        root.querySelector('.subformat-column[aria-label="Done"] .subformat-cards').dispatchEvent(
+            new DragEvent("drop", { bubbles: true, dataTransfer: transfer }),
+        );
+        assert(!root.querySelector(".subformat-drag-preview"), "Saving a drop removes the preview");
+        assert(
+            card() === movingCard &&
+                card().closest(".subformat-column").getAttribute("aria-label") === "Done" &&
+                movingColumns.scrollLeft === 120,
+            "Dropping moves the existing card immediately without rebuilding or resetting scroll",
+        );
         assert(
             root.querySelector('[data-subformat-board][aria-busy="true"]') &&
                 !root.querySelector(".subformat-status") &&
                 !document.querySelector(".subformat-toast"),
-            "Saving does not show a loading message",
+            "Dropping saves the tracked card even without a readable transfer payload",
         );
+        movingColumns.style.maxWidth = "";
+        delaySave = false;
+        finishSave();
         await wait(() => root.querySelector('[data-subformat-board][aria-busy="false"]'));
         assert(
             saves === 2 &&
@@ -548,7 +654,16 @@ window.testSubformatCards = async () => {
         );
         const create = root.querySelector("[data-subformat-create]");
         create.click();
-        let form = root.querySelector(".subformat-create-form");
+        let form = host.querySelector("[data-subformat-record]");
+        assert(
+            form && !root.contains(form),
+            "Create opens the right editor without a toolbar popup",
+        );
+        create.click();
+        assert(
+            host.querySelectorAll("[data-subformat-record]").length === 1,
+            "Repeated Create keeps the existing draft",
+        );
         assert(
             form.elements.file.value === "records/new.issue",
             "Create uses the configured folder",
@@ -563,8 +678,10 @@ window.testSubformatCards = async () => {
             "Escape cancels creation and restores focus",
         );
         create.click();
-        form = root.querySelector(".subformat-create-form");
+        form = host.querySelector("[data-subformat-record]");
         form.elements.file.value = "created.issue";
+        form.elements.file.dispatchEvent(new Event("input", { bubbles: true }));
+        assert(hasSubformatDraft(), "New record edits participate in the unsaved warning");
         failCreate = true;
         const beforeCreate = card().getBoundingClientRect().top;
         form.requestSubmit();
@@ -585,6 +702,7 @@ window.testSubformatCards = async () => {
         form.requestSubmit();
         await wait(() => !form.isConnected);
         assert(opened === "created.issue", "Creating opens the right editor");
+        assert(!hasSubformatDraft(), "Successful creation clears the unsaved draft");
         const created = root.querySelector('[data-record-file="created.issue"]');
         assert(created?.dataset.recordChange === "added", "New records use the added border");
         assert(
@@ -683,6 +801,74 @@ window.testSubformatCards = async () => {
         registration = openAdd();
         assert(registration, "The first subformat can be added from an empty workspace");
         registration.querySelector("[data-cancel]").click();
+        root = createRoot();
+        const openAction = (ext, action) => {
+            root.querySelector("[data-subformat-trigger]").click();
+            root.querySelector(
+                `[data-subformat-action="${action}"][aria-label$=": ${ext}"]`,
+            ).click();
+        };
+        opened = undefined;
+        const picker = root.querySelector("[data-subformat-trigger]");
+        picker.click();
+        document.activeElement.dispatchEvent(
+            new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }),
+        );
+        assert(
+            document.activeElement.dataset.subformatAction === "edit",
+            "Keyboard navigation reaches the edit action",
+        );
+        root.querySelector("[data-subformat-options]").hidePopover();
+        openAction("note", "edit");
+        assert(opened === "note.schema.json", "Edit opens the chosen subformat's schema");
+        assert(
+            root.querySelector("[data-resource-filter]").value === "issue",
+            "Editing another subformat preserves the selection",
+        );
+        openAction("issue", "delete");
+        const confirmation = document.querySelector("dialog[open]");
+        assert(
+            confirmation.textContent.includes("Records and schema files will be kept"),
+            "Deletion explains which files are kept",
+        );
+        confirmation.close("");
+        await wait(() => !confirmation.isConnected);
+        assert(
+            deletions.length === 0 && card(),
+            "Cancelling deletion preserves the collection without a request",
+        );
+        assert(document.activeElement === picker, "Cancelling deletion restores picker focus");
+        failDelete = true;
+        openAction("issue", "delete");
+        document.querySelector("dialog[open]").close("confirm");
+        await wait(() => document.querySelector(".subformat-toast"));
+        assert(
+            root.querySelector('[data-resource-filter] option[value="issue"]') && card(),
+            "Failed deletion preserves the collection",
+        );
+        document.querySelector(".subformat-toast").remove();
+        failDelete = false;
+        openAction("issue", "delete");
+        document.querySelector("dialog[open]").close("confirm");
+        await wait(() => !root.querySelector('[data-resource-filter] option[value="issue"]'));
+        assert(
+            card().dataset.recordFile === "note.note",
+            "Deleting the selected subformat selects the remaining collection",
+        );
+        assert(
+            deletions.at(-1).base.schema === collection.schema,
+            "Deletion includes the loaded definition for conflict checks",
+        );
+        openAction("note", "delete");
+        document.querySelector("dialog[open]").close("confirm");
+        await wait(() => root.querySelector("[data-subformat-board]").hidden);
+        assert(
+            !host.querySelector("[data-subformat-register]"),
+            "Deleting the last subformat does not open registration automatically",
+        );
+        registration = openAdd();
+        assert(registration, "A subformat can be added after deleting the last one");
+        registration.querySelector("[data-cancel]").click();
         document.body.classList.remove("edit");
         root = createRoot(false);
         assert(
@@ -692,6 +878,10 @@ window.testSubformatCards = async () => {
         assert(
             !root.querySelector("[data-subformat-add]"),
             "Read-only boards do not offer Add subformat",
+        );
+        assert(
+            !root.querySelector("[data-subformat-action]"),
+            "Read-only boards do not offer Edit or Delete",
         );
         assert(
             !card().draggable && !card().querySelector("select:not(:disabled)"),
@@ -733,9 +923,10 @@ window.testSubformatCards = async () => {
         );
         collection.layouts = configuredLayouts;
         delete collection.records[0].data.name;
-        return "Passed: collapse, state restoration, click/keyboard editing, escaping, focus, whole-card dragging, same-column drop, drag preview/cancel, temporary error toast without layout shift, save failure/retry, read-only details";
+        return "Passed: transparent cards, subformat edit/delete/confirmation/conflicts/last deletion/read-only actions, collapse, state restoration, click/keyboard editing, escaping, focus, whole-card dragging, same-column drop, drag preview/cancel, temporary error toast without layout shift, save failure/retry, read-only details";
     } finally {
         document.removeEventListener("docs:subformat-add", openRegistration);
+        document.removeEventListener("docs:subformat-create", openRegistration);
         host.remove();
         document.querySelector(".subformat-toast")?.remove();
         document.body.classList.toggle("edit", wasEditable);

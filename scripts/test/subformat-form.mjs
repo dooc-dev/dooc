@@ -1,6 +1,7 @@
 import { undo } from "@codemirror/commands";
 import { EditorView } from "@codemirror/view";
 import { parseSubformatRecord } from "../../src/core/subformat-record.ts";
+import { subformatForm } from "../../src/viewer/edit-subformat-form.ts";
 import { createTextfileEditors } from "../../src/viewer/edit-textfile.ts";
 
 // Bundle with esbuild and run testSubformatForm() in a browser on a local HTTP origin.
@@ -199,5 +200,47 @@ window.testSubformatForm = async () => {
         return "Passed: JSON/YAML/TOML form/text switching, typed and nested fields, local refs, read-only fields, autosave, comments, undo, remount, invalid drafts and external changes";
     } finally {
         window.fetch = originalFetch;
+    }
+};
+
+window.testReferencedEnumForm = async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const schema = {
+        type: "object",
+        properties: { choice: { $ref: "common.schema.json#/$defs/choice" } },
+    };
+    const view = new EditorView({
+        parent: host,
+        doc: '{"choice":{"id":1}}',
+        extensions: [
+            subformatForm(schema, "json", {
+                uri: "file:///schemas/record.schema.json",
+                schemas: {
+                    "file:///schemas/common.schema.json": {
+                        $defs: { choice: { $ref: "https://schemas.example.com/choice.json" } },
+                    },
+                    "https://schemas.example.com/choice.json": {
+                        type: "object",
+                        properties: {},
+                        enum: [{ id: 1 }, { id: 2 }],
+                    },
+                },
+            }),
+        ],
+    });
+    try {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const select = host.querySelector("select[data-record-path]");
+        if (!select || select.value !== "0")
+            throw new Error("Referenced object enums must use a selected choice control");
+        select.value = "1";
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+        if (JSON.parse(view.state.doc.toString()).choice.id !== 2)
+            throw new Error("Choosing a referenced object enum must preserve its JSON type");
+        return "Passed: file and HTTPS refs, object enum choices and typed changes";
+    } finally {
+        view.destroy();
+        host.remove();
     }
 };

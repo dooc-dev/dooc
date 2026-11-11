@@ -46,7 +46,11 @@ const codeFormat = (language: string): string =>
           )?.id ?? language);
 
 /** Index authored content, including files not referenced by any document. */
-export const resourceIndex = (root: string, files: readonly string[]): ResourceIndex => {
+export const resourceIndex = (
+    root: string,
+    files: readonly string[],
+    domains: readonly string[] = [],
+): ResourceIndex => {
     const result: ResourceIndex = {
         codeblocks: [],
         urls: [],
@@ -62,7 +66,7 @@ export const resourceIndex = (root: string, files: readonly string[]): ResourceI
         try {
             if (!paths.has(config.schema))
                 throw new Error("Schema is not available in the workspace");
-            const loaded = loadSubformat(root, config);
+            const loaded = loadSubformat(root, config, domains);
             formats.set(config.ext, loaded);
             result.subformats.push({
                 ...config,
@@ -97,9 +101,10 @@ export const resourceIndex = (root: string, files: readonly string[]): ResourceI
             const source = { file, line: offset + (node.position?.start.line ?? 1) };
             if (node.type === "code") {
                 const language = node.lang?.toLowerCase() || "text";
+                const format = formats.get(language.replace(/^\./, ""));
                 result.codeblocks.push({
-                    language: formats.get(language)?.format ?? language,
-                    format: formats.has(language) ? language : codeFormat(language),
+                    language: format?.format ?? language,
+                    format: format?.ext ?? codeFormat(language),
                     caption: node.meta ?? "",
                     content: node.value,
                     source,

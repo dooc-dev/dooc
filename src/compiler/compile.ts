@@ -574,7 +574,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                 assertNotIgnored(root, config.schema);
                 if (!paths.some((file) => file.path === config.schema))
                     throw new Error("Subformat schema is not available in the workspace");
-                const loaded = loadSubformat(root, config);
+                const loaded = loadSubformat(root, config, previews.domains);
                 collection.fields = loaded.fields;
                 collection.template = loaded.template;
                 collection.defaultFolder = manifest.defaultSubformatFolder;

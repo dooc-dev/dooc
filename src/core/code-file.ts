@@ -18,11 +18,13 @@ export const codeFileName = (body: string, position: number, documentId: string)
         markdown: "md",
         "c++": "cpp",
     };
-    const extension = Object.hasOwn(aliases, language)
-        ? aliases[language]
-        : /^[a-z0-9_-]+$/.test(language)
-          ? language
-          : "txt";
+    const extension = /^\.[a-z0-9][a-z0-9_-]*$/.test(language)
+        ? language.slice(1)
+        : Object.hasOwn(aliases, language)
+          ? aliases[language]
+          : /^[a-z0-9_-]+$/.test(language)
+            ? language
+            : "txt";
     const directory =
         language === "termth"
             ? "terms"

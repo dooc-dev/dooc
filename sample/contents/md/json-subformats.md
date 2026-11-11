@@ -70,6 +70,20 @@ The second record in each format is deliberately unreferenced here; it still app
 
 ![YAML issue](contents/issue/board.issue)
 
+## Code blocks
+
+Use the registered extension as the fence language, including its leading dot. For example, `.issue` uses the YAML storage format configured above:
+
+````markdown
+```.issue
+title: Example issue
+status: Todo
+due: 2026-11-20
+```
+````
+
+The editor offers `/code-.issue` in its completion menu. Preview and editor highlighting use the declared storage format. **Create file** keeps the `.issue` extension and validates the record against its schema before saving. Inline code examples remain code blocks and are not added to the record board.
+
 ## Copy source references
 
 Each card has a copy icon on its upper-right border. The copied reference uses the following order:

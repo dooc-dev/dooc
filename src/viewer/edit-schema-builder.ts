@@ -2,12 +2,15 @@ import { isolateHistory } from "@codemirror/commands";
 import { type EditorState, StateEffect, StateField } from "@codemirror/state";
 import { type EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import {
+    formatSchemaChoices,
     parseFieldSchema,
+    parseSchemaParameter,
     renameSchemaField,
     type SchemaObject,
     schemaChoices,
     schemaConstraints,
     schemaFieldNamesLocked,
+    schemaJsonParameters,
     schemaKeyword,
     schemaObject,
     schemaTypes,
@@ -305,7 +308,25 @@ class SchemaBuilder {
         this.panel.replaceChildren();
         const locked = schemaFieldNamesLocked(root);
         this.panel.inert = this.view.state.readOnly;
-        this.properties(root, [], this.panel, locked);
+        const objectRoot = root.type === "object" || (root.type === undefined && !root.$ref);
+        if (objectRoot) this.properties(root, [], this.panel, locked);
+        const settings = document.createElement("details");
+        settings.className = "schema-root-settings";
+        const summary = document.createElement("summary");
+        summary.textContent = t("Schema settings");
+        settings.open = !objectRoot || this.expanded.has("[]");
+        settings.addEventListener("toggle", () => {
+            if (settings.open) this.expanded.add("[]");
+            else this.expanded.delete("[]");
+        });
+        const menus = document.createElement("div");
+        menus.className = "schema-field-name";
+        for (const kind of ["Constraints", "Semantic"] as const)
+            menus.append(this.parameterMenu(kind, root, [], t("Schema settings")));
+        settings.append(summary, menus);
+        settings.append(label("Type", this.typeSelect(root, [])));
+        this.settings(root, [], settings, locked, !objectRoot);
+        this.panel.append(settings);
         const selects = [...this.panel.querySelectorAll("select")];
         for (const select of selects) {
             select.id = `schema-type-${++pickerId}`;
@@ -333,19 +354,24 @@ class SchemaBuilder {
         select.setAttribute("aria-label", t("Type"));
         select.dataset.schemaFocus = `${JSON.stringify(path)}:type`;
         const simple =
-            typeof schema.type === "string" &&
-            schemaTypes.includes(schema.type) &&
-            !schema.$ref &&
-            !schema.$dynamicRef;
-        if (!simple) select.add(new Option("JSON", ""));
+            schema.type === undefined ||
+            (typeof schema.type === "string" && schemaTypes.includes(schema.type));
+        select.add(new Option(t("Any type"), ""));
+        if (!simple)
+            select.add(
+                new Option(
+                    Array.isArray(schema.type) ? schema.type.join(" | ") : "JSON",
+                    "current",
+                ),
+            );
         for (const type of schemaTypes) select.add(new Option(type, type));
-        select.value = simple ? String(schema.type) : "";
-        select.disabled = !simple;
+        select.value = simple ? String(schema.type ?? "") : "current";
         select.addEventListener("change", () => {
             const value = select.value;
+            if (value === "current") return;
             this.expanded.add(JSON.stringify(path));
             if (!this.change((root) => this.setType(root, path, value), select.dataset.schemaFocus))
-                select.value = String(schema.type ?? "");
+                select.value = simple ? String(schema.type ?? "") : "current";
         });
         return select;
     }
@@ -497,8 +523,9 @@ class SchemaBuilder {
         name.setAttribute("aria-required", String(this.drafts.has(key)));
         const type = document.createElement("select");
         type.setAttribute("aria-label", t("New field type"));
+        type.add(new Option(t("Any type"), ""));
         for (const value of schemaTypes) type.add(new Option(value, value));
-        type.value = String(draft.schema.type);
+        type.value = String(draft.schema.type ?? "");
         type.dataset.schemaFocus = `${JSON.stringify(draftPath)}:type`;
         type.addEventListener("change", () => {
             const value = type.value;
@@ -509,7 +536,7 @@ class SchemaBuilder {
                     this.setType(root, draftPath, value);
                 }, type.dataset.schemaFocus)
             )
-                type.value = String(draft.schema.type);
+                type.value = String(draft.schema.type ?? "");
         });
         const create = () => {
             const value = name.value;
@@ -547,7 +574,9 @@ class SchemaBuilder {
         });
         const addActions = document.createElement("div");
         addActions.className = "schema-add-actions";
-        addActions.append(button("Add field", create));
+        const createButton = button("Add field", create);
+        createButton.dataset.schemaAdd = "";
+        addActions.append(createButton);
         if (this.drafts.has(key)) {
             const cancel = button("Cancel", () => {
                 this.drafts = new Map(this.drafts);
@@ -559,7 +588,19 @@ class SchemaBuilder {
             cancel.setAttribute("aria-label", t("Cancel"));
             addActions.append(cancel);
         }
-        add.append(label("Field name", name), label("Type", type), addActions);
+        const heading = document.createElement("div");
+        heading.className = "schema-field-name";
+        heading.append(label("Field name", name));
+        for (const kind of ["Constraints", "Semantic"] as const)
+            heading.append(
+                this.parameterMenu(kind, draft.schema, draftPath, t("New field name"), () => {
+                    if (this.drafts.has(key)) return;
+                    this.drafts = new Map(this.drafts);
+                    this.drafts.set(key, structuredClone(draft));
+                    this.view.dispatch({ effects: setDrafts.of(this.drafts) });
+                }),
+            );
+        add.append(heading, label("Type", type), addActions);
         host.append(add);
         if (this.drafts.has(key)) {
             const details = document.createElement("div");
@@ -585,6 +626,8 @@ class SchemaBuilder {
     private parameterKeys(kind: "Constraints" | "Semantic", schema: SchemaObject): string[] {
         if (kind === "Semantic")
             return [
+                "$id",
+                "$anchor",
                 "title",
                 "description",
                 "default",
@@ -599,16 +642,14 @@ class SchemaBuilder {
             ...(schema.type === "object" && !schemaObject(schema.additionalProperties)
                 ? ["additionalProperties"]
                 : []),
-            ...(["string", "number", "integer", "boolean", "null"].includes(String(schema.type)) &&
-            (!schema.enum ||
-                (Array.isArray(schema.enum) &&
-                    schema.enum.every(
-                        (value) =>
-                            value === null ||
-                            ["string", "number", "boolean"].includes(typeof value),
-                    )))
-                ? ["enum"]
-                : []),
+            "enum",
+            "const",
+            "$ref",
+            "$defs",
+            "oneOf",
+            "anyOf",
+            "allOf",
+            "not",
         ];
     }
     private parameterMenu(
@@ -616,6 +657,7 @@ class SchemaBuilder {
         schema: SchemaObject,
         path: string[],
         name: string,
+        prepare?: () => void,
     ): HTMLElement {
         const host = document.createElement("div");
         const popup = document.createElement("div");
@@ -658,6 +700,7 @@ class SchemaBuilder {
             const focus = `${JSON.stringify(path)}:${key}`;
             if (visible.includes(key)) continue;
             const item = button(key, () => {
+                prepare?.();
                 this.parameters.add(focus);
                 this.expanded.add(JSON.stringify(path));
                 popup.hidePopover();
@@ -770,6 +813,7 @@ class SchemaBuilder {
         path: string[],
         host: HTMLElement,
         locked: boolean,
+        children = true,
     ): void {
         for (const kind of ["Constraints", "Semantic"] as const) {
             const keys = this.visibleParameters(kind, schema, path);
@@ -784,10 +828,11 @@ class SchemaBuilder {
             for (const key of keys) {
                 const focus = `${JSON.stringify(path)}:${key}`;
                 const rule = schemaKeyword(key);
-                const json = key === "default" || key === "examples";
-                const input = ["description", "enum", "default", "examples"].includes(key)
-                    ? document.createElement("textarea")
-                    : document.createElement("input");
+                const json = schemaJsonParameters.includes(key);
+                const input =
+                    json || ["description", "enum"].includes(key)
+                        ? document.createElement("textarea")
+                        : document.createElement("input");
                 const numeric = rule.type === "number" || rule.type === "integer";
                 if (input instanceof HTMLInputElement) {
                     input.type =
@@ -804,7 +849,7 @@ class SchemaBuilder {
                 } else input.rows = 2;
                 input.value =
                     key === "enum" && Array.isArray(schema.enum)
-                        ? schema.enum.map(String).join("\n")
+                        ? formatSchemaChoices(schema.enum, schema.type)
                         : json
                           ? Object.hasOwn(schema, key)
                               ? JSON.stringify(schema[key], null, 2)
@@ -812,8 +857,22 @@ class SchemaBuilder {
                           : schema[key] == null
                             ? ""
                             : String(schema[key]);
+                if (input instanceof HTMLTextAreaElement)
+                    input.rows = Math.min(12, Math.max(2, input.value.split("\n").length));
                 input.dataset.schemaFocus = focus;
                 input.dataset.schemaKeyword = key;
+                if (key === "enum") {
+                    input.title = t(
+                        'One choice per line. Use "" for empty text, "a\\nb" for multiline text, and JSON for other types.',
+                    );
+                    input.placeholder = schema.type === "string" ? 'Todo\nDone\n""' : "1\n2";
+                } else if (json)
+                    input.placeholder = ["oneOf", "anyOf", "allOf"].includes(key)
+                        ? '[{"type":"string"}, {"type":"number"}]'
+                        : key === "$defs"
+                          ? '{"name":{"type":"string"}}'
+                          : '"value"';
+                else if (key === "$ref") input.placeholder = "./common.schema.json#/$defs/name";
                 input.addEventListener("input", () => input.setCustomValidity(""));
                 input.addEventListener("change", () => {
                     if (
@@ -837,13 +896,9 @@ class SchemaBuilder {
                         else if (!input.value) delete target[key];
                         else if (key === "enum")
                             target.enum = schemaChoices(input.value, schema.type);
-                        else if (json) {
-                            const value = JSON.parse(input.value);
-                            if (key === "examples" && !Array.isArray(value))
-                                throw new Error("Examples must be a JSON array.");
-                            target[key] = value;
-                            parseFieldSchema(JSON.stringify(root));
-                        } else target[key] = numeric ? Number(input.value) : input.value;
+                        else if (json)
+                            target[key] = parseSchemaParameter(key, input.value, schema.type);
+                        else target[key] = numeric ? Number(input.value) : input.value;
                     });
                     if (!changed) input.setCustomValidity(t("Check the parameter value."));
                 });
@@ -878,10 +933,16 @@ class SchemaBuilder {
                 remove.hidden =
                     !!pair && !Object.hasOwn(schema, key) && !this.parameters.has(focus);
                 remove.innerHTML = removeIcon;
-                parameter.append(
-                    label(key === "enum" ? "Choices (one per line)" : key, input),
-                    remove,
-                );
+                const control = label(key === "enum" ? "Choices (one per line)" : key, input);
+                if (key === "enum") {
+                    const hint = document.createElement("small");
+                    hint.className = "schema-parameter-help";
+                    hint.id = `schema-help-${++pickerId}`;
+                    hint.textContent = input.title;
+                    input.setAttribute("aria-describedby", hint.id);
+                    control.append(hint);
+                }
+                parameter.append(control, remove);
                 row.append(parameter);
             }
             for (const row of rows.values())
@@ -889,25 +950,29 @@ class SchemaBuilder {
             group.append(fields);
             host.append(group);
         }
-        if (schema.type === "object" || (schema.type === "array" && schemaObject(schema.items))) {
-            const children = document.createElement("div");
-            children.className = "schema-children";
-            if (schema.type === "object") this.properties(schema, path, children, locked);
+        if (
+            children &&
+            (schema.type === "object" || (schema.type === "array" && schemaObject(schema.items)))
+        ) {
+            const nested = document.createElement("div");
+            nested.className = "schema-children";
+            if (schema.type === "object") this.properties(schema, path, nested, locked);
             else {
                 const name = document.createElement("span");
                 name.className = "schema-item-name";
                 name.textContent = t("Items");
-                children.append(
+                nested.append(
                     this.field(schema.items, [...path, "items"], "items", name, [], locked),
                 );
             }
-            host.append(children);
+            host.append(nested);
         }
         const handled = [
             "type",
             "properties",
             "required",
             "items",
+            "$schema",
             ...this.parameterKeys("Constraints", schema),
             ...this.parameterKeys("Semantic", schema),
         ];

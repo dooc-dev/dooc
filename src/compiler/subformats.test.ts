@@ -153,6 +153,66 @@ it.each([
 it.each([
     "legacy",
     "nested",
+])("deletes only the selected %s subformat registration and sidebar page", (kind) => {
+    const { root, config } = fixture();
+    const nested = kind === "nested";
+    writeFileSync(
+        join(root, "dooc.yaml"),
+        `# Keep this comment\n${nested ? "center_contents" : "docs"}:\n  - subformat: issue\n    title: Issues\n${nested ? "json_subformats" : "subformats"}:\n  - ext: issue\n    format: yaml\n    schema: schemas/issue.json\n  - ext: note # Keep other format comment\n    format: yaml\n    schema: schemas/issue.json\ndefault_subformat_folder: records\n`,
+    );
+    const beforeSchema = readFileSync(join(root, config.schema), "utf8");
+    const request = { action: "delete", ext: "issue", base: config };
+    const before = readFileSync(join(root, "dooc.yaml"), "utf8");
+    expect(
+        subformatResponse(root, { ...request, base: { ...config, format: "json" } }).status,
+    ).toBe(409);
+    expect(subformatResponse(root, { ...request, base: undefined }).status).toBe(400);
+    expect(subformatResponse(root, { ...request, ext: "missing" }).status).toBe(400);
+    expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toBe(before);
+    expect(subformatResponse(root, request)).toEqual({ status: 200, body: {} });
+    const manifest = readManifest(root);
+    expect(manifest.errors).toEqual([]);
+    expect(manifest.tree).toEqual([]);
+    expect(manifest.subformats).toEqual([{ ...config, ext: "note" }]);
+    expect(manifest.defaultSubformatFolder).toBe("records");
+    const saved = readFileSync(join(root, "dooc.yaml"), "utf8");
+    expect(saved).toContain("# Keep this comment");
+    expect(saved).toContain("# Keep other format comment");
+    expect(readFileSync(join(root, config.schema), "utf8")).toBe(beforeSchema);
+    expect(readFileSync(join(root, "one.issue"), "utf8")).toBe(contents.yaml);
+    expect(
+        subformatResponse(root, { action: "delete", ext: "note", base: { ...config, ext: "note" } })
+            .status,
+    ).toBe(200);
+    expect(readManifest(root).subformats).toEqual([]);
+});
+
+it("keeps child pages and changed definitions when deleting a subformat", () => {
+    const { root, config } = fixture();
+    writeFileSync(
+        join(root, "dooc.yaml"),
+        `docs: [{subformat: issue, title: Issues, children: [guide]}]\nsubformats: ${JSON.stringify([config])}\n`,
+    );
+    const before = readFileSync(join(root, "dooc.yaml"), "utf8");
+    expect(subformatResponse(root, { action: "delete", ext: "issue", base: config })).toMatchObject(
+        {
+            status: 400,
+            body: { error: "Move or remove this subformat page's child pages before deleting it." },
+        },
+    );
+    expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toBe(before);
+    writeFileSync(
+        join(root, "dooc.yaml"),
+        `docs: []\nsubformats: ${JSON.stringify([{ ...config, layouts: { card_title: "title" } }])}\n`,
+    );
+    expect(subformatResponse(root, { action: "delete", ext: "issue", base: config }).status).toBe(
+        409,
+    );
+});
+
+it.each([
+    "legacy",
+    "nested",
 ])("registers a subformat and schema without overwriting %s settings", (kind) => {
     const { root, config } = fixture();
     writeFileSync(

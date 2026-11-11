@@ -53,3 +53,26 @@ it("completes record keys, enum values, and properties resolved through local re
         (await complete(context('{ "owner": { "|" } }')))?.options.map((item) => item.label),
     ).toContain("name");
 });
+
+it("completes enums across file and remote schema documents without fetching from the browser", async () => {
+    const uri = "file:///schemas/issue.json";
+    const complete = jsonCompletion(
+        { type: "object", properties: { status: { $ref: "common.json#/$defs/status" } } },
+        false,
+        {
+            uri,
+            schemas: {
+                "file:///schemas/common.json": {
+                    $defs: { status: { $ref: "https://schemas.example.test/status.json" } },
+                },
+                "https://schemas.example.test/status.json": {
+                    type: "string",
+                    enum: ["Todo", "Done"],
+                },
+            },
+        },
+    );
+    expect((await complete(context('{"status":"|"}')))?.options.map((item) => item.label)).toEqual(
+        expect.arrayContaining(['"Todo"', '"Done"']),
+    );
+});

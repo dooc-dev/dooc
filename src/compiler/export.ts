@@ -1,9 +1,11 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { posix } from "node:path";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { posix, relative as relativePath } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { visit } from "unist-util-visit";
 import { flattenTree, MANIFEST_FILE } from "../core/content-metadata.js";
 import { docFile, docIconFile, fileExtension, localFile } from "../core/files.js";
 import { contentLinks, parseMdast } from "../core/markdown.js";
+import { visitSchema } from "../core/schema-refs.js";
 import { isRemoteTextfile, parseFileReference } from "../core/textfile.js";
 import { assetReferences } from "./asset-references.js";
 import { CODE_LANGUAGES_DIR } from "./code-languages.js";
@@ -79,16 +81,25 @@ export const exportEntries = (root: string): ZipEntry[] => {
     };
     const schemas = new Set(manifest.subformats?.map((format) => format.schema));
     for (const file of schemas) {
-        const refs = (value: unknown): void => {
-            if (!value || typeof value !== "object") return;
-            for (const [key, child] of Object.entries(value)) {
-                if (key === "$ref" && typeof child === "string") {
-                    const dependency = relative(child, file);
-                    if (dependency) schemas.add(dependency);
-                } else refs(child);
-            }
-        };
-        refs(JSON.parse(entries.get(file)?.data.toString("utf8") ?? ""));
+        const document = JSON.parse(entries.get(file)?.data.toString("utf8") ?? "");
+        const baseUri = pathToFileURL(textfilePath(root, file)).href;
+        const resources = new Set([baseUri]);
+        visitSchema(document, baseUri, (_schema, base) =>
+            resources.add(base.split("#")[0] ?? base),
+        );
+        visitSchema(document, baseUri, (schema, base) => {
+            if (typeof schema.$ref !== "string") return;
+            const uri = new URL(schema.$ref, base);
+            if (uri.protocol !== "file:") return;
+            uri.hash = "";
+            if (resources.has(uri.href)) return;
+            const dependency = relativePath(realpathSync(root), fileURLToPath(uri)).replaceAll(
+                "\\",
+                "/",
+            );
+            add(dependency);
+            schemas.add(dependency);
+        });
     }
     // Map iteration visits dependencies appended while walking the graph, once per path.
     for (const entry of entries.values()) {

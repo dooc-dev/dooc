@@ -105,6 +105,23 @@ it("keeps JSON examples verbatim instead of interpreting them as schemas", () =>
     );
 });
 
+it("exports file refs with schema URI scopes without reading embedded IDs or data as files", () => {
+    const { root, write } = fixture();
+    write(
+        "schemas/issue.json",
+        JSON.stringify({
+            type: "object",
+            $defs: { status: { $id: "status.json", type: "string" } },
+            properties: { status: { $ref: "status.json" }, other: { $ref: "base.json" } },
+            examples: [{ $ref: "private.json" }],
+        }),
+    );
+    const files = exportEntries(root).map((entry) => entry.name);
+    expect(files).toContain("schemas/base.json");
+    expect(files).not.toContain("schemas/status.json");
+    expect(files).not.toContain("schemas/private.json");
+});
+
 it("omits ignored records and stale display order, but rejects ignored dependencies", () => {
     const { root, write } = fixture();
     write(".gitignore", "private/\nassets/private.png\n");

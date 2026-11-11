@@ -1,5 +1,9 @@
 import { readManifest } from "../compiler/manifest.js";
-import { validateSubformatFile } from "../compiler/subformats.js";
+import {
+    compileSubformatSchema,
+    isSubformatSchemaFile,
+    validateSubformatFile,
+} from "../compiler/subformats.js";
 import {
     readTextfile,
     readTextfileAsync,
@@ -7,6 +11,7 @@ import {
     writeTextfile,
 } from "../compiler/textfile.js";
 import { TextfileUnavailable } from "../compiler/textfile-remote.js";
+import type { SchemaContext } from "../core/schema-refs.js";
 import { isRemoteTextfile } from "../core/textfile.js";
 
 export const previewTextfiles = (root: string, input: unknown): ReadonlyMap<string, string> => {
@@ -36,6 +41,7 @@ export const textfileResponse = async (
         language?: string;
         schema?: object;
         schemaDocument?: boolean;
+        schemaContext?: SchemaContext;
     };
 }> => {
     if (typeof input?.file !== "string" || !["read", "save"].includes(String(input.action)))
@@ -49,7 +55,7 @@ export const textfileResponse = async (
                 (input.base !== null && typeof input.base !== "string")
             )
                 return { status: 400, body: { error: "Content and original text are required" } };
-            validateSubformatFile(root, input.file, input.content);
+            validateSubformatFile(root, input.file, input.content, domains);
             if (!writeTextfile(root, input.file, input.content, input.base))
                 return {
                     status: 409,
@@ -60,17 +66,34 @@ export const textfileResponse = async (
         const configs = isRemoteTextfile(input.file) ? [] : (readManifest(root).subformats ?? []);
         const extension = input.file.split(".").at(-1);
         const format = configs.find((config) => config.ext === extension);
+        const compiled = format
+            ? compileSubformatSchema(readTextfile(root, format.schema), {
+                  root,
+                  file: format.schema,
+                  domains,
+              })
+            : undefined;
+        const content = await readTextfileAsync(root, input.file, true, domains).catch((error) => {
+            if (
+                (error as NodeJS.ErrnoException).code === "ENOENT" ||
+                (error instanceof TextfileUnavailable && error.reason === "missing")
+            )
+                return null;
+            throw error;
+        });
         return {
             status: 200,
             body: {
-                content: await readTextfileAsync(root, input.file, true, domains),
+                content,
                 ...(format
                     ? {
                           language: format.format,
-                          schema: JSON.parse(readTextfile(root, format.schema)),
+                          schema: compiled?.schema,
+                          schemaContext: compiled?.context,
                       }
                     : {}),
-                ...(configs.some((config) => config.schema === input.file)
+                ...(!isRemoteTextfile(input.file) &&
+                isSubformatSchemaFile(root, input.file, domains)
                     ? { schemaDocument: true }
                     : {}),
             },

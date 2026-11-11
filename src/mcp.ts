@@ -118,6 +118,7 @@ export const createTools = (root: string, options: McpOptions = {}): Record<stri
                     mode: a.mode as "static" | "live" | undefined,
                     auth: a.auth as "external" | undefined,
                     sourceUrl: a.source_url as string | undefined,
+                    previews: options.previews,
                 });
                 const path = textfilePath(root, file);
                 mkdirSync(dirname(path), { recursive: true });
@@ -156,7 +157,12 @@ export const createTools = (root: string, options: McpOptions = {}): Record<stri
             props: { file: str, content: str, base: { type: ["string", "null"] } },
             required: ["file", "content", "base"],
             run: (a) => {
-                validateSubformatFile(root, fileArg(a.file), a.content as string);
+                validateSubformatFile(
+                    root,
+                    fileArg(a.file),
+                    a.content as string,
+                    options.previews?.domains,
+                );
                 return writeTextfile(
                     root,
                     fileArg(a.file),
@@ -197,6 +203,7 @@ export const createTools = (root: string, options: McpOptions = {}): Record<stri
                 resourceIndex(
                     root,
                     filesSnapshot(root).files.map((file) => file.path),
+                    options.previews?.domains,
                 ),
         },
         list_fonts: {

@@ -3,6 +3,7 @@ import { type EditorState, StateEffect, StateField } from "@codemirror/state";
 import { type EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import type { JSONSchema } from "vscode-json-languageservice";
 import { type SchemaObject, schemaObject } from "../core/schema-fields.js";
+import { type SchemaContext, schemaResolver } from "../core/schema-refs.js";
 import { parseSubformatRecord, setSubformatValue } from "../core/subformat-record.js";
 import type { Subformat } from "../core/subformats.js";
 import { t } from "./i18n.js";
@@ -33,28 +34,12 @@ export const hasSubformatFormDraft = (state?: EditorState): boolean =>
     !!state?.field(formInputs, false)?.size;
 let fieldId = 0;
 
-export const subformatForm = (schema: JSONSchema, format: Subformat["format"]) => {
-    const resolve = (definition: unknown): SchemaObject => {
-        let rule = schemaObject(definition) ? definition : {};
-        const seen = new Set<string>();
-        while (
-            typeof rule.$ref === "string" &&
-            rule.$ref.startsWith("#/") &&
-            !seen.has(rule.$ref)
-        ) {
-            seen.add(rule.$ref);
-            let target: unknown = schema;
-            for (const key of rule.$ref.slice(2).split("/")) {
-                const name = key.replaceAll("~1", "/").replaceAll("~0", "~");
-                target =
-                    schemaObject(target) && Object.hasOwn(target, name) ? target[name] : undefined;
-            }
-            if (!schemaObject(target)) break;
-            const { $ref: _ref, ...siblings } = rule;
-            rule = { ...target, ...siblings };
-        }
-        return rule;
-    };
+export const subformatForm = (
+    schema: JSONSchema,
+    format: Subformat["format"],
+    context?: SchemaContext,
+) => {
+    const resolve = schemaResolver(schema as SchemaObject, context);
     return [
         formMode.init((state) => {
             try {
@@ -182,7 +167,11 @@ export const subformatForm = (schema: JSONSchema, format: Subformat["format"]) =
                             rule.readOnly === true ||
                             field.readOnly === true ||
                             Object.hasOwn(field, "const");
-                        if (schemaObject(value) && schemaObject(field.properties)) {
+                        if (
+                            schemaObject(value) &&
+                            schemaObject(field.properties) &&
+                            !Array.isArray(field.enum)
+                        ) {
                             const group = document.createElement("fieldset");
                             const legend = document.createElement("legend");
                             legend.textContent = name + (required ? " *" : "");

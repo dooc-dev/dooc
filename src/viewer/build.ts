@@ -7,9 +7,11 @@ import { exportEntries } from "../compiler/export.js";
 import { loadProjectFonts } from "../compiler/fonts.js";
 import { textfilePath } from "../compiler/textfile.js";
 import { zip } from "../compiler/zip.js";
+import { type PreviewSettings, parsePreviewSettings } from "../core/previewers.js";
 import type { PluginTransport } from "../plugins/transport.js";
 import { loadBuildPlugins, pluginSnapshot } from "./build-plugins.js";
 import { loadSiteLanguages } from "./languages.js";
+import { loadViewerPlugins } from "./plugin-config.js";
 import { sourceFileBase } from "./workspace.js";
 
 export interface BuildOptions {
@@ -23,6 +25,7 @@ export interface BuildOptions {
     pluginModule?: string;
     /** Build-time authenticated reads; live HTML receives its transport at runtime. */
     pluginTransport?: PluginTransport;
+    previews?: PreviewSettings;
 }
 
 /** Build one artifact from the manifest and its managed content. */
@@ -45,8 +48,13 @@ export const buildBundle = async (root: string, options: BuildOptions) => {
     if (format !== "html" && format !== "zip") throw new Error("build format must be html | zip");
     if (urlPreview !== "embed" && urlPreview !== "network")
         throw new Error("--url_preview must be embed | network");
+    const previews =
+        options.previews ??
+        parsePreviewSettings({
+            domains: (await loadViewerPlugins(options.pluginModule)).allowedDomains ?? [],
+        });
     const validate = (path: string) => {
-        const compiled = compileSite(path);
+        const compiled = compileSite(path, { previews });
         if (compiled.errors.length)
             throw new Error(`Content validation failed:\n${compiled.errors.join("\n")}`);
         return compiled;
@@ -86,11 +94,9 @@ export const buildBundle = async (root: string, options: BuildOptions) => {
     return {
         data: publishHtml(
             {
-                ...siteFrom(compiled, config.languages),
+                ...siteFrom(compiled, config.languages, config),
                 sourceBase,
                 fonts: loadProjectFonts(root),
-                codeLanguages: config.codeLanguages,
-                codeGrammars: config.codeGrammars,
             },
             await bundleClient("core/schema-graph-global.tsx"),
             undefined,

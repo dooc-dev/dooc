@@ -1,23 +1,26 @@
 import { existsSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import type { AnySchemaObject, ValidateFunction } from "ajv";
-import { Ajv2020 } from "ajv/dist/2020.js";
-import addFormats from "ajv-formats";
 import { stringify as stringifyToml } from "smol-toml";
-import { Document, isSeq, parseDocument, stringify as stringifyYaml } from "yaml";
-import { MANIFEST_FILE } from "../core/content-metadata.js";
+import { Document, isSeq, parseDocument, stringify as stringifyYaml, visit } from "yaml";
+import { flattenTree, MANIFEST_FILE, subformatPageId } from "../core/content-metadata.js";
 import { fileExtension } from "../core/files.js";
+import { schemaResolver } from "../core/schema-refs.js";
 import { parseSubformatRecord, setSubformatValue } from "../core/subformat-record.js";
 import {
     parseSubformats,
     SUBFORMAT_SCHEMA_TEMPLATE,
-    SUBFORMAT_SCHEMA_VERSION,
     type Subformat,
     type SubformatCollection,
     type SubformatField,
 } from "../core/subformats.js";
 import { filesSnapshot, managedFile } from "./files.js";
 import { parseManifestText, readManifest } from "./manifest.js";
+import { compileSubformatSchema } from "./subformat-schema.js";
 import { readTextfile, textfilePath, writeTextfile } from "./textfile.js";
+
+export { compileSubformatSchema } from "./subformat-schema.js";
 
 export interface LoadedSubformat extends Subformat {
     fields: SubformatField[];
@@ -25,49 +28,19 @@ export interface LoadedSubformat extends Subformat {
     validate: ValidateFunction;
 }
 
-export const compileSubformatSchema = (content: string) => {
-    const schema = JSON.parse(content) as AnySchemaObject;
-    if (!schema || typeof schema !== "object" || Array.isArray(schema) || schema.$async)
-        throw new Error("Use a synchronous JSON object schema");
-    if (schema.$schema !== undefined && schema.$schema !== SUBFORMAT_SCHEMA_VERSION)
-        throw new Error(`Use JSON Schema 2020-12: ${SUBFORMAT_SCHEMA_VERSION}`);
-    const ajv = new Ajv2020({ allErrors: true, strict: true, ownProperties: true });
-    addFormats.default(ajv);
-    const validate = ajv.compile(schema);
-    return { schema, validate };
-};
-
-const schemaCache = new Map<string, ReturnType<typeof compileSubformatSchema>>();
-
-export const loadSubformat = (root: string, config: Subformat): LoadedSubformat => {
+export const loadSubformat = (
+    root: string,
+    config: Subformat,
+    domains: readonly string[] = [],
+): LoadedSubformat => {
     const content = readTextfile(root, config.schema);
-    let compiled = schemaCache.get(content);
-    if (!compiled) {
-        compiled = compileSubformatSchema(content);
-        // Bound retained validators when schemas are edited repeatedly.
-        if (schemaCache.size >= 32) schemaCache.clear();
-        schemaCache.set(content, compiled);
-    }
-    const { schema, validate } = compiled;
-    const resolve = (value: AnySchemaObject): AnySchemaObject => {
-        const seen = new Set<string>();
-        while (typeof value.$ref === "string" && value.$ref.startsWith("#/")) {
-            if (seen.has(value.$ref)) break;
-            seen.add(value.$ref);
-            const target = value.$ref
-                .slice(2)
-                .split("/")
-                .reduce((node: AnySchemaObject | undefined, key: string) => {
-                    const property = key.replaceAll("~1", "/").replaceAll("~0", "~");
-                    return node && Object.hasOwn(node, property) ? node[property] : undefined;
-                }, schema);
-            if (!target || typeof target !== "object") break;
-            const { $ref: _ref, ...siblings } = value;
-            value = { ...target, ...siblings };
-        }
-        return value;
-    };
-    // shortcut: controls use top-level properties and local refs, extend extraction for composed schemas.
+    const { schema, validate, context } = compileSubformatSchema(content, {
+        root,
+        file: config.schema,
+        domains,
+    });
+    const resolve = schemaResolver(schema, context) as (value: unknown) => AnySchemaObject;
+    // shortcut: controls use top-level properties and refs; extend extraction for composed schemas.
     const fields: SubformatField[] = Object.entries(resolve(schema).properties ?? {}).flatMap(
         ([name, definition]) => {
             if (!definition || typeof definition !== "object") return [];
@@ -105,23 +78,26 @@ export const loadSubformat = (root: string, config: Subformat): LoadedSubformat 
                 if (!definition || typeof definition !== "object") return [];
                 const property = resolve(definition);
                 if (!object.required?.includes(name) && property.default === undefined) return [];
-                const value =
-                    property.default ??
-                    property.const ??
-                    property.enum?.[0] ??
-                    (property.type === "boolean"
-                        ? false
-                        : ["number", "integer"].includes(property.type)
-                          ? (property.minimum ?? 0)
-                          : property.type === "object"
-                            ? {}
-                            : property.type === "array"
-                              ? []
-                              : property.format === "date"
-                                ? new Date().toISOString().slice(0, 10)
-                                : property.format === "date-time"
-                                  ? new Date().toISOString()
-                                  : "");
+                const prescribed = ["default", "const"].find((key) => Object.hasOwn(property, key));
+                const value = prescribed
+                    ? property[prescribed]
+                    : Array.isArray(property.enum)
+                      ? property.enum[0]
+                      : property.type === "null"
+                        ? null
+                        : property.type === "boolean"
+                          ? false
+                          : ["number", "integer"].includes(property.type)
+                            ? (property.minimum ?? 0)
+                            : property.type === "object"
+                              ? {}
+                              : property.type === "array"
+                                ? []
+                                : property.format === "date"
+                                  ? new Date().toISOString().slice(0, 10)
+                                  : property.format === "date-time"
+                                    ? new Date().toISOString()
+                                    : "";
                 return [[name, value]];
             }),
         );
@@ -151,17 +127,51 @@ export const validateSubformatRecord = (
         );
 };
 
-export const validateSubformatFile = (root: string, file: string, content: string): void => {
+export const isSubformatSchemaFile = (
+    root: string,
+    file: string,
+    domains: readonly string[] = [],
+): boolean => {
+    const configs = readManifest(root).subformats ?? [];
+    if (
+        /\.schema\.json$/i.test(file) ||
+        configs.some((config) => config.schema === file.replace(/^(\.\/)+/, ""))
+    )
+        return true;
+    const uri = pathToFileURL(textfilePath(root, file)).href;
+    return configs.some((config) => {
+        try {
+            return Object.hasOwn(
+                compileSubformatSchema(readTextfile(root, config.schema), {
+                    root,
+                    file: config.schema,
+                    domains,
+                }).context.schemas,
+                uri,
+            );
+        } catch {
+            // A broken referring schema must not prevent opening a file for repair.
+            return false;
+        }
+    });
+};
+
+export const validateSubformatFile = (
+    root: string,
+    file: string,
+    content: string,
+    domains: readonly string[] = [],
+): void => {
     const configs = readManifest(root).subformats;
-    if (configs?.some((format) => format.schema === file.replace(/^(\.\/)+/, "")))
-        compileSubformatSchema(content);
+    if (isSubformatSchemaFile(root, file, domains))
+        compileSubformatSchema(content, { root, file, domains });
     const config = configs?.find((format) => format.ext === fileExtension(file));
     if (!config) return;
     if (!filesSnapshot(root).files.some((file) => file.path === config.schema))
         throw new Error("Subformat schema is not available in the workspace");
     try {
         validateSubformatRecord(
-            loadSubformat(root, config),
+            loadSubformat(root, config, domains),
             parseSubformatRecord(content, config.format),
         );
     } catch (error) {
@@ -174,6 +184,7 @@ export const validateSubformatFile = (root: string, file: string, content: strin
 export const subformatResponse = (
     root: string,
     input: Record<string, unknown> | undefined,
+    domains: readonly string[] = [],
 ): {
     status: number;
     body: {
@@ -186,7 +197,16 @@ export const subformatResponse = (
     try {
         if (input?.action === "validate") {
             if (typeof input.content !== "string") throw new Error("Schema content is required");
-            compileSubformatSchema(input.content);
+            if (input.file !== undefined && typeof input.file !== "string")
+                throw new Error("Schema file must be a path");
+            compileSubformatSchema(input.content, {
+                root,
+                file:
+                    typeof input.file === "string" && input.file
+                        ? input.file
+                        : "subformat.schema.json",
+                domains,
+            });
             return { status: 200, body: {} };
         }
         if (input?.action === "layouts") {
@@ -212,7 +232,7 @@ export const subformatResponse = (
                 };
             parseSubformats([{ ...config, layouts: { ...config.layouts, [key]: input.value } }]);
             if (key !== "sort_order" && input.value) {
-                const field = loadSubformat(root, config).fields.find(
+                const field = loadSubformat(root, config, domains).fields.find(
                     (field) => field.name === input.value,
                 );
                 if (
@@ -226,6 +246,44 @@ export const subformatResponse = (
             const section = manifest.format === "nested" ? "json_subformats" : "subformats";
             document.setIn([section, index, "layouts", key], input.value);
             if (!writeTextfile(root, MANIFEST_FILE, document.toString(), raw))
+                return { status: 409, body: { error: "Manifest changed externally. Try again." } };
+            return { status: 200, body: {} };
+        }
+        if (input?.action === "delete") {
+            if (typeof input.ext !== "string") throw new Error("A subformat extension is required");
+            const raw = readTextfile(root, MANIFEST_FILE);
+            const manifest = parseManifestText(raw);
+            if (manifest.errors.length) throw new Error(manifest.errors.join("\n"));
+            const index =
+                manifest.subformats?.findIndex((format) => format.ext === input.ext) ?? -1;
+            const config = manifest.subformats?.[index];
+            if (!config) throw new Error("Unknown subformat");
+            if (!isDeepStrictEqual(config, parseSubformats([input.base])[0]))
+                return {
+                    status: 409,
+                    body: { error: "Subformat changed externally. Reload and try again." },
+                };
+            const id = subformatPageId(input.ext);
+            if (flattenTree(manifest.tree).some((node) => node.parent === id))
+                throw new Error(
+                    "Move or remove this subformat page's child pages before deleting it.",
+                );
+            const document = parseDocument(raw);
+            const nested = manifest.format === "nested";
+            document.deleteIn([nested ? "json_subformats" : "subformats", index]);
+            const pages = document.get(nested ? "center_contents" : "docs", true);
+            if (isSeq(pages))
+                visit(pages, {
+                    Map: (_key, node) => {
+                        if (node.get("subformat") === input.ext) return visit.REMOVE;
+                    },
+                });
+            if (!nested && document.hasIn(["files", "icons", id]))
+                document.deleteIn(["files", "icons", id]);
+            const content = document.toString();
+            const next = parseManifestText(content);
+            if (next.errors.length) throw new Error(next.errors.join("\n"));
+            if (!writeTextfile(root, MANIFEST_FILE, content, raw))
                 return { status: 409, body: { error: "Manifest changed externally. Try again." } };
             return { status: 200, body: {} };
         }
@@ -246,7 +304,7 @@ export const subformatResponse = (
             if (input.content !== undefined && typeof input.content !== "string")
                 throw new Error("Schema content must be text");
             const initial = input.content ?? SUBFORMAT_SCHEMA_TEMPLATE;
-            compileSubformatSchema(initial);
+            compileSubformatSchema(initial, { root, file: config.schema, domains });
             if (!existsSync(textfilePath(root, config.schema))) {
                 if (!writeTextfile(root, config.schema, initial, null))
                     return {
@@ -264,7 +322,7 @@ export const subformatResponse = (
             }
             if (!filesSnapshot(root).files.some((file) => file.path === config.schema))
                 throw new Error("Subformat schema is not available in the workspace");
-            const loaded = loadSubformat(root, config);
+            const loaded = loadSubformat(root, config, domains);
             const parsed = parseDocument(raw);
             const document =
                 isSeq(parsed.contents) || parsed.contents == null
@@ -297,7 +355,7 @@ export const subformatResponse = (
                 (format) => format.ext === fileExtension(input.file as string),
             );
             if (!config) throw new Error("Choose a configured subformat extension");
-            validateSubformatFile(root, input.file, input.content);
+            validateSubformatFile(root, input.file, input.content, domains);
             const data = parseSubformatRecord(input.content, config.format);
             if (!writeTextfile(root, input.file, input.content, null))
                 return { status: 409, body: { error: "File already exists" } };
@@ -317,7 +375,7 @@ export const subformatResponse = (
         );
         if (!config || !files.includes(config.schema))
             throw new Error("Subformat schema is not available in the workspace");
-        const format = loadSubformat(root, config);
+        const format = loadSubformat(root, config, domains);
         const field = format.fields.find((field) => field.name === input.field);
         if (field?.readOnly || !field?.enum?.some((value) => value === input.value))
             throw new Error("Choose a writable enum value defined by the schema");

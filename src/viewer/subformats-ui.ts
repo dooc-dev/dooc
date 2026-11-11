@@ -20,13 +20,43 @@ interface State {
     openSource?: (file: string, line: number) => void;
     dialogOpen: boolean;
     dragging?: string;
+    stopDrag?: () => void;
     busy: boolean;
     selected?: string;
     openSetting?: string;
 }
 const states = new WeakMap<HTMLElement, State>();
+const cardPositions = (board: HTMLElement): Map<HTMLElement, DOMRect> =>
+    new Map(
+        [...board.querySelectorAll<HTMLElement>("[data-record-file]")].map((card) => [
+            card,
+            card.getBoundingClientRect(),
+        ]),
+    );
+const settleCards = (positions: Map<HTMLElement, DOMRect>): Promise<unknown[]> => {
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return Promise.resolve([]);
+    const animations: Promise<unknown>[] = [];
+    for (const [card, before] of positions) {
+        if (!card.isConnected) continue;
+        const after = card.getBoundingClientRect();
+        const x = before.left - after.left;
+        const y = before.top - after.top;
+        if (Math.abs(x) < 1 && Math.abs(y) < 1) continue;
+        animations.push(
+            card
+                .animate([{ transform: `translate(${x}px, ${y}px)` }, { transform: "none" }], {
+                    duration: 180,
+                    easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+                })
+                .finished.catch(() => {}),
+        );
+    }
+    return Promise.all(animations);
+};
 let registrationForm: HTMLFormElement | undefined;
-export const hasSubformatDraft = (): boolean => registrationForm?.dataset.dirty === "true";
+let recordForm: HTMLFormElement | undefined;
+export const hasSubformatDraft = (): boolean =>
+    registrationForm?.dataset.dirty === "true" || recordForm?.dataset.dirty === "true";
 
 export const showSubformatError = (error: unknown): void => {
     document.querySelector(".subformat-toast")?.remove();
@@ -168,12 +198,13 @@ export const filterSubformats = (
         const change = collection && subformatChange(collection);
         if (change) select.dataset.subformatChange = change;
         else delete select.dataset.subformatChange;
-        syncSubformatPicker(root, select);
+        syncSubformatPicker(root, select, state);
     }
     board.hidden = !collection;
     const items = root.querySelector<HTMLElement>(".resource-items");
     if (items) items.hidden = !!collection;
     if (!collection) {
+        state.stopDrag?.();
         root.querySelector(".subformat-controls")?.remove();
         return false;
     }
@@ -183,7 +214,7 @@ export const filterSubformats = (
     return true;
 };
 
-const syncSubformatPicker = (root: HTMLElement, select: HTMLSelectElement): void => {
+const syncSubformatPicker = (root: HTMLElement, select: HTMLSelectElement, state: State): void => {
     const trigger = root.querySelector<HTMLButtonElement>("[data-subformat-trigger]");
     const popup = root.querySelector<HTMLElement>("[data-subformat-options]");
     if (!trigger || !popup) return;
@@ -212,9 +243,83 @@ const syncSubformatPicker = (root: HTMLElement, select: HTMLSelectElement): void
             select.dispatchEvent(new Event("change", { bubbles: true }));
             if (option.value !== "+") trigger.focus();
         });
-        popup.append(button);
+        const row = document.createElement("div");
+        row.className = "subformat-picker-option";
+        row.setAttribute("role", "none");
+        row.append(button);
+        const collection = state.collections.find((item) => item.ext === option.value);
+        if (collection && state.openSource && document.body.classList.contains("edit")) {
+            for (const action of ["edit", "delete"] as const) {
+                const control = document.createElement("button");
+                control.type = "button";
+                control.tabIndex = -1;
+                control.dataset.subformatAction = action;
+                control.textContent = t(action === "edit" ? "Edit" : "Delete");
+                control.setAttribute("role", "menuitem");
+                control.setAttribute("aria-label", `${control.textContent}: ${collection.ext}`);
+                control.disabled = state.busy;
+                control.addEventListener("click", () => {
+                    if (state.busy) return;
+                    popup.hidePopover();
+                    trigger.focus();
+                    if (action === "edit") state.openSource?.(collection.schema, 1);
+                    else void deleteSubformat(root, state, select, collection);
+                });
+                row.append(control);
+            }
+        }
+        popup.append(row);
     }
     mountSubformatMenu(trigger, popup);
+};
+
+const deleteSubformat = async (
+    root: HTMLElement,
+    state: State,
+    select: HTMLSelectElement,
+    collection: SubformatCollection,
+): Promise<void> => {
+    state.busy = true;
+    try {
+        if (
+            !(await confirmDialog(
+                t(
+                    "Delete subformat {ext} and its sidebar page? Records and schema files will be kept.",
+                    {
+                        ext: collection.ext,
+                    },
+                ),
+                t("Delete"),
+                true,
+            ))
+        )
+            return;
+        const { ext, format, schema, layouts } = collection;
+        const response = await fetch("/api/subformat", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ action: "delete", ext, base: { ext, format, schema, layouts } }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(t(result.error ?? "Save failed"));
+        state.collections = state.collections.filter((item) => item !== collection);
+        state.views.delete(ext);
+        for (const option of [...select.options]) {
+            if (option.value === ext) option.remove();
+        }
+        if (!state.collections.some((item) => item.ext === select.value))
+            select.value = state.collections[0]?.ext ?? "";
+        document.dispatchEvent(
+            new CustomEvent("docs:subformat-saved", { detail: { file: "dooc.yaml" } }),
+        );
+        document.dispatchEvent(new Event("docs:files-changed"));
+    } catch (error) {
+        showSubformatError(error);
+    } finally {
+        state.busy = false;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+        root.querySelector<HTMLElement>("[data-subformat-trigger]")?.focus();
+    }
 };
 
 const mountSubformatMenu = (
@@ -369,6 +474,9 @@ export const restoreSubformatViews = (previous: Element, next: Element): void =>
         to.openSetting = from.openSetting;
         if (after?.hasAttribute("data-subformat-page"))
             filterSubformats(after, [], from.openSource);
+        const columns = after?.querySelector(".subformat-columns");
+        if (columns)
+            columns.scrollLeft = before?.querySelector(".subformat-columns")?.scrollLeft ?? 0;
     }
 };
 
@@ -382,6 +490,8 @@ const render = (
     collection: SubformatCollection,
     words: string[],
 ): void => {
+    state.stopDrag?.();
+    const scrollLeft = board.querySelector(".subformat-columns")?.scrollLeft ?? 0;
     const enums = collection.fields.filter((field) => field.enum?.length);
     const view = state.views.get(collection.ext) ?? {
         card_title: collection.layouts?.card_title ?? "",
@@ -534,19 +644,20 @@ const render = (
         create.dataset.subformatCreate = "";
         create.textContent = t("Create");
         create.disabled = state.busy;
-        create.setAttribute("aria-expanded", "false");
         controls.append(create);
         create.addEventListener("click", () => {
-            const existing = controls.querySelector(".subformat-create-form");
-            if (existing) {
-                existing.remove();
-                create.setAttribute("aria-expanded", "false");
+            if (recordForm) {
+                document.dispatchEvent(
+                    new CustomEvent("docs:subformat-create", { detail: recordForm }),
+                );
                 return;
             }
             const form = document.createElement("form");
+            recordForm = form;
             form.className = "subformat-create-form";
+            form.dataset.subformatRecord = collection.format;
             form.setAttribute("aria-label", t("Create"));
-            form.innerHTML = `<fieldset><label>${t("File path")}<input name="file" required autocomplete="off" spellcheck="false"></label><label>${t("Contents")} (${collection.format})<textarea name="content" required rows="10" spellcheck="false"></textarea></label><div class="subformat-create-actions"><button type="button" data-cancel>${t("Cancel")}</button><button type="submit">${t("Create")}</button></div></fieldset>`;
+            form.innerHTML = `<fieldset class="subformat-register-fields"><input name="file" required aria-label="${t("File path")}" autocomplete="off" spellcheck="false"></fieldset><fieldset><textarea name="content" hidden></textarea><div data-subformat-schema-editor></div><div class="subformat-create-actions"><button type="button" data-cancel>${t("Cancel")}</button><button type="submit">${t("Create")}</button></div></fieldset>`;
             const file = form.elements.namedItem("file") as HTMLInputElement;
             const content = form.elements.namedItem("content") as HTMLTextAreaElement;
             const directory = collection.defaultFolder
@@ -565,20 +676,33 @@ const render = (
                 name = `new-${index}`;
             file.value = `${directory}${name}.${collection.ext}`;
             content.value = collection.template ?? (collection.format === "json" ? "{}\n" : "");
+            form.addEventListener("input", () => {
+                form.dataset.dirty = "true";
+            });
+            const dismiss = () => {
+                recordForm = undefined;
+                document.dispatchEvent(
+                    new CustomEvent("docs:subformat-editor-close", { detail: form }),
+                );
+                form.remove();
+            };
             const close = () => {
                 if (state.busy) return;
-                form.remove();
-                create.setAttribute("aria-expanded", "false");
-                create.focus();
+                dismiss();
+                root.querySelector<HTMLElement>("[data-subformat-create]")?.focus();
             };
             form.querySelector("[data-cancel]")?.addEventListener("click", close);
-            form.addEventListener("keydown", (event) => {
-                if (event.key === "Escape") {
+            const keydown = (event: KeyboardEvent) => {
+                if (event.key === "Escape" && !event.defaultPrevented) {
                     event.preventDefault();
                     event.stopPropagation();
                     close();
                 }
-            });
+            };
+            form.addEventListener("keydown", keydown);
+            form.querySelector(".subformat-register-fields")?.addEventListener("keydown", (event) =>
+                keydown(event as KeyboardEvent),
+            );
             form.addEventListener("submit", async (event) => {
                 event.preventDefault();
                 if (state.busy) return;
@@ -591,8 +715,13 @@ const render = (
                 }
                 state.busy = true;
                 create.disabled = true;
-                const fields = form.querySelector("fieldset") as HTMLFieldSetElement;
-                fields.disabled = true;
+                const fields = [...form.elements].filter(
+                    (element): element is HTMLFieldSetElement =>
+                        element instanceof HTMLFieldSetElement,
+                );
+                for (const field of fields) field.disabled = true;
+                const editor = form.querySelector<HTMLElement>("[data-subformat-schema-editor]");
+                if (editor) editor.inert = true;
                 try {
                     const response = await fetch("/api/subformat", {
                         method: "POST",
@@ -616,18 +745,19 @@ const render = (
                         new CustomEvent("docs:subformat-saved", { detail: { file: path } }),
                     );
                     state.busy = false;
+                    dismiss();
                     filterSubformats(root, words);
                     state.openSource?.(path, 1);
                 } catch (error) {
                     showSubformatError(error);
                 } finally {
                     state.busy = false;
-                    fields.disabled = false;
+                    for (const field of fields) field.disabled = false;
+                    if (editor) editor.inert = false;
                     create.disabled = false;
                 }
             });
-            controls.append(form);
-            create.setAttribute("aria-expanded", "true");
+            document.dispatchEvent(new CustomEvent("docs:subformat-create", { detail: form }));
             file.focus();
             file.select();
         });
@@ -637,12 +767,39 @@ const render = (
     const columns = board.querySelector(".subformat-columns") as HTMLElement;
     const writable =
         !!state.openSource && document.body.classList.contains("edit") && !grouping?.readOnly;
+    const dropAreas = new Map<unknown, HTMLElement>();
     const move = async (record: SubformatRecord, value: unknown): Promise<void> => {
         if (state.busy || !grouping || !writable || record.data[grouping.name] === value) return;
+        const card = board.querySelector<HTMLElement>(
+            `[data-record-file="${CSS.escape(record.file)}"]`,
+        );
+        const target = dropAreas.get(value);
+        if (!card || !target) return;
+        const positions = cardPositions(board);
+        const preview = board.querySelector<HTMLElement>(".subformat-drag-preview");
+        if (preview && !preview.hidden) positions.set(card, preview.getBoundingClientRect());
         state.busy = true;
         document.querySelector(".subformat-toast")?.remove();
-        state.dragging = undefined;
-        render(root, board, state, collection, words);
+        state.stopDrag?.();
+        board.setAttribute("aria-busy", "true");
+        for (const control of root.querySelectorAll<HTMLButtonElement | HTMLSelectElement>(
+            ".subformat-controls button, .subformat-card select",
+        ))
+            control.disabled = true;
+        const moved = { ...record, data: { ...record.data, [grouping.name]: value } };
+        const ordered = sortSubformatRecords(
+            records
+                .map((item) => (item === record ? moved : item))
+                .filter((item) => item.data[grouping.name] === value),
+            sorting,
+            descending,
+        );
+        const next = ordered[ordered.indexOf(moved) + 1];
+        target.insertBefore(
+            card,
+            next ? target.querySelector(`[data-record-file="${CSS.escape(next.file)}"]`) : null,
+        );
+        const settling = settleCards(positions);
         try {
             const response = await fetch("/api/subformat", {
                 method: "POST",
@@ -665,6 +822,10 @@ const render = (
         } catch (error) {
             showSubformatError(error);
         } finally {
+            await settling;
+            const before = new Map(
+                [...cardPositions(board)].map(([card, rect]) => [card.dataset.recordFile, rect]),
+            );
             state.busy = false;
             const query =
                 root.querySelector<HTMLInputElement>("[data-resource-search]")?.value ?? "";
@@ -672,13 +833,21 @@ const render = (
                 root,
                 query.normalize("NFKC").toLowerCase().trim().split(/\s+/).filter(Boolean),
             );
+            void settleCards(
+                new Map(
+                    [...cardPositions(board)].map(([card, rect]) => [
+                        card,
+                        before.get(card.dataset.recordFile) ?? rect,
+                    ]),
+                ),
+            );
             if (document.activeElement === document.body) {
                 const card = board.querySelector(`[data-record-file="${CSS.escape(record.file)}"]`);
                 (
                     card?.querySelector<HTMLElement>(
                         ".subformat-card-details:not([hidden]) select",
                     ) ?? card?.querySelector<HTMLElement>(".subformat-card-open")
-                )?.focus();
+                )?.focus({ preventScroll: true });
             }
         }
     };
@@ -700,6 +869,7 @@ const render = (
         const cards = document.createElement("div");
         cards.className = "subformat-cards";
         column.append(cards);
+        dropAreas.set(value, cards);
         if (writable && value !== undefined) {
             cards.addEventListener("dragover", (event) => {
                 const record = collection.records.find((item) => item.file === state.dragging);
@@ -708,15 +878,10 @@ const render = (
                 if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
                 cards.classList.toggle("is-drop-target", record.data[grouping.name] !== value);
             });
-            cards.addEventListener("dragleave", (event) => {
-                if (!(event.relatedTarget instanceof Node) || !cards.contains(event.relatedTarget))
-                    cards.classList.remove("is-drop-target");
-            });
             cards.addEventListener("drop", (event) => {
                 event.preventDefault();
                 cards.classList.remove("is-drop-target");
-                const file = event.dataTransfer?.getData("application/x-dooc-record");
-                const record = collection.records.find((record) => record.file === file);
+                const record = collection.records.find((record) => record.file === state.dragging);
                 if (record) void move(record, value);
             });
         }
@@ -859,6 +1024,7 @@ const render = (
             card.addEventListener("dragstart", (event) => {
                 if (
                     !card.draggable ||
+                    state.busy ||
                     !event.dataTransfer ||
                     (event.target as Element).closest(".subformat-reference-list")
                 ) {
@@ -868,24 +1034,67 @@ const render = (
                 state.dragging = record.file;
                 event.dataTransfer.effectAllowed = "move";
                 event.dataTransfer.setData("application/x-dooc-record", record.file);
-                const preview = document.createElement("div");
-                preview.className = "subformat-card subformat-drag-preview";
+                const rect = card.getBoundingClientRect();
+                const preview = card.cloneNode(true) as HTMLElement;
+                preview.classList.add("subformat-drag-preview");
+                preview.hidden = true;
                 preview.setAttribute("aria-hidden", "true");
-                preview.style.width = `${Math.min(card.offsetWidth, 280)}px`;
-                preview.innerHTML = `<strong>${escapeHtml(title)}</strong><span class="subformat-card-file">${escapeHtml(record.file.split("/").at(-1) ?? record.file)}</span>${summaryHtml}`;
-                cards.append(preview);
-                event.dataTransfer.setDragImage(preview, 24, 18);
-                requestAnimationFrame(() => {
-                    preview.remove();
-                    if (state.dragging === record.file) card.classList.add("is-dragging");
+                preview.inert = true;
+                delete preview.dataset.recordFile;
+                for (const element of preview.querySelectorAll("[id]"))
+                    element.removeAttribute("id");
+                Object.assign(preview.style, {
+                    left: `${rect.left}px`,
+                    top: `${rect.top}px`,
+                    width: `${rect.width}px`,
+                    height: `${rect.height}px`,
+                    borderColor: getComputedStyle(card).borderColor,
                 });
-            });
-            card.addEventListener("dragend", () => {
-                state.dragging = undefined;
-                ignoreClickUntil = Date.now() + 250;
-                card.classList.remove("is-dragging");
-                for (const target of columns.querySelectorAll(".is-drop-target"))
-                    target.classList.remove("is-drop-target");
+                // Render the full card in the page to avoid the browser's translucent drag image.
+                const blank = document.createElement("canvas");
+                blank.width = blank.height = 1;
+                event.dataTransfer.setDragImage(blank, 0, 0);
+                cards.append(preview);
+                let x = 0;
+                let y = 0;
+                let frame = 0;
+                const paint = () => {
+                    frame = 0;
+                    card.classList.add("is-dragging");
+                    preview.hidden = false;
+                    preview.style.transform = `translate(${x}px, ${y}px)`;
+                };
+                const follow = (next: DragEvent) => {
+                    x = next.clientX - event.clientX;
+                    y = next.clientY - event.clientY;
+                    if (!frame) frame = requestAnimationFrame(paint);
+                    const over = (next.target as Element).closest?.(".subformat-cards");
+                    for (const target of columns.querySelectorAll(".is-drop-target"))
+                        if (target !== over) target.classList.remove("is-drop-target");
+                };
+                const stop = () => {
+                    cancelAnimationFrame(frame);
+                    const from = preview.hidden ? undefined : preview.getBoundingClientRect();
+                    preview.remove();
+                    state.dragging = undefined;
+                    state.stopDrag = undefined;
+                    ignoreClickUntil = Date.now() + 250;
+                    card.classList.remove("is-dragging");
+                    for (const target of columns.querySelectorAll(".is-drop-target"))
+                        target.classList.remove("is-drop-target");
+                    document.removeEventListener("dragover", follow, true);
+                    document.removeEventListener("drop", stop);
+                    document.removeEventListener("dragend", stop, true);
+                    card.removeEventListener("dragend", stop);
+                    if (!state.busy && from) void settleCards(new Map([[card, from]]));
+                };
+                state.stopDrag = stop;
+                document.addEventListener("dragover", follow, true);
+                // Keep the active record until the destination handles the drop.
+                document.addEventListener("drop", stop);
+                document.addEventListener("dragend", stop, true);
+                card.addEventListener("dragend", stop);
+                frame = requestAnimationFrame(paint);
             });
             if (grouping && writable) {
                 const label = document.createElement("label");
@@ -915,4 +1124,5 @@ const render = (
         }
         columns.append(column);
     }
+    columns.scrollLeft = scrollLeft;
 };

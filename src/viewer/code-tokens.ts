@@ -3,8 +3,12 @@ import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 
 let grammars: LanguageRegistration[] | undefined;
 let highlighter: ReturnType<typeof createHighlighterCore> | undefined;
+// shortcut: Aliases refresh on page reload; refresh in place if live subformat registration is needed.
 const codeGrammars = (): LanguageRegistration[] =>
     (grammars ??= JSON.parse(document.getElementById("code-grammars")?.textContent ?? "[]"));
+
+export const codeGrammar = (language: string): LanguageRegistration | undefined =>
+    codeGrammars().find((entry) => entry.name === language || entry.aliases?.includes(language));
 
 export const codeTheme = (element?: Element): string => {
     const choice = element?.closest("#panel")
@@ -22,9 +26,7 @@ export const codeTokens = async (source: string, language: string, theme?: strin
     // Large sources remain plain text so tokenization cannot stall either editor or the preview.
     if (source.length > 100_000 || source.split("\n").some((line) => line.length > 10_000))
         return [];
-    const grammar = codeGrammars().find(
-        (entry) => entry.name === language || entry.aliases?.includes(language),
-    );
+    const grammar = codeGrammar(language);
     if (!grammar) return [];
     highlighter ??= createHighlighterCore({
         langs: codeGrammars(),

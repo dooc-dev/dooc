@@ -44,7 +44,7 @@ window.testSchemaBuilder = async () => {
         );
         update(form.querySelector("input"), name);
         form.querySelector("select").value = type;
-        form.querySelector("button").click();
+        form.querySelector("[data-schema-add]").click();
     };
     const parameter = (node, kind, name) => {
         node.querySelector(`[data-schema-menu="${kind}"]`).click();
@@ -486,6 +486,135 @@ window.testSchemaDraftSaving = async () => {
     } finally {
         dispose();
         outer.destroy();
+        host.remove();
+        window.fetch = originalFetch;
+        document.querySelector(".subformat-toast")?.remove();
+    }
+};
+
+window.testSchemaParameters = async () => {
+    const assert = (value, message) => {
+        if (!value) throw new Error(message);
+    };
+    const host = document.createElement("div");
+    host.style.cssText = "height:700px;width:620px;max-width:100%";
+    document.body.append(host);
+    const originalFetch = window.fetch;
+    window.fetch = async () => Response.json({});
+    const view = new EditorView({
+        parent: host,
+        doc: SUBFORMAT_SCHEMA_TEMPLATE,
+        extensions: [editorSetup, jsonEditor(undefined, true)],
+    });
+    const schema = () => JSON.parse(view.state.doc.toString());
+    const update = (input, value) => {
+        input.value = value;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    const parameter = (node, key) => {
+        node.querySelector('[data-schema-menu="Constraints"]').click();
+        [...node.querySelectorAll('[role="menuitem"]')]
+            .find((item) => item.textContent === key)
+            .click();
+    };
+    const row = (name) =>
+        [...host.querySelectorAll("[data-schema-field]")].find(
+            (node) => node.dataset.schemaField === JSON.stringify(["properties", name]),
+        );
+    try {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        parameter(host.querySelector(".schema-add-field"), "enum");
+        update(
+            host.querySelector('.schema-draft-details [data-schema-keyword="enum"]'),
+            'Todo\n""\n"first\\nsecond"',
+        );
+        assert(hasSchemaBuilderDraft(view.state), "Draft constraints participate in unsaved state");
+        update(host.querySelector('.schema-add-field [aria-label="New field name"]'), "status");
+        assert(prepareSchemaBuilder(view.state), "Saving commits a constrained field draft");
+        assert(
+            JSON.stringify(schema().properties.status.enum) ===
+                JSON.stringify(["Todo", "", "first\nsecond"]),
+            "Enum preserves empty and multiline strings",
+        );
+        let input = row("status").querySelector('[data-schema-keyword="enum"]');
+        update(input, `${input.value}\nDone`);
+        assert(
+            schema().properties.status.enum[2] === "first\nsecond",
+            "Enum editing preserves the original multiline value",
+        );
+        parameter(row("status"), "const");
+        update(row("status").querySelector('[data-schema-keyword="const"]'), '""');
+        assert(schema().properties.status.const === "", "Empty constants remain set");
+        row("status").querySelector('[aria-label="Remove parameter: const"]').click();
+        update(row("status").querySelector('select[aria-label="Type"]'), "");
+        update(
+            row("status").querySelector('[data-schema-keyword="enum"]'),
+            '"text"\n1\nfalse\nnull\n[]\n{"x":1}',
+        );
+        assert(
+            schema().properties.status.enum.length === 6 && !schema().properties.status.type,
+            "Any type permits mixed JSON choices",
+        );
+        const before = view.state.doc.toString();
+        input = row("status").querySelector('[data-schema-keyword="enum"]');
+        update(input, '{"a":1,"b":2}\n{"b":2,"a":1}');
+        assert(
+            !prepareSchemaBuilder(view.state) && view.state.doc.toString() === before,
+            "Duplicate object choices block save without changing the schema",
+        );
+        update(input, '{"x":1}\n{"x":2}');
+        update(row("status").querySelector('select[aria-label="Type"]'), "object");
+        assert(
+            schema().properties.status.enum[1].x === 2,
+            "Object enum choices are editable in the builder",
+        );
+        row("status").querySelector('[aria-label="Remove parameter: enum"]').click();
+        update(row("status").querySelector('select[aria-label="Type"]'), "");
+        parameter(row("status"), "oneOf");
+        update(
+            row("status").querySelector('[data-schema-keyword="oneOf"]'),
+            '[{"type":"string"},{"type":"number"}]',
+        );
+        assert(schema().properties.status.oneOf.length === 2, "Composed rules reach the schema");
+        input = row("status").querySelector('[data-schema-keyword="oneOf"]');
+        update(input, "[]");
+        assert(!prepareSchemaBuilder(view.state), "Invalid composed rules block saving");
+        row("status").querySelector('[aria-label="Remove parameter: oneOf"]').click();
+        parameter(row("status"), "$ref");
+        update(
+            row("status").querySelector('[data-schema-keyword="$ref"]'),
+            "./common.schema.json#/$defs/status",
+        );
+        assert(
+            schema().properties.status.$ref === "./common.schema.json#/$defs/status",
+            "File refs are preserved verbatim",
+        );
+        const rootSettings = host.querySelector(".schema-root-settings");
+        rootSettings.open = true;
+        parameter(rootSettings, "$defs");
+        update(
+            host.querySelector('.schema-root-settings [data-schema-keyword="$defs"]'),
+            '{"status":{"type":"string"}}',
+        );
+        assert(schema().$defs.status.type === "string", "Root schema definitions can be edited");
+        view.dispatch({
+            changes: {
+                from: 0,
+                to: view.state.doc.length,
+                insert: '{"type":"string","enum":["a",""]}',
+            },
+        });
+        assert(
+            host.querySelector('.schema-root-settings [data-schema-keyword="enum"]'),
+            "Standalone scalar schema files stay in the builder",
+        );
+        input = host.querySelector('.schema-root-settings [data-schema-keyword="enum"]');
+        update(input, `${input.value}\nb`);
+        assert(schema().enum.join(",") === "a,,b", "Standalone enums roundtrip");
+        return "Passed: draft constraints, all enum values, duplicate rejection, const, composed rules, file refs, root definitions, standalone schemas";
+    } finally {
+        view.destroy();
         host.remove();
         window.fetch = originalFetch;
         document.querySelector(".subformat-toast")?.remove();

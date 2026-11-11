@@ -31,8 +31,33 @@ export const schemaConstraints: Record<string, string[]> = {
     object: ["minProperties", "maxProperties"],
 };
 
-export const parseFieldSchema = (content: string): SchemaObject => {
-    const schema: unknown = JSON.parse(content, (_key, value) => {
+export const schemaJsonParameters = [
+    "const",
+    "default",
+    "examples",
+    "oneOf",
+    "anyOf",
+    "allOf",
+    "not",
+    "$defs",
+];
+
+const matchesType = (value: unknown, type: unknown): boolean =>
+    type === undefined ||
+    (Array.isArray(type)
+        ? type.some((item) => matchesType(value, item))
+        : type === "null"
+          ? value === null
+          : type === "integer"
+            ? Number.isSafeInteger(value)
+            : type === "array"
+              ? Array.isArray(value)
+              : type === "object"
+                ? schemaObject(value)
+                : typeof value === type);
+
+const parseSchemaJson = (content: string): unknown =>
+    JSON.parse(content, (_key, value) => {
         if (
             typeof value === "number" &&
             (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)))
@@ -40,13 +65,10 @@ export const parseFieldSchema = (content: string): SchemaObject => {
             throw new Error("Use JSON text for numbers outside the safe integer range.");
         return value;
     });
-    if (
-        !schemaObject(schema) ||
-        (schema.type !== undefined && schema.type !== "object") ||
-        schema.$ref ||
-        schema.$dynamicRef
-    )
-        throw new Error("Build kit requires an object schema.");
+
+export const parseFieldSchema = (content: string): SchemaObject => {
+    const schema = parseSchemaJson(content);
+    if (!schemaObject(schema)) throw new Error("Build kit requires a schema object.");
     if (schema.$schema !== undefined && schema.$schema !== SUBFORMAT_SCHEMA_VERSION)
         throw new Error("Build kit uses JSON Schema 2020-12.");
     return schema;
@@ -83,43 +105,27 @@ export const schemaFieldNamesLocked = (schema: unknown): boolean => {
                 "not",
                 "patternProperties",
                 "propertyNames",
-            ].includes(key) || schemaFieldNamesLocked(value),
+            ].includes(key) ||
+            (!["enum", "const", "default", "examples"].includes(key) &&
+                schemaFieldNamesLocked(value)),
     );
 };
 
 export const setSchemaType = (schema: SchemaObject, type: string): void => {
-    if (!schemaTypes.includes(type)) throw new Error("Choose a schema type.");
-    if (schema.type === type) return;
+    if (type && !schemaTypes.includes(type)) throw new Error("Choose a schema type.");
+    if ((schema.type ?? "") === type) return;
     const values = [
         ...(Array.isArray(schema.enum) ? schema.enum : []),
         ...["const", "default"].flatMap((key) => (Object.hasOwn(schema, key) ? [schema[key]] : [])),
     ];
-    if (
-        values.some((value) =>
-            type === "null"
-                ? value !== null
-                : type === "integer"
-                  ? !Number.isSafeInteger(value)
-                  : type === "array"
-                    ? !Array.isArray(value)
-                    : type === "object"
-                      ? !schemaObject(value)
-                      : typeof value !== type,
-        )
-    )
-        throw new Error(
-            "Change existing choices or defaults in JSON text before changing the type.",
-        );
+    if (type && values.some((value) => !matchesType(value, type)))
+        throw new Error("Change existing choices or defaults before changing the type.");
     if (
         (schemaObject(schema.properties) && Object.keys(schema.properties).length) ||
         (schemaObject(schema.items) && Object.keys(schema.items).some((key) => key !== "type")) ||
-        schema.prefixItems ||
-        schema.$ref ||
-        schema.oneOf ||
-        schema.anyOf ||
-        schema.allOf
+        schema.prefixItems
     )
-        throw new Error("Use JSON text to change a type with nested or composed rules.");
+        throw new Error("Remove nested fields before changing the type.");
     for (const key of new Set(Object.values(schemaConstraints).flat()))
         if (!(schemaConstraints[type] ?? []).includes(key)) delete schema[key];
     if (type !== "string") delete schema.format;
@@ -129,26 +135,66 @@ export const setSchemaType = (schema: SchemaObject, type: string): void => {
         delete schema.required;
         delete schema.additionalProperties;
     }
-    schema.type = type;
+    if (type) schema.type = type;
+    else delete schema.type;
     if (type === "object") schema.properties ??= {};
     if (type === "array") schema.items ??= { type: "string" };
 };
 
+export const formatSchemaChoices = (values: unknown[], type: unknown): string =>
+    values
+        .map((value) =>
+            type === "string" &&
+            typeof value === "string" &&
+            value !== "" &&
+            !/[\r\n]/.test(value) &&
+            !value.trimStart().startsWith('"')
+                ? value
+                : JSON.stringify(value),
+        )
+        .join("\n");
+
 export const schemaChoices = (text: string, type: unknown): unknown[] => {
     const lines = text.split(/\r?\n/).filter((line) => line.length > 0);
     const values = lines.map((line) => {
-        if (type === "string" || type === undefined) return line;
-        const value: unknown = JSON.parse(line);
-        if (
-            (type === "number" && typeof value === "number" && Number.isFinite(value)) ||
-            (type === "integer" && Number.isSafeInteger(value)) ||
-            (type === "boolean" && typeof value === "boolean") ||
-            (type === "null" && value === null)
-        )
-            return value;
-        throw new Error("Each choice must match the field type.");
+        const value: unknown =
+            type === "string" && !line.trimStart().startsWith('"') ? line : parseSchemaJson(line);
+        if (!matchesType(value, type)) throw new Error("Each choice must match the field type.");
+        return value;
     });
-    if (new Set(values.map((value) => JSON.stringify(value))).size !== values.length)
+    if (!values.length) throw new Error("Enter at least one choice.");
+    if (
+        new Set(
+            values.map((value) =>
+                JSON.stringify(value, (_key, item) =>
+                    schemaObject(item)
+                        ? Object.fromEntries(
+                              Object.entries(item).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+                          )
+                        : item,
+                ),
+            ),
+        ).size !== values.length
+    )
         throw new Error("Choices must be unique.");
     return values;
+};
+
+export const parseSchemaParameter = (key: string, text: string, type: unknown): unknown => {
+    const value = parseSchemaJson(text);
+    const isSchema = (item: unknown) => typeof item === "boolean" || schemaObject(item);
+    if (
+        ["oneOf", "anyOf", "allOf"].includes(key) &&
+        (!Array.isArray(value) || !value.length || !value.every(isSchema))
+    )
+        throw new Error("Enter a non-empty JSON array of schemas.");
+    if (key === "not" && !isSchema(value))
+        throw new Error("Enter a JSON schema object or boolean.");
+    if (key === "$defs" && (!schemaObject(value) || !Object.values(value).every(isSchema)))
+        throw new Error("Enter an object containing named schemas.");
+    if (key === "examples" && !Array.isArray(value))
+        throw new Error("Examples must be a JSON array.");
+    if (key === "const" && !matchesType(value, type))
+        throw new Error("The constant must match the field type.");
+    return value;
 };

@@ -102,7 +102,7 @@ import { createGitHandler, validateGitOrigin } from "./git.js";
 import { gitBaseBody, gitBaseText, setSubformatChanges } from "./git-diff.js";
 import { createHmrHub, HMR_PATH, hmrClientScript, watchProject } from "./hmr.js";
 import { translate } from "./i18n.js";
-import { DEFAULT_SITE_LANGUAGES, loadSiteLanguages } from "./languages.js";
+import { DEFAULT_SITE_LANGUAGES, loadSiteLanguages, type SiteLanguages } from "./languages.js";
 import { loadGraphScript } from "./lazy-graph.js";
 import { focusNavTree } from "./nav-focus.js";
 import { updateNav } from "./nav-update.js";
@@ -244,10 +244,31 @@ export const siteFrom = (
         subformats,
     }: Compiled,
     languages: readonly LanguageAdapter[] = DEFAULT_SITE_LANGUAGES.languages,
+    code: Pick<SiteLanguages, "codeLanguages" | "codeGrammars"> = {},
 ): Site => {
+    const grammars = code.codeGrammars ?? [];
+    const registered = new Set(
+        grammars.flatMap((grammar) => [grammar.name, ...(grammar.aliases ?? [])]),
+    );
     return {
         previews,
         subformats,
+        codeLanguages: [
+            ...new Set([
+                ...(code.codeLanguages ?? CODE_LANGS),
+                ...(subformats ?? []).map(({ ext }) => `.${ext}`),
+            ]),
+        ],
+        codeGrammars: grammars.map((grammar) => ({
+            ...grammar,
+            aliases: [
+                ...(grammar.aliases ?? []),
+                ...(subformats ?? [])
+                    .filter(({ format }) => format === grammar.name)
+                    .flatMap(({ ext }) => [`.${ext}`, ext])
+                    .filter((alias) => !registered.has(alias)),
+            ],
+        })),
         ...(contentLanguages ? { contentLanguages } : {}),
         ...(themes ? { themes } : {}),
         ...(title === undefined ? {} : { title }),
@@ -313,7 +334,7 @@ const loadSite = (locale?: string): Site => {
         selected = localeCompilers.get(locale) ?? createCompiler(root, { locale, previews });
         localeCompilers.set(locale, selected);
     }
-    const site = siteFrom(selected.compile(), siteLanguages.languages);
+    const site = siteFrom(selected.compile(), siteLanguages.languages, siteLanguages);
     const sourceLanguage = contentLanguageCode(site.defaultLang);
     for (const entry of site.entries) {
         entry.translatedLanguages = [sourceLanguage];
@@ -353,8 +374,6 @@ const loadSite = (locale?: string): Site => {
         filePaths: manifest.errors.length
             ? undefined
             : filesSnapshot(root).files.map((file) => file.path),
-        codeLanguages: siteLanguages.codeLanguages,
-        codeGrammars: siteLanguages.codeGrammars,
         contentLanguage: locale,
     };
 };
@@ -1450,6 +1469,11 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .subformat-picker-menu button { display: block; width: 100%; padding: 7px 10px; border: 0; background: transparent; color: var(--c-fg); font: inherit; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
 .subformat-picker-menu button:is(:hover, :focus-visible, [aria-checked="true"]) { background: var(--c-raised); outline: none; }
 .subformat-picker-menu [data-subformat-add] { margin-top: 4px; border-top: 1px solid var(--c-line); font-size: 13px; }
+.subformat-picker-option { display: flex; }
+.subformat-picker-option > button:first-child { flex: 1; min-width: 0; }
+.subformat-picker-option > [data-subformat-action] { flex: none; width: auto; padding-inline: 8px; font-size: 12px; }
+.subformat-picker-option > [data-subformat-action="delete"] { color: var(--c-danger); }
+.subformat-picker-option > button:disabled { opacity: .55; cursor: default; }
 
 .resource-results [data-subformat-change="added"] { color: var(--c-ok); }
 .resource-results [data-subformat-change="modified"] { color: var(--c-accent); }
@@ -1484,11 +1508,11 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
   font: 13px/1.5 var(--font-sans); white-space: pre-wrap; overflow-wrap: anywhere; }
 .subformat-columns { display: flex; flex: 1; gap: 20px; min-width: 0; overflow-x: auto; padding: 16px 2px 12px; scrollbar-width: thin; scrollbar-color: var(--c-line) transparent; }
 .subformat-column { display: flex; flex-direction: column; flex: 1 0 248px; min-width: 0; }
-.subformat-cards { flex: 1; min-height: 100px; border-radius: 6px; }
+.subformat-cards { flex: 1; min-height: 100px; border-radius: 6px; transition: background-color 100ms ease-out; }
 .subformat-cards.is-drop-target { background: var(--c-raised); }
 .subformat-column > h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; padding: 0 2px 10px; border-bottom: 1px solid var(--c-line); color: var(--c-fg); font: 500 12px/20px var(--font-sans); overflow-wrap: anywhere; }
 .subformat-count > span { flex: none; min-width: 10px; padding: 0 5px; border-radius: 4px; background: var(--c-raised); color: var(--c-fg-muted); font-size: 11px; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
-.subformat-card { max-width: none; margin: 0 0 12px; padding: 14px; border: 1px solid var(--c-line); border-radius: 6px; background: var(--c-bg0); color: var(--c-fg); font-family: var(--font-sans); overflow-wrap: anywhere; }
+.subformat-card { max-width: none; margin: 0 0 12px; padding: 14px; border: 1px solid var(--c-line); border-radius: 6px; background: transparent; color: var(--c-fg); font-family: var(--font-sans); overflow-wrap: anywhere; }
 .subformat-card:hover, .subformat-card:focus-within { border-color: var(--c-fg-faint); }
 .subformat-count { display: inline-flex; align-items: center; gap: 4px; }
 .resource-results [data-record-change="added"] { --record-color: var(--c-ok); }
@@ -1505,14 +1529,14 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .subformat-create-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .subformat-card[draggable="true"] { cursor: grab; user-select: none; }
 .subformat-card[draggable="true"] :is(.subformat-card-open, .subformat-card-toggle) { cursor: inherit; }
-.subformat-card.is-dragging { opacity: .4; border-style: dashed; }
-.subformat-card-tools { display: flex; align-items: center; justify-content: flex-end; gap: 8px; box-sizing: border-box; width: fit-content; max-width: 100%; height: 20px; margin: -25px -4px 8px auto; padding: 0 6px; background: var(--c-bg0); }
+.subformat-card.is-dragging { visibility: hidden; }
+.subformat-card-tools { display: flex; align-items: center; justify-content: flex-end; gap: 8px; box-sizing: border-box; width: fit-content; max-width: 100%; height: 20px; margin: -25px -4px 8px auto; padding: 0 6px; background: var(--c-bg1); }
 .subformat-card h3 { min-width: 0; margin: 0; font-size: 13px; line-height: 1.55; }
 .subformat-card-open, .subformat-card-toggle, .subformat-card-copy { padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
 .subformat-card :focus-visible { outline-color: var(--c-fg-muted); }
 .subformat-card .subformat-card-open:focus { outline: none; }
 .subformat-card-open:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
-.subformat-card-open, .subformat-drag-preview strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-align: left; font-weight: 500; overflow-wrap: anywhere; }
+.subformat-card-open { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-align: left; font-weight: 500; overflow-wrap: anywhere; }
 .subformat-card-toggle, .subformat-card-copy { flex: none; display: grid; place-items: center; width: 20px; height: 20px; margin: 0; border-radius: 4px; color: var(--c-fg-muted); }
 .subformat-card-toggle:hover, .subformat-card-copy:hover { background: var(--c-raised); color: var(--c-fg); }
 .subformat-card-copy .ic-ok, .subformat-card-copy[data-copied] svg:not(.ic-ok) { display: none; }
@@ -1520,7 +1544,6 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .subformat-card-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
 .subformat-card .subformat-card-file { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--c-fg-faint); font-family: var(--doc-mono); font-size: 11px; }
 .subformat-card-tools .subformat-card-file { flex: 1; max-width: 170px; }
-.subformat-drag-preview .subformat-card-file { margin-top: 6px; }
 .subformat-card-references { padding: 2px 0; border: 0; background: none; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; flex: none; color: var(--record-color, var(--c-fg-faint)); font-size: 11px; font-variant-numeric: tabular-nums; }
 .subformat-card-references:disabled { cursor: default; }
 .subformat-reference-list { position: fixed; margin: 0; box-sizing: border-box; width: min(320px, calc(100vw - 16px)); padding: 4px; border: 1px solid var(--c-line); border-radius: 4px; background: var(--c-bg1); color: var(--c-fg); overflow-y: auto; font: 12px/1.6 var(--font-sans); }
@@ -1541,8 +1564,7 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .subformat-card-details dd, .subformat-detail dd { white-space: pre-wrap; overflow-wrap: anywhere; }
 .subformat-card-details label { margin-top: 12px; }
 .subformat-card [hidden] { display: none; }
-.subformat-drag-preview { position: fixed; left: -10000px; top: 0; box-sizing: border-box; pointer-events: none; border-color: var(--c-fg-faint); box-shadow: 0 8px 24px var(--c-shadow); }
-.subformat-drag-preview strong { font-size: 13px; }
+.subformat-drag-preview { position: fixed; z-index: 1000; box-sizing: border-box; pointer-events: none; background: var(--c-bg1); will-change: transform; }
 .app-dialog { width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 22px;
   color: var(--c-fg); background: color-mix(in srgb, var(--c-bg1) 90%, transparent);
   border: 1px solid var(--c-fg-faint); border-radius: 10px; box-shadow: 0 16px 48px #0004; backdrop-filter: blur(16px); }
@@ -1631,8 +1653,8 @@ body.textfile-open #phead :is(.fm-language, #status, #validate, #save, #split-pr
 #file-editor .cm-textfile-status { padding: 8px 12px; white-space: pre-wrap; }
 #file-editor .cm-textfile-status[hidden] { display: none; }
 #file-editor .cm-textfile-status.error { color: var(--doc-danger); }
-#file-editor[data-subformat-register] { position: static; width: auto; max-height: none; padding: 0; border: 0; border-radius: 0; overflow: hidden; }
-#file-editor[data-subformat-register] fieldset { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+#file-editor:is([data-subformat-register], [data-subformat-record]) { position: static; width: auto; max-height: none; padding: 0; border: 0; border-radius: 0; overflow: hidden; }
+#file-editor:is([data-subformat-register], [data-subformat-record]) fieldset { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .subformat-register-fields { display: grid; flex: 1; min-width: 0; grid-template-columns: minmax(36px, .5fr) 60px minmax(50px, 1.5fr); gap: 6px; margin: 0; padding: 0; border: 0; }
 .subformat-register-fields :is(input, select) { width: 100%; min-width: 0; height: 28px; padding: 4px; background: transparent; color: var(--c-fg); border: 0; border-bottom: 1px solid var(--c-line); border-radius: 0; font: 12px/18px var(--font-sans); }
 .subformat-register-fields input:hover, .subformat-register-fields input:focus-visible { background: transparent; outline: none; border-bottom-color: var(--c-fg-muted); }
@@ -1642,13 +1664,14 @@ body.textfile-open #phead :is(.fm-language, #status, #validate, #save, #split-pr
 .subformat-register-fields .language-select-input { height: 24px; padding: 4px 18px 1px 6px; border: 1px solid var(--c-line); border-radius: 4px; background: var(--c-bg1); font-size: 11px; line-height: 16px; }
 .subformat-register-fields .language-select::after { right: 6px; top: 9px; width: 4px; height: 4px; }
 .subformat-register-fields :disabled { opacity: .5; }
+.subformat-register-fields > input[name="file"] { grid-column: 1 / -1; }
 .subformat-register-fields input::placeholder { color: var(--c-fg-muted); opacity: 1; }
 .subformat-register-fields input[name="schema"]:not([placeholder="path"])::placeholder { opacity: .55; }
 #phead:has(.subformat-register-fields) { padding-inline: 6px; }
 .file-editor-heading:has(.subformat-register-fields) { gap: 4px; margin-left: 2px; }
 [data-subformat-schema-editor] { flex: 1; min-height: 0; }
-#file-editor[data-subformat-register] .subformat-create-actions { flex: none; padding: 10px 14px; border-top: 1px solid var(--c-line); }
-#file-editor[data-subformat-register] [hidden] { display: none; }
+#file-editor:is([data-subformat-register], [data-subformat-record]) .subformat-create-actions { flex: none; padding: 10px 14px; border-top: 1px solid var(--c-line); }
+#file-editor:is([data-subformat-register], [data-subformat-record]) [hidden] { display: none; }
 .schema-editor-host { display: flex; flex-direction: column; min-height: 0; }
 .schema-editor-host > .cm-editor { flex: 1; min-height: 0; }
 .schema-editor-host > [hidden] { display: none !important; }
@@ -1675,6 +1698,8 @@ body.textfile-open #phead :is(.fm-language, #status, #validate, #save, #split-pr
 .schema-field { position: relative; min-width: 0; }
 .schema-builder > :is(.schema-field, .schema-add-field, .schema-draft-details) { max-width: 560px; }
 .schema-builder > .schema-field { margin-bottom: 8px; }
+.schema-root-settings { max-width: 560px; margin-block: 12px; }
+.schema-root-settings > summary { cursor: pointer; }
 .schema-field-row, .schema-add-field { position: relative; display: grid; grid-template-columns: minmax(0, 260px) 112px minmax(128px, 1fr); align-items: center; gap: 8px; padding: 6px 0 2px; }
 .schema-field-name { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .schema-field-name > :first-child { flex: 1; min-width: 0; }
@@ -1704,6 +1729,7 @@ body.textfile-open #phead :is(.fm-language, #status, #validate, #save, #split-pr
 .schema-parameter[data-schema-bound="max"] { grid-column: 2; }
 .schema-parameter label { display: grid; grid-template-columns: 100px minmax(0, 1fr); align-items: center; gap: 8px; }
 .schema-parameter label > span { overflow-wrap: anywhere; }
+.schema-parameter-help { grid-column: 1 / -1; color: var(--c-fg-muted); overflow-wrap: anywhere; }
 .schema-parameter label:has(> textarea) { align-items: start; }
 .schema-parameter label:has(> input[type="checkbox"]) { display: flex; flex-direction: row-reverse; align-items: center; justify-content: flex-end; gap: 8px; min-height: 28px; cursor: pointer; }
 .schema-parameter > button { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--c-fg-muted); }
@@ -2297,7 +2323,7 @@ export const textfilePreviewHtml = (site: Site, file: string, source: string): s
 export const textfilePreviewErrors = (site: Site, file: string, source: string): string[] => {
     const errors = textfilePreview(site, file, source).errors;
     try {
-        validateSubformatFile(root, file, source);
+        validateSubformatFile(root, file, source, site.previews?.domains);
     } catch (error) {
         errors.push(error instanceof Error ? error.message : String(error));
     }
@@ -2356,6 +2382,7 @@ export const resourcesMain = (
         const index = resourceIndex(
             root,
             site.filePaths ?? filesSnapshot(root).files.map((item) => item.path),
+            site.previews?.domains,
         );
         if (site.workspace?.protocol === "git" && index.subformats.length)
             setSubformatChanges(root, index.subformats);
@@ -4064,7 +4091,11 @@ export const startServer = async (
                     });
                     return;
                 }
-                const result = subformatResponse(root, await readJson(req));
+                const result = subformatResponse(
+                    root,
+                    await readJson(req),
+                    applicationPreviews.domains,
+                );
                 sendJson(res, result.status, result.body);
                 return;
             }
