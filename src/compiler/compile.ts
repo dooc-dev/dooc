@@ -1,6 +1,6 @@
 // Reads dooc.yaml and source files into validated, in-memory content for the viewer and HTML
 // bundles. createCompiler caches unchanged files; compileSite performs a one-shot compilation.
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { type Block, type ListItem, type TocEntry, walkBlocks } from "../core/blocks.js";
 import { docIdOfFile, flattenTree, MANIFEST_FILE } from "../core/content-metadata.js";
@@ -388,6 +388,17 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             () => loadFigures(figuresDir, visualFiles),
         );
         const siteErrors: string[] = figErrors.filter((error) => error.startsWith("figures/"));
+        if (manifest.licence) {
+            try {
+                assertNotIgnored(root, manifest.licence);
+                if (!statSync(textfilePath(root, manifest.licence)).isFile())
+                    throw new Error("expected a regular file");
+            } catch (error) {
+                siteErrors.push(
+                    `${MANIFEST_FILE}: system.licence ${manifest.licence}: ${error instanceof Error ? error.message : error}`,
+                );
+            }
+        }
         if (!isLangTag(defaultLang)) {
             siteErrors.push("defaultLang must be a BCP 47 language tag");
         }

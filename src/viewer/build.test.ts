@@ -30,6 +30,54 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 it.each([
+    "static",
+    "live",
+] as const)("omits unused runtimes and grammars from %s HTML", async (mode) => {
+    write("content/guide.md", "---\ntitle: Guide\n---\n\nOnly text.\n");
+    const { data } = await buildBundle(root, { format: "html", mode });
+    expect(bundleClient).not.toHaveBeenCalled();
+    expect(data).toContain('id="code-grammars" type="application/json">[]</script>');
+});
+
+it("includes languages used by nested code and file embeds, along with their dependencies", async () => {
+    write(
+        "content/guide.md",
+        "---\ntitle: Guide\n---\n\n> ```example\n> name: example\n> ```\n\n![](files/example.json)\n",
+    );
+    write(
+        ".dooc/code-languages/custom.json",
+        JSON.stringify({
+            name: "custom",
+            aliases: ["example"],
+            scopeName: "source.custom",
+            patterns: [{ include: "source.yaml" }],
+        }),
+    );
+    write("files/example.json", '{"name":"example"}');
+    const { data } = await buildBundle(root, { format: "html" });
+    expect(vi.mocked(bundleClient).mock.calls).toEqual([["viewer/code-highlight.ts"]]);
+    const json =
+        String(data).match(/id="code-grammars" type="application\/json">([^<]*)<\/script>/)?.[1] ??
+        "[]";
+    expect(
+        JSON.parse(json)
+            .map((grammar: { name: string }) => grammar.name)
+            .sort(),
+    ).toEqual(["custom", "json", "yaml"]);
+});
+
+it("retains the complete diagram runtime for Mermaid without bundling unrelated code languages", async () => {
+    write(
+        "content/guide.md",
+        "---\ntitle: Guide\n---\n\n```mermaid\nmindmap\n  root((Example))\n    Child\n```\n",
+    );
+    const { data } = await buildBundle(root, { format: "html" });
+    expect(vi.mocked(bundleClient).mock.calls).toEqual([["core/schema-graph-global.tsx"]]);
+    expect(data).toContain('data-mermaid="pending"');
+    expect(data).toContain('id="code-grammars" type="application/json">[]</script>');
+});
+
+it.each([
     { format: "html", urlPreview: "embed" },
     { format: "html", urlPreview: "network" },
     { format: "zip", urlPreview: "embed" },

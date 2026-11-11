@@ -1,6 +1,6 @@
 import { runInNewContext } from "node:vm";
 import { type Entities, Helper } from "dxf";
-import { escapeHtml } from "../core/html.js";
+import { escapeHtml } from "../core/escape-html.js";
 
 export const dxfSvg = (source: string): string => {
     source = source.replace(/\r\n?/g, "\n").trim();

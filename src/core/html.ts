@@ -5,6 +5,7 @@
 
 import type { Block, ListItem, TocEntry } from "./blocks.js";
 import type { FigureEntry, TermEntry } from "./content-types.js";
+import { escapeHtml } from "./escape-html.js";
 import { figureFrameHtml } from "./figure-frame.js";
 import { parseFigureLink } from "./file-embed.js";
 import {
@@ -29,11 +30,15 @@ import { docDisplayName, type Frontmatter } from "./taxonomy.js";
 import { termAnchor } from "./term-reference.js";
 import { textfileName } from "./textfile.js";
 
+export { escapeHtml } from "./escape-html.js";
+
 export interface RenderCtx {
     /** Source file to published document route. */
     docLinks?: ReadonlyMap<string, string>;
     /** Figures including their markup (name → entry). */
     figures: ReadonlyMap<string, FigureEntry>;
+    /** Local viewers may defer large figures; published HTML embeds them directly. */
+    figurePreview?: typeof figureFrameHtml;
     terms: readonly TermEntry[];
     termLinks?: ReadonlyMap<string, string>;
     /** The doc's language tag (BCP 47), emitted as `<article lang>`. */
@@ -50,9 +55,6 @@ export interface RenderCtx {
 }
 
 export const emptyCtx: RenderCtx = { figures: new Map(), terms: [] };
-
-export const escapeHtml = (s: string): string =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 type Segmenter = (text: string) => ReturnType<ReturnType<typeof inlineSegmenter>>;
 
@@ -94,7 +96,7 @@ const inlineHtml = (segments: InlineSegment[], ctx: RenderCtx): string =>
                                     : "");
                             const pop =
                                 fig.kind === "svg"
-                                    ? `<span class="figpop">${figureFrameHtml(fig, "fig-frame figpop-frame")}</span>`
+                                    ? `<span class="figpop">${(ctx.figurePreview ?? figureFrameHtml)(fig, "fig-frame figpop-frame")}</span>`
                                     : "";
                             return `<a class="figref" href="${escapeHtml(href)}">${label}${pop}</a>`;
                         }
@@ -138,10 +140,15 @@ const listHtml = (items: ListItem[], ctx: RenderCtx, seg: Segmenter, ordered = f
 // caption: line 1 = the label "Fig.<name>", then a newline and the description (.cap keeps it via
 // pre-line). The figure content is figure-frame.ts's sandboxed iframe (fully isolates svg / html;
 // raster images use <img>).
-const figureHtml = (fig: FigureEntry, withLabel = true, caption?: string): string => {
+const figureHtml = (
+    fig: FigureEntry,
+    ctx: RenderCtx,
+    withLabel = true,
+    caption?: string,
+): string => {
     const label = caption ?? fig.title ?? `Fig.${fig.name}`;
     const cap = [withLabel ? label : undefined, fig.desc].filter(Boolean).join("\n");
-    return `<figure class="fig">${figureFrameHtml(fig, "fig-frame", caption)}${
+    return `<figure class="fig">${(ctx.figurePreview ?? figureFrameHtml)(fig, "fig-frame", caption)}${
         cap ? `<figcaption class="cap">${escapeHtml(cap)}</figcaption>` : ""
     }</figure>`;
 };
@@ -502,8 +509,8 @@ const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
             const fig = ctx.figures.get(b.name);
             if (fig) {
                 if (b.alt !== undefined)
-                    return `<figure class="fig">${figureFrameHtml(fig, "fig-frame", b.alt)}</figure>`;
-                return figureHtml(fig, true, b.caption);
+                    return `<figure class="fig">${(ctx.figurePreview ?? figureFrameHtml)(fig, "fig-frame", b.alt)}</figure>`;
+                return figureHtml(fig, ctx, true, b.caption);
             }
             return `<div class="ph">${escapeHtml(b.alt || `Fig. ${b.name}`)}<span> — not found in figures/</span></div>`;
         }
@@ -515,7 +522,7 @@ const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
             return [...ctx.figures.values()]
                 .map(
                     (f) =>
-                        `<h2 id="${escapeHtml(f.name)}">${escapeHtml(f.title ?? f.name)}</h2>${figureHtml(f, false)}`,
+                        `<h2 id="${escapeHtml(f.name)}">${escapeHtml(f.title ?? f.name)}</h2>${figureHtml(f, ctx, false)}`,
                 )
                 .join("\n");
         case "schemaGraph":

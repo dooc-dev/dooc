@@ -30,7 +30,7 @@ export function mountToc(doc: Document): () => void {
             const list = nav.querySelector("ul");
             if (!article || !button || !list) continue;
             const pane = nav.closest<HTMLElement>(".preview-pane");
-            const scroller = pane ?? doc.scrollingElement;
+            const scroller = pane ?? nav.closest("main") ?? doc.scrollingElement;
             if (!scroller) continue;
             const header = (pane ?? article.parentElement)?.querySelector<HTMLElement>(
                 ":scope > .pane-actions, :scope > .page-actions",

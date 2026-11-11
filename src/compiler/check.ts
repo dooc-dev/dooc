@@ -197,6 +197,7 @@ export const checkSite = (root: string, options: CheckOptions = {}): CheckReport
         for (const message of manifest.errors)
             add("MANIFEST_INVALID", "error", MANIFEST_FILE, message);
         if (manifest.errors.length) return finish(report, options);
+        if (manifest.licence) read(manifest.licence, { sourceFile: MANIFEST_FILE });
         let sourceLanguage: string;
         try {
             sourceLanguage = contentLanguageCode(manifest.defaultLang ?? DEFAULT_LANG);

@@ -35,6 +35,7 @@
     "Save (Ctrl+S)": "保存（Ctrl+S）",
     "View settings": "显示设置",
     "Auto save": "自动保存",
+    "Wrap lines": "自动换行",
     "Front-matter fields": "显示文档属性",
     "title": "标题",
     "desc": "描述",
@@ -387,10 +388,17 @@
     "Remove page": "移除页面",
     "Rename page": "重命名页面",
     "Remove this page from the sidebar? The records will be kept.": "从侧边栏移除此页面？记录将被保留。",
-    "Constraints": "约束",
-    "Semantic": "语义信息",
+    "Parameters": "参数",
     "Items": "数组元素",
     "Remove parameter": "移除参数",
     "Check the parameter value.": "请检查参数值。",
-    "Download PDF": "下载 PDF"
+    "Download PDF": "下载 PDF",
+    "Choose date": "选择日期",
+    "Previous month": "上个月",
+    "Next month": "下个月",
+    "Today": "今天",
+    "Clear": "清除",
+    "Enter a valid date (YYYY-MM-DD).": "请输入有效日期（YYYY-MM-DD）。",
+    "Load preview": "加载预览",
+    "Preview unavailable": "无法加载预览"
 }

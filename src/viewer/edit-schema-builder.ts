@@ -65,7 +65,7 @@ const label = (name: string, input: HTMLElement): HTMLLabelElement => {
 
 const icon = (paths: string): string =>
     `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
-const removeIcon = icon('<path d="M3 5h14M7 5V3h6v2M5 5l1 12h8l1-12M8 8v6m4-6v6"/>');
+const removeIcon = icon('<path d="m5 5 10 10M15 5 5 15"/>');
 const parameterPairs = [
     ["minLength", "maxLength"],
     ["minimum", "maximum"],
@@ -321,8 +321,7 @@ class SchemaBuilder {
         });
         const menus = document.createElement("div");
         menus.className = "schema-field-name";
-        for (const kind of ["Constraints", "Semantic"] as const)
-            menus.append(this.parameterMenu(kind, root, [], t("Schema settings")));
+        menus.append(this.parameterMenu(root, [], t("Schema settings")));
         settings.append(summary, menus);
         settings.append(label("Type", this.typeSelect(root, [])));
         this.settings(root, [], settings, locked, !objectRoot);
@@ -409,8 +408,7 @@ class SchemaBuilder {
         heading.append(nameControl);
         if (controls[0]) heading.append(controls[0]);
         if (schemaObject(schema)) {
-            for (const kind of ["Constraints", "Semantic"] as const)
-                heading.append(this.parameterMenu(kind, schema, path, name));
+            heading.append(this.parameterMenu(schema, path, name));
             this.settings(schema, path, details, locked);
         } else {
             details.append(
@@ -591,15 +589,14 @@ class SchemaBuilder {
         const heading = document.createElement("div");
         heading.className = "schema-field-name";
         heading.append(label("Field name", name));
-        for (const kind of ["Constraints", "Semantic"] as const)
-            heading.append(
-                this.parameterMenu(kind, draft.schema, draftPath, t("New field name"), () => {
-                    if (this.drafts.has(key)) return;
-                    this.drafts = new Map(this.drafts);
-                    this.drafts.set(key, structuredClone(draft));
-                    this.view.dispatch({ effects: setDrafts.of(this.drafts) });
-                }),
-            );
+        heading.append(
+            this.parameterMenu(draft.schema, draftPath, t("New field name"), () => {
+                if (this.drafts.has(key)) return;
+                this.drafts = new Map(this.drafts);
+                this.drafts.set(key, structuredClone(draft));
+                this.view.dispatch({ effects: setDrafts.of(this.drafts) });
+            }),
+        );
         add.append(heading, label("Type", type), addActions);
         host.append(add);
         if (this.drafts.has(key)) {
@@ -623,19 +620,7 @@ class SchemaBuilder {
             host.append(extraLabel);
         }
     }
-    private parameterKeys(kind: "Constraints" | "Semantic", schema: SchemaObject): string[] {
-        if (kind === "Semantic")
-            return [
-                "$id",
-                "$anchor",
-                "title",
-                "description",
-                "default",
-                "examples",
-                "readOnly",
-                "writeOnly",
-                "deprecated",
-            ];
+    private parameterKeys(schema: SchemaObject): string[] {
         return [
             ...(schemaConstraints[String(schema.type)] ?? []),
             ...(schema.type === "string" ? ["format"] : []),
@@ -650,10 +635,18 @@ class SchemaBuilder {
             "anyOf",
             "allOf",
             "not",
+            "$id",
+            "$anchor",
+            "title",
+            "description",
+            "default",
+            "examples",
+            "readOnly",
+            "writeOnly",
+            "deprecated",
         ];
     }
     private parameterMenu(
-        kind: "Constraints" | "Semantic",
         schema: SchemaObject,
         path: string[],
         name: string,
@@ -664,7 +657,7 @@ class SchemaBuilder {
         popup.className = "schema-parameter-menu language-picker";
         popup.popover = "auto";
         popup.setAttribute("role", "menu");
-        popup.setAttribute("aria-label", t(kind));
+        popup.setAttribute("aria-label", t("Parameters"));
         const menu = document.createElement("div");
         menu.className = "language-options";
         const trigger = button("", () => {
@@ -685,18 +678,14 @@ class SchemaBuilder {
             popup.style.maxHeight = `${Math.max(60, innerHeight - rect.bottom - 12)}px`;
             menu.querySelector<HTMLElement>("button")?.focus();
         });
-        trigger.title = `${t(kind)}: ${name}`;
+        trigger.title = `${t("Parameters")}: ${name}`;
         trigger.setAttribute("aria-label", trigger.title);
         trigger.setAttribute("aria-haspopup", "menu");
         trigger.setAttribute("aria-expanded", "false");
-        trigger.dataset.schemaMenu = kind;
-        trigger.innerHTML = icon(
-            kind === "Constraints"
-                ? '<path d="M10 2 17 5v5c0 4-7 8-7 8s-7-4-7-8V5Z"/><path d="m6 10 3 3 5-6"/>'
-                : '<path d="M3 3h7l7 7-7 7-7-7Z"/><circle cx="7" cy="7" r="1"/>',
-        );
-        const visible = this.visibleParameters(kind, schema, path);
-        for (const key of this.parameterKeys(kind, schema)) {
+        trigger.dataset.schemaMenu = "Parameters";
+        trigger.innerHTML = icon('<path d="M10 4v12M4 10h12"/>');
+        const visible = this.visibleParameters(schema, path);
+        for (const key of this.parameterKeys(schema)) {
             const focus = `${JSON.stringify(path)}:${key}`;
             if (visible.includes(key)) continue;
             const item = button(key, () => {
@@ -733,12 +722,8 @@ class SchemaBuilder {
         host.append(trigger, popup);
         return host;
     }
-    private visibleParameters(
-        kind: "Constraints" | "Semantic",
-        schema: SchemaObject,
-        path: string[],
-    ): string[] {
-        return this.parameterKeys(kind, schema).filter(
+    private visibleParameters(schema: SchemaObject, path: string[]): string[] {
+        return this.parameterKeys(schema).filter(
             (key) =>
                 Object.hasOwn(schema, key) || this.parameters.has(`${JSON.stringify(path)}:${key}`),
         );
@@ -815,15 +800,13 @@ class SchemaBuilder {
         locked: boolean,
         children = true,
     ): void {
-        for (const kind of ["Constraints", "Semantic"] as const) {
-            const keys = this.visibleParameters(kind, schema, path);
-            if (!keys.length) continue;
+        const keys = this.visibleParameters(schema, path);
+        if (keys.length) {
             const group = document.createElement("section");
             group.className = "schema-parameter-group";
-            group.dataset.schemaGroup = kind;
-            group.setAttribute("aria-label", t(kind));
+            group.setAttribute("aria-label", t("Parameters"));
             const fields = document.createElement("div");
-            fields.className = "schema-constraints";
+            fields.className = "schema-parameters";
             const rows = new Map<string, HTMLElement>();
             for (const key of keys) {
                 const focus = `${JSON.stringify(path)}:${key}`;
@@ -973,8 +956,7 @@ class SchemaBuilder {
             "required",
             "items",
             "$schema",
-            ...this.parameterKeys("Constraints", schema),
-            ...this.parameterKeys("Semantic", schema),
+            ...this.parameterKeys(schema),
         ];
         if (Object.keys(schema).some((key) => !handled.includes(key))) {
             const note = document.createElement("p");

@@ -46,8 +46,8 @@ window.testSchemaBuilder = async () => {
         form.querySelector("select").value = type;
         form.querySelector("[data-schema-add]").click();
     };
-    const parameter = (node, kind, name) => {
-        node.querySelector(`[data-schema-menu="${kind}"]`).click();
+    const parameter = (node, name) => {
+        node.querySelector('[data-schema-menu="Parameters"]').click();
         [...node.querySelectorAll('[role="menuitem"]')]
             .find((item) => item.textContent === name)
             .click();
@@ -66,6 +66,19 @@ window.testSchemaBuilder = async () => {
             "The selected mode is announced",
         );
         const draftForm = () => host.querySelector(".schema-builder > .schema-add-field");
+        for (const node of [draftForm(), host.querySelector(".schema-root-settings")]) {
+            assert(
+                node.querySelectorAll("[data-schema-menu]").length === 1,
+                "One parameter menu per schema",
+            );
+            const names = [...node.querySelectorAll('[role="menuitem"]')].map(
+                (item) => item.textContent,
+            );
+            assert(
+                names.includes("enum") && names.includes("description"),
+                "Rules and annotations share one menu",
+            );
+        }
         const beforeDraft = view.state.doc.toString();
         update(draftForm().querySelector("select"), "array");
         let draftItems = host.querySelector(".schema-draft-details [data-schema-field]");
@@ -113,7 +126,7 @@ window.testSchemaBuilder = async () => {
             !row("status").querySelector("[data-schema-keyword]"),
             "Parameters start hidden until added",
         );
-        parameter(row("status"), "Constraints", "enum");
+        parameter(row("status"), "enum");
         update(row("status").querySelector('textarea[data-schema-focus$=":enum"]'), "Todo\nDone");
         update(row("status").querySelector('[aria-label="Field name"]'), "stage");
         assert(
@@ -129,7 +142,7 @@ window.testSchemaBuilder = async () => {
             "Nested properties can be added",
         );
         add("tags", "array");
-        parameter(row("tags"), "Constraints", "minItems");
+        parameter(row("tags"), "minItems");
         assert(
             !row("tags").querySelector('[data-schema-keyword="maxItems"]'),
             "Adding min does not automatically add max",
@@ -150,11 +163,11 @@ window.testSchemaBuilder = async () => {
             item().querySelector("[data-schema-field]"),
             "Nested array items keep their own tree row",
         );
-        parameter(item(), "Semantic", "description");
+        parameter(item(), "description");
         update(item().querySelector('[data-schema-keyword="description"]'), "Nested items");
         assert(
             schema().properties.tags.items.description === "Nested items",
-            "Semantic parameters reach the correct nested schema",
+            "Parameters reach the correct nested schema",
         );
         item().querySelector('[aria-label="Remove parameter: description"]').click();
         assert(
@@ -192,7 +205,7 @@ window.testSchemaBuilder = async () => {
         mode("json");
         mode("build");
         assert(view.state.doc.toString() === before, "Mode switches never rewrite JSON");
-        parameter(row("title"), "Semantic", "description");
+        parameter(row("title"), "description");
         update(
             row("title").querySelector('[data-schema-keyword="description"]'),
             "Updated in Build kit",
@@ -287,7 +300,32 @@ window.testSchemaBuilder = async () => {
                     Math.abs(collapse.right - field.getBoundingClientRect().right) < 1,
                     "Collapse stays at the right edge, including Items",
                 );
+                assert(
+                    field.querySelectorAll("[data-schema-menu]").length === 1,
+                    "Fields and array items use a single parameter menu",
+                );
             }
+            for (const group of host.querySelectorAll(
+                ".schema-field > .schema-field-details > .schema-parameter-group",
+            )) {
+                const field = group.parentElement.parentElement
+                    .querySelector(".schema-field-row")
+                    .getBoundingClientRect();
+                const box = group.getBoundingClientRect();
+                assert(
+                    box.left >= field.left + 24 && box.top >= field.bottom + 8,
+                    "Fixed parameters are indented and spaced below their field name",
+                );
+            }
+            assert(
+                row("title")
+                    .querySelector('[data-schema-keyword="enum"]')
+                    .closest(".schema-parameter-group") ===
+                    row("title")
+                        .querySelector('[data-schema-keyword="description"]')
+                        .closest(".schema-parameter-group"),
+                "Validation and descriptive parameters use the same settings block",
+            );
             const panel = host.querySelector(".schema-builder");
             assert(panel.scrollWidth === panel.clientWidth, `No horizontal overflow at ${width}px`);
         }
@@ -340,7 +378,7 @@ window.testSchemaBuilder = async () => {
             !number("negative", "minimum") && !slider("negative", "maximum"),
             "A single maximum stays an independent input",
         );
-        parameter(row("negative"), "Constraints", "minimum");
+        parameter(row("negative"), "minimum");
         update(number("negative", "minimum"), "-10");
         assert(
             !slider("negative", "maximum").disabled,
@@ -380,7 +418,7 @@ window.testSchemaBuilder = async () => {
             "Parameter groups do not repeat text headings",
         );
         assert(
-            row("title").querySelector('.schema-field-name [data-schema-menu="Constraints"]'),
+            row("title").querySelector('.schema-field-name [data-schema-menu="Parameters"]'),
             "Parameter icons sit beside their field name",
         );
         assert(
@@ -513,7 +551,7 @@ window.testSchemaParameters = async () => {
         input.dispatchEvent(new Event("change", { bubbles: true }));
     };
     const parameter = (node, key) => {
-        node.querySelector('[data-schema-menu="Constraints"]').click();
+        node.querySelector('[data-schema-menu="Parameters"]').click();
         [...node.querySelectorAll('[role="menuitem"]')]
             .find((item) => item.textContent === key)
             .click();

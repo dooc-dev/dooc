@@ -20,6 +20,7 @@ import {
     crosshairCursor,
     drawSelection,
     dropCursor,
+    EditorView,
     highlightActiveLine,
     highlightActiveLineGutter,
     highlightSpecialChars,
@@ -36,8 +37,15 @@ export const editorSetup: Extension = [
     ViewPlugin.define((view) => {
         const measure = () => view.requestMeasure();
         document.addEventListener("docs:font-change", measure);
-        return { destroy: () => document.removeEventListener("docs:font-change", measure) };
+        document.addEventListener("docs:line-wrap", measure);
+        return {
+            destroy: () => {
+                document.removeEventListener("docs:font-change", measure);
+                document.removeEventListener("docs:line-wrap", measure);
+            },
+        };
     }),
+    EditorView.lineWrapping,
     lineNumbers(),
     highlightActiveLineGutter(),
     highlightSpecialChars(),

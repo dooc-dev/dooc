@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { escapeHtml } from "../core/html.js";
+import { escapeHtml } from "../core/escape-html.js";
 import type { PluginCredentialStore } from "../plugins/local-storage.js";
 import { isPluginError, PluginError } from "../plugins/oauth.js";
 import { createPluginRuntime } from "../plugins/runtime.js";

@@ -3,8 +3,37 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, posix, relative, resolve, sep } from "node:path";
 import ignore, { type Ignore } from "ignore";
 
+let cached: Map<string, Map<string, boolean>> | undefined;
+
+/** Share Git checks within one synchronous read, never across requests or writes. */
+export const withIgnoredFilesCache = <T>(read: () => T): T => {
+    if (cached) return read();
+    cached = new Map();
+    try {
+        return read();
+    } finally {
+        cached = undefined;
+    }
+};
+
 /** Use Git's tracked-file and exclude rules; standalone folders use their .gitignore files. */
 export const ignoredFiles = (root: string, files: readonly string[]): Set<string> => {
+    if (!cached) return readIgnoredFiles(root, files);
+    const key = resolve(root);
+    let known = cached.get(key);
+    if (!known) {
+        known = new Map();
+        cached.set(key, known);
+    }
+    const missing = [...new Set(files.filter((file) => !known.has(file)))];
+    if (missing.length) {
+        const ignored = readIgnoredFiles(root, missing);
+        for (const file of missing) known.set(file, ignored.has(file));
+    }
+    return new Set(files.filter((file) => known.get(file)));
+};
+
+const readIgnoredFiles = (root: string, files: readonly string[]): Set<string> => {
     if (!files.length) return new Set();
     const hasGit = (directory: string) =>
         existsSync(join(directory, ".git", "HEAD")) ||

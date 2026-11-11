@@ -7,6 +7,8 @@ import { exportEntries } from "../compiler/export.js";
 import { loadProjectFonts } from "../compiler/fonts.js";
 import { textfilePath } from "../compiler/textfile.js";
 import { zip } from "../compiler/zip.js";
+import { walkBlocks } from "../core/blocks.js";
+import { selectCodeGrammars } from "../core/code-grammars.js";
 import { type PreviewSettings, parsePreviewSettings } from "../core/previewers.js";
 import type { PluginTransport } from "../plugins/transport.js";
 import { loadBuildPlugins, pluginSnapshot } from "./build-plugins.js";
@@ -91,18 +93,34 @@ export const buildBundle = async (root: string, options: BuildOptions) => {
     if (format === "zip") return { data: zip(entries), docs: compiled.docs.length };
     const config = await loadSiteLanguages(root);
     const { bundleClient, publishHtml, siteFrom } = await import("./serve.js");
+    const site = {
+        ...siteFrom(compiled, config.languages, config),
+        sourceBase,
+        fonts: loadProjectFonts(root),
+    };
+    const blocks = walkBlocks(site.entries.flatMap((entry) => entry.blocks));
+    const code = blocks.flatMap((block) =>
+        block.type === "code" && block.lang !== "mermaid" && !block.unavailable ? [block] : [],
+    );
+    site.codeGrammars = selectCodeGrammars(
+        site.codeGrammars ?? [],
+        code.map((block) => block.lang ?? "text"),
+    );
+    const diagrams = blocks.some(
+        (block) =>
+            block.type === "schemaGraph" ||
+            (block.type === "code" && block.lang === "mermaid" && !block.unavailable),
+    );
     return {
         data: publishHtml(
-            {
-                ...siteFrom(compiled, config.languages, config),
-                sourceBase,
-                fonts: loadProjectFonts(root),
-            },
-            await bundleClient("core/schema-graph-global.tsx"),
+            site,
+            diagrams ? await bundleClient("core/schema-graph-global.tsx") : "",
             undefined,
-            await bundleClient("viewer/code-highlight.ts"),
+            code.length ? await bundleClient("viewer/code-highlight.ts") : "",
             options.mode === "live" ? "live" : urlPreview === "embed" ? "static" : "network",
-            options.mode === "live" ? await bundleClient("viewer/published-plugins.ts") : "",
+            options.mode === "live" && blocks.some((block) => block.type === "external")
+                ? await bundleClient("viewer/published-plugins.ts")
+                : "",
             compiled.docs.some((doc) => doc.subformat)
                 ? await bundleClient("viewer/published-subformats.ts")
                 : "",

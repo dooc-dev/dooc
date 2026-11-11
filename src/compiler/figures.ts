@@ -23,7 +23,7 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { FigureEntry } from "../core/content-types.js";
-import { escapeHtml } from "../core/html.js";
+import { escapeHtml } from "../core/escape-html.js";
 import { extractMxfile, isDrawioSvg, normalizeDrawioSvg } from "./drawio.js";
 import { dxfSvg } from "./dxf.js";
 import { ignoredFiles } from "./ignored-files.js";

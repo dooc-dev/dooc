@@ -26,6 +26,7 @@ window.testSubformatForm = async () => {
             count: { type: "integer" },
             active: { type: "boolean" },
             locked: { type: "string", readOnly: true },
+            due: { type: "string", format: "date" },
             owner: { type: "object", properties: { name: { type: "string" } } },
             tags: { type: "array", items: { type: "string" } },
         },
@@ -107,6 +108,12 @@ window.testSubformatForm = async () => {
                 edit(field("count"), "0");
                 edit(field("active"), "0");
                 edit(field("owner", "name"), "B");
+                field("due").closest(".date-control").querySelector(".date-trigger").click();
+                const day = host.querySelector(
+                    '.date-picker [data-date]:not([data-outside="true"])',
+                );
+                const due = day.dataset.date;
+                day.click();
                 edit(field("tags"), '["one", "two"]');
                 await editors.flush();
                 const data = parseSubformatRecord(content, format);
@@ -115,6 +122,7 @@ window.testSubformatForm = async () => {
                         data.status === "Done" &&
                         data.count === 0 &&
                         data.active === true &&
+                        data.due === due &&
                         data.owner.name === "B",
                     "Typed form edits use the shared autosave draft",
                 );
@@ -239,6 +247,123 @@ window.testReferencedEnumForm = async () => {
         if (JSON.parse(view.state.doc.toString()).choice.id !== 2)
             throw new Error("Choosing a referenced object enum must preserve its JSON type");
         return "Passed: file and HTTPS refs, object enum choices and typed changes";
+    } finally {
+        view.destroy();
+        host.remove();
+    }
+};
+
+window.testSubformatDatePicker = async () => {
+    const assert = (value, message) => {
+        if (!value) throw new Error(message);
+    };
+    const tick = () => new Promise((resolve) => setTimeout(resolve, 30));
+    const host = document.createElement("div");
+    host.style.cssText = "width:340px;max-width:100%;height:540px";
+    document.body.append(host);
+    const schema = {
+        type: "object",
+        properties: {
+            due: { type: "string", format: "date" },
+            locked: { type: "string", format: "date", readOnly: true },
+            choice: { type: "string", format: "date", enum: ["2024-01-01", "2024-01-02"] },
+        },
+    };
+    const view = new EditorView({
+        parent: host,
+        doc: '{"due":"2024-01-31","locked":"2024-01-01"}',
+        extensions: [subformatForm(schema, "json")],
+    });
+    const input = () => host.querySelector("[data-record-date]");
+    const popup = () => host.querySelector(".date-picker");
+    const open = async () => {
+        host.querySelector(".date-trigger").click();
+        await tick();
+    };
+    const key = (key, extra = {}) =>
+        document.activeElement.dispatchEvent(
+            new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...extra }),
+        );
+    try {
+        await tick();
+        const choice = host.querySelector("select[data-record-path]");
+        choice.value = "1";
+        choice.dispatchEvent(new Event("change", { bubbles: true }));
+        assert(
+            JSON.parse(view.state.doc.toString()).choice === "2024-01-02",
+            "Date enums keep their choice control and save a date string",
+        );
+        assert(
+            host.querySelectorAll(".date-trigger")[1].disabled,
+            "Read-only date fields cannot open the calendar",
+        );
+        await open();
+        assert(
+            document.activeElement.dataset.date === "2024-01-31",
+            "Opening focuses the selected day",
+        );
+        key("PageDown");
+        assert(
+            document.activeElement.dataset.date === "2024-02-29",
+            "Month navigation clamps to leap day",
+        );
+        key("PageDown", { shiftKey: true });
+        assert(
+            document.activeElement.dataset.date === "2025-02-28",
+            "Year navigation clamps to the last valid day",
+        );
+        key("ArrowRight");
+        assert(
+            document.activeElement.dataset.date === "2025-03-01",
+            "Arrow navigation crosses month boundaries",
+        );
+        document.activeElement.click();
+        assert(
+            JSON.parse(view.state.doc.toString()).due === "2025-03-01" &&
+                document.activeElement === input() &&
+                !popup().matches(":popover-open"),
+            "Selection saves an ISO date and restores input focus",
+        );
+        await open();
+        key("Escape");
+        assert(
+            !popup().matches(":popover-open") && document.activeElement === input(),
+            "Escape dismisses without changing the date",
+        );
+        input().value = "2026-02-30";
+        input().dispatchEvent(new Event("input", { bubbles: true }));
+        assert(
+            !input().checkValidity() && JSON.parse(view.state.doc.toString()).due === "2025-03-01",
+            "Invalid dates remain drafts and do not overwrite the source",
+        );
+        await open();
+        popup().querySelector(".date-picker-footer button").click();
+        const today = new Date();
+        const expected = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+        assert(
+            input().value === expected && input().checkValidity(),
+            "Today uses the local date and clears an invalid draft",
+        );
+        await open();
+        popup().querySelector(".date-picker-footer button:last-child").click();
+        assert(
+            JSON.parse(view.state.doc.toString()).due === "",
+            "Clear updates the same form field",
+        );
+        await open();
+        document.body.click();
+        host.querySelector("[data-record-mode]").click();
+        assert(
+            !host.querySelector(".date-picker:popover-open"),
+            "Switching to source mode removes the calendar",
+        );
+        host.querySelector("[data-record-mode]").click();
+        await tick();
+        assert(
+            host.querySelectorAll(".date-control").length === 2,
+            "Remounting does not duplicate date controls",
+        );
+        return "Passed: date selection, leap years, keyboard navigation, focus, invalid drafts, today/clear, read-only fields and mode switching";
     } finally {
         view.destroy();
         host.remove();

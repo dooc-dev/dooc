@@ -35,6 +35,7 @@
     "Save (Ctrl+S)": "保存（Ctrl+S）",
     "View settings": "表示設定",
     "Auto save": "自動保存",
+    "Wrap lines": "折り返す",
     "Front-matter fields": "文書の属性を表示",
     "title": "タイトル",
     "desc": "説明",
@@ -387,10 +388,17 @@
     "Remove page": "ページを削除",
     "Rename page": "ページ名を変更",
     "Remove this page from the sidebar? The records will be kept.": "サイドバーからこのページを削除しますか？ レコードは保持されます。",
-    "Constraints": "制約",
-    "Semantic": "意味情報",
+    "Parameters": "パラメーター",
     "Items": "配列要素",
     "Remove parameter": "パラメーターを削除",
     "Check the parameter value.": "パラメーターの値を確認してください。",
-    "Download PDF": "PDFをダウンロード"
+    "Download PDF": "PDFをダウンロード",
+    "Choose date": "日付を選択",
+    "Previous month": "前の月",
+    "Next month": "次の月",
+    "Today": "今日",
+    "Clear": "クリア",
+    "Enter a valid date (YYYY-MM-DD).": "有効な日付を入力してください（YYYY-MM-DD）。",
+    "Load preview": "プレビューを読み込む",
+    "Preview unavailable": "プレビューを読み込めません"
 }
