@@ -45,11 +45,11 @@ export const exportEntries = (root: string): ZipEntry[] => {
     add(MANIFEST_FILE);
     optional(CONFIG_FILE);
     for (const { id, subformat } of flattenTree(manifest.tree)) {
-        if (subformat) continue;
-        const file = docFile(id, manifest.files);
-        add(file);
+        const file = subformat ? undefined : docFile(id, manifest.files);
+        if (file) add(file);
         if (manifest.files?.icons?.[id]) add(docIconFile(id, manifest.files));
         else optional(docIconFile(id, manifest.files));
+        if (!file) continue;
         for (const language of siteContentLanguages(root, manifest))
             optional(translationFile(file, language));
     }

@@ -131,6 +131,58 @@ it("compiles a subformat-only site and publishes its board in the sidebar", () =
     expect(compileSite(root).errors.join("\n")).toContain("status");
 });
 
+it.each([
+    true,
+    false,
+])("keeps page identity and records when renaming and changing icons (nested: %s)", (nested) => {
+    const { root, ops, write } = fixture(nested);
+    const id = subformatPageId("issue");
+    const record = readFileSync(join(root, "files/one.issue"), "utf8");
+    const defaultIcon = `icons/${id}.svg`;
+    const svg = '<svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="6"/></svg>';
+    expect(ops.addSubformat("issue", "Issues")).toEqual({ id });
+    write(defaultIcon, svg);
+    expect(compileSite(root).errors).toEqual([]);
+    expect(compileSite(root).docs[0]?.icon).toBe(svg);
+    expect(exportEntries(root).map((entry) => entry.name)).toContain(defaultIcon);
+
+    const manifest = readManifest(root);
+    manifest.files = {
+        ...(manifest.files ?? { defaultLayout: true, documents: {} }),
+        icons: { [id]: "files/page.svg" },
+    };
+    write("files/page.svg", svg);
+    rmSync(join(root, defaultIcon));
+    write("dooc.yaml", serializeManifest(manifest.tree, manifest));
+    expect(readManifest(root).errors).toEqual([]);
+    expect(readManifest(root).files?.icons?.[id]).toBe("files/page.svg");
+    expect(ops.renameSubformat(id, "Work items")).toEqual({ id });
+    const compiled = compileSite(root);
+    expect(compiled.errors).toEqual([]);
+    expect(compiled.docs[0]).toMatchObject({
+        id,
+        title: "Work items",
+        icon: svg,
+        subformat: { ext: "issue" },
+    });
+    const site = siteFrom(compiled);
+    expect(docPath(site.entries, id)).toBe(`/${id}`);
+    const nav = navGroupsHtml("edit", site);
+    expect(nav).toContain('type="file" accept=".svg,image/svg+xml"');
+    expect(nav).toContain('class="nav-icon-clear"');
+    expect(nav).toContain('aria-keyshortcuts="F2"');
+    expect(nav).toContain("Work items");
+    const html = publishHtml(site, "");
+    expect(html).toContain("Work items");
+    expect(html).toContain(Buffer.from(svg).toString("base64"));
+    expect(exportEntries(root).map((entry) => entry.name)).toContain("files/page.svg");
+    expect(readFileSync(join(root, "files/one.issue"), "utf8")).toBe(record);
+    expect(ops.remove(id)).toMatchObject({ danglingRefs: 0 });
+    expect(existsSync(join(root, "files/page.svg"))).toBe(false);
+    expect(readManifest(root).files?.icons?.[id]).toBeUndefined();
+    expect(exportEntries(root).map((entry) => entry.name)).not.toContain("files/page.svg");
+});
+
 it("validates unknown, duplicate and mixed file/subformat entries", () => {
     const { root } = fixture();
     const manifest = parse(readFileSync(join(root, "dooc.yaml"), "utf8"));
@@ -139,6 +191,8 @@ it("validates unknown, duplicate and mixed file/subformat entries", () => {
         [{ subformat: "issue" }, { subformat: "issue" }],
         [{ subformat: "issue", file: "guide.md" }],
         [{ subformat: "issue", title: " " }],
+        [{ subformat: "issue", icon: "../outside.svg" }],
+        [{ subformat: "issue", icon: "page.png" }],
     ])
         expect(
             parseManifest({ ...manifest, center_contents: entries }).errors.length,

@@ -2114,9 +2114,7 @@ export const navGroupsHtml = (
                 let editableIcon = "";
                 if (mode === "edit") {
                     link = `<a class="${depth === 0 ? "nav-link" : "nav-tree-link"}${cur}" href="/${e.id}" title="${label}" aria-keyshortcuts="F2"><span class="nav-doc-name"><span class="nav-label">${label}</span></span></a>`;
-                    editableIcon = e.subformat
-                        ? `<span class="nav-doc-icon">${SUBFORMATS_ICON}</span>`
-                        : `<span class="nav-doc-icon" title="icon" data-i18n-title="icon">${e.icon ? svgImg(e.icon, "doc-icon") : e.subformat ? SUBFORMATS_ICON : DOCS_ICON}<input type="file" accept=".svg,image/svg+xml" aria-label="icon" data-i18n-aria-label="icon">${e.icon ? '<button class="nav-icon-clear" type="button" title="Remove icon" data-i18n-title="Remove icon" aria-label="Remove icon" data-i18n-aria-label="Remove icon">×</button>' : ""}</span>`;
+                    editableIcon = `<span class="nav-doc-icon" title="icon" data-i18n-title="icon">${e.icon ? svgImg(e.icon, "doc-icon") : e.subformat ? SUBFORMATS_ICON : DOCS_ICON}<input type="file" accept=".svg,image/svg+xml" aria-label="icon" data-i18n-aria-label="icon">${e.icon ? '<button class="nav-icon-clear" type="button" title="Remove icon" data-i18n-title="Remove icon" aria-label="Remove icon" data-i18n-aria-label="Remove icon">×</button>' : ""}</span>`;
                     actions = `<button class="new" type="button" data-parent="${escapeHtml(e.id)}" popovertarget="nav-page-menu" aria-haspopup="menu" title="Add doc" data-i18n-title="Add doc" aria-label="Add doc" data-i18n-aria-label="Add doc">${PLUS_ICON}</button><button class="nav-delete" type="button" data-doc-action="delete" title="Delete doc" data-i18n-title="Delete doc" aria-label="Delete doc" data-i18n-aria-label="Delete doc">${DELETE_ICON}</button>`;
                 }
                 const branch = childrenOf(site.entries, e.id).length > 0;
@@ -3625,28 +3623,37 @@ const handleFigure = async (req: IncomingMessage, res: ServerResponse): Promise<
 // writes icons/<id>.svg. Response icon = the new data URI (null if removed).
 const handleIcon = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const body = await readJson(req);
-    const target = resolveContentFile(body?.file);
-    if (!target || !existsSync(target.abs)) {
-        sendJson(res, 404, { error: "target doc not found" });
-        return;
-    }
     const manifest = readManifest(root);
     if (manifest.errors.length) {
         sendJson(res, 409, { error: manifest.errors.join("\n") });
         return;
     }
-    const previous = docIconFile(target.id, manifest.files);
+    const requestedId = typeof body?.file === "string" ? docIdOfFile(body.file) : undefined;
+    const page = flattenTree(manifest.tree).find(
+        (node) => node.id === requestedId && node.subformat,
+    );
+    const target = page ? undefined : resolveContentFile(body?.file);
+    const id = page?.id ?? (target && existsSync(target.abs) ? target.id : undefined);
+    if (!id) {
+        sendJson(res, 404, { error: "target doc not found" });
+        return;
+    }
+    const previous = docIconFile(id, manifest.files);
     const file =
         manifest.format !== "nested" &&
         manifest.files?.defaultLayout !== false &&
-        !Object.hasOwn(manifest.files?.icons ?? {}, target.id) &&
+        !Object.hasOwn(manifest.files?.icons ?? {}, id) &&
         !existsSync(textfilePath(root, previous))
-            ? defaultFilePath(`${target.id}-icon.svg`)
+            ? defaultFilePath(`${id}-icon.svg`)
             : previous;
     const path = textfilePath(root, file);
     if (body?.data == null) {
         if (existsSync(path)) {
             unlinkSync(path);
+        }
+        if (manifest.files?.icons && Object.hasOwn(manifest.files.icons, id)) {
+            delete manifest.files.icons[id];
+            writeManifest(root, manifest.tree, manifest);
         }
         sendJson(res, 200, { ok: true, icon: null });
         return;
@@ -3668,7 +3675,7 @@ const handleIcon = async (req: IncomingMessage, res: ServerResponse): Promise<vo
     if (file !== previous) {
         manifest.files ??= parseFileLayout({});
         manifest.files.icons ??= {};
-        manifest.files.icons[target.id] = file;
+        manifest.files.icons[id] = file;
         writeManifest(root, manifest.tree, manifest);
     }
     sendJson(res, 200, { ok: true, icon: svgDataUri(svg) });

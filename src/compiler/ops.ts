@@ -343,7 +343,10 @@ export const createDocOps = (root: string) => {
         if (page) {
             const tree = removeDoc(manifest.tree, id);
             if (!tree) return { error: "doc has children (move / delete them first)", status: 409 };
+            const removedIcon = iconPath(id);
+            if (manifest.files?.icons) delete manifest.files.icons[id];
             writeManifest(root, tree, manifest);
+            if (existsSync(removedIcon)) unlinkSync(removedIcon);
             return { parent: page.parent, danglingRefs: 0 };
         }
         const target = existingDoc(id);

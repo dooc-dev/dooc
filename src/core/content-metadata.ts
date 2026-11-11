@@ -321,6 +321,11 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                     ["file", "icon", "children", "subformat", "title"],
                     "center_contents",
                 );
+                if (
+                    node.icon !== undefined &&
+                    (!localFile(node.icon) || !node.icon.endsWith(".svg"))
+                )
+                    throw new Error("Document icons must be local SVG files");
                 if (node.subformat !== undefined) {
                     const config = parseSubformats(root.json_subformats ?? []).find(
                         (format) => format.ext === node.subformat,
@@ -328,15 +333,16 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                     if (
                         !config ||
                         node.file !== undefined ||
-                        node.icon !== undefined ||
                         (node.title !== undefined &&
                             (typeof node.title !== "string" || !node.title.trim()))
                     )
                         throw new Error(
                             "Subformat pages require a registered subformat and a non-empty title",
                         );
+                    const id = subformatPageId(config.ext);
+                    if (typeof node.icon === "string") icons[id] = node.icon;
                     return {
-                        id: subformatPageId(config.ext),
+                        id,
                         subformat: config.ext,
                         title: typeof node.title === "string" ? node.title.trim() : config.ext,
                         children: node.children === undefined ? [] : walk(node.children),
@@ -348,11 +354,7 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                 if (Object.hasOwn(documents, id))
                     throw new Error(`Duplicate document: ${node.file}`);
                 documents[id] = node.file;
-                if (node.icon !== undefined) {
-                    if (!localFile(node.icon) || !node.icon.endsWith(".svg"))
-                        throw new Error("Document icons must be local SVG files");
-                    icons[id] = node.icon;
-                }
+                if (typeof node.icon === "string") icons[id] = node.icon;
                 return {
                     id,
                     file: node.file,

@@ -521,7 +521,12 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
         // Icons are small, so read them every time (no cache).
         const { icons, errors: iconErrors } = loadIcons(
             root,
-            new Set(files.map((f) => f.doc.id)),
+            new Set([
+                ...files.map((f) => f.doc.id),
+                ...flattenTree(manifest.tree)
+                    .filter((node) => node.subformat)
+                    .map((node) => node.id),
+            ]),
             iconFile,
             manifest.files,
             Object.values(manifest.themeIcons ?? {}),
@@ -599,6 +604,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                 file,
                 lang: defaultLang,
                 subformat: collection,
+                icon: icons.get(node.id),
                 body: "",
                 blocks: [],
                 toc: [],

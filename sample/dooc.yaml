@@ -25,6 +25,8 @@ center_contents:
   - subformat: issue
     title: issue
   - file: content/demo-page.md
+  - subformat: release
+    title: release
 json_subformats:
   - ext: issue
     format: yaml
