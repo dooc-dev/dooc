@@ -13,7 +13,7 @@ The curl installer verifies SHA-256 and writes `~/.local/bin/dooc`. A failed dow
 
 ```sh
 curl -fsSL https://github.com/dooc-dev/dooc/releases/latest/download/install.sh |
-  DOOC_VERSION=0.0.10 DOOC_INSTALL_DIR="$HOME/bin" sh
+  DOOC_VERSION=0.0.11 DOOC_INSTALL_DIR="$HOME/bin" sh
 ```
 
 The source repository also serves as the Homebrew tap. Opening a Git repository URL requires system Git, including when using the standalone executable. Configured external formatters and linters require their own tools.
