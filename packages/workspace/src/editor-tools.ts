@@ -75,21 +75,25 @@ export async function runCodeTool(
     body: string,
     position: number,
     action: "format" | "lint",
+    allowExternal = true,
 ) {
     const block = codeBlockAt(body, position);
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_+-]*$/.test(block.language))
         throw new Error("Unsupported code language identifier");
     const path = join(root, ".dooc", "editor-tools", `${block.language}.json`);
-    let config: Record<string, unknown>;
-    try {
-        config = JSON.parse(await readFile(path, "utf8"));
-    } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        if (block.language !== "json")
-            throw new Error(
-                `Create .dooc/editor-tools/${block.language}.json to configure this language`,
-            );
-        config = {};
+    let config: Record<string, unknown> = {};
+    if (allowExternal) {
+        try {
+            config = JSON.parse(await readFile(path, "utf8"));
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+            if (block.language !== "json")
+                throw new Error(
+                    `Create .dooc/editor-tools/${block.language}.json to configure this language`,
+                );
+        }
+    } else if (block.language !== "json") {
+        throw new Error("External editor tools are disabled in remote sessions");
     }
     if (!config || typeof config !== "object") throw new Error("Invalid editor tool configuration");
     const tool = config[action === "format" ? "formatter" : "linter"];
@@ -168,7 +172,7 @@ export async function runCodeTool(
     return { findings };
 }
 
-export async function validateCodeTools(root: string, body: string) {
+export async function validateCodeTools(root: string, body: string, allowExternal = true) {
     const original = body;
     const configuredBlocks = async (text: string, tool: "formatter" | "linter") => {
         const blocks: number[] = [];
@@ -194,6 +198,10 @@ export async function validateCodeTools(root: string, body: string) {
                 !/^[a-zA-Z0-9][a-zA-Z0-9_+-]*$/.test(node.lang)
             )
                 continue;
+            if (!allowExternal) {
+                if (node.lang === "json") blocks.push(node.position.start.offset);
+                continue;
+            }
             let raw: string;
             try {
                 raw = await readFile(join(root, ".dooc/editor-tools", `${node.lang}.json`), "utf8");
@@ -214,14 +222,14 @@ export async function validateCodeTools(root: string, body: string) {
     };
     const originalFindings = [];
     for (const position of await configuredBlocks(body, "linter")) {
-        const result = await runCodeTool(root, body, position, "lint");
+        const result = await runCodeTool(root, body, position, "lint", allowExternal);
         originalFindings.push(...(result.findings ?? []));
     }
     if (originalFindings.some((finding) => finding.ruleId === "error")) {
         return { changes: [], findings: originalFindings };
     }
     for (const position of (await configuredBlocks(body, "formatter")).reverse()) {
-        const { change } = await runCodeTool(root, body, position, "format");
+        const { change } = await runCodeTool(root, body, position, "format", allowExternal);
         if (change && body.slice(change.from, change.to) !== change.insert) {
             body = body.slice(0, change.from) + change.insert + body.slice(change.to);
         }
@@ -230,7 +238,7 @@ export async function validateCodeTools(root: string, body: string) {
     if (body === original) return { changes: [], findings: originalFindings };
     const findings = [];
     for (const position of await configuredBlocks(body, "linter")) {
-        const result = await runCodeTool(root, body, position, "lint");
+        const result = await runCodeTool(root, body, position, "lint", allowExternal);
         findings.push(...(result.findings ?? []));
     }
     if (findings.some((finding) => finding.ruleId === "error")) {
@@ -251,7 +259,12 @@ export async function validateCodeTools(root: string, body: string) {
 }
 
 /** Apply the same registered formatter/linter to a complete file without writing to disk. */
-export async function validateTextfileCode(root: string, language: string, content: string) {
+export async function validateTextfileCode(
+    root: string,
+    language: string,
+    content: string,
+    allowExternal = true,
+) {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_+-]*$/.test(language) || content.includes("\0"))
         throw new Error("Invalid text file tool request");
     const eol = content.includes("\r\n") ? "\r\n" : "\n";
@@ -264,7 +277,7 @@ export async function validateTextfileCode(root: string, language: string, conte
     const prefix = `${marker}${language}${eol}`;
     const separator = content && !content.endsWith("\n") ? eol : "";
     let body = `${prefix}${content}${separator}${marker}${eol}`;
-    const result = await validateCodeTools(root, body);
+    const result = await validateCodeTools(root, body, allowExternal);
     for (const change of [...result.changes].reverse())
         body = body.slice(0, change.from) + change.insert + body.slice(change.to);
     const block = codeBlockAt(body, 0);

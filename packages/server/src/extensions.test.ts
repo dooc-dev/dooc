@@ -13,6 +13,7 @@ import { createPluginHandler } from "./plugins.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
+    vi.unstubAllEnvs();
     for (const cleanup of cleanups.splice(0)) cleanup();
 });
 const moduleSource = (id = "example", text = "Demo") =>
@@ -182,6 +183,31 @@ it("restores only personally approved ZIP hashes after a server restart", async 
     writeFileSync(join(root, EXTENSIONS_DIR, "example.zip"), archive(moduleSource("changed")));
     await next.restore();
     await expect(next({ action: "list" })).resolves.toMatchObject({ items: [{ enabled: false }] });
+});
+it("does not activate downloaded plugins even with saved approval in a remote session", async () => {
+    const { root, registry } = setup();
+    const personal = createLocalPluginStorage(join(root, "personal"));
+    const manager = createExtensionManager(root, registry, { plugins: [], mocks: {} }, personal);
+    cleanups.push(manager.dispose);
+    const data = archive("throw new Error('downloaded plugin ran');");
+    mkdirSync(join(root, EXTENSIONS_DIR), { recursive: true });
+    writeFileSync(join(root, EXTENSIONS_DIR, "example.zip"), data);
+    const listed = (await manager({ action: "list" })) as {
+        scope: string;
+        items: ExtensionSummary[];
+    };
+    const hash = listed.items[0]?.hash;
+    personal.write(`extensions-${listed.scope}.json`, { "example.zip": hash });
+    vi.stubEnv("DOOC_REMOTE_WORKSPACE", "1");
+    await expect(manager.restore()).resolves.toEqual([]);
+    await expect(manager({ action: "enable", file: "example.zip", hash })).rejects.toThrow(
+        "disabled in remote sessions",
+    );
+    await expect(manager({ action: "list" })).resolves.toMatchObject({
+        items: [{ enabled: false }],
+    });
+    expect(registry.register).not.toHaveBeenCalled();
+    expect(readFileSync(join(root, EXTENSIONS_DIR, "example.zip"))).toEqual(data);
 });
 it("packages a built module and assets without executing scripts or including the output ZIP", async () => {
     const { root } = setup();

@@ -119,6 +119,7 @@
         "vitest": "^2.1.9"
     },
     "dependencies": {
+        "@clack/prompts": "1.9.0",
         "@dagrejs/dagre": "^3.0.0",
         "@shikijs/langs": "4.5.0",
         "@textlint/kernel": "^15.8.0",

@@ -36,7 +36,7 @@ mise run binary
 
 `pnpm check` runs Biome, TypeScript, the production build, unit tests, installer tests, and a packed plugin SDK consumer check. `mise run binary` builds and tests a standalone executable for the current machine. Binary CI builds and tests Linux (glibc) and macOS on x64 and arm64; Windows and musl Linux are not targets.
 
-Production npm packages and standalone executables include runtime assets such as fonts, syntax grammars, and the Japanese proofreading dictionary. They do not bundle `dooc-docs`; `dooc self docs` downloads the documentation at runtime. Edit this documentation in `dooc-docs`, and register new pages in its `dooc.yaml`.
+Production npm packages and standalone executables include runtime assets such as fonts, syntax grammars, and the Japanese proofreading dictionary. They do not bundle `dooc-docs`; `dooc view dooc-docs --repo https://github.com/dooc-dev/dooc.git` clones the repository at runtime using system Git. Edit this documentation in `dooc-docs`, and register new pages in its `dooc.yaml`.
 
 ## Release
 

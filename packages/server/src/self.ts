@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { unzipSync } from "fflate";
 import { prebuilt, readInstaller, standalone } from "./assets.js";
+import { downloadGitHubArchive } from "./github-archive.js";
 
 export const selfUpdate = (): void => {
     if (!standalone) {
@@ -44,61 +44,16 @@ export const prepareSelfDocs = async (): Promise<{ root: string; dispose: () => 
         if (root) rmSync(root, { recursive: true, force: true });
     };
     try {
-        const response = await fetch(
+        const files = await downloadGitHubArchive(
             "https://codeload.github.com/dooc-dev/dooc/zip/refs/heads/main",
-            {
-                signal: AbortSignal.timeout(60_000),
-            },
+            "dooc-docs",
+            "documentation",
         );
-        if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
-        if (!response.body) throw new Error("Empty archive response");
-        const chunks: Uint8Array[] = [];
-        let downloaded = 0;
-        await response.body.pipeTo(
-            new WritableStream<Uint8Array>({
-                write(chunk) {
-                    downloaded += chunk.length;
-                    if (downloaded > 128 * 1024 * 1024)
-                        throw new Error("Documentation archive exceeds 128 MiB");
-                    chunks.push(chunk);
-                },
-            }),
-        );
-        const prefix = "dooc-main/dooc-docs/";
-        const paths = new Set<string>();
-        let extracted = 0;
-        const files = unzipSync(Buffer.concat(chunks), {
-            filter: ({ name, size, originalSize, compression }) => {
-                if (!name.startsWith(prefix) || name.endsWith("/")) return false;
-                if (compression === 0 && size !== originalSize)
-                    throw new Error("Invalid documentation file size");
-                const path = name.slice(prefix.length);
-                const parts = path.split("/");
-                if (
-                    /[\\:]/.test(path) ||
-                    [...path].some(
-                        (char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127,
-                    ) ||
-                    parts.some(
-                        (part) => !part || part === "." || part === ".." || /[. ]$/.test(part),
-                    )
-                )
-                    throw new Error("Invalid documentation path");
-                if (parts.some((part) => part.startsWith("."))) return false;
-                const key = path.normalize("NFC").toLowerCase();
-                if (paths.has(key)) throw new Error("Duplicate documentation path");
-                paths.add(key);
-                extracted += originalSize;
-                if (paths.size > 4096 || extracted > 256 * 1024 * 1024)
-                    throw new Error("Documentation exceeds 4096 files or 256 MiB");
-                return true;
-            },
-        });
-        if (!files[`${prefix}dooc.yaml`]?.length)
+        if (!files["dooc.yaml"]?.length)
             throw new Error("GitHub main does not contain dooc-docs/dooc.yaml");
         root = mkdtempSync(join(tmpdir(), "dooc-docs-"));
         for (const [name, data] of Object.entries(files)) {
-            const path = join(root, name.slice(prefix.length));
+            const path = join(root, name);
             mkdirSync(dirname(path), { recursive: true });
             writeFileSync(path, data, { flag: "wx" });
         }

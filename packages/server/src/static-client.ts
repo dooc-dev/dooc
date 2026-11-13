@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { dirname, join } from "node:path";
 import { prebuilt, readViewerAsset } from "./assets.js";
 import { bundleClient } from "./serve.js";
+import { terminal } from "./terminal.js";
 
 export const validateServerUrl = (value: string): string => {
     const url = new URL(value);
@@ -119,8 +120,10 @@ export const startStaticClient = async (port = 5180, socket?: string) => {
         server.listen(port, "127.0.0.1", resolve);
     });
     const address = server.address();
-    console.log(
-        `dooc client: http://localhost:${typeof address === "object" && address ? address.port : port}`,
+    terminal.ready(
+        "client",
+        socket ?? "Browser workspaces",
+        `http://localhost:${typeof address === "object" && address ? address.port : port}/`,
     );
     return server;
 };

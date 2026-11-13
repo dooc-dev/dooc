@@ -32,7 +32,9 @@ import { gitBaseBody, gitBaseText, setSubformatChanges } from "./git-diff.js";
 import { workspaceHistory } from "./history.js";
 import { watchProject } from "./hmr.js";
 import { loadSiteLanguages } from "./languages.js";
+import { loggedWorkspaceOps } from "./operation-log.js";
 import { loadViewerPlugins } from "./plugin-config.js";
+import { terminal } from "./terminal.js";
 import { readWorkspaceSource, sourceFileBase } from "./workspace.js";
 
 export interface WorkspaceDescription {
@@ -276,7 +278,9 @@ export const startWorkspaceServer = async (
     const manager = await nodeWorkspaceOperations(manifest, pluginModule, (event, data) =>
         channel?.broadcast(event, data),
     );
-    const activeChannel = createWorkspaceServer(manager.ops, { boot: crypto.randomUUID() });
+    const activeChannel = createWorkspaceServer(loggedWorkspaceOps(manager.ops), {
+        boot: crypto.randomUUID(),
+    });
     channel = activeChannel;
     const server = createServer((_req, res) => {
         res.writeHead(404);
@@ -332,8 +336,11 @@ export const startWorkspaceServer = async (
         throw error;
     }
     const address = server.address();
-    console.log(
-        `dooc server: ws://localhost:${typeof address === "object" && address ? address.port : port}${WORKSPACE_PATH} (client: ${allowed})`,
+    terminal.ready(
+        "server",
+        manifest,
+        `ws://localhost:${typeof address === "object" && address ? address.port : port}${WORKSPACE_PATH}`,
     );
+    terminal.info(`Client origin: ${allowed}`);
     return server;
 };

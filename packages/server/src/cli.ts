@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // CLI entry shared by npx and mise. The manifest defaults to ./dooc.yaml; project paths use its parent directory.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { setDownloadProgressListener } from "../../engine/src/compiler/download-progress.js";
 import { projectRoot } from "../../engine/src/compiler/manifest.js";
 import {
     isManifestFile,
@@ -10,6 +12,7 @@ import {
     serializeManifest,
 } from "../../engine/src/core/content-metadata.js";
 import { prebuilt } from "./assets.js";
+import { terminal } from "./terminal.js";
 
 process.env.NODE_ENV = prebuilt ? "production" : "development";
 
@@ -17,7 +20,8 @@ const USAGE = `usage: dooc <command>
 
 commands:
   init [path]                          create a manifest in a directory or at a manifest path
-  edit [dooc.yaml] [port]              open dooc in edit mode
+  edit [path] [port]                   edit a local workspace or a path in a Git repository
+     --repo <git-url>                   resolve the path inside a cloned repository
      --viewer-plugins <module>         inject an external viewer plugin module
      --shared <branch>                 several people edit; snapshots are recorded on <branch>
      --tls-cert <pem> --tls-key <pem>  serve over HTTPS (or DOOC_TLS_CERT / DOOC_TLS_KEY)
@@ -25,7 +29,8 @@ commands:
      --client-origin <origin>           permit the static client origin (default: http://localhost:5180)
   client [port]                        serve the static client only (default: 5180)
      --server <ws-url>                  connect to an optional workspace server
-  view [dooc.yaml] [port]              open dooc in view mode
+  view [path] [port]                   view a local workspace or a path in a Git repository
+     --repo <git-url>                   resolve the path inside a cloned repository
      --viewer-plugins <module>         inject an external viewer plugin module
      --tls-cert <pem> --tls-key <pem>  serve over HTTPS (or DOOC_TLS_CERT / DOOC_TLS_KEY)
   build                                build the selected bundle (default <project>/dist)
@@ -56,11 +61,14 @@ commands:
      --git-origin <module>             inject gitOrigin from an external viewer plugin module
   help, --help, -h                     show this help
 
-Details: dooc <command> --help (init, build, check, plugin, font, self, mcp).
+Details: dooc <command> --help (init, edit, view, build, check, plugin, font, self, mcp).
 Default manifest: ./dooc.yaml. Named manifests (<name>.dooc.yaml) are also accepted.
+Paths use the current directory, or the repository root when --repo is given.
+Example: dooc view dooc-docs --repo https://github.com/dooc-dev/dooc.git
 Paths and .dooc/ are relative to the selected manifest's directory.`;
 
 const fail = (message: string): never => {
+    terminal.close();
     console.error(message);
     process.exit(1);
 };
@@ -71,6 +79,8 @@ const writeOut = (out: string, data: string | Buffer): void => {
 };
 
 const [command, ...args] = process.argv.slice(2);
+if (["edit", "view", "self", "build", "server"].includes(command ?? ""))
+    setDownloadProgressListener(terminal.download);
 switch (command) {
     case "self": {
         try {
@@ -99,7 +109,7 @@ options:
             if (positionals[0] === "update") {
                 selfUpdate();
             } else {
-                console.log("Downloading documentation from GitHub...");
+                terminal.info("Downloading documentation from GitHub...");
                 const { root, dispose } = await prepareSelfDocs();
                 process.once("exit", dispose);
                 process.once("SIGINT", () => process.exit(130));
@@ -409,22 +419,97 @@ Report:
                     "tls-cert": { type: "string" },
                     "tls-key": { type: "string" },
                     shared: { type: "string" },
+                    repo: { type: "string" },
+                    help: { type: "boolean", short: "h" },
                 },
             });
+            if (values.help) {
+                console.log(`usage: dooc ${command} [path] [port] [options]
+
+path:
+  ./dooc.yaml               manifest (default); folders are also accepted
+  ./docs                    folder containing dooc.yaml
+  docs/team.dooc.yaml       named manifest
+  file:///home/me/docs      local folder or manifest URL (without --repo)
+
+Paths use the current directory, or the cloned repository root with --repo.
+The repository's default branch is opened. Use the clone URL supplied by your Git host.
+
+Remote sources require Git. Cloning finishes before the server starts.
+Edit clones retain Git history and local changes, and reopen without fetching or resetting.
+View clones are temporary and removed on exit.
+
+options:
+  --repo <git-url>            clone an HTTPS/SSH Git repository and resolve path inside it
+  --viewer-plugins <module>   load an explicit local viewer plugin module
+  --tls-cert <pem>            HTTPS certificate (requires --tls-key)
+  --tls-key <pem>             HTTPS key (requires --tls-cert)
+  --shared <branch>           record shared-workspace snapshots on a branch
+  --help, -h                 show this help
+
+Example: dooc ${command} dooc-docs --repo https://github.com/dooc-dev/dooc.git`);
+                break;
+            }
+            if (positionals.length > 2) throw new Error("Too many positional arguments");
+            const port = Number(positionals[1] ?? 5179);
+            if (!Number.isInteger(port) || port < 0 || port > 65535)
+                throw new Error("Choose a port between 0 and 65535");
             const cert = values["tls-cert"] ?? process.env.DOOC_TLS_CERT;
             const key = values["tls-key"] ?? process.env.DOOC_TLS_KEY;
             if (!cert !== !key) throw new Error("--tls-cert and --tls-key must be given together");
-            process.env.DOCS_ROOT = projectRoot(positionals[0]);
-            process.env.DOCS_HMR = "1";
+            let source = positionals[0];
+            const remote = values.repo !== undefined;
+            if (values.repo !== undefined) {
+                // A caller's Git context must never redirect operations outside the cloned repo.
+                for (const key of Object.keys(process.env))
+                    if (
+                        /^GIT_(?:DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|CEILING_DIRECTORIES|CONFIG|CONFIG_PARAMETERS|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+)$/.test(
+                            key,
+                        )
+                    )
+                        delete process.env[key];
+                const { prepareGitWorkspace } = await import("./git-workspace.js");
+                const workspace = await prepareGitWorkspace(values.repo, command, {
+                    path: source,
+                });
+                process.once("exit", workspace.dispose);
+                process.once("SIGINT", () => process.exit(130));
+                process.once("SIGTERM", () => process.exit(143));
+                source = workspace.manifest;
+                if (command === "edit")
+                    terminal.info(
+                        `${workspace.reused ? "Reusing" : "Saved"} workspace: ${workspace.root}`,
+                    );
+            } else if (source && /^file:/i.test(source)) {
+                const url = new URL(source);
+                if (url.username || url.password || url.search || url.hash)
+                    throw new Error(
+                        "Local file URLs must not contain credentials, query or fragment",
+                    );
+                source = fileURLToPath(url);
+            } else if (
+                source &&
+                !isAbsolute(source) &&
+                !existsSync(resolve(source)) &&
+                /^(?:[a-z][a-z\d+.-]*:|[^/\s]+@[^/\s]+:)/i.test(source)
+            ) {
+                throw new Error("Pass Git repository URLs with --repo <git-url>");
+            }
+            if (source && existsSync(resolve(source)) && statSync(resolve(source)).isDirectory())
+                source = join(source, MANIFEST_FILE);
+            process.env.DOCS_ROOT = projectRoot(source);
+            process.env.DOCS_HMR = remote && command === "view" ? "0" : "1";
+            process.env.DOOC_REMOTE_WORKSPACE = remote ? "1" : "0";
             // serve.ts reads DOCS_ROOT at import time, so import it after the env is set.
             const { startServer } = await import("./serve.js");
             await startServer(
                 command === "view" ? "preview" : "edit",
-                Number(positionals[1] ?? 5179),
+                port,
                 values["viewer-plugins"] ?? process.env.DOOC_VIEWER_PLUGINS,
-                ...((cert && key) || values.shared !== undefined
+                ...(remote || (cert && key) || values.shared !== undefined
                     ? [
                           {
+                              ...(remote ? { open: true } : {}),
                               ...(cert && key
                                   ? { tls: { cert: resolve(cert), key: resolve(key) } }
                                   : {}),

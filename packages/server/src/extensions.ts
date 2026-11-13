@@ -31,6 +31,7 @@ import {
     validateViewerPlugins,
 } from "./plugin-config.js";
 import type { LocalPluginStorage } from "./plugins/local-storage.js";
+import { allowsWorkspaceCode } from "./workspace-trust.js";
 
 export const EXTENSIONS_DIR = ".dooc/plugins";
 const hash = (source: Uint8Array) => createHash("sha256").update(source).digest("hex");
@@ -164,6 +165,10 @@ export const createExtensionManager = (
         return { scope, items: items.sort((a, b) => a.name.localeCompare(b.name)) };
     };
     const activate = async (name: string, data: Buffer, save: boolean, base: string | null) => {
+        if (!allowsWorkspaceCode())
+            throw new Error(
+                "Workspace plugins are disabled in remote sessions; use --viewer-plugins for an explicit local module",
+            );
         const revision = hash(data);
         if (!save && active.get(name)?.hash === revision) return;
         const pkg = await unpack(data);
@@ -324,6 +329,7 @@ export const createExtensionManager = (
     };
     return Object.assign(request, {
         async restore() {
+            if (!allowsWorkspaceCode()) return [];
             const approved = approval();
             const errors: string[] = [];
             for (const item of (await list()).items)

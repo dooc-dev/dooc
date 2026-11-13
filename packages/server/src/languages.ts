@@ -6,6 +6,7 @@ import { loadCodeLanguages } from "../../engine/src/compiler/code-languages.js";
 import { loadDocsConfig } from "../../engine/src/compiler/config.js";
 import type { LanguageAdapter } from "../../engine/src/core/language.js";
 import { ja } from "../../engine/src/core/languages/ja.js";
+import { allowsWorkspaceCode } from "./workspace-trust.js";
 
 export const BUILTIN_LANGUAGES: readonly LanguageAdapter[] = [
     // textlint is heavy; load it on the first lint request.
@@ -24,7 +25,7 @@ export const DEFAULT_SITE_LANGUAGES: SiteLanguages = {
 
 /** docs.config.mjs + built-ins (configured adapters first, so they override a built-in code). */
 export const loadSiteLanguages = async (root: string): Promise<SiteLanguages> => {
-    const config = await loadDocsConfig(root);
+    const config = allowsWorkspaceCode() ? await loadDocsConfig(root) : { languages: [] };
     return {
         ...(await loadCodeLanguages(root)),
         languages: [...config.languages, ...BUILTIN_LANGUAGES],

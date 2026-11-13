@@ -16,7 +16,7 @@ curl -fsSL https://github.com/dooc-dev/dooc/releases/latest/download/install.sh 
   DOOC_VERSION=0.0.7 DOOC_INSTALL_DIR="$HOME/bin" sh
 ```
 
-The source repository also serves as the Homebrew tap. Git-backed sources require Git; configured external formatters and linters require their own tools.
+The source repository also serves as the Homebrew tap. Opening a Git repository URL requires system Git, including when using the standalone executable. Configured external formatters and linters require their own tools.
 
 ## Start a project
 
@@ -59,12 +59,14 @@ For global npm installations, the command runs `npm install -g @dooc-dev/dooc@la
 ## Open the documentation
 
 ```sh
-dooc self docs
+dooc view dooc-docs --repo https://github.com/dooc-dev/dooc.git
 ```
 
-This downloads `dooc-docs` from the GitHub repository's `main` branch and opens it in a local read-only viewer. It requires a network connection on each launch; the documentation is not bundled in the npm package or standalone executable and may describe changes newer than your installed version.
+This uses system Git to clone the repository's default branch and opens its `dooc-docs` folder in a local read-only viewer. It requires Git and a network connection on each launch; the documentation is not bundled in the npm package or standalone executable and may describe changes newer than your installed version.
 
-Run it from any directory and keep the command running while you read. If the browser does not open automatically, open the printed URL. Downloaded files live in a temporary directory that is removed when the command exits.
+Run it from any directory and keep the command running while you read. If the browser does not open automatically, open the printed URL. The clone lives in a temporary directory that is removed when the command exits.
+
+Use `dooc edit dooc-docs --repo https://github.com/dooc-dev/dooc.git` to keep an editable clone with Git history. Repeating the command reopens your saved changes. Other Git hosts and SSH URLs are supported; see [Git repositories](contents/md/cli.md#git-repositories). The older `dooc self docs` command remains available for compatibility and downloads read-only documentation from GitHub `main`.
 
 ## Share the result
 

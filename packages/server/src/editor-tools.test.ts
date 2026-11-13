@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { exportEntries } from "../../engine/src/compiler/export.js";
 import {
     codeBlockAt,
@@ -13,6 +13,7 @@ import {
 
 const roots: string[] = [];
 afterEach(async () => {
+    vi.unstubAllEnvs();
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 async function fixture(formatter: string, linter = "require('node:fs').writeSync(1,'[]')") {
@@ -99,6 +100,29 @@ describe("code tool virtual blocks", () => {
 });
 
 describe("external editor tools", () => {
+    it("skips remote commands while retaining configuration and built-in formatting", async () => {
+        const root = await fixture(
+            "throw Error('downloaded formatter ran')",
+            "throw Error('downloaded linter ran')",
+        );
+        const config = await readFile(join(root, ".dooc/editor-tools/js.json"), "utf8");
+        await writeFile(join(root, ".dooc/editor-tools/json.json"), config);
+        vi.stubEnv("DOOC_REMOTE_WORKSPACE", "1");
+        await expect(runCodeTool(root, body, position, "format")).rejects.toThrow(
+            "disabled in remote sessions",
+        );
+        await expect(validateCodeTools(root, body)).resolves.toEqual({ changes: [], findings: [] });
+        await expect(validateTextfileCode(root, "js", "const x=1\n")).resolves.toEqual({
+            content: "const x=1\n",
+            findings: [],
+        });
+        await expect(validateTextfileCode(root, "json", '{"x":1}\n')).resolves.toEqual({
+            content: '{\n  "x": 1\n}\n',
+            findings: [],
+        });
+        expect(await readFile(join(root, ".dooc/editor-tools/js.json"), "utf8")).toBe(config);
+        expect(await readFile(join(root, ".dooc/editor-tools/json.json"), "utf8")).toBe(config);
+    });
     it("includes editor configuration and adapters in source exports", async () => {
         const root = await fixture("");
         await writeFile(join(root, "dooc.yaml"), "docs: []\n");

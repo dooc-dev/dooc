@@ -10,19 +10,27 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { terminal } from "./terminal.js";
+
+vi.mock("./terminal.js", () => ({
+    terminal: { info: vi.fn(), download: vi.fn(), close: vi.fn() },
+}));
 
 const originalArgv = process.argv;
 const roots: string[] = [];
 afterEach(() => {
     process.argv = originalArgv;
     vi.restoreAllMocks();
+    vi.clearAllMocks();
     vi.unstubAllEnvs();
     vi.doUnmock("./serve.js");
     vi.doUnmock("./assets.js");
     vi.doUnmock("./build.js");
     vi.doUnmock("./mcp.js");
     vi.doUnmock("./self.js");
+    vi.doUnmock("./git-workspace.js");
     vi.doUnmock("./static-client.js");
     vi.doUnmock("./workspace-server.js");
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -31,6 +39,7 @@ afterEach(() => {
 const cli = (...args: string[]) => {
     vi.resetModules();
     vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("DOOC_REMOTE_WORKSPACE", "");
     process.argv = [process.execPath, "cli.js", ...args];
     vi.spyOn(process, "cwd").mockReturnValue(roots.at(-1) ?? tmpdir());
     const stdout = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -67,7 +76,7 @@ describe("source-based CLI", () => {
         const result = cli("self", "docs");
         const pending = result.run();
         await vi.waitFor(() => expect(prepareSelfDocs).toHaveBeenCalledOnce());
-        expect(result.stdout).toHaveBeenCalledWith("Downloading documentation from GitHub...");
+        expect(terminal.info).toHaveBeenCalledWith("Downloading documentation from GitHub...");
         expect(startServer).not.toHaveBeenCalled();
         expect(process.env.DOCS_ROOT).toBe("/other/project");
         expect(process.env.DOCS_HMR).toBe("1");
@@ -275,8 +284,8 @@ describe("source-based CLI", () => {
         await result.run();
         const help = result.stdout.mock.calls[0]?.[0];
         expect(help).toContain("init");
-        expect(help).toContain("edit [dooc.yaml] [port]");
-        expect(help).toContain("view [dooc.yaml] [port]");
+        expect(help).toContain("edit [path] [port]");
+        expect(help).toContain("view [path] [port]");
         expect(help).toContain("mcp [dooc.yaml]");
         expect(help).not.toMatch(/(?:^|\n)\s+(?:preview|code-language|doc ls|figure ls)\b/);
         expect(help).not.toMatch(/[│├└─]/);
@@ -336,6 +345,167 @@ describe("source-based CLI", () => {
             );
         }
         expect(startServer).not.toHaveBeenCalled();
+    });
+
+    it.each(["edit", "view"])("clones a Git workspace before starting %s", async (command) => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-github-"));
+        roots.push(root);
+        mkdirSync(join(root, "dooc-docs"));
+        writeFileSync(join(root, "dooc-docs/dooc.yaml"), "docs: []\n");
+        const manifest = join(root, "team.dooc.yaml");
+        writeFileSync(manifest, "docs: []\n");
+        let complete!: (value: {
+            root: string;
+            manifest: string;
+            dispose: () => void;
+            reused: boolean;
+        }) => void;
+        const download = new Promise<{
+            root: string;
+            manifest: string;
+            dispose: () => void;
+            reused: boolean;
+        }>((resolve) => {
+            complete = resolve;
+        });
+        const prepareGitWorkspace = vi.fn(() => download);
+        vi.doMock("./git-workspace.js", () => ({
+            prepareGitWorkspace,
+        }));
+        const startServer = vi.fn();
+        vi.doMock("./serve.js", () => ({ startServer }));
+        const once = vi.spyOn(process, "once").mockReturnValue(process);
+        vi.stubEnv("DOCS_ROOT", "/existing");
+        vi.stubEnv("DOCS_HMR", "1");
+        const source = "https://github.com/dooc-dev/dooc.git";
+        vi.stubEnv("GIT_DIR", "/caller/.git");
+        vi.stubEnv("GIT_CONFIG_COUNT", "1");
+        vi.stubEnv("GIT_CONFIG_KEY_0", "core.worktree");
+        vi.stubEnv("GIT_CONFIG_VALUE_0", "/caller");
+        vi.stubEnv("GIT_CONFIG_GLOBAL", "/caller/gitconfig");
+        const pending = cli(command, "dooc-docs", "4321", "--repo", source).run();
+        await vi.waitFor(() =>
+            expect(prepareGitWorkspace).toHaveBeenCalledWith(source, command, {
+                path: "dooc-docs",
+            }),
+        );
+        expect(startServer).not.toHaveBeenCalled();
+        expect(process.env.DOCS_ROOT).toBe("/existing");
+        expect(process.env.GIT_DIR).toBeUndefined();
+        expect(process.env.GIT_CONFIG_COUNT).toBeUndefined();
+        expect(process.env.GIT_CONFIG_KEY_0).toBeUndefined();
+        expect(process.env.GIT_CONFIG_VALUE_0).toBeUndefined();
+        expect(process.env.GIT_CONFIG_GLOBAL).toBe("/caller/gitconfig");
+        const dispose = vi.fn();
+        complete({ root, manifest, dispose, reused: false });
+        await pending;
+        expect(startServer).toHaveBeenCalledWith(
+            command === "edit" ? "edit" : "preview",
+            4321,
+            undefined,
+            { open: true },
+        );
+        expect(process.env.DOCS_ROOT).toBe(root);
+        expect(process.env.DOCS_HMR).toBe(command === "edit" ? "1" : "0");
+        expect(process.env.DOOC_REMOTE_WORKSPACE).toBe("1");
+        expect(once).toHaveBeenCalledWith("exit", dispose);
+        const { manifestFile } = await import("../../engine/src/compiler/manifest.js");
+        expect(manifestFile(root)).toBe("team.dooc.yaml");
+    });
+
+    it.each([
+        "owner/repo/docs",
+        "notes:2026",
+    ])("opens local folder %s without cloning", async (name) => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-local-source-"));
+        roots.push(root);
+        const local = join(root, name);
+        mkdirSync(local, { recursive: true });
+        writeFileSync(join(local, "dooc.yaml"), "docs: []\n");
+        const prepareGitWorkspace = vi.fn();
+        vi.doMock("./git-workspace.js", () => ({
+            prepareGitWorkspace,
+        }));
+        const startServer = vi.fn();
+        vi.doMock("./serve.js", () => ({ startServer }));
+        vi.stubEnv("DOCS_ROOT", "");
+        vi.stubEnv("DOCS_HMR", "");
+        await cli("edit", name).run();
+        expect(prepareGitWorkspace).not.toHaveBeenCalled();
+        expect(process.env.DOCS_ROOT).toBe(local);
+        expect(startServer).toHaveBeenCalledWith("edit", 5179, undefined);
+    });
+
+    it.each(["path", "file URL"])("selects a nested local workspace from a %s", async (kind) => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-local-url-"));
+        roots.push(root);
+        const docs = join(root, "my docs");
+        mkdirSync(docs);
+        writeFileSync(join(docs, "team.dooc.yaml"), "docs: []\n");
+        const prepareGitWorkspace = vi.fn();
+        vi.doMock("./git-workspace.js", () => ({
+            prepareGitWorkspace,
+        }));
+        const startServer = vi.fn();
+        vi.doMock("./serve.js", () => ({ startServer }));
+        vi.stubEnv("DOCS_ROOT", "");
+        vi.stubEnv("DOCS_HMR", "");
+        const manifest = join(docs, "team.dooc.yaml");
+        const source = kind === "path" ? manifest : pathToFileURL(manifest).href;
+        await cli("edit", source).run();
+        expect(prepareGitWorkspace).not.toHaveBeenCalled();
+        expect(startServer).toHaveBeenCalledWith("edit", 5179, undefined);
+        expect(process.env.DOCS_ROOT).toBe(docs);
+        expect(process.env.DOOC_REMOTE_WORKSPACE).toBe("0");
+        const { manifestFile } = await import("../../engine/src/compiler/manifest.js");
+        expect(manifestFile(docs)).toBe("team.dooc.yaml");
+    });
+
+    it("does not interpret missing relative paths as GitHub shorthand", async () => {
+        const prepareGitWorkspace = vi.fn();
+        vi.doMock("./git-workspace.js", () => ({
+            prepareGitWorkspace,
+        }));
+        const startServer = vi.fn();
+        vi.doMock("./serve.js", () => ({ startServer }));
+        const result = cli("view", "owner/repository/docs");
+        await expect(result.run()).rejects.toThrow("CLI exit");
+        expect(prepareGitWorkspace).not.toHaveBeenCalled();
+        expect(startServer).not.toHaveBeenCalled();
+    });
+
+    it("requires an explicit repository option for remote URLs", async () => {
+        const startServer = vi.fn();
+        vi.doMock("./serve.js", () => ({ startServer }));
+        const result = cli("edit", "https://host.example/team/docs.git");
+        await expect(result.run()).rejects.toThrow("CLI exit");
+        expect(result.stderr).toHaveBeenCalledWith(
+            "Pass Git repository URLs with --repo <git-url>",
+        );
+        expect(startServer).not.toHaveBeenCalled();
+    });
+
+    it("does not start a server after a failed Git clone", async () => {
+        vi.doMock("./git-workspace.js", () => ({
+            prepareGitWorkspace: vi.fn().mockRejectedValue(new Error("Git unavailable")),
+        }));
+        const startServer = vi.fn();
+        vi.doMock("./serve.js", () => ({ startServer }));
+        const result = cli("view", "--repo", "https://github.com/dooc-dev/dooc.git");
+        await expect(result.run()).rejects.toThrow("CLI exit");
+        expect(startServer).not.toHaveBeenCalled();
+        expect(result.stderr).toHaveBeenCalledWith("Git unavailable");
+    });
+
+    it.each(["edit", "view"])("shows Git URL usage for %s without downloading", async (command) => {
+        const prepareGitWorkspace = vi.fn();
+        vi.doMock("./git-workspace.js", () => ({
+            prepareGitWorkspace,
+        }));
+        const result = cli(command, "--help");
+        await result.run();
+        expect(result.stdout).toHaveBeenCalledWith(expect.stringContaining("--repo <git-url>"));
+        expect(prepareGitWorkspace).not.toHaveBeenCalled();
     });
 
     it.each(["edit", "view", "mcp"])("selects a named manifest for %s", async (command) => {

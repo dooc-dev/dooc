@@ -18,7 +18,7 @@ dooc init
 dooc edit
 ```
 
-Other install methods and updates are in [Install](contents/md/install.md). Run `dooc self docs` to download this documentation from GitHub and open it locally.
+Other install methods and updates are in [Install](contents/md/install.md). With Git installed, run `dooc view dooc-docs --repo https://github.com/dooc-dev/dooc.git` to clone this documentation and open it locally, or use `dooc edit dooc-docs --repo https://github.com/dooc-dev/dooc.git` to keep an editable clone.
 
 ## Where to look
 

@@ -1,12 +1,12 @@
-Commands that operate on a workspace accept an optional manifest path and default to `./dooc.yaml`. A named manifest, `<name>.dooc.yaml`, works the same way. `client`, `build client`, and `self` do not take a manifest. Run `dooc help`, or `dooc <command> --help` for `init`, `server`, `client`, `build`, `check`, `plugin`, `font`, `self`, and `mcp`.
+Commands that operate on a workspace accept an optional manifest path and default to `./dooc.yaml`. A named manifest, `<name>.dooc.yaml`, works the same way. `edit` and `view` also accept a folder or local `file://` URL. Add `--repo <url>` to resolve the document path inside a Git clone instead of the local filesystem. `client`, `build client`, and `self` do not take a manifest. Run `dooc help`, or `dooc <command> --help` for command details.
 
 ## Commands
 
 | Command                                 | Use it to                                           |
 | --------------------------------------- | --------------------------------------------------- |
 | `dooc init [path]`                      | Create a manifest; never overwrites an existing one |
-| `dooc edit [dooc.yaml] [port]`          | Write and reorganize pages, records, and schemas    |
-| `dooc view [dooc.yaml] [port]`          | Read the workspace without editing controls         |
+| `dooc edit [path] [port]`               | Write and reorganize pages, records, and schemas    |
+| `dooc view [path] [port]`               | Read the workspace without editing controls         |
 | `dooc server [dooc.yaml] [port]`        | Serve the workspace WebSocket without frontend assets |
 | `dooc client [port]`                    | Serve the static editor without a workspace API     |
 | `dooc check [dooc.yaml]`                | Print a JSON consistency report                     |
@@ -31,6 +31,7 @@ Commands that operate on a workspace accept an optional manifest path and defaul
 | Command        | Option                             | Effect                                                |
 | -------------- | ---------------------------------- | ----------------------------------------------------- |
 | `edit`         | `--shared <branch>`                | Several people edit; snapshots go to the branch       |
+| `edit`, `view` | `--repo <url>`                     | Resolve the document path inside a Git clone          |
 | `edit`, `view` | `--tls-cert <pem> --tls-key <pem>` | Serve over HTTPS                                      |
 | `edit`, `view` | `--viewer-plugins <module>`        | Load a viewer plugin module                           |
 | `server`       | `--viewer-plugins <module>`        | Load plugins for the workspace service                |
@@ -63,7 +64,26 @@ dooc check
 dooc build html ./dooc.yaml ./dist
 ```
 
-See [Install](contents/md/install.md#open-the-documentation) for the network requirement and temporary files used by `self docs`, [Update](contents/md/install.md#update) for installation-specific update behavior, and [Development](contents/md/development.md) for source builds and release commands.
+## Git repositories
+
+```sh
+dooc view dooc-docs --repo https://github.com/dooc-dev/dooc.git
+dooc edit dooc-docs --repo https://github.com/dooc-dev/dooc.git
+dooc edit dooc-docs/dooc.yaml --repo https://github.com/dooc-dev/dooc.git
+dooc edit handbook --repo git@example.com:team/docs.git
+```
+
+The first argument selects a folder or manifest; `--repo` supplies the repository's clone URL. A folder must contain `dooc.yaml`; an explicit path may select `<name>.dooc.yaml`. Omitting the document path with `--repo` selects `dooc.yaml` at the repository root. HTTPS and SSH repositories on GitHub or other Git hosts use system Git and its configured credentials. Install Git before using remote sources.
+
+Cloning opens the remote's default branch and retains the full Git repository, including history and the origin remote, so branch switching, commits, and pushes remain available. Use the editor's branch selector to open another branch.
+
+`edit` saves the clone under `$XDG_DATA_HOME/dooc/workspaces` or `~/.local/share/dooc/workspaces`. Repeating the same repository and path reopens that clone without overwriting edits. `view` creates a fresh temporary clone on each launch and removes it on exit. Automatically loaded executable configuration is disabled for remote clones; an explicit local `--viewer-plugins` module remains supported.
+
+Without `--repo`, the path is local: `dooc edit ./dooc-docs`. Local folders, manifest paths, and local `file://` URLs open directly, without cloning or deleting the original files. With `--repo`, the document path must be relative and stay within the cloned repository.
+
+The terminal shows the local URL, operation logs, and Git clone progress. Other downloads show bytes and a percentage when the server supplies a size. Output is plain when redirected or when `NO_COLOR` is set. These messages go to stderr; JSON reports and MCP stdout stay machine-readable.
+
+See [Install](contents/md/install.md#open-the-documentation) for opening this documentation, [Update](contents/md/install.md#update) for installation-specific update behavior, and [Development](contents/md/development.md) for source builds and release commands.
 
 ## Check report
 

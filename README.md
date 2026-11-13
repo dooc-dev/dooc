@@ -17,8 +17,11 @@ dooc turns a folder of Markdown, data files, and schema-backed records into one 
 ## Documentation
 
 ```sh
-dooc self docs
+dooc view dooc-docs --repo https://github.com/dooc-dev/dooc.git
+dooc edit dooc-docs --repo https://github.com/dooc-dev/dooc.git
 ```
+
+Requires Git. `view` opens a temporary read-only copy; `edit` keeps a local clone and preserves your changes.
 
 ## License
 

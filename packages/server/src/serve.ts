@@ -36,16 +36,18 @@ import {
     validateCodeTools,
     validateTextfileCode,
 } from "./editor-tools.js";
-import { createExtensionManager, EXTENSIONS_DIR } from "./extensions.js";
+import { createExtensionManager } from "./extensions.js";
 import { fontCss, readFont } from "./fonts.js";
 import { createGitHandler, validateGitOrigin } from "./git.js";
 import { gitBaseBody, gitBaseText, setSubformatChanges } from "./git-diff.js";
 import { workspaceHistory } from "./history.js";
 import { watchProject } from "./hmr.js";
 import { loadSiteLanguages } from "./languages.js";
+import { loggedWorkspaceOps, logHttpOperation } from "./operation-log.js";
 import { loadViewerPlugins, type ViewerRuntime } from "./plugin-config.js";
 import { createLocalPluginStorage } from "./plugins/local-storage.js";
 import { createPluginHandler } from "./plugins.js";
+import { terminal } from "./terminal.js";
 import { readWorkspaceSource, sourceFileBase } from "./workspace.js";
 import { nodeWorkspaceOperations } from "./workspace-server.js";
 
@@ -250,10 +252,13 @@ export const startServer = async (
     if (sharedBranch !== undefined) delete editOps.git;
     // The boot id changes on every process start; it is how an open page notices a restart.
     // A preview only listens for changes, so it gets no operations.
-    const workspaceServer = createWorkspaceServer<Session>(mode === "edit" ? editOps : {}, {
-        boot: `${process.pid}-${Date.now()}`,
-        ...(sharedBranch === undefined ? {} : { shared: true }),
-    });
+    const workspaceServer = createWorkspaceServer<Session>(
+        mode === "edit" ? loggedWorkspaceOps(editOps) : {},
+        {
+            boot: `${process.pid}-${Date.now()}`,
+            ...(sharedBranch === undefined ? {} : { shared: true }),
+        },
+    );
     const personal = createLocalPluginStorage();
     const handlePlugins = createPluginHandler(
         viewerPlugins.plugins,
@@ -332,7 +337,7 @@ export const startServer = async (
     const extensionErrors = await handleExtensions
         .restore()
         .catch((error: unknown) => [error instanceof Error ? error.message : String(error)]);
-    for (const error of extensionErrors) console.error(`Plugin: ${error}`);
+    for (const error of extensionErrors) terminal.error(`Plugin: ${error}`);
     if (startup?.file && startup.data) {
         const result = (await handleExtensions({
             action: "install",
@@ -341,13 +346,13 @@ export const startServer = async (
             base: null,
         })) as { items: import("../../engine/src/core/extension-package.js").ExtensionSummary[] };
         loginPlugins = result.items.find((item) => item.file === startup.file)?.plugins ?? [];
-        console.log(`Installed ${startup.file} in ${join(root, EXTENSIONS_DIR)}`);
+        terminal.operation("Installed plugin", startup.file);
     }
 
     // DOCS_HMR=0 = no hot reload (nothing is watched = changes need a manual reload).
     if (process.env.DOCS_HMR !== "0") {
         const watcher = watchProject(root, pkgRoot, (kind, files) => {
-            console.log(`hmr: ${kind} (${files.join(", ")})`);
+            terminal.operation(kind === "client" ? "Reloaded client" : "Changed", files.join(", "));
             if (kind === "client") {
                 bundleCache.clear();
                 graphChunks = undefined;
@@ -479,12 +484,20 @@ export const startServer = async (
     };
 
     const listener = (req: IncomingMessage, res: ServerResponse): void => {
-        handle(req, res).catch((e: unknown) => {
-            if (!res.headersSent) {
-                res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
-            }
-            res.end(`error: ${e instanceof Error ? e.message : e}`);
-        });
+        handle(req, res)
+            .then(() => {
+                if (typeof res.statusCode === "number")
+                    logHttpOperation(req.method ?? "GET", req.url ?? "/", res.statusCode);
+            })
+            .catch((e: unknown) => {
+                terminal.error(
+                    `Request failed: ${req.method ?? "GET"} ${(req.url ?? "/").split(/[?#]/)[0]}`,
+                );
+                if (!res.headersSent) {
+                    res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+                }
+                res.end(`error: ${e instanceof Error ? e.message : e}`);
+            });
     };
     const tls = startup?.tls;
     const server = tls
@@ -562,14 +575,14 @@ export const startServer = async (
     server.once("listening", () => {
         const addr = server.address();
         const p = typeof addr === "object" && addr ? addr.port : port;
-        console.log(`dooc ${mode} (${root}): ${scheme}://localhost:${p}/`);
+        terminal.ready(mode === "preview" ? "view" : mode, root, `${scheme}://localhost:${p}/`);
         if (startup?.open) {
             const url = `${scheme}://localhost:${p}/`;
             const command = process.platform === "darwin" ? "open" : "xdg-open";
             const browser = spawn(command, [url], { stdio: "ignore", detached: true });
-            browser.on("error", () => console.error(`Open ${url} in your browser.`));
+            browser.on("error", () => terminal.warn(`Open ${url} in your browser.`));
             browser.on("exit", (code) => {
-                if (code) console.error(`Open ${url} in your browser.`);
+                if (code) terminal.warn(`Open ${url} in your browser.`);
             });
             browser.unref();
         }
@@ -579,7 +592,7 @@ export const startServer = async (
                     `Log in to ${plugin}: ${handlePlugins.loginLink(plugin, `${scheme}://localhost:${p}`)}`,
                 );
             } catch (error) {
-                console.error(error instanceof Error ? error.message : String(error));
+                terminal.error(error instanceof Error ? error.message : String(error));
             }
         }
         if (loginPlugins.length)
@@ -590,7 +603,7 @@ export const startServer = async (
     const listen = (p: number, left: number): void => {
         server.once("error", (err: NodeJS.ErrnoException) => {
             if (err.code === "EADDRINUSE" && left > 0) {
-                console.log(`port ${p} in use → trying ${p + 1}`);
+                terminal.warn(`Port ${p} is in use; trying ${p + 1}`);
                 listen(p + 1, left - 1);
                 return;
             }

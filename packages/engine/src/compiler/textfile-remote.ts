@@ -1,4 +1,5 @@
 import { allowedPreviewUrl } from "../core/previewers.js";
+import { reportDownloadProgress } from "./download-progress.js";
 import { execFileSync, fetchPublicFile } from "./host.js";
 
 export class TextfileUnavailable extends Error {
@@ -76,9 +77,23 @@ export const readRemoteTextfileAsync = async (
     if (active) return active;
     const task = (async () => {
         let result: Buffer | TextfileUnavailable;
+        let received = 0;
+        let total: number | undefined;
+        reportDownloadProgress({ url: source.url, state: "start", received });
         try {
-            result = await fetchPublicFile(source.url);
+            result = await fetchPublicFile(source.url, undefined, (size, length) => {
+                received = size;
+                total = length;
+                reportDownloadProgress({ url: source.url, state: "progress", received, total });
+            });
+            reportDownloadProgress({
+                url: source.url,
+                state: "complete",
+                received: result.length,
+                total,
+            });
         } catch (error) {
+            reportDownloadProgress({ url: source.url, state: "error", received, total });
             if ((error as Error).message === "BLOCKED")
                 throw new Error("External previews require a public network address");
             result = new TextfileUnavailable(
@@ -116,6 +131,7 @@ export const readRemoteTextfile = (
         return cached.result;
     }
     let result: Buffer | TextfileUnavailable;
+    reportDownloadProgress({ url: source.url, state: "start", received: 0 });
     try {
         result = execFileSync(process.execPath, ["--input-type=module", "-e", FETCH, source.url], {
             timeout: 12000,
@@ -123,7 +139,9 @@ export const readRemoteTextfile = (
             stdio: ["ignore", "pipe", "pipe"],
             env: { PATH: process.env.PATH },
         });
+        reportDownloadProgress({ url: source.url, state: "complete", received: result.length });
     } catch (error) {
+        reportDownloadProgress({ url: source.url, state: "error", received: 0 });
         if ((error as { status?: number }).status === 45)
             throw new Error("External previews require a public network address");
         result = new TextfileUnavailable(

@@ -1,8 +1,10 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadViewerPlugins } from "./plugin-config.js";
+
+afterEach(() => vi.unstubAllEnvs());
 
 const load = async (source: string) => {
     const root = mkdtempSync(join(tmpdir(), "dooc-viewer-plugins-"));
@@ -16,6 +18,21 @@ const load = async (source: string) => {
 };
 
 describe("external viewer registration", () => {
+    it("still loads an explicitly selected local module in a remote session", async () => {
+        vi.stubEnv("DOOC_REMOTE_WORKSPACE", "1");
+        const config = await load(
+            'export default { plugins: [], setup(viewer) { viewer.unregister("explicit"); } };',
+        );
+        const viewer = {
+            register: vi.fn(),
+            unregister: vi.fn(),
+            setAllowedDomains: vi.fn(),
+            setGitOrigin: vi.fn(),
+            setWorkspace: vi.fn(),
+        };
+        await config.setup?.(viewer);
+        expect(viewer.unregister).toHaveBeenCalledWith("explicit");
+    });
     it("accepts only explicit executable origin adapters", async () => {
         const config = await load(
             'export default { plugins: [], gitOrigin: { name: "Origin", capabilities: ["push"], async read() {}, async execute() {} } };',

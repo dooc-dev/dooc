@@ -89,6 +89,7 @@ export const runInNewContext = (code: string, context: { render(): unknown }): u
 export async function fetchPublicFile(
     url: string,
     validate?: (contentType: string) => void,
+    progress?: (received: number, total?: number) => void,
 ): Promise<Buffer> {
     const parsed = new URL(url);
     if (
@@ -113,12 +114,22 @@ export async function fetchPublicFile(
     const reader = response.body?.getReader();
     if (!reader) throw new Error("Empty response");
     const chunks: Uint8Array[] = [];
+    const length = response.headers.get("content-length");
+    const total =
+        length !== null &&
+        /^\d+$/.test(length) &&
+        Number.isSafeInteger(Number(length)) &&
+        !response.headers.get("content-encoding")
+            ? Number(length)
+            : undefined;
     let size = 0;
     try {
+        progress?.(0, total);
         for (;;) {
             const { value, done } = await reader.read();
             if (done) break;
             size += value.length;
+            progress?.(size, total);
             if (size > 2 * 1024 * 1024) throw new Error("File exceeds 2 MiB");
             chunks.push(value);
         }

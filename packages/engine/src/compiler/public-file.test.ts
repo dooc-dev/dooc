@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import type { LookupAddress, LookupAllOptions } from "node:dns";
 import { lookup } from "node:dns/promises";
 import { EventEmitter } from "node:events";
-import type { ClientRequest, IncomingMessage } from "node:http";
+import type { ClientRequest, IncomingHttpHeaders, IncomingMessage } from "node:http";
 import { type RequestOptions, request } from "node:https";
 import { Readable } from "node:stream";
 import { beforeEach, expect, it, vi } from "vitest";
@@ -15,6 +15,9 @@ const dnsLookup = vi.mocked(
 );
 let status: number;
 let payload: Buffer;
+let chunks: Buffer[] | undefined;
+let failure: Error | undefined;
+let headers: IncomingHttpHeaders;
 let connected: unknown;
 let options: RequestOptions;
 
@@ -22,6 +25,9 @@ beforeEach(() => {
     vi.resetAllMocks();
     status = 200;
     payload = Buffer.from("hello");
+    chunks = undefined;
+    failure = undefined;
+    headers = {};
     connected = undefined;
     dnsLookup.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
     const fakeRequest = (
@@ -38,8 +44,14 @@ beforeEach(() => {
                     return;
                 }
                 connected = addresses;
-                const response = Readable.from([payload]) as IncomingMessage;
+                const response = Readable.from(
+                    (async function* () {
+                        yield* chunks ?? [payload];
+                        if (failure) throw failure;
+                    })(),
+                ) as IncomingMessage;
                 response.statusCode = status;
+                response.headers = headers;
                 callback(response);
             });
             return req;
@@ -57,6 +69,50 @@ it("connects only to validated DNS answers, without an agent or authorization", 
     expect(options.headers).toBeUndefined();
     expect(options.auth).toBeUndefined();
     expect(options.signal).toBeInstanceOf(AbortSignal);
+});
+
+it("reports cumulative streamed bytes and a valid response length", async () => {
+    chunks = [Buffer.from("he"), Buffer.from("llo")];
+    headers["content-length"] = "5";
+    const progress = vi.fn();
+    expect(await fetchPublicFile("https://example.com/file.txt", undefined, progress)).toEqual(
+        payload,
+    );
+    expect(progress.mock.calls).toEqual([
+        [0, 5],
+        [2, 5],
+        [5, 5],
+    ]);
+});
+
+it.each([
+    undefined,
+    "",
+    "-1",
+    "1.5",
+    "1e3",
+    "unknown",
+    "9007199254740992",
+])("reports bytes without a total for Content-Length %s", async (length) => {
+    headers["content-length"] = length;
+    const progress = vi.fn();
+    await fetchPublicFile("https://example.com/file.txt", undefined, progress);
+    expect(progress.mock.calls).toEqual([
+        [0, undefined],
+        [5, undefined],
+    ]);
+});
+
+it("preserves stream failures after reporting the bytes received", async () => {
+    failure = new Error("Connection reset");
+    const progress = vi.fn();
+    await expect(fetchPublicFile("https://example.com/file.txt", undefined, progress)).rejects.toBe(
+        failure,
+    );
+    expect(progress.mock.calls).toEqual([
+        [0, undefined],
+        [5, undefined],
+    ]);
 });
 
 it.each([

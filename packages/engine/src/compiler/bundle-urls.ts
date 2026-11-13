@@ -4,6 +4,7 @@ import valueParser from "postcss-value-parser";
 import { embeddedImages, parseMdast } from "../core/markdown.js";
 import { isRemoteTextfile } from "../core/textfile.js";
 import { collectRefs } from "./dialect.js";
+import { reportDownloadProgress } from "./download-progress.js";
 import { createHash, fetchPublicFile, posix, readFileSync } from "./host.js";
 import { assertNotIgnored } from "./ignored-files.js";
 import { readManifest } from "./manifest.js";
@@ -88,14 +89,48 @@ export const embedBundleUrls = async (
                 if (url.protocol === "https:" && ++downloads > 256)
                     throw new Error("Bundle exceeds 256 remote assets");
                 let type = "";
-                const data =
-                    url.protocol === "bundle:"
-                        ? readFileSync(
-                              textfilePath(root, decodeURIComponent(url.pathname.slice(1))),
-                          )
-                        : await fetchPublicFile(url.href, (value) => {
-                              type = value.split(";")[0]?.trim().toLowerCase() ?? "";
-                          });
+                let data: Buffer;
+                if (url.protocol === "bundle:") {
+                    data = readFileSync(
+                        textfilePath(root, decodeURIComponent(url.pathname.slice(1))),
+                    );
+                } else {
+                    let received = 0;
+                    let length: number | undefined;
+                    reportDownloadProgress({ url: key, state: "start", received });
+                    try {
+                        data = await fetchPublicFile(
+                            url.href,
+                            (value) => {
+                                type = value.split(";")[0]?.trim().toLowerCase() ?? "";
+                            },
+                            (size, value) => {
+                                received = size;
+                                length = value;
+                                reportDownloadProgress({
+                                    url: key,
+                                    state: "progress",
+                                    received,
+                                    total: length,
+                                });
+                            },
+                        );
+                        reportDownloadProgress({
+                            url: key,
+                            state: "complete",
+                            received: data.length,
+                            total: length,
+                        });
+                    } catch (error) {
+                        reportDownloadProgress({
+                            url: key,
+                            state: "error",
+                            received,
+                            total: length,
+                        });
+                        throw error;
+                    }
+                }
                 if (url.protocol === "https:") total += data.length;
                 if (total > 64 * 1024 * 1024) throw new Error("Embedded assets exceed 64 MiB");
                 if (!type || type === "application/octet-stream")

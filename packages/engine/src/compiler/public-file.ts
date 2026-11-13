@@ -2,6 +2,7 @@
 export async function fetchPublicFile(
     source: string,
     contentType?: (type: string) => void,
+    progress?: (received: number, total?: number) => void,
 ): Promise<Buffer> {
     const { request } = await import("node:https");
     const { lookup } = await import("node:dns/promises");
@@ -81,10 +82,19 @@ export async function fetchPublicFile(
                     return;
                 }
                 contentType?.(response.headers["content-type"] ?? "");
+                const length = response.headers["content-length"];
+                const total =
+                    typeof length === "string" &&
+                    /^\d+$/.test(length) &&
+                    Number.isSafeInteger(Number(length))
+                        ? Number(length)
+                        : undefined;
+                progress?.(0, total);
                 const chunks: Buffer[] = [];
                 let size = 0;
                 response.on("data", (chunk: Buffer) => {
                     size += chunk.length;
+                    progress?.(size, total);
                     if (size > 2 * 1024 * 1024) {
                         response.destroy();
                         reject(new Error("UNAVAILABLE"));

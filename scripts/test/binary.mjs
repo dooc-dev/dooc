@@ -101,9 +101,6 @@ try {
     const startServer = async (...args) => {
         server = spawn(binary, args, options);
         let output = "";
-        server.stderr.on("data", (data) => {
-            output += data;
-        });
         return await new Promise((resolveUrl, reject) => {
             const timer = setTimeout(
                 () => reject(new Error(`Server did not start: ${output}`)),
@@ -117,14 +114,16 @@ try {
                 clearTimeout(timer);
                 reject(new Error(`Server exited (${code}): ${output}`));
             });
-            server.stdout.on("data", (data) => {
+            const readOutput = (data) => {
                 output += data;
                 const match = /http:\/\/localhost:\d+\//.exec(output);
                 if (match) {
                     clearTimeout(timer);
                     resolveUrl(match[0].replace("localhost", "127.0.0.1"));
                 }
-            });
+            };
+            server.stdout.on("data", readOutput);
+            server.stderr.on("data", readOutput);
         });
     };
     const url = await startServer("edit", join(root, "dooc.yaml"), "0");

@@ -1,5 +1,7 @@
 `dooc edit` opens the workspace in a browser with editing on. `dooc view` opens the same pages read-only. Both serve `http://localhost:5179` unless a port is given.
 
+To open a Git repository, run `dooc edit dooc-docs --repo https://github.com/dooc-dev/dooc.git`. System Git clones the default branch and retains its history and origin remote. Editing keeps the clone and reopens your saved changes; viewing uses a temporary clone. Without `--repo`, the document path opens locally. See [Git repositories](contents/md/cli.md#git-repositories) for source formats and storage paths.
+
 ## Layout
 
 | Area            | Holds                                                                 |
