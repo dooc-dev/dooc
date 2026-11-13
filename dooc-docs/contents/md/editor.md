@@ -7,7 +7,7 @@ To open a Git repository, run `dooc edit dooc-docs --repo https://github.com/doo
 | Area            | Holds                                                                 |
 | --------------- | --------------------------------------------------------------------- |
 | Document tree   | Pages and boards from `center_contents`; add, rename, move, set icons |
-| Workspace tools | Files, Library, Subformats, Plugins, Git, History                     |
+| Workspace tools | Files, Library, Subformats, Plugins, Git                              |
 | Document pane   | The page, with source and preview side by side while editing          |
 | Split view      | A second pane with its own page, language, and theme                  |
 
@@ -17,14 +17,14 @@ Tree edits rewrite `dooc.yaml`, and hand edits to `dooc.yaml` show up in the tre
 
 ## Workspace tools
 
-| Tool       | Use it to                                                                                   |
-| ---------- | ------------------------------------------------------------------------------------------- |
-| Files      | Browse, upload, rename, and reorganize files; copy a path to embed                          |
-| Library    | List every block, code fence, URL, and term in the workspace, with where it is used         |
-| Subformats | Open [record boards](contents/md/subformats.md), add a record type, edit its schema         |
-| Plugins    | Add, enable, and sign in to [plugins](contents/md/plugins.md)                               |
-| Git        | Stage, commit, switch branch, fetch, pull, push; open pull requests with an origin provider |
-| History    | Save a snapshot with a message, and restore every file to one                               |
+| Tool            | Use it to                                                                                |
+| --------------- | ---------------------------------------------------------------------------------------- |
+| Files           | Browse, upload, rename, and reorganize files; copy a path to embed                         |
+| Library         | List every block, code fence, URL, and term in the workspace, with where it is used        |
+| Subformats      | Open [record boards](contents/md/subformats.md), add a record type, edit its schema        |
+| Plugins         | Add, enable, and sign in to [plugins](contents/md/plugins.md)                              |
+| Git             | Stage, commit, switch branch, fetch, pull, push; open pull requests with an origin provider |
+| Files → History | Save a snapshot with a message, and restore the workspace to one                          |
 
 A Library view can also be a page in the tree: see `library` in [dooc.yaml](contents/md/manifest.md). **Terms** at the bottom of this tree is one.
 
@@ -90,12 +90,18 @@ SSH remotes, stashes, and external formatting or lint commands require the Node 
 
 For Node workspaces, Git uses the system credential helper. GitHub pull-request operations use GitHub CLI (`gh auth login`), unless an origin plugin supplies another provider. The pull-request view includes open, closed, and merged requests. Creation requires pushing the current commit first; merging includes the reviewed head commit and respects GitHub branch protections. Editing a file alone never starts a remote operation.
 
+Node and browser workspaces require a clean working tree before **Pull (fast-forward)**. Commit or stash pending changes first; a pull fails if the histories have diverged instead of creating a merge commit. Stashing is available only through the Node server.
+
 ## History
+
+Open **Files → History** in `dooc edit` or a connected Node workspace. Browser-only workspaces do not offer snapshots.
 
 | Workspace               | A snapshot is                                     |
 | ----------------------- | ------------------------------------------------- |
 | Inside a Git repository | A commit of everything under the workspace folder |
 | Not under Git           | A copy of the files under `.dooc/snapshots/`      |
+
+Save pending editor changes before taking a snapshot. In a Git workspace, snapshot or commit pending changes before restoring. A restore replaces the workspace files and records the result as a new commit, preserving existing commits. Outside Git, restoring first saves a **Before restoring** snapshot of the current files.
 
 Undo and redo inside the editor are separate from snapshots and cover recent typing.
 
@@ -125,6 +131,8 @@ dooc edit --shared main --tls-cert cert.pem --tls-key key.pem
 The validation button or **Shift+Alt+F** formats and checks the whole current Markdown page, regardless of cursor position. It handles Markdown and configured, closed code fences, including fences inside lists and block quotes. dooc directives and unconfigured code remain intact; JSON has built-in formatting and validation. Text-file editors use the same registered tools for their language.
 
 Formatting is undoable. Hover an underlined diagnostic to read it. If the edited text or target changes while a tool is running, its result is discarded. Error diagnostics prevent formatting changes; successful formatting is checked again before it is applied. Enable **Auto validate** to run validation after edits. The validation button is green after success, red for errors, muted when pending, and blue while checking.
+
+Sessions opened with `--repo` disable configured external formatters and linters, including manual requests. Editing, saving, and built-in Markdown and JSON formatting and validation remain available. See [Git repositories](contents/md/cli.md#git-repositories) for the scope of executable configuration in remote sessions.
 
 ### Configure a language
 

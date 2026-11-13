@@ -59,6 +59,8 @@ The editor rewrites this file when pages are added, moved, or renamed, so hand e
 | `.dooc/editor-tools/<lang>.json` | Formatter and linter commands for code fences                                |
 | `docs.config.mjs`                | Language adapters for term matching and prose linting                        |
 
+When `edit` or `view` opens a repository with `--repo`, these files are retained, but `docs.config.mjs` is not loaded, external editor-tool commands do not run, and workspace plugin ZIPs cannot be activated. Built-in JSON tools and syntax highlighting remain available. Open a trusted local checkout without `--repo` to use its executable configuration; an explicitly selected local `--viewer-plugins` module also works in a remote session. See [Git repositories](contents/md/cli.md#git-repositories) and [Code tools](contents/md/editor.md#code-tools).
+
 Folder names such as `contents/md/` are a convention. Only the paths written in `dooc.yaml`, links, and embeds matter.
 
 An editor tool configuration, for example `.dooc/editor-tools/typescript.json`:

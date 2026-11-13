@@ -20,7 +20,14 @@ Three fictional services show what a card can do. They run on a local mock: no a
 | [GitApp](contents/md/gitapp.md)   | A pull request | Read the diff, change review status, comment |
 | [ChatApp](contents/md/chatapp.md) | A message      | Reply to the thread, toggle reactions        |
 
-The demo plugins load in a source checkout with `mise run dev`. The **Plugins** tool then lists **Sample plugin** (`sample`) and **Sample plugin (sign-in demo)** (`sample-auth`). Without them, as in `dooc self docs`, the cards on these pages stay links.
+The demo modules are development files in a source checkout; they are not bundled with dooc. After [development setup](contents/md/development.md#set-up-and-run), `mise run dev` loads them automatically. To use them with a cloned documentation workspace, run from that trusted source checkout:
+
+```sh
+dooc edit dooc-docs --repo https://github.com/dooc-dev/dooc.git \
+  --viewer-plugins ./examples/viewer-plugins/index.mjs
+```
+
+The **Plugins** tool then lists **Sample plugin** (`sample`) and **Sample plugin (sign-in demo)** (`sample-auth`). Opening the documentation with `dooc view dooc-docs --repo https://github.com/dooc-dev/dooc.git` or `dooc self docs` does not load these modules; the demo cards stay links.
 
 ## Card controls
 
@@ -41,6 +48,8 @@ Values save as you leave a field. Cards refresh every five seconds and when you 
 | Viewer module | `dooc edit --viewer-plugins <module>`, or `DOOC_VIEWER_PLUGINS`     | Outside the workspace |
 
 A ZIP is installed per project and can be enabled, disabled, replaced, or deleted in the **Plugins** tool. A viewer module is trusted code chosen by whoever starts dooc; its plugins show as **Provided by viewer**.
+
+In an `edit` or `view` session opened with `--repo`, workspace ZIPs remain files but are not activated, even if previously approved. Installing, enabling, replacing, or editing a workspace plugin is disabled in that session. An explicitly selected local `--viewer-plugins` module remains supported; `edit` and `view` also accept `DOOC_VIEWER_PLUGINS`. To use workspace ZIPs, inspect and trust a local checkout, then open its manifest without `--repo`.
 
 ## Sign in
 

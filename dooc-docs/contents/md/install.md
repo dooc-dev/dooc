@@ -13,7 +13,7 @@ The curl installer verifies SHA-256 and writes `~/.local/bin/dooc`. A failed dow
 
 ```sh
 curl -fsSL https://github.com/dooc-dev/dooc/releases/latest/download/install.sh |
-  DOOC_VERSION=0.0.7 DOOC_INSTALL_DIR="$HOME/bin" sh
+  DOOC_VERSION=0.0.10 DOOC_INSTALL_DIR="$HOME/bin" sh
 ```
 
 The source repository also serves as the Homebrew tap. Opening a Git repository URL requires system Git, including when using the standalone executable. Configured external formatters and linters require their own tools.
@@ -25,6 +25,8 @@ mkdir my-docs && cd my-docs
 dooc init
 dooc edit
 ```
+
+Open the URL printed in the terminal and add your first page. Keep the command running while using the editor or viewer; **Ctrl+C** stops it. Save your changes before stopping, then run `dooc check` or build commands, or use another terminal for them.
 
 | Command      | Result                                                              |
 | ------------ | ------------------------------------------------------------------- |
@@ -66,7 +68,9 @@ This uses system Git to clone the repository's default branch and opens its `doo
 
 Run it from any directory and keep the command running while you read. If the browser does not open automatically, open the printed URL. The clone lives in a temporary directory that is removed when the command exits.
 
-Use `dooc edit dooc-docs --repo https://github.com/dooc-dev/dooc.git` to keep an editable clone with Git history. Repeating the command reopens your saved changes. Other Git hosts and SSH URLs are supported; see [Git repositories](contents/md/cli.md#git-repositories). The older `dooc self docs` command remains available for compatibility and downloads read-only documentation from GitHub `main`.
+Use `dooc edit dooc-docs --repo https://github.com/dooc-dev/dooc.git` to keep an editable clone with Git history. Repeating the command reopens the saved clone, including offline, without fetching, pulling, or resetting it. To update its documents, use **Fetch** and **Pull** in the editor's Git tool, or run Git in the printed workspace directory. Commit pending changes before using **Pull**. `dooc self update` updates dooc itself; it does not update saved workspaces.
+
+Other Git hosts and SSH URLs are supported; see [Git repositories](contents/md/cli.md#git-repositories) for storage and execution limits. The compatibility command `dooc self docs` downloads read-only documentation from GitHub `main` as a ZIP, so it requires a network connection but no system Git. Its temporary files are removed on exit.
 
 ## Share the result
 

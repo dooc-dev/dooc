@@ -41,11 +41,13 @@ A GitHub Actions workflow built on the script. It checks the document, validates
 
 | Step              | Uses                                   | Fails when                                  |
 | ----------------- | -------------------------------------- | ------------------------------------------- |
-| `dooc check`      | Pages, links, embeds                   | A page does not compile or a link is broken |
+| `dooc check`      | Pages, local links and embeds          | A page does not compile or a local reference is broken |
 | `records.mjs`     | `ext`, `format`, `schema` of each type | A record does not match its schema          |
 | `jq` filter       | Record data                            | Never; it selects what to deploy            |
-| `dooc build html` | The whole workspace                    | A page does not compile                     |
+| `dooc build html` | The whole workspace                    | Compilation or a remote embed download fails |
 | `deploy` matrix   | One selected record per job            | The rollout command fails                   |
+
+`dooc check` runs offline and reports remote content as unchecked. The HTML build downloads embedded URLs by default; ordinary links stay links. See [Build output](contents/md/cli.md#build-output) for network mode and download limits.
 
 ## Other things to do with records
 

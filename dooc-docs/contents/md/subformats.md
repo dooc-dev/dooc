@@ -39,6 +39,8 @@ default_subformat_folder: contents/issue
 
 Files with a registered extension are collected even when no page links to them. In the editor, **Add subformat…** in the Subformats tool registers a type and creates its schema file. Because the list lives in `dooc.yaml`, a script can read it too: see [CI/CD](contents/md/ci.md).
 
+Open the type selector in **Subformats** to manage an existing type. Its **Edit** button opens the schema; **Delete** removes the registration and its sidebar page after confirmation. The record files and schema file are kept.
+
 ## What the schema controls
 
 Schemas use JSON Schema 2020-12 and are validated strictly: unknown keywords and formats are rejected.
@@ -66,12 +68,14 @@ Schemas use JSON Schema 2020-12 and are validated strictly: unknown keywords and
 | Save a menu choice as default | Its **✓**, in edit mode; writes `layouts` in `dooc.yaml` |
 | Move a card                   | Drag it to another column; the file is rewritten         |
 | Edit a record                 | Click the card; view mode opens a detail dialog          |
-| New record                    | **Create**; saved into `default_subformat_folder`        |
+| New record                    | **Create**; choose the file path in the form             |
 | Find what links to a record   | Reference dropdown on the card                           |
 | Copy a source link            | Copy icon on the card                                    |
 | Search                        | **Ctrl+F**                                               |
 
 Card borders follow Git status: green for new files, orange for modified ones. Moves keep YAML and TOML comments.
+
+The Create form suggests a path under `default_subformat_folder`, or an existing record's folder when no default is set. You can change the path before saving; keep the registered file extension.
 
 ## Records in a page
 

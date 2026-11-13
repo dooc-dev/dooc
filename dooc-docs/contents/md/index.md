@@ -13,12 +13,15 @@ dooc turns a folder of Markdown, data files, and records into one browsable docu
 
 ```sh
 curl -fsSL https://github.com/dooc-dev/dooc/releases/latest/download/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 mkdir my-docs && cd my-docs
 dooc init
 dooc edit
 ```
 
-Other install methods and updates are in [Install](contents/md/install.md). With Git installed, run `dooc view dooc-docs --repo https://github.com/dooc-dev/dooc.git` to clone this documentation and open it locally, or use `dooc edit dooc-docs --repo https://github.com/dooc-dev/dooc.git` to keep an editable clone.
+Open the URL printed in the terminal and add your first page. Keep the command running while editing; **Ctrl+C** stops it.
+
+Other install methods and updates are in [Install](contents/md/install.md). With Git installed, run `dooc view dooc-docs --repo https://github.com/dooc-dev/dooc.git` to download a fresh temporary copy of this documentation, or use `dooc edit dooc-docs --repo https://github.com/dooc-dev/dooc.git` to keep an editable clone. Reopening an edit clone preserves your changes and does not fetch updates automatically; see [Git repositories](contents/md/cli.md#git-repositories).
 
 ## Where to look
 

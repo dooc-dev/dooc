@@ -956,6 +956,7 @@ main { --doc-mono: var(--viewer-font, ${MONO_FONT}); }
 .page-actions, .pane-actions { position: sticky; display: flex; align-items: center; justify-content: flex-end;
   gap: 2px; height: 36px; padding: 0 24px; pointer-events: none; z-index: 5; }
 :is(.page-actions, .pane-actions) > .pbtn { pointer-events: auto; background: var(--c-bg0); }
+.pane-actions > .pbtn { background: inherit; }
 .page-actions { top: 0; margin: -20px -24px -36px; }
 .pbtn { flex: none; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px;
   padding: 0; color: var(--c-fg-faint); background: none; border: none; border-radius: 5px; cursor: pointer;
@@ -1635,7 +1636,7 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .resource-results:has([data-subformat-board]:not([hidden])) .resource-search { flex: 1 1 160px; max-width: 260px; height: 30px; box-sizing: border-box; gap: 8px; padding: 0 8px; border: 1px solid var(--c-line); border-radius: 4px; background: var(--c-bg0); }
 .resource-results:has([data-subformat-board]:not([hidden])) .resource-search:focus-within { border-color: var(--c-accent); }
 .resource-results:has([data-subformat-board]:not([hidden])) .resource-count { display: none; }
-.resources-pane:has([data-subformat-board]:not([hidden])) :is(.preview-content, .resource-library, .resource-results, [data-subformat-board]) { display: flex; flex-direction: column; flex: 1; }
+.resources-pane:has([data-subformat-board]:not([hidden])) :is(.preview-content, .resource-library, .resource-results, [data-subformat-board]):not([hidden]) { display: flex; flex-direction: column; flex: 1; }
 .resources-pane:has([data-subformat-board]:not([hidden])) .preview-content { min-height: 100%; }
 .resource-results:has(> .resource-empty:not([hidden])) [data-subformat-board] { flex: none; }
 .resource-results:has(> .resource-empty:not([hidden])) .subformat-columns { display: none; }
@@ -2152,7 +2153,7 @@ body.edit #nav-groups { --nav-rail: 22px; --nav-icon-half: 9px; }
 
 main.editor-workspace { padding: 0; height: 100vh; display: flex; flex-direction: column; position: sticky; top: 0; }
 #split-preview[aria-pressed="true"] { color: var(--c-accent); background: var(--c-raised); }
-.pane-actions { flex-wrap: wrap; top: -20px; margin: -20px -24px 16px; padding: 4px 12px; min-height: 38px; height: auto; background: var(--c-bg0); }
+.pane-actions { flex-wrap: wrap; top: -20px; margin: -20px -24px 16px; padding: 4px 12px; min-height: 38px; height: auto; background: inherit; }
 .pane-resource { min-width: 0; }
 #preview-panes { display: flex; flex: 1; min-height: 0; }
 #preview-panes[hidden] { display: none; }

@@ -61,7 +61,7 @@ commands:
      --git-origin <module>             inject gitOrigin from an external viewer plugin module
   help, --help, -h                     show this help
 
-Details: dooc <command> --help (init, edit, view, build, check, plugin, font, self, mcp).
+Details: dooc <command> --help (init, edit, view, server, client, build, export, check, plugin, font, self, mcp).
 Default manifest: ./dooc.yaml. Named manifests (<name>.dooc.yaml) are also accepted.
 Paths use the current directory, or the repository root when --repo is given.
 Example: dooc view dooc-docs --repo https://github.com/dooc-dev/dooc.git
@@ -308,9 +308,11 @@ options:
   --help, -h                      show this help
 
 dooc.yaml example:
-  defaultLang: jpn
-  languages: [jpn, eng]
-  themes: [light, dark]
+  system:
+    default_lang: jpn
+    languages: [jpn, eng]
+    themes: [light, dark]
+  center_contents: []
 
 Checks:
   render     uses the viewer compiler
@@ -525,10 +527,27 @@ Example: dooc ${command} dooc-docs --repo https://github.com/dooc-dev/dooc.git`)
     }
     case "export": {
         try {
-            if (args.length > 2)
+            const { positionals, values } = parseArgs({
+                args,
+                allowPositionals: true,
+                options: { help: { type: "boolean", short: "h" } },
+            });
+            if (values.help) {
+                console.log(`usage: dooc export [dooc.yaml] [out-dir]
+
+Collect the workspace's source dependencies into bundle.zip.
+Default manifest: ./dooc.yaml; named manifests are also accepted.
+Default output directory: <project>/dist.
+Configuration and plugins are not executed. Remote URLs stay unchanged; nothing is downloaded.
+
+options:
+  --help, -h  show this help`);
+                break;
+            }
+            if (positionals.length > 2)
                 throw new Error("export accepts a dooc.yaml path and an output directory");
-            const root = projectRoot(args[0]);
-            const out = join(resolve(args[1] ?? join(root, "dist")), "bundle.zip");
+            const root = projectRoot(positionals[0]);
+            const out = join(resolve(positionals[1] ?? join(root, "dist")), "bundle.zip");
             const { exportBundle } = await import("../../engine/src/compiler/export.js");
             writeOut(out, exportBundle(root));
             console.log(out);

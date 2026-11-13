@@ -556,17 +556,76 @@ describe("source-based CLI", () => {
         expect(result.stderr).toHaveBeenCalledWith(expect.stringContaining("unknown command"));
     });
 
-    it("exports sources without executing configuration or plugins", async () => {
+    it.each(["--help", "-h"])("shows export %s without a workspace or output", async (flag) => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-export-help-"));
+        roots.push(root);
+        const result = cli("export", flag);
+        await result.run();
+        expect(result.stdout).toHaveBeenCalledWith(
+            expect.stringContaining("usage: dooc export [dooc.yaml] [out-dir]"),
+        );
+        expect(result.stderr).not.toHaveBeenCalled();
+        expect(result.exit).not.toHaveBeenCalled();
+        expect(readdirSync(root)).toEqual([]);
+    });
+
+    it("shows a valid current manifest in check help", async () => {
+        const result = cli("check", "--help");
+        await result.run();
+        const help = result.stdout.mock.calls[0]?.[0] as string;
+        const example = /dooc.yaml example:\n([\s\S]+?)\n\nChecks:/.exec(help)?.[1];
+        expect(example).toBeDefined();
+        const { parseManifestText } = await import("../../engine/src/compiler/manifest.js");
+        expect(parseManifestText(example?.replace(/^ {2}/gm, "") ?? "")).toMatchObject({
+            format: "nested",
+            defaultLang: "jpn",
+            languages: ["jpn", "eng"],
+            themes: ["light", "dark"],
+            tree: [],
+            errors: [],
+        });
+    });
+
+    it.each([
+        false,
+        true,
+    ])("exports sources without executing configuration or plugins (custom output=%s)", async (custom) => {
         const root = mkdtempSync(join(tmpdir(), "dooc-cli-export-"));
         roots.push(root);
         mkdirSync(join(root, "docs"));
         writeFileSync(join(root, "dooc.yaml"), "center_contents:\n  - file: docs/guide.md\n");
         writeFileSync(join(root, "docs/guide.md"), "![](https://private.example/item)\n");
         writeFileSync(join(root, "docs.config.mjs"), 'throw new Error("Do not execute");');
-        const result = cli("export", join(root, "dooc.yaml"));
+        const out = join(root, custom ? "custom" : "dist");
+        const result = cli("export", join(root, "dooc.yaml"), ...(custom ? [out] : []));
         await result.run();
         expect(result.exit).not.toHaveBeenCalled();
-        expect(readFileSync(join(root, "dist/bundle.zip")).subarray(0, 2).toString()).toBe("PK");
+        expect(readFileSync(join(out, "bundle.zip")).subarray(0, 2).toString()).toBe("PK");
+        expect(result.stdout).toHaveBeenCalledWith(join(out, "bundle.zip"));
+    });
+
+    it.each([
+        "extra",
+        "--unknown",
+    ])("rejects invalid export argument %s before replacing output", async (argument) => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-export-invalid-"));
+        roots.push(root);
+        writeFileSync(join(root, "dooc.yaml"), "center_contents: []\n");
+        const out = join(root, "dist");
+        mkdirSync(out);
+        writeFileSync(join(out, "bundle.zip"), "Previous bundle");
+        const result = cli("export", join(root, "dooc.yaml"), out, argument);
+        await expect(result.run()).rejects.toThrow("CLI exit");
+        expect(result.exit).toHaveBeenCalledWith(1);
+        expect(result.stderr).toHaveBeenCalledWith(
+            expect.stringContaining(
+                argument === "extra"
+                    ? "export accepts a dooc.yaml path and an output directory"
+                    : "Unknown option",
+            ),
+        );
+        expect(result.stdout).not.toHaveBeenCalled();
+        expect(readFileSync(join(out, "bundle.zip"), "utf8")).toBe("Previous bundle");
     });
 
     it("rejects unsupported URL preview options without writing output", async () => {
