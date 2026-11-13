@@ -1,6 +1,6 @@
 {
     "name": "@dooc-dev/dooc",
-    "version": "0.0.7",
+    "version": "0.0.8",
     "description": "View and edit source files with dooc.yaml configuration, and share them as source ZIPs or standalone HTML.",
     "type": "module",
     "files": [
