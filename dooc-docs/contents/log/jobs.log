@@ -1,0 +1,14 @@
+name: Jobs
+category: Job
+format: JSON
+level: Warn
+retention_days: 30
+sink: contents/datastore/search-index.datastore
+contains_personal_data: false
+fields:
+  - timestamp
+  - level
+  - worker
+  - job_id
+  - attempt
+  - message

@@ -1,0 +1,11 @@
+{
+  "name": "Static export review",
+  "status": "Planned",
+  "team": "contents/team/platform.team",
+  "owner": "erin",
+  "target": "2026-12-18",
+  "summary": "Review the standalone HTML and ZIP bundles before the next release.",
+  "docs": [
+    "contents/md/cli.md"
+  ]
+}

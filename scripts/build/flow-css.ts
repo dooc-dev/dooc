@@ -8,7 +8,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const SRC = "@xyflow/react/dist/base.css";
-const OUT = new URL("../../src/core/flow-base-css.generated.ts", import.meta.url);
+const OUT = new URL("../../packages/frontend/src/flow-base-css.generated.ts", import.meta.url);
 
 /** Read the base.css (= structure-only stylesheet) of the installed `@xyflow/react`. */
 export const readXyflowBaseCss = (): string =>

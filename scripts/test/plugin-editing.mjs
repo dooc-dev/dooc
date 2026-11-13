@@ -1,4 +1,4 @@
-import { mountPlugins } from "../../src/viewer/plugins-ui.ts";
+import { mountPlugins } from "../../packages/frontend/src/plugins-ui.ts";
 
 // Bundle with esbuild and run testPluginEditing() in a browser on a local HTTP origin.
 window.testPluginEditing = async () => {

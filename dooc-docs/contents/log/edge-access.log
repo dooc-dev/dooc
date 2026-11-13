@@ -1,0 +1,14 @@
+name: Edge access
+category: Access
+format: JSON
+level: Info
+retention_days: 90
+sink: contents/datastore/log-archive.datastore
+contains_personal_data: true
+fields:
+  - timestamp
+  - client_ip
+  - method
+  - path
+  - status
+  - duration_ms

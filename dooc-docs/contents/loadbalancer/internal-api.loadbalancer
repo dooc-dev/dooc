@@ -1,0 +1,14 @@
+name: Internal API
+scheme: Internal
+layer: L7
+network: contents/vpc/prod-cloud.vpc
+subnet: app
+listeners:
+  - port: 8443
+    protocol: HTTPS
+    target: contents/container/api.container
+    target_port: 8080
+health_check:
+  path: /ready
+  interval_seconds: 5
+logs: contents/log/edge-access.log

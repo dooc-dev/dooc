@@ -1,0 +1,7 @@
+{
+    "name": "@dooc-dev/workspace",
+    "version": "0.0.0",
+    "private": true,
+    "description": "Workspace protocol, its host-neutral server and browser client (the backend that can run on either side).",
+    "type": "module"
+}

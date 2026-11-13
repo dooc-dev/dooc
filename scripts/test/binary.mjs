@@ -28,13 +28,20 @@ try {
     };
     const run = (...args) => execFileSync(binary, args, options);
     assert.match(run("--help"), /usage: dooc/);
+    assert.match(run("self", "docs", "--help"), /GitHub/);
+    assert.equal(existsSync(resolve("dist/dooc-docs")), false);
+    const docsContent = readFileSync("dooc-docs/contents/md/system.md");
+    const executable = readFileSync(binary);
+    assert.ok(docsContent.length > 100);
+    assert.equal(executable.includes(docsContent), false);
+    assert.equal(executable.includes(Buffer.from(docsContent.toString("base64"))), false);
     assert.match(run("init"), /Created/);
     assert.match(readFileSync(join(root, "dooc.yaml"), "utf8"), /center_contents: \[\]/);
     mkdirSync(join(root, "content"));
     writeFileSync(join(root, "dooc.yaml"), "defaultLang: ja\ndocs:\n  - guide\n");
     writeFileSync(
         join(root, "content/guide.md"),
-        "---\ntitle: Guide\n---\n# Hello\n\n```js\nconst x = 1;\n```\n\n```graphth\n[a]: 書く\n[b]: 共有する\n[a] -> [b]\n```\n\n```mermaid\nflowchart LR\n A --> B\n```\n",
+        "# Hello\n\n```js\nconst x = 1;\n```\n\n```graphth\n[a]: 書く\n[b]: 共有する\n[a] -> [b]\n```\n\n```mermaid\nflowchart LR\n A --> B\n```\n",
     );
     run("build", "html", "--url_preview=embed");
     assert.ok(!existsSync(join(root, "dist/bundle.zip")));
@@ -91,33 +98,36 @@ try {
     assert.equal(JSON.parse(replies[4].result.content[0].text).ok, true);
     assert.equal(JSON.parse(replies[5].result.content[0].text).content, "Created after build");
     assert.match(run("mcp", "--help"), /--git-origin/);
-    server = spawn(binary, ["edit", join(root, "dooc.yaml"), "0"], options);
-    let output = "";
-    server.stderr.on("data", (data) => {
-        output += data;
-    });
-    const url = await new Promise((resolveUrl, reject) => {
-        const timer = setTimeout(
-            () => reject(new Error(`Server did not start: ${output}`)),
-            30_000,
-        );
-        server.once("error", (error) => {
-            clearTimeout(timer);
-            reject(error);
-        });
-        server.once("exit", (code) => {
-            clearTimeout(timer);
-            reject(new Error(`Server exited (${code}): ${output}`));
-        });
-        server.stdout.on("data", (data) => {
+    const startServer = async (...args) => {
+        server = spawn(binary, args, options);
+        let output = "";
+        server.stderr.on("data", (data) => {
             output += data;
-            const match = /http:\/\/localhost:\d+\//.exec(output);
-            if (match) {
-                clearTimeout(timer);
-                resolveUrl(match[0].replace("localhost", "127.0.0.1"));
-            }
         });
-    });
+        return await new Promise((resolveUrl, reject) => {
+            const timer = setTimeout(
+                () => reject(new Error(`Server did not start: ${output}`)),
+                30_000,
+            );
+            server.once("error", (error) => {
+                clearTimeout(timer);
+                reject(error);
+            });
+            server.once("exit", (code) => {
+                clearTimeout(timer);
+                reject(new Error(`Server exited (${code}): ${output}`));
+            });
+            server.stdout.on("data", (data) => {
+                output += data;
+                const match = /http:\/\/localhost:\d+\//.exec(output);
+                if (match) {
+                    clearTimeout(timer);
+                    resolveUrl(match[0].replace("localhost", "127.0.0.1"));
+                }
+            });
+        });
+    };
+    const url = await startServer("edit", join(root, "dooc.yaml"), "0");
     for (const path of [
         "guide",
         "assets/edit.js",
@@ -171,7 +181,7 @@ try {
     assert.equal(saved.saved, true);
     assert.equal(readFileSync(translated, "utf8"), saved.raw);
     assert.equal(readFileSync(join(root, "content/guide.md"), "utf8"), source);
-    const external = "---\ntitle: External edit\nlang: eng\n---\n\nChanged outside the editor.\n";
+    const external = "Changed outside the editor.\n";
     writeFileSync(translated, external);
     const conflict = await request("api/save?lang=eng", { ...change, baseRaw: saved.raw });
     assert.equal(conflict.conflict, true);
@@ -190,8 +200,14 @@ try {
     assert.ok(
         (await lint.json()).findings.some((finding) => finding.ruleId === "no-doubled-joshi"),
     );
+    const editorExited = once(server, "exit");
+    server.kill();
+    await editorExited;
+    execFileSync(process.execPath, [resolve("scripts/test/install.mjs"), binary], {
+        stdio: "inherit",
+    });
     console.log(
-        "Standalone CLI, MCP, bundles, Markdown translations, editor assets, and Japanese lint passed (empty PATH).",
+        "Standalone CLI, MCP, bundles, editor assets, Japanese lint, self update, and documentation packaging passed.",
     );
 } finally {
     if (server && server.exitCode === null && server.signalCode === null) {

@@ -45,7 +45,7 @@ export const createSamplePlugin = ({ id = "sample", authorizationUrl, tokenUrl, 
     };
     return {
         id,
-        name: "Service cards",
+        name: "Sample plugin",
         icon: { light: icon("ticket", "#303a4d"), dark: icon("ticket", "#d5dfef") },
         matches,
         oauth: { authorizationUrl, tokenUrl, clientId, clientSecret, scopes: ["read", "write"] },

@@ -1,0 +1,7 @@
+{
+    "name": "@dooc-dev/engine",
+    "version": "0.0.0",
+    "private": true,
+    "description": "Pure dooc analysis engine: parsing, validation, compilation and HTML rendering. Reaches the platform only through src/compiler/host.ts.",
+    "type": "module"
+}

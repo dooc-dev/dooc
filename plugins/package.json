@@ -1,0 +1,33 @@
+{
+    "name": "@dooc-dev/dooc-plugin",
+    "version": "0.0.2",
+    "description": "Plugin authoring types and OAuth helpers for dooc.",
+    "type": "module",
+    "main": "./dist/plugins/index.js",
+    "types": "./dist/plugins/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/plugins/index.d.ts",
+            "default": "./dist/plugins/index.js"
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "engines": {
+        "node": ">=22"
+    },
+    "scripts": {
+        "build": "node -e \"require('node:fs').rmSync('dist', {recursive:true, force:true})\" && tsc -p tsconfig.json",
+        "prepack": "pnpm run build"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/dooc-dev/dooc.git",
+        "directory": "plugins"
+    },
+    "publishConfig": {
+        "registry": "https://registry.npmjs.org",
+        "access": "public"
+    }
+}

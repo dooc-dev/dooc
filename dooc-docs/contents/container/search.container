@@ -1,0 +1,19 @@
+name: Search
+tier: Backend
+runtime: Kubernetes
+image: registry.example.org/fieldnotes/search:1.9.0
+network: contents/vpc/prod-cloud.vpc
+subnet: app
+team: contents/team/platform.team
+resources:
+  cpu: 2
+  memory_mb: 4096
+  disk_gb: 50
+replicas:
+  min: 2
+  max: 2
+ports:
+  - 9200
+depends_on:
+  - contents/datastore/search-index.datastore
+logs: contents/log/application.log

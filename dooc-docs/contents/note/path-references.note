@@ -1,0 +1,15 @@
+title: Records reference each other by path
+kind: Decision
+date: 2026-11-10
+team: contents/team/platform.team
+project: contents/project/record-model.project
+milestone: contents/milestone/five-record-types.milestone
+issues:
+  - contents/issue/share-reference-definitions.issue
+attendees:
+  - dave
+  - erin
+body: |
+  A reference is the project-relative path of the target record.
+  Each schema publishes its own path pattern in $defs/ref; other schemas reuse it with $ref.
+  References point upward only: note -> issue -> milestone -> project -> team.

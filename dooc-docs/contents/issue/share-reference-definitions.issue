@@ -1,0 +1,8 @@
+title: Share reference definitions between schemas
+status: Done
+priority: High
+due: 2026-11-10
+points: 5
+project: contents/project/record-model.project
+milestone: contents/milestone/five-record-types.milestone
+assignee: dave

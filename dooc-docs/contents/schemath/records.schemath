@@ -1,0 +1,41 @@
+team:
+  file: pk
+  name: string
+  focus: enum("Docs"|"Product"|"Platform")
+  lead: string
+  members: json
+
+project:
+  file: pk
+  team: fk(team)
+  name: string
+  status: enum("Planned"|"Active"|"Paused"|"Done")
+  owner: string
+  target: string
+
+milestone:
+  file: pk
+  project: fk(project)
+  name: string
+  state: enum("Open"|"Closed")
+  due: string
+
+issue:
+  file: pk
+  project: fk(project)
+  milestone: fk(milestone)
+  blocked_by: fk[](issue)
+  title: string
+  status: enum("Todo"|"Doing"|"Done")
+  assignee: string
+  due: string
+
+note:
+  file: pk
+  team: fk(team)
+  project: fk(project)
+  milestone: fk(milestone)
+  issues: fk[](issue)
+  title: string
+  kind: enum("Meeting"|"Decision"|"Memo")
+  date: string

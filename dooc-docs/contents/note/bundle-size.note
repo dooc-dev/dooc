@@ -1,0 +1,7 @@
+title: Measure the bundle before the review
+kind: Memo
+date: 2026-11-12
+team: contents/team/platform.team
+project: contents/project/static-export.project
+body: |
+  Measure bundle.html for this workspace before the static export review starts.

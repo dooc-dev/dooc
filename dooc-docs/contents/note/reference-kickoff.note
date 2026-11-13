@@ -1,0 +1,16 @@
+title: Feature reference kickoff
+kind: Meeting
+date: 2026-11-09
+team: contents/team/docs.team
+project: contents/project/feature-reference.project
+milestone: contents/milestone/cheat-sheet-draft.milestone
+issues:
+  - contents/issue/write-cheat-sheet.issue
+  - contents/issue/list-embed-formats.issue
+attendees:
+  - alice
+  - bob
+  - carol
+body: |
+  Start with one page that lists every feature, then give each feature one live example.
+  Bob lists the embed formats once the cheat sheet page exists.

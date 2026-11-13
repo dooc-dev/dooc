@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Log stream",
+  "type": "object",
+  "required": ["name", "category", "format", "level", "retention_days", "sink"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1, "title": "Name" },
+    "category": {
+      "type": "string",
+      "enum": ["Access", "Application", "Job", "Audit"],
+      "title": "Category"
+    },
+    "format": { "type": "string", "enum": ["JSON", "Text"], "title": "Format" },
+    "level": {
+      "type": "string",
+      "enum": ["Debug", "Info", "Warn", "Error"],
+      "title": "Minimum level"
+    },
+    "retention_days": { "type": "integer", "minimum": 1, "title": "Retention (days)" },
+    "sink": {
+      "$ref": "datastore.schema.json#/$defs/ref",
+      "title": "Sink",
+      "description": "Datastore that keeps the stream."
+    },
+    "contains_personal_data": { "type": "boolean", "title": "Personal data" },
+    "fields": {
+      "type": "array",
+      "title": "Fields",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ref": {
+      "title": "Log stream",
+      "description": "Project-relative path of a .log record.",
+      "type": "string",
+      "pattern": "^contents/log/[a-z0-9-]+\\.log$"
+    }
+  },
+  "examples": [
+    {
+      "name": "New log stream",
+      "category": "Application",
+      "format": "JSON",
+      "level": "Info",
+      "retention_days": 30,
+      "sink": "contents/datastore/log-archive.datastore"
+    }
+  ]
+}

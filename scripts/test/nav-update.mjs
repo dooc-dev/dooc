@@ -1,4 +1,4 @@
-import { updateNav } from "../../src/viewer/nav-update.ts";
+import { updateNav } from "../../packages/frontend/src/nav-update.ts";
 
 // Bundle with esbuild and run testNavUpdate() in a browser.
 window.testNavUpdate = () => {

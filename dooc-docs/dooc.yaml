@@ -1,0 +1,189 @@
+system:
+  default_lang: eng
+  files:
+    default_layout: false
+left_sidebar:
+  title:
+    eng: dooc documentation
+  icon:
+    light: contents/svg/_site.svg
+    dark: themes/dark/contents/svg/_site.svg
+center_contents:
+  - file: contents/md/index.md
+    title: Overview
+    icon: contents/svg/icons/overview.svg
+    children:
+      - file: contents/md/install.md
+        title: Install
+        icon: contents/svg/icons/install.svg
+      - file: contents/md/editor.md
+        title: Editor
+        icon: contents/svg/icons/editor.svg
+  - file: contents/md/markdown.md
+    title: Markdown
+    icon: contents/svg/icons/markdown.svg
+  - file: contents/md/blocks.md
+    title: Blocks
+    icon: contents/svg/icons/blocks.svg
+  - file: contents/md/embeds.md
+    title: File embeds
+    icon: contents/svg/icons/embeds.svg
+    children:
+      - file: contents/md/media.md
+        title: Media
+        icon: contents/svg/icons/media.svg
+  - file: contents/md/variants.md
+    title: Variants
+    icon: contents/svg/icons/variants.svg
+  - file: contents/md/subformats.md
+    title: Subformats
+    icon: contents/svg/icons/subformats.svg
+    children:
+      - file: contents/md/records.md
+        title: Linked records
+        icon: contents/svg/icons/records.svg
+      - file: contents/md/ci.md
+        title: CI/CD
+        icon: contents/svg/icons/ci.svg
+      - subformat: team
+        title: Teams
+      - subformat: project
+        title: Projects
+      - subformat: milestone
+        title: Milestones
+      - subformat: issue
+        title: Issues
+      - subformat: note
+        title: Notes
+  - file: contents/md/system.md
+    title: System design
+    icon: contents/svg/icons/system.svg
+    children:
+      - subformat: vpc
+        title: Networks
+      - subformat: loadbalancer
+        title: Load balancers
+      - subformat: container
+        title: Containers
+      - subformat: worker
+        title: Workers
+      - subformat: datastore
+        title: Datastores
+      - subformat: log
+        title: Log streams
+  - file: contents/md/plugins.md
+    title: Plugins
+    icon: contents/svg/icons/plugins.svg
+    children:
+      - file: contents/md/taskapp.md
+        title: TaskApp
+        icon: contents/svg/icons/taskapp.svg
+      - file: contents/md/gitapp.md
+        title: GitApp
+        icon: contents/svg/icons/gitapp.svg
+      - file: contents/md/chatapp.md
+        title: ChatApp
+        icon: contents/svg/icons/chatapp.svg
+      - file: contents/md/plugin-dev.md
+        title: Write a plugin
+        icon: contents/svg/icons/plugin-dev.svg
+  - file: contents/md/manifest.md
+    title: dooc.yaml
+    icon: contents/svg/icons/manifest.svg
+  - file: contents/md/cli.md
+    title: Commands
+    icon: contents/svg/icons/cli.svg
+  - file: contents/md/development.md
+    title: Development
+    icon: contents/svg/icons/system.svg
+    children:
+      - file: contents/md/license-audit.md
+        title: License audit (2026-11-12)
+  - library: termth
+    title: Terms
+json_subformats:
+  - ext: team
+    format: toml
+    schema: contents/json/team.schema.json
+    icon: contents/svg/icons/team.svg
+    layouts:
+      card_title: name
+      group_by: focus
+  - ext: project
+    format: json
+    schema: contents/json/project.schema.json
+    icon: contents/svg/icons/project.svg
+    layouts:
+      card_title: name
+      group_by: status
+      sort_by: target
+  - ext: milestone
+    format: toml
+    schema: contents/json/milestone.schema.json
+    icon: contents/svg/icons/milestone.svg
+    layouts:
+      card_title: name
+      group_by: state
+      sort_by: due
+  - ext: issue
+    format: yaml
+    schema: contents/json/issue.schema.json
+    icon: contents/svg/icons/issue.svg
+    layouts:
+      card_title: title
+      group_by: status
+      sort_by: due
+  - ext: note
+    format: yaml
+    schema: contents/json/note.schema.json
+    icon: contents/svg/icons/note.svg
+    layouts:
+      card_title: title
+      group_by: kind
+      sort_by: date
+      sort_order: desc
+  - ext: vpc
+    format: toml
+    schema: contents/json/vpc.schema.json
+    icon: contents/svg/icons/vpc.svg
+    layouts:
+      card_title: name
+      group_by: provider
+  - ext: loadbalancer
+    format: yaml
+    schema: contents/json/loadbalancer.schema.json
+    icon: contents/svg/icons/loadbalancer.svg
+    layouts:
+      card_title: name
+      group_by: scheme
+  - ext: container
+    format: yaml
+    schema: contents/json/container.schema.json
+    icon: contents/svg/icons/container.svg
+    layouts:
+      card_title: name
+      group_by: runtime
+  - ext: worker
+    format: json
+    schema: contents/json/worker.schema.json
+    icon: contents/svg/icons/worker.svg
+    layouts:
+      card_title: name
+      group_by: trigger
+  - ext: datastore
+    format: toml
+    schema: contents/json/datastore.schema.json
+    icon: contents/svg/icons/datastore.svg
+    layouts:
+      card_title: name
+      group_by: kind
+  - ext: log
+    format: yaml
+    schema: contents/json/log.schema.json
+    icon: contents/svg/icons/log.svg
+    layouts:
+      card_title: name
+      group_by: category
+      sort_by: retention_days
+      sort_order: desc
+default_subformat_folder: contents/issue

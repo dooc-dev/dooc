@@ -1,0 +1,11 @@
+name: On-premise edge
+scheme: Public
+layer: L4
+network: contents/vpc/prod-onprem.vpc
+subnet: dmz
+listeners:
+  - port: 443
+    protocol: TCP
+    target: contents/container/web-onprem.container
+    target_port: 8443
+logs: contents/log/edge-access.log

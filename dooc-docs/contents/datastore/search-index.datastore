@@ -1,0 +1,11 @@
+name = "Search index"
+kind = "Search"
+engine = "OpenSearch 2"
+network = "contents/vpc/prod-cloud.vpc"
+subnet = "data"
+encrypted = true
+
+[resources]
+cpu = 2
+memory_mb = 8192
+disk_gb = 100

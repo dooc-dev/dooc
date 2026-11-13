@@ -1,0 +1,14 @@
+{
+  "name": "Replica lag check",
+  "trigger": "Schedule",
+  "schedule": "*/5 * * * *",
+  "image": "registry.example.org/fieldnotes/jobs:2.4.1",
+  "network": "contents/vpc/prod-onprem.vpc",
+  "subnet": "app",
+  "team": "contents/team/platform.team",
+  "resources": { "cpu": 0.25, "memory_mb": 256 },
+  "concurrency": 1,
+  "timeout_seconds": 60,
+  "depends_on": ["contents/datastore/main-db-replica.datastore"],
+  "logs": "contents/log/jobs.log"
+}

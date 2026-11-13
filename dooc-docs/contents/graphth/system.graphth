@@ -1,0 +1,48 @@
+[user]: Readers and editors
+
+[edge]: Public edge (L7) @cloud-public
+[web]: Web ×2–6 @cloud-app
+[ilb]: Internal API (L7) @cloud-app
+[api]: API ×3–10 @cloud-app
+[search]: Search ×2 @cloud-app
+[render]: Render queue worker @cloud-app
+[indexer]: Search indexer worker @cloud-app
+[export]: Nightly export worker @cloud-app
+[db]: Main database @cloud-data
+[cache]: Session cache @cloud-data
+[queue]: Render jobs queue @cloud-data
+[index]: Search index @cloud-data
+[assets]: Assets @cloud-data
+[archive]: Log archive @cloud-data
+
+[oedge]: On-premise edge (L4) @onprem-dmz
+[oweb]: Web ×2 @onprem-app
+[oapi]: API ×2 @onprem-app
+[lag]: Replica lag check worker @onprem-app
+[odb]: Main database replica @onprem-data
+
+[user] -> [edge]: HTTPS 443
+[edge] -> [web]
+[web] -> [ilb]
+[ilb] -> [api]
+[web] -> [assets]
+[api] -> [db]
+[api] -> [cache]
+[api] -> [search]
+[api] --> [queue]: enqueue
+[queue] --> [render]
+[queue] --> [indexer]
+[render] -> [db]
+[render] -> [assets]
+[indexer] -> [search]
+[search] -> [index]
+[export] -> [db]
+[export] -> [assets]
+
+[user] -> [oedge]: TCP 443
+[oedge] -> [oweb]
+[oweb] -> [oapi]
+[oapi] -> [odb]
+[lag] -> [odb]
+[db] --> [odb]: replication
+[edge] --> [archive]: access log

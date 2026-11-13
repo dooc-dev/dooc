@@ -1,0 +1,15 @@
+{
+  "name": "Feature reference",
+  "status": "Active",
+  "team": "contents/team/docs.team",
+  "owner": "alice",
+  "start": "2026-11-09",
+  "target": "2026-11-27",
+  "summary": "Rebuild this workspace as a cheat sheet that shows every dooc feature once.",
+  "docs": [
+    "contents/md/index.md",
+    "contents/md/markdown.md",
+    "contents/md/embeds.md",
+    "contents/md/manifest.md"
+  ]
+}

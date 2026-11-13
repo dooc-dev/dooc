@@ -1,4 +1,0 @@
-Theme: light
-Surface: #ffffff
-Text: #263244
-Accent: #5e66cd

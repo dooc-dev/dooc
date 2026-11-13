@@ -1,8 +1,8 @@
 import { undo } from "@codemirror/commands";
 import { EditorView } from "@codemirror/view";
-import { parseSubformatRecord } from "../../src/core/subformat-record.ts";
-import { subformatForm } from "../../src/viewer/edit-subformat-form.ts";
-import { createTextfileEditors } from "../../src/viewer/edit-textfile.ts";
+import { parseSubformatRecord } from "../../packages/engine/src/core/subformat-record.ts";
+import { subformatForm } from "../../packages/frontend/src/edit-subformat-form.ts";
+import { createTextfileEditors } from "../../packages/frontend/src/edit-textfile.ts";
 
 // Bundle with esbuild and run testSubformatForm() in a browser on a local HTTP origin.
 window.testSubformatForm = async () => {
@@ -92,6 +92,26 @@ window.testSubformatForm = async () => {
                 assert(
                     field("title").value === "Original" && field("locked").disabled,
                     "Values, labels and read-only fields follow the schema",
+                );
+                const titleGroup = field("title").closest("fieldset");
+                const titleLabel = titleGroup.querySelector("legend label");
+                assert(
+                    titleLabel.control === field("title") && titleLabel.textContent === "Title *",
+                    "Field names label their inputs from the border legend",
+                );
+                const legend = titleLabel.parentElement.getBoundingClientRect();
+                const group = titleGroup.getBoundingClientRect();
+                const input = field("title").getBoundingClientRect();
+                assert(
+                    legend.top <= group.top &&
+                        legend.bottom > group.top &&
+                        input.top >= legend.bottom,
+                    "Field names overlap the top border without covering the value",
+                );
+                titleLabel.click();
+                assert(
+                    document.activeElement === field("title"),
+                    "Clicking a field name focuses its input",
                 );
                 mode().click();
                 assert(

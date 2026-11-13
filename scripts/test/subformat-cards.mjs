@@ -1,9 +1,9 @@
-import { mountSelectPickers } from "../../src/viewer/language-picker.ts";
+import { mountSelectPickers } from "../../packages/frontend/src/language-picker.ts";
 import {
     mountResourceLibrary,
     restoreResourceFilters,
-} from "../../src/viewer/resource-library-ui.ts";
-import { filterSubformats, hasSubformatDraft } from "../../src/viewer/subformats-ui.ts";
+} from "../../packages/frontend/src/resource-library-ui.ts";
+import { filterSubformats, hasSubformatDraft } from "../../packages/frontend/src/subformats-ui.ts";
 
 // Bundle with esbuild and run testSubformatCards() on a local HTTP origin with viewer styles.
 window.testSubformatCards = async () => {
@@ -35,7 +35,7 @@ window.testSubformatCards = async () => {
             {
                 file: "card.issue",
                 references: [
-                    { file: "guide.md", line: 4 },
+                    { file: "guide.md", line: 4, href: "/_docs/guide.md" },
                     { file: "notes.md", line: 12 },
                 ],
                 content: "original",
@@ -324,6 +324,8 @@ window.testSubformatCards = async () => {
         chooseTitle("");
         assert(title().textContent === "card.issue", "The file name is an explicit title choice");
         chooseTitle("due");
+        root.dataset.subformatPage = "issue";
+        filterSubformats(root, []);
         const toolOrder = [...card().querySelector(".subformat-card-tools").children].map(
             (element) => element.className,
         );
@@ -337,6 +339,7 @@ window.testSubformatCards = async () => {
             "Cards show their body reference count",
         );
         const referenceButton = card().querySelector(".subformat-card-references");
+        assert(!referenceButton.hidden, "Sidebar subformat pages show reference counts");
         const referenceList = card().querySelector(".subformat-reference-list");
         referenceButton.click();
         await wait(() => referenceList.matches(":popover-open"));
@@ -349,6 +352,10 @@ window.testSubformatCards = async () => {
             "The dropdown lists every reference",
         );
         const sourceLink = referenceList.querySelector("a");
+        assert(
+            sourceLink.getAttribute("href") === "/_docs/guide.md",
+            "References link to their document in read-only views",
+        );
         assert(sourceLink.textContent === "guide.mdL4", "References identify the file and line");
         assert(!sourceLink.draggable, "Reference links do not start native URL drags");
         sourceLink.click();
@@ -361,6 +368,7 @@ window.testSubformatCards = async () => {
             "Selecting a reference closes the dropdown",
         );
         opened = undefined;
+        delete root.dataset.subformatPage;
         card().querySelector(".subformat-card-toggle").click();
         assert(!details().hidden, "The arrow expands details");
         assert(!opened, "Expanding a card does not open the editor");
@@ -880,6 +888,16 @@ window.testSubformatCards = async () => {
         registration.querySelector("[data-cancel]").click();
         document.body.classList.remove("edit");
         root = createRoot(false);
+        const publishedPage = document.createElement("template");
+        publishedPage.dataset.route = "_docs/guide.md";
+        host.append(publishedPage);
+        filterSubformats(root, []);
+        assert(
+            card().querySelector(".subformat-reference-list a").getAttribute("href") ===
+                "#/_docs/guide.md",
+            "Published reference links use the bundle's document routes",
+        );
+        publishedPage.remove();
         assert(
             !root.querySelector("[data-subformat-create]"),
             "Read-only boards do not offer Create",

@@ -1,0 +1,15 @@
+name: API (staging)
+tier: Backend
+runtime: Managed containers
+image: registry.example.org/fieldnotes/api:2.5.0-rc1
+network: contents/vpc/staging-cloud.vpc
+subnet: app
+team: contents/team/platform.team
+resources:
+  cpu: 0.25
+  memory_mb: 256
+replicas:
+  min: 0
+  max: 1
+ports:
+  - 8080

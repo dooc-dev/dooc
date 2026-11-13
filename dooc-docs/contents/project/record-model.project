@@ -1,0 +1,13 @@
+{
+  "name": "Record model",
+  "status": "Active",
+  "team": "contents/team/platform.team",
+  "owner": "dave",
+  "start": "2026-11-02",
+  "target": "2026-12-11",
+  "summary": "Connect team, project, milestone, issue and note records through shared schema definitions.",
+  "docs": [
+    "contents/md/subformats.md",
+    "contents/md/records.md"
+  ]
+}

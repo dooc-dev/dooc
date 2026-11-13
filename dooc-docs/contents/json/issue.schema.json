@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Issue",
+  "type": "object",
+  "required": ["title", "status", "due", "project"],
+  "properties": {
+    "title": { "type": "string", "minLength": 1, "title": "Title" },
+    "status": { "type": "string", "enum": ["Todo", "Doing", "Done"], "title": "Status" },
+    "priority": { "type": "string", "enum": ["Low", "Normal", "High"], "title": "Priority" },
+    "due": { "type": "string", "format": "date", "title": "Due date" },
+    "points": { "type": "integer", "minimum": 0, "title": "Points" },
+    "project": { "$ref": "project.schema.json#/$defs/ref" },
+    "milestone": { "$ref": "milestone.schema.json#/$defs/ref" },
+    "assignee": { "$ref": "team.schema.json#/$defs/member_id", "title": "Assignee" },
+    "blocked_by": {
+      "type": "array",
+      "title": "Blocked by",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/ref" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ref": {
+      "title": "Issue",
+      "description": "Project-relative path of an .issue record.",
+      "type": "string",
+      "pattern": "^contents/issue/[a-z0-9-]+\\.issue$"
+    }
+  },
+  "examples": [
+    {
+      "title": "New issue",
+      "status": "Todo",
+      "priority": "Normal",
+      "due": "2026-11-30",
+      "project": "contents/project/feature-reference.project"
+    }
+  ]
+}

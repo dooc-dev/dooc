@@ -1,0 +1,10 @@
+title: List every embed format with one example
+status: Doing
+priority: Normal
+due: 2026-11-17
+points: 2
+project: contents/project/feature-reference.project
+milestone: contents/milestone/cheat-sheet-draft.milestone
+assignee: bob
+blocked_by:
+  - contents/issue/write-cheat-sheet.issue

@@ -7,6 +7,7 @@ import {
     mkdtempSync,
     readFileSync,
     rmSync,
+    symlinkSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -55,8 +56,8 @@ cp "$DOOC_TEST_RELEASES/\${url##*/}" "$dest"
     );
     chmodSync(join(mocks, "uname"), 0o755);
     chmodSync(join(mocks, "curl"), 0o755);
-    const install = (env = {}) =>
-        spawnSync("sh", [installer], {
+    const install = (env = {}, binary) =>
+        spawnSync(binary ?? "sh", binary ? ["self", "update"] : [installer], {
             cwd: root,
             encoding: "utf8",
             env: {
@@ -86,12 +87,38 @@ cp "$DOOC_TEST_RELEASES/\${url##*/}" "$dest"
         readFileSync(join(root, "downloads"), "utf8"),
         /download\/dooc-v1\.2\.3\/dooc-darwin-arm64\.tar\.gz/,
     );
+    const renamed = join(installDir, "renamed-dooc");
+    writeFileSync(renamed, "previous executable");
+    result = install({ DOOC_INSTALL_PATH: renamed });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(execFileSync(renamed, { encoding: "utf8" }), "fixture\n");
+    const selfBinary = process.argv[2] ? join(installDir, "self-dooc") : undefined;
+    if (selfBinary) {
+        copyFileSync(resolve(process.argv[2]), selfBinary);
+        chmodSync(selfBinary, 0o755);
+        const link = join(root, "dooc-link");
+        symlinkSync(selfBinary, link);
+        result = install({ DOOC_VERSION: "0.0.1" }, link);
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(execFileSync(link, { encoding: "utf8" }), "fixture\n");
+        copyFileSync(resolve(process.argv[2]), selfBinary);
+    }
     writeFileSync(join(installDir, "dooc"), "keep previous installation");
     writeFileSync(archive, "corrupted download");
     result = install();
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /Checksum mismatch/);
     assert.equal(readFileSync(join(installDir, "dooc"), "utf8"), "keep previous installation");
+    writeFileSync(renamed, "keep renamed executable");
+    result = install({ DOOC_INSTALL_PATH: renamed });
+    assert.notEqual(result.status, 0);
+    assert.equal(readFileSync(renamed, "utf8"), "keep renamed executable");
+    if (selfBinary) {
+        result = install({}, selfBinary);
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /Checksum mismatch/);
+        assert.deepEqual(readFileSync(selfBinary), readFileSync(resolve(process.argv[2])));
+    }
     assert.notEqual(install({ DOOC_TEST_FAIL: "1" }).status, 0);
     assert.notEqual(install({ DOOC_TEST_OS: "FreeBSD" }).status, 0);
     assert.notEqual(install({ DOOC_TEST_ARCH: "riscv64" }).status, 0);

@@ -1,0 +1,18 @@
+name: Public edge
+scheme: Public
+layer: L7
+network: contents/vpc/prod-cloud.vpc
+subnet: public
+listeners:
+  - port: 443
+    protocol: HTTPS
+    target: contents/container/web.container
+    target_port: 8080
+  - port: 80
+    protocol: HTTP
+    target: contents/container/web.container
+    target_port: 8080
+health_check:
+  path: /healthz
+  interval_seconds: 10
+logs: contents/log/edge-access.log

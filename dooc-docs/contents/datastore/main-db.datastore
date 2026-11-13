@@ -1,0 +1,12 @@
+name = "Main database"
+kind = "Relational"
+engine = "PostgreSQL 17"
+network = "contents/vpc/prod-cloud.vpc"
+subnet = "data"
+backup_retention_days = 35
+encrypted = true
+
+[resources]
+cpu = 4
+memory_mb = 16384
+disk_gb = 200

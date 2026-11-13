@@ -1,0 +1,17 @@
+{
+  "name": "Render queue",
+  "trigger": "Queue",
+  "source": "contents/datastore/render-jobs.datastore",
+  "image": "registry.example.org/fieldnotes/jobs:2.4.1",
+  "network": "contents/vpc/prod-cloud.vpc",
+  "subnet": "app",
+  "team": "contents/team/platform.team",
+  "resources": { "cpu": 1, "memory_mb": 2048 },
+  "concurrency": 4,
+  "timeout_seconds": 300,
+  "depends_on": [
+    "contents/datastore/main-db.datastore",
+    "contents/datastore/assets.datastore"
+  ],
+  "logs": "contents/log/jobs.log"
+}

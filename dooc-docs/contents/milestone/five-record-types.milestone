@@ -1,0 +1,6 @@
+name = "Five record types"
+state = "Closed"
+project = "contents/project/record-model.project"
+owner = "dave"
+due = "2026-11-13"
+goal = "Team, project, milestone, issue and note schemas reference each other."

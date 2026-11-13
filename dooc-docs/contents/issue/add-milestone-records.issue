@@ -1,0 +1,10 @@
+title: Add milestone records between project and issue
+status: Done
+priority: Normal
+due: 2026-11-13
+points: 3
+project: contents/project/record-model.project
+milestone: contents/milestone/five-record-types.milestone
+assignee: erin
+blocked_by:
+  - contents/issue/share-reference-definitions.issue

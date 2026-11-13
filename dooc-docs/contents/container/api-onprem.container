@@ -1,0 +1,18 @@
+name: API (on-premise)
+tier: Backend
+runtime: Docker host
+image: registry.example.org/fieldnotes/api:2.4.1
+network: contents/vpc/prod-onprem.vpc
+subnet: app
+team: contents/team/platform.team
+resources:
+  cpu: 2
+  memory_mb: 2048
+replicas:
+  min: 2
+  max: 2
+ports:
+  - 8080
+depends_on:
+  - contents/datastore/main-db-replica.datastore
+logs: contents/log/application.log

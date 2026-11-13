@@ -1,0 +1,12 @@
+name: Audit
+category: Audit
+format: JSON
+level: Info
+retention_days: 400
+sink: contents/datastore/log-archive.datastore
+contains_personal_data: true
+fields:
+  - timestamp
+  - actor
+  - action
+  - target

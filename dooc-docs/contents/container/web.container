@@ -1,0 +1,19 @@
+name: Web
+tier: Frontend
+runtime: Kubernetes
+image: registry.example.org/fieldnotes/web:2.4.1
+network: contents/vpc/prod-cloud.vpc
+subnet: app
+team: contents/team/docs.team
+resources:
+  cpu: 0.5
+  memory_mb: 512
+replicas:
+  min: 2
+  max: 6
+ports:
+  - 8080
+depends_on:
+  - contents/container/api.container
+  - contents/datastore/assets.datastore
+logs: contents/log/application.log

@@ -1,5 +1,8 @@
-import { deferredFigureHtml, mountFigurePreviews } from "../../src/viewer/figure-preview.ts";
-import { mountPlugins } from "../../src/viewer/plugins-ui.ts";
+import {
+    deferredFigureHtml,
+    mountFigurePreviews,
+} from "../../packages/frontend/src/figure-preview.ts";
+import { mountPlugins } from "../../packages/frontend/src/plugins-ui.ts";
 
 // Bundle with esbuild and run testViewLoading() in a browser on a local HTTP origin.
 window.testViewLoading = async () => {

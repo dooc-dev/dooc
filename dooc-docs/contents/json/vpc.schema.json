@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Network",
+  "type": "object",
+  "required": ["name", "provider", "environment", "location", "cidr", "subnets"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1, "title": "Name" },
+    "provider": { "$ref": "runtime.schema.json#/$defs/provider" },
+    "environment": { "$ref": "runtime.schema.json#/$defs/environment" },
+    "location": { "type": "string", "minLength": 1, "title": "Region or site" },
+    "cidr": { "$ref": "runtime.schema.json#/$defs/cidr" },
+    "team": { "$ref": "team.schema.json#/$defs/ref" },
+    "subnets": {
+      "type": "array",
+      "title": "Subnets",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "cidr", "tier"],
+        "properties": {
+          "name": { "$ref": "#/$defs/subnet_name" },
+          "cidr": { "$ref": "runtime.schema.json#/$defs/cidr" },
+          "tier": { "type": "string", "enum": ["Public", "Application", "Data"] },
+          "zone": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "peers": {
+      "type": "array",
+      "title": "Peered networks",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/ref" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ref": {
+      "title": "Network",
+      "description": "Project-relative path of a .vpc record.",
+      "type": "string",
+      "pattern": "^contents/vpc/[a-z0-9-]+\\.vpc$"
+    },
+    "subnet_name": {
+      "title": "Subnet",
+      "description": "Subnet name as listed in a network's subnets.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    }
+  },
+  "examples": [
+    {
+      "name": "New network",
+      "provider": "Cloud",
+      "environment": "Development",
+      "location": "region-1",
+      "cidr": "10.0.0.0/16",
+      "subnets": [{ "name": "app", "cidr": "10.0.1.0/24", "tier": "Application" }]
+    }
+  ]
+}

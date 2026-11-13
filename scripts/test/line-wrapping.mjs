@@ -1,5 +1,5 @@
 import { EditorView } from "@codemirror/view";
-import { editorSetup } from "../../src/viewer/edit-setup.ts";
+import { editorSetup } from "../../packages/frontend/src/edit-setup.ts";
 
 // Bundle with esbuild and run testLineWrapping() on a fresh edit page.
 window.testLineWrapping = async () => {

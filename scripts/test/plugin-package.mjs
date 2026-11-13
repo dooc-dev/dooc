@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { isPluginError, PluginError } from "../../src/plugins/oauth.ts";
-import { createPluginRuntime } from "../../src/plugins/runtime.ts";
+import { createPluginRuntime } from "../../packages/server/src/plugins/runtime.ts";
+import { isPluginError, PluginError } from "../../plugins/src/oauth.ts";
 
 const root = resolve(import.meta.dirname, "../..");
-const manifest = JSON.parse(readFileSync(join(root, "packages/dooc-plugin/package.json"), "utf8"));
+const manifest = JSON.parse(readFileSync(join(root, "plugins/package.json"), "utf8"));
 assert.equal(manifest.name, "@dooc-dev/dooc-plugin");
 assert.deepEqual(manifest.publishConfig, {
     registry: "https://registry.npmjs.org",
@@ -16,9 +16,24 @@ assert.deepEqual(manifest.publishConfig, {
 });
 const output = join(root, "build/packages");
 const consumer = mkdtempSync(join(tmpdir(), "dooc-plugin-consumer-"));
+const standalone = mkdtempSync(join(tmpdir(), "dooc-plugin-source-"));
 const cache = join(tmpdir(), "dooc-plugin-npm-cache");
 const originalFetch = globalThis.fetch;
 try {
+    for (const path of ["src", "package.json", "tsconfig.json"]) {
+        cpSync(join(root, "plugins", path), join(standalone, path), { recursive: true });
+    }
+    execFileSync(
+        process.execPath,
+        [
+            join(root, "node_modules/typescript/bin/tsc"),
+            "-p",
+            ".",
+            "--typeRoots",
+            join(root, "node_modules/@types"),
+        ],
+        { cwd: standalone, stdio: "inherit" },
+    );
     execFileSync("pnpm", ["run", "build:plugin"], { cwd: root, stdio: "inherit" });
     mkdirSync(output, { recursive: true });
     const [packed] = JSON.parse(
@@ -26,7 +41,7 @@ try {
             "npm",
             [
                 "pack",
-                "./packages/dooc-plugin",
+                "./plugins",
                 "--ignore-scripts",
                 "--json",
                 "--pack-destination",
@@ -174,4 +189,5 @@ export default plugin;
 } finally {
     globalThis.fetch = originalFetch;
     rmSync(consumer, { recursive: true, force: true });
+    rmSync(standalone, { recursive: true, force: true });
 }

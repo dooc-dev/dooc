@@ -1,9 +1,0 @@
-authors:
-  id: pk
-  name: string
-
-documents:
-  id: pk
-  author_id: fk(authors)
-  title: string
-  published: bool

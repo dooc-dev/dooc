@@ -1,0 +1,6 @@
+name = "Render jobs"
+kind = "Queue"
+engine = "NATS JetStream"
+network = "contents/vpc/prod-cloud.vpc"
+subnet = "data"
+encrypted = true

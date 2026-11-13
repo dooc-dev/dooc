@@ -1,0 +1,13 @@
+name = "Main database replica"
+kind = "Relational"
+engine = "PostgreSQL 17"
+network = "contents/vpc/prod-onprem.vpc"
+subnet = "data"
+replica_of = "contents/datastore/main-db.datastore"
+backup_retention_days = 7
+encrypted = true
+
+[resources]
+cpu = 4
+memory_mb = 16384
+disk_gb = 200

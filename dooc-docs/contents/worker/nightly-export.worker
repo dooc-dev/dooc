@@ -1,0 +1,17 @@
+{
+  "name": "Nightly export",
+  "trigger": "Schedule",
+  "schedule": "0 18 * * *",
+  "image": "registry.example.org/fieldnotes/jobs:2.4.1",
+  "network": "contents/vpc/prod-cloud.vpc",
+  "subnet": "app",
+  "team": "contents/team/docs.team",
+  "resources": { "cpu": 2, "memory_mb": 4096, "disk_gb": 20 },
+  "concurrency": 1,
+  "timeout_seconds": 3600,
+  "depends_on": [
+    "contents/datastore/main-db.datastore",
+    "contents/datastore/assets.datastore"
+  ],
+  "logs": "contents/log/jobs.log"
+}

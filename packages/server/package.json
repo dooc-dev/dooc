@@ -1,0 +1,7 @@
+{
+    "name": "@dooc-dev/server",
+    "version": "0.0.0",
+    "private": true,
+    "description": "Node side: CLI, MCP server, dev server, Git, plugin runtime.",
+    "type": "module"
+}

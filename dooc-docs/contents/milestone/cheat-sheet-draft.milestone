@@ -1,0 +1,6 @@
+name = "Cheat sheet draft"
+state = "Open"
+project = "contents/project/feature-reference.project"
+owner = "alice"
+due = "2026-11-20"
+goal = "Every feature has one row in the cheat sheet and one live example."

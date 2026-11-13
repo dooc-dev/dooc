@@ -1,13 +1,13 @@
 import { undo } from "@codemirror/commands";
 import { EditorView } from "@codemirror/view";
-import { SUBFORMAT_SCHEMA_TEMPLATE } from "../../src/core/subformats.ts";
-import { jsonEditor } from "../../src/viewer/edit-json.ts";
+import { SUBFORMAT_SCHEMA_TEMPLATE } from "../../packages/engine/src/core/subformats.ts";
+import { jsonEditor } from "../../packages/frontend/src/edit-json.ts";
 import {
     hasSchemaBuilderDraft,
     prepareSchemaBuilder,
-} from "../../src/viewer/edit-schema-builder.ts";
-import { editorSetup } from "../../src/viewer/edit-setup.ts";
-import { createTextfileEditors } from "../../src/viewer/edit-textfile.ts";
+} from "../../packages/frontend/src/edit-schema-builder.ts";
+import { editorSetup } from "../../packages/frontend/src/edit-setup.ts";
+import { createTextfileEditors } from "../../packages/frontend/src/edit-textfile.ts";
 
 window.testSchemaBuilder = async () => {
     const assert = (value, message) => {

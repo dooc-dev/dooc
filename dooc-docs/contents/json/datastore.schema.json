@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Datastore",
+  "type": "object",
+  "required": ["name", "kind", "engine", "network"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1, "title": "Name" },
+    "kind": {
+      "type": "string",
+      "enum": ["Relational", "Cache", "Object", "Queue", "Search"],
+      "title": "Kind"
+    },
+    "engine": { "type": "string", "minLength": 1, "title": "Engine" },
+    "network": { "$ref": "vpc.schema.json#/$defs/ref" },
+    "subnet": { "$ref": "vpc.schema.json#/$defs/subnet_name" },
+    "resources": { "$ref": "runtime.schema.json#/$defs/resources" },
+    "replica_of": { "$ref": "#/$defs/ref", "title": "Replica of" },
+    "backup_retention_days": { "type": "integer", "minimum": 0, "title": "Backup retention (days)" },
+    "encrypted": { "type": "boolean", "title": "Encrypted at rest" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ref": {
+      "title": "Datastore",
+      "description": "Project-relative path of a .datastore record.",
+      "type": "string",
+      "pattern": "^contents/datastore/[a-z0-9-]+\\.datastore$"
+    }
+  },
+  "examples": [
+    {
+      "name": "New datastore",
+      "kind": "Relational",
+      "engine": "PostgreSQL 17",
+      "network": "contents/vpc/prod-cloud.vpc",
+      "encrypted": true
+    }
+  ]
+}

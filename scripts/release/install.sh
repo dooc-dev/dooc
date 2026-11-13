@@ -46,18 +46,19 @@ install_dooc() {
     fi
     tar -xzf "$temp/$asset" -C "$temp" dooc
     [ -f "$temp/dooc" ] && [ ! -L "$temp/dooc" ]
-    install_dir=${DOOC_INSTALL_DIR:-"$HOME/.local/bin"}
-    if [ -d "$install_dir/dooc" ]; then
-        echo "$install_dir/dooc is a directory." >&2
+    install_path=${DOOC_INSTALL_PATH:-"${DOOC_INSTALL_DIR:-"$HOME/.local/bin"}/dooc"}
+    install_dir=$(dirname "$install_path")
+    if [ -d "$install_path" ]; then
+        echo "$install_path is a directory." >&2
         exit 1
     fi
     mkdir -p "$install_dir"
     staged=$(mktemp "$install_dir/.dooc.XXXXXX")
     cp "$temp/dooc" "$staged"
     chmod 755 "$staged"
-    mv -f "$staged" "$install_dir/dooc"
+    mv -f "$staged" "$install_path"
     staged=
-    echo "Installed dooc to $install_dir/dooc"
+    echo "Installed dooc to $install_path"
     case ":$PATH:" in
         *":$install_dir:"*) ;;
         *) echo "Add $install_dir to PATH to run dooc." ;;

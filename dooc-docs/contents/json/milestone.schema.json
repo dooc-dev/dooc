@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Milestone",
+  "type": "object",
+  "required": ["name", "state", "project", "due"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1, "title": "Name" },
+    "state": { "type": "string", "enum": ["Open", "Closed"], "title": "State" },
+    "project": { "$ref": "project.schema.json#/$defs/ref" },
+    "owner": { "$ref": "team.schema.json#/$defs/member_id", "title": "Owner" },
+    "due": { "type": "string", "format": "date", "title": "Due date" },
+    "goal": { "type": "string", "title": "Goal" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ref": {
+      "title": "Milestone",
+      "description": "Project-relative path of a .milestone record.",
+      "type": "string",
+      "pattern": "^contents/milestone/[a-z0-9-]+\\.milestone$"
+    }
+  },
+  "examples": [
+    {
+      "name": "New milestone",
+      "state": "Open",
+      "project": "contents/project/feature-reference.project",
+      "due": "2026-12-18"
+    }
+  ]
+}

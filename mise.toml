@@ -9,8 +9,8 @@ bun = "1.4.4"
 
 # The manifest selects the project root. Relative paths use the invocation directory.
 [vars]
-resolve_manifest = 'r="$(if [ -n "$usage_manifest" ]; then cd "$MISE_ORIGINAL_CWD" && realpath -e "$usage_manifest"; else realpath -e sample/dooc.yaml; fi)"'
-viewer_plugins = 'if [ "$r" = "$(realpath -e sample/dooc.yaml)" ]; then export DOOC_VIEWER_PLUGINS="${DOOC_VIEWER_PLUGINS:-$PWD/examples/viewer-plugins/index.mjs}"; fi'
+resolve_manifest = 'r="$(if [ -n "$usage_manifest" ]; then cd "$MISE_ORIGINAL_CWD" && realpath -e "$usage_manifest"; else realpath -e dooc-docs/dooc.yaml; fi)"'
+viewer_plugins = 'if [ "$r" = "$(realpath -e dooc-docs/dooc.yaml)" ]; then export DOOC_VIEWER_PLUGINS="${DOOC_VIEWER_PLUGINS:-$PWD/examples/viewer-plugins/index.mjs}"; fi'
 
 [tasks.dev]
 description = "Start edit or view with hot reload and sample demo plugins. e.g. mise run dev view ../my-docs/dooc.yaml 5179"
@@ -21,13 +21,21 @@ arg "[mode]" default="edit" {
 arg "[manifest]" default=""
 arg "[port]" default="5179"
 '''
-run = '{{vars.resolve_manifest}} && {{vars.viewer_plugins}} && pnpm exec tsx watch --clear-screen=false src/cli.ts "$usage_mode" "$r" "$usage_port"'
+run = '{{vars.resolve_manifest}} && {{vars.viewer_plugins}} && pnpm run dev "$usage_mode" "$r" "$usage_port"'
 
 [tasks.dooc]
-description = "Run dooc from local source. e.g. mise run dooc edit sample/dooc.yaml"
+description = "Run dooc from local source. e.g. mise run dooc edit dooc-docs/dooc.yaml"
 raw_args = true
 dir = "{{cwd}}"
-run = '"{{config_root}}/node_modules/.bin/tsx" "{{config_root}}/src/cli.ts"'
+# The package.json script owns the entry path and keeps the caller's directory.
+run = 'pnpm --silent --dir "{{config_root}}" run dooc'
+
+[tasks.packed]
+description = "Build, then run the package the way an npm install would (packed files, bin entry). e.g. mise run packed edit dooc-docs/dooc.yaml"
+raw_args = true
+dir = "{{cwd}}"
+# The cache is disabled so every run installs the files that were just built.
+run = 'pnpm --silent --dir "{{config_root}}" run build >&2 && pnpm --silent --config.dlx-cache-max-age=0 dlx "file:{{config_root}}"'
 
 [tasks.release]
 description = "Bump and publish dooc or dooc-plugin through GitHub Actions"

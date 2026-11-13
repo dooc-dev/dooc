@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Container",
+  "type": "object",
+  "required": ["name", "tier", "runtime", "image", "network", "resources", "replicas"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1, "title": "Name" },
+    "tier": { "type": "string", "enum": ["Frontend", "Backend"], "title": "Tier" },
+    "runtime": {
+      "type": "string",
+      "enum": ["Kubernetes", "Managed containers", "Docker host"],
+      "title": "Runtime"
+    },
+    "image": { "$ref": "runtime.schema.json#/$defs/image" },
+    "network": { "$ref": "vpc.schema.json#/$defs/ref" },
+    "subnet": { "$ref": "vpc.schema.json#/$defs/subnet_name" },
+    "team": { "$ref": "team.schema.json#/$defs/ref" },
+    "resources": { "$ref": "runtime.schema.json#/$defs/resources" },
+    "replicas": { "$ref": "runtime.schema.json#/$defs/replicas" },
+    "ports": {
+      "type": "array",
+      "title": "Ports",
+      "uniqueItems": true,
+      "items": { "$ref": "runtime.schema.json#/$defs/port" }
+    },
+    "depends_on": {
+      "type": "array",
+      "title": "Depends on",
+      "uniqueItems": true,
+      "items": { "$ref": "runtime.schema.json#/$defs/dependency" }
+    },
+    "logs": { "$ref": "log.schema.json#/$defs/ref" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ref": {
+      "title": "Container",
+      "description": "Project-relative path of a .container record.",
+      "type": "string",
+      "pattern": "^contents/container/[a-z0-9-]+\\.container$"
+    }
+  },
+  "examples": [
+    {
+      "name": "New container",
+      "tier": "Backend",
+      "runtime": "Kubernetes",
+      "image": "registry.example.org/fieldnotes/service:1.0.0",
+      "network": "contents/vpc/prod-cloud.vpc",
+      "resources": { "cpu": 0.5, "memory_mb": 512 },
+      "replicas": { "min": 1, "max": 2 }
+    }
+  ]
+}

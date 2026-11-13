@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Team",
+  "type": "object",
+  "required": ["name", "focus", "lead", "members"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1, "title": "Name" },
+    "focus": { "type": "string", "enum": ["Docs", "Product", "Platform"], "title": "Focus" },
+    "lead": { "$ref": "#/$defs/member_id", "title": "Lead" },
+    "contact": { "type": "string", "format": "email", "title": "Contact" },
+    "members": {
+      "type": "array",
+      "title": "Members",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "role"],
+        "properties": {
+          "id": { "$ref": "#/$defs/member_id" },
+          "name": { "type": "string", "minLength": 1 },
+          "role": { "type": "string", "enum": ["Writer", "Engineer", "Designer", "Reviewer"] }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ref": {
+      "title": "Team",
+      "description": "Project-relative path of a .team record.",
+      "type": "string",
+      "pattern": "^contents/team/[a-z0-9-]+\\.team$"
+    },
+    "member_id": {
+      "title": "Member",
+      "description": "Member id as listed in a team's members.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    }
+  },
+  "examples": [
+    {
+      "name": "New team",
+      "focus": "Docs",
+      "lead": "alice",
+      "members": [{ "id": "alice", "name": "Alice", "role": "Writer" }]
+    }
+  ]
+}

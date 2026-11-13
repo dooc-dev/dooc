@@ -1,0 +1,11 @@
+name = "Staging cloud"
+provider = "Cloud"
+environment = "Staging"
+location = "region-east-1"
+cidr = "10.30.0.0/16"
+team = "contents/team/platform.team"
+
+[[subnets]]
+name = "app"
+cidr = "10.30.10.0/24"
+tier = "Application"

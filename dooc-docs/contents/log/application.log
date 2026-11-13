@@ -1,0 +1,13 @@
+name: Application
+category: Application
+format: JSON
+level: Info
+retention_days: 30
+sink: contents/datastore/search-index.datastore
+contains_personal_data: false
+fields:
+  - timestamp
+  - level
+  - service
+  - trace_id
+  - message

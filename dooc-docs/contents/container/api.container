@@ -1,0 +1,22 @@
+name: API
+tier: Backend
+runtime: Kubernetes
+image: registry.example.org/fieldnotes/api:2.4.1
+network: contents/vpc/prod-cloud.vpc
+subnet: app
+team: contents/team/platform.team
+resources:
+  cpu: 1
+  memory_mb: 1024
+replicas:
+  min: 3
+  max: 10
+ports:
+  - 8080
+  - 9090
+depends_on:
+  - contents/datastore/main-db.datastore
+  - contents/datastore/session-cache.datastore
+  - contents/datastore/render-jobs.datastore
+  - contents/container/search.container
+logs: contents/log/application.log

@@ -1,6 +1,6 @@
 import { EditorView, ViewPlugin } from "@codemirror/view";
-import { gitBaseState } from "../../src/viewer/edit-git-diff.ts";
-import { createTextfileEditors } from "../../src/viewer/edit-textfile.ts";
+import { gitBaseState } from "../../packages/frontend/src/edit-git-diff.ts";
+import { createTextfileEditors } from "../../packages/frontend/src/edit-textfile.ts";
 
 // Bundle with esbuild and run testCodeEditing() in a browser on a local HTTP origin.
 window.testCodeEditing = async () => {

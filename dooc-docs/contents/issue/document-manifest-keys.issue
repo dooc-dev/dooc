@@ -1,0 +1,10 @@
+title: Document every dooc.yaml key
+status: Todo
+priority: Normal
+due: 2026-11-19
+points: 2
+project: contents/project/feature-reference.project
+milestone: contents/milestone/cheat-sheet-draft.milestone
+assignee: alice
+blocked_by:
+  - contents/issue/write-cheat-sheet.issue

@@ -1,0 +1,33 @@
+// Browser-safe content types, parsers and rendering helpers. No project data is bundled.
+
+export * from "../../engine/src/core/blocks.js";
+export * from "../../engine/src/core/content-metadata.js";
+export type * from "../../engine/src/core/content-types.js";
+// Isolated figure rendering (sandboxed iframe) and its parent-side mount (theme following /
+// html figure height).
+export * from "../../engine/src/core/figure-frame.js";
+// node / edge DSL (`graphth`): parse / graph model / deterministic layout via Dagre.
+// graph-common.js is the SoT for the geometry parts shared with the schema graph (text width
+// estimation / orthogonal routing / uid).
+export * from "../../engine/src/core/graph.js";
+export * from "../../engine/src/core/graph-common.js";
+// Block AST → HTML renderer, shared with the viewer.
+export * from "../../engine/src/core/html.js";
+export * from "../../engine/src/core/inline.js";
+// Language socket: the adapter interface + generic rules, and the built-in Japanese adapter
+// (browser-safe part; its prose lint is Node-only and lives in the viewer).
+export * from "../../engine/src/core/language.js";
+export * from "../../engine/src/core/languages/ja.js";
+export * from "../../engine/src/core/previewers.js";
+export * from "../../engine/src/core/routing.js";
+// table DSL (`schemath`): parse / graph model / deterministic layout. html.ts uses it for
+// rendering, and it also serves as the model source when consumers build their own UI
+// (interactive graphs etc.).
+export * from "../../engine/src/core/schema-graph.js";
+// The schema graph's interactive UI (React Flow) requires react, so it is imported not from
+// this react-free entry but from the subpath export `./flow` (dist/core/schema-graph-mount.js)
+// and, for script tags, `./flow.global.js`.
+export * from "../../engine/src/core/taxonomy.js";
+export { mountThemeVariants, themeVariantFile } from "../../engine/src/core/theme-variants.js";
+export * from "../../engine/src/core/workspace.js";
+export * from "../../frontend/src/terms-ui.js";

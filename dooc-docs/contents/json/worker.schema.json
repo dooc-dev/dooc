@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Worker",
+  "type": "object",
+  "required": ["name", "trigger", "image", "network", "resources", "concurrency"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1, "title": "Name" },
+    "trigger": { "type": "string", "enum": ["Queue", "Schedule", "Stream"], "title": "Trigger" },
+    "schedule": {
+      "type": "string",
+      "title": "Schedule",
+      "description": "Five-field cron expression in UTC; for Schedule triggers."
+    },
+    "source": {
+      "$ref": "datastore.schema.json#/$defs/ref",
+      "title": "Source",
+      "description": "Queue or stream the worker consumes."
+    },
+    "image": { "$ref": "runtime.schema.json#/$defs/image" },
+    "network": { "$ref": "vpc.schema.json#/$defs/ref" },
+    "subnet": { "$ref": "vpc.schema.json#/$defs/subnet_name" },
+    "team": { "$ref": "team.schema.json#/$defs/ref" },
+    "resources": { "$ref": "runtime.schema.json#/$defs/resources" },
+    "concurrency": { "type": "integer", "minimum": 1, "title": "Concurrency" },
+    "timeout_seconds": { "type": "integer", "minimum": 1, "title": "Timeout (s)" },
+    "depends_on": {
+      "type": "array",
+      "title": "Depends on",
+      "uniqueItems": true,
+      "items": { "$ref": "runtime.schema.json#/$defs/dependency" }
+    },
+    "logs": { "$ref": "log.schema.json#/$defs/ref" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ref": {
+      "title": "Worker",
+      "description": "Project-relative path of a .worker record.",
+      "type": "string",
+      "pattern": "^contents/worker/[a-z0-9-]+\\.worker$"
+    }
+  },
+  "examples": [
+    {
+      "name": "New worker",
+      "trigger": "Schedule",
+      "schedule": "0 3 * * *",
+      "image": "registry.example.org/fieldnotes/jobs:1.0.0",
+      "network": "contents/vpc/prod-cloud.vpc",
+      "resources": { "cpu": 0.5, "memory_mb": 512 },
+      "concurrency": 1
+    }
+  ]
+}

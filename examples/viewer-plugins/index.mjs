@@ -12,7 +12,7 @@ const authPlugin = createSamplePlugin({
     id: "sample-auth", authorizationUrl: `${authMock.origin}/authorize`,
     tokenUrl: `${authMock.origin}/token`, userUrl: `${authMock.origin}/me`, clientId: "dooc-sample",
 });
-authPlugin.name = "Service cards (sign-in demo)";
+authPlugin.name = "Sample plugin (sign-in demo)";
 
 export default {
     allowedDomains: [],

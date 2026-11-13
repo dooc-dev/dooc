@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Load balancer",
+  "type": "object",
+  "required": ["name", "scheme", "layer", "network", "listeners"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1, "title": "Name" },
+    "scheme": { "type": "string", "enum": ["Public", "Internal"], "title": "Scheme" },
+    "layer": { "type": "string", "enum": ["L4", "L7"], "title": "Layer" },
+    "network": { "$ref": "vpc.schema.json#/$defs/ref" },
+    "subnet": { "$ref": "vpc.schema.json#/$defs/subnet_name" },
+    "listeners": {
+      "type": "array",
+      "title": "Listeners",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["port", "protocol", "target", "target_port"],
+        "properties": {
+          "port": { "$ref": "runtime.schema.json#/$defs/port" },
+          "protocol": { "type": "string", "enum": ["HTTP", "HTTPS", "TCP"] },
+          "target": { "$ref": "container.schema.json#/$defs/ref" },
+          "target_port": { "$ref": "runtime.schema.json#/$defs/port" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "health_check": {
+      "type": "object",
+      "title": "Health check",
+      "required": ["path", "interval_seconds"],
+      "properties": {
+        "path": { "type": "string", "pattern": "^/" },
+        "interval_seconds": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "logs": { "$ref": "log.schema.json#/$defs/ref" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ref": {
+      "title": "Load balancer",
+      "description": "Project-relative path of a .loadbalancer record.",
+      "type": "string",
+      "pattern": "^contents/loadbalancer/[a-z0-9-]+\\.loadbalancer$"
+    }
+  },
+  "examples": [
+    {
+      "name": "New load balancer",
+      "scheme": "Internal",
+      "layer": "L7",
+      "network": "contents/vpc/prod-cloud.vpc",
+      "listeners": [
+        {
+          "port": 443,
+          "protocol": "HTTPS",
+          "target": "contents/container/api.container",
+          "target_port": 8080
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+name = "Production on-premise"
+provider = "On-premise"
+environment = "Production"
+location = "datacenter-1, rack row C"
+cidr = "10.40.0.0/16"
+team = "contents/team/platform.team"
+
+[[subnets]]
+name = "dmz"
+cidr = "10.40.0.0/24"
+tier = "Public"
+
+[[subnets]]
+name = "app"
+cidr = "10.40.10.0/24"
+tier = "Application"
+
+[[subnets]]
+name = "data"
+cidr = "10.40.20.0/24"
+tier = "Data"

@@ -1,0 +1,6 @@
+name = "Assets"
+kind = "Object"
+engine = "S3-compatible object storage"
+network = "contents/vpc/prod-cloud.vpc"
+backup_retention_days = 90
+encrypted = true

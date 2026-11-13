@@ -1,0 +1,58 @@
+### Network
+vpc:
+  file: pk
+  team: fk(team)
+  peers: fk[](vpc)
+  provider: enum("Cloud"|"On-premise")
+  environment: enum("Production"|"Staging"|"Development")
+  cidr: string
+  subnets: json
+
+### Traffic
+loadbalancer:
+  file: pk
+  network: fk(vpc)
+  target: fk[](container)
+  logs: fk(log)
+  scheme: enum("Public"|"Internal")
+  layer: enum("L4"|"L7")
+
+### Compute
+container:
+  file: pk
+  network: fk(vpc)
+  team: fk(team)
+  depends_on: fk[](container|datastore)
+  logs: fk(log)
+  image: string
+  resources: json
+  replicas: json
+
+worker:
+  file: pk
+  network: fk(vpc)
+  team: fk(team)
+  source: fk(datastore)
+  depends_on: fk[](container|datastore)
+  logs: fk(log)
+  trigger: enum("Queue"|"Schedule"|"Stream")
+  resources: json
+
+### State
+datastore:
+  file: pk
+  network: fk(vpc)
+  replica_of: fk(datastore)
+  kind: enum("Relational"|"Cache"|"Object"|"Queue"|"Search")
+  engine: string
+
+log:
+  file: pk
+  sink: fk(datastore)
+  category: enum("Access"|"Application"|"Job"|"Audit")
+  retention_days: number
+
+### Organization
+team:
+  file: pk
+  name: string

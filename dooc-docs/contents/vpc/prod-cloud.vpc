@@ -1,0 +1,25 @@
+name = "Production cloud"
+provider = "Cloud"
+environment = "Production"
+location = "region-east-1"
+cidr = "10.20.0.0/16"
+team = "contents/team/platform.team"
+peers = ["contents/vpc/prod-onprem.vpc"]
+
+[[subnets]]
+name = "public"
+cidr = "10.20.0.0/24"
+tier = "Public"
+zone = "east-1a"
+
+[[subnets]]
+name = "app"
+cidr = "10.20.10.0/23"
+tier = "Application"
+zone = "east-1a"
+
+[[subnets]]
+name = "data"
+cidr = "10.20.20.0/24"
+tier = "Data"
+zone = "east-1b"

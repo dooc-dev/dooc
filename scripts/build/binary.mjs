@@ -19,6 +19,8 @@ const assets = [
     ...readdirSync("dist/graph")
         .filter((name) => name.endsWith(".js"))
         .map((name) => `graph/${name}`),
+    "client.global.js",
+    "workspace-worker.global.js",
     "edit.global.js",
     "ui.global.js",
     "code.global.js",
@@ -27,18 +29,20 @@ const assets = [
     "subformats.global.js",
 ];
 const files = [
-    ...assets.map((name) => resolve("dist", name.startsWith("fonts/") ? `viewer/${name}` : name)),
+    ...assets.map((name) => resolve("dist", name.startsWith("fonts/") ? `server/${name}` : name)),
     ...dictFiles.map((name) => join(dictionary, name)),
 ];
+const installerIndex = files.length;
+files.push(resolve("dist/install.sh"));
 mkdirSync("build", { recursive: true });
 mkdirSync(dirname(outfile), { recursive: true });
 writeFileSync(
     "build/entry.mjs",
     `
 import { dirname } from "node:path";
-import { dictionaryFiles } from ${JSON.stringify(resolve("src/viewer/assets.ts"))};
+import { dictionaryFiles } from ${JSON.stringify(resolve("packages/server/src/assets.ts"))};
 process.env.KUROMOJIN_DIC_PATH = dirname(dictionaryFiles[0]);
-await import(${JSON.stringify(resolve("src/cli.ts"))});
+await import(${JSON.stringify(resolve("packages/server/src/cli.ts"))});
 `,
 );
 const result = await Bun.build({
@@ -50,7 +54,7 @@ const result = await Bun.build({
         {
             name: "embedded-viewer-assets",
             setup(build) {
-                build.onLoad({ filter: /\/viewer\/assets\.ts$/ }, () => ({
+                build.onLoad({ filter: /\/server\/src\/assets\.ts$/ }, () => ({
                     loader: "js",
                     contents: `
 import { readFileSync } from "node:fs";
@@ -58,7 +62,9 @@ ${files.map((file, i) => `import asset${i} from ${JSON.stringify(file)} with { t
 const assets = { ${assets.map((name, i) => `${JSON.stringify(name)}: asset${i}`).join(",")} };
 export const dictionaryFiles = [${dictFiles.map((_, i) => `asset${i + assets.length}`).join(",")}];
 export const prebuilt = true;
+export const standalone = true;
 export const readViewerAsset = (name) => readFileSync(assets[name]);
+export const readInstaller = () => readFileSync(asset${installerIndex});
 `,
                 }));
             },

@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Project",
+  "type": "object",
+  "required": ["name", "status", "team", "owner", "target"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1, "title": "Name" },
+    "status": {
+      "type": "string",
+      "enum": ["Planned", "Active", "Paused", "Done"],
+      "title": "Status"
+    },
+    "team": { "$ref": "team.schema.json#/$defs/ref" },
+    "owner": { "$ref": "team.schema.json#/$defs/member_id", "title": "Owner" },
+    "start": { "type": "string", "format": "date", "title": "Start" },
+    "target": { "type": "string", "format": "date", "title": "Target" },
+    "summary": { "type": "string", "title": "Summary" },
+    "docs": {
+      "type": "array",
+      "title": "Documents",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^contents/md/[a-z0-9-]+\\.md$" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ref": {
+      "title": "Project",
+      "description": "Project-relative path of a .project record.",
+      "type": "string",
+      "pattern": "^contents/project/[a-z0-9-]+\\.project$"
+    }
+  },
+  "examples": [
+    {
+      "name": "New project",
+      "status": "Planned",
+      "team": "contents/team/docs.team",
+      "owner": "alice",
+      "target": "2026-12-18"
+    }
+  ]
+}

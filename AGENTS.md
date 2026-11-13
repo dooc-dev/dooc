@@ -1,2 +1,2 @@
-do not wirte readme
-write every comment in english
+do not edit README.md and dooc-document without explicit order
+write every comment/code in english

@@ -3,8 +3,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { build } from "esbuild";
-import { zip } from "../../src/compiler/zip.ts";
-import { readExtensionZip } from "../../src/core/extension-package.ts";
+import { zip } from "../../packages/engine/src/compiler/zip.ts";
+import { readExtensionZip } from "../../packages/engine/src/core/extension-package.ts";
 
 const output = resolve(process.argv[2] ?? "build/sample-extension.zip");
 const bundle = await build({
