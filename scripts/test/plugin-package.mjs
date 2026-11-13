@@ -20,7 +20,7 @@ const standalone = mkdtempSync(join(tmpdir(), "dooc-plugin-source-"));
 const cache = join(tmpdir(), "dooc-plugin-npm-cache");
 const originalFetch = globalThis.fetch;
 try {
-    for (const path of ["src", "package.json", "tsconfig.json"]) {
+    for (const path of ["src", "package.json", "tsconfig.json", "LICENSE"]) {
         cpSync(join(root, "plugins", path), join(standalone, path), { recursive: true });
     }
     execFileSync(
@@ -57,6 +57,7 @@ try {
     assert.deepEqual(
         packed.files.map((file) => file.path).sort(),
         [
+            "LICENSE",
             "dist/plugins/actions.d.ts",
             "dist/plugins/actions.js",
             "dist/plugins/blocks.d.ts",

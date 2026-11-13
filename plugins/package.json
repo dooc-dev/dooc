@@ -2,6 +2,7 @@
     "name": "@dooc-dev/dooc-plugin",
     "version": "0.0.2",
     "description": "Plugin authoring types and OAuth helpers for dooc.",
+    "license": "MIT",
     "type": "module",
     "main": "./dist/plugins/index.js",
     "types": "./dist/plugins/index.d.ts",

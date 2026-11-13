@@ -41,7 +41,7 @@ jobs:
           BUN_TARGET: ${{ matrix.target }}
       - run: pnpm test:binary
       - name: Package executable
-        run: tar -czf "build/dooc-$PLATFORM.tar.gz" -C build/bin dooc
+        run: tar -czf "build/dooc-$PLATFORM.tar.gz" LICENSE -C build/bin dooc
         env:
           PLATFORM: ${{ matrix.platform }}
       - uses: actions/upload-artifact@v4

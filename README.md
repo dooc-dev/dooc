@@ -1,27 +1,25 @@
 # dooc
-dooc is an orchestration tool for documentation.
 
-1. Create documentation resources.
-2. Build an interface for those resources.
-3. Distribute documentation everywhere.
+![dooc Overview page in dark mode, with the live preview and Markdown editor side by side](dooc-docs/contents/png/editor.png)
 
-# Usage
+dooc turns a folder of Markdown, data files, and schema-backed records into one browsable document.
+`dooc.yaml` arranges the files; dooc edits, checks, and ships them as a single HTML file.
+
+## Install
+
+| Method   | Command                                                                                      |
+| -------- | -------------------------------------------------------------------------------------------- |
+| npm      | `npm install -g @dooc-dev/dooc`                                                              |
+| curl     | `curl -fsSL https://github.com/dooc-dev/dooc/releases/latest/download/install.sh \| sh`      |
+| mise     | `mise use -g github:dooc-dev/dooc@latest`                                                    |
+| Homebrew | `brew tap dooc-dev/dooc https://github.com/dooc-dev/dooc && brew install dooc-dev/dooc/dooc` |
+
+## Documentation
+
 ```sh
-pnpm exec dooc edit [root] [port]				 	# open dooc in edit mode 
-pnpm exec dooc view [root] [port]					# open dooc in view mode 
-pnpm exec dooc export zip  [root] [out]   # zip of the content (<root>/dist/<root name>.zip)
-pnpm exec dooc export html [root] [out]   # single HTML file with everything embedded (<root>/dist/index.html)
-pnpm exec dooc mcp [root]                 # stdio MCP server (all read / write operations)
+dooc self docs
 ```
 
-Registering the MCP server (Claude Code):
+## License
 
-```sh
-claude mcp add docs -- pnpm exec dooc mcp /path/to/root
-```
-
-tool: `list_docs` `search_docs` `read_doc` `read_figure` `check` `add_doc` `write_doc` `move_doc` `rename_doc` `delete_doc` `add_figure` `delete_figure`
-
-# Folder structure
-
-
+[MIT](LICENSE)
