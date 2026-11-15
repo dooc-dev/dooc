@@ -128,7 +128,10 @@ export async function testWorkspaceChooserTheme(page) {
                     controlsMatch: controls.every((element) => {
                         const value = getComputedStyle(element);
                         return (
-                            value.backgroundColor === background &&
+                            value.backgroundColor ===
+                                (element.matches("select:focus-visible")
+                                    ? token("--c-raised")
+                                    : background) &&
                             value.color === foreground &&
                             value.borderTopColor === line &&
                             value.colorScheme === scheme
@@ -176,7 +179,7 @@ export async function testWorkspaceChooserTheme(page) {
     return results;
 }
 
-// Run against `dooc client` using an isolated Playwright context.
+// Run against `dooc editor run web --client --server` using an isolated Playwright context.
 export async function testBrowserWorkspace(page, url) {
     await page.setViewportSize({ width: 1440, height: 1000 });
     const errors = [];
@@ -641,9 +644,25 @@ export async function testSocketWorkspace(page, url, socket) {
     await page.locator("#split-preview").click();
     const first = page.locator(".preview-pane").nth(0),
         second = page.locator(".preview-pane").nth(1);
-    await first.click({ position: { x: 20, y: 120 } });
+    const activate = async (pane) => {
+        await page.waitForFunction(
+            () =>
+                !document.querySelector('select[data-workspace-pane][data-active="true"]').disabled,
+        );
+        await pane.click({ position: { x: 20, y: 120 } });
+        await page.waitForFunction(
+            (id) => {
+                const selected = document.querySelector(
+                    'select[data-workspace-pane][data-active="true"]',
+                );
+                return selected?.dataset.workspacePane === id && !selected.disabled;
+            },
+            await pane.getAttribute("data-pane-id"),
+        );
+    };
+    await activate(first);
     await page.locator("#cm .cm-content").fill("# Left Node draft\n\nKeep this draft.\n");
-    await second.click({ position: { x: 20, y: 120 } });
+    await activate(second);
     await page.waitForFunction(
         () => !document.querySelector("#cm .cm-content")?.textContent.includes("Left Node draft"),
     );
@@ -688,12 +707,12 @@ export async function testSocketWorkspace(page, url, socket) {
         document.querySelector("#cm .cm-content")?.textContent.includes("Only feature receives"),
     );
     assert.equal(await selector.locator(`option[value="${mainId}"]`).count(), 1);
-    await first.click({ position: { x: 20, y: 120 } });
+    await activate(first);
     await page.waitForFunction(() =>
         document.querySelector("#cm .cm-content")?.textContent.includes("Left Node draft"),
     );
     assert.match(await page.locator(".workspace-location").innerText(), /main/);
-    await second.click({ position: { x: 20, y: 120 } });
+    await activate(second);
     await page.waitForFunction(() =>
         document.querySelector(".workspace-location")?.textContent.includes("feature"),
     );

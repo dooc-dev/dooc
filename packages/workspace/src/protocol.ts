@@ -36,6 +36,7 @@ export interface WorkspaceHello {
     boot?: string;
     /** Several people edit this workspace at once, so each connection should identify itself. */
     shared?: boolean;
+    readOnly?: boolean;
 }
 
 /** Two connected ports in one thread (tests, and a server hosted next to its client). */

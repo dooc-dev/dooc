@@ -1,0 +1,12 @@
+[onboarding]: Draft onboarding · Done @portal
+[invitations]: Test invitations · Doing @portal
+[criteria]: Define acceptance · Todo @portal
+[migration]: Rehearse migration · Done @platform
+[rollback]: Verify rollback · Done @platform
+[launch]: Collect launch evidence · Todo @review
+[onboarding] -> [invitations]
+[onboarding] -> [criteria]
+[migration] -> [rollback]
+[invitations] --> [launch]: evidence
+[criteria] --> [launch]: criteria
+[rollback] --> [launch]: recovery evidence

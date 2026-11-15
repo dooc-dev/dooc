@@ -1,0 +1,12 @@
+[outcome]: Agree on an outcome
+[project]: Assign project ownership
+[milestone]: Define an acceptance gate
+[issue]: Deliver and review issues
+[note]: Record decisions and evidence
+[review]: Accept or revise the milestone
+[outcome] -> [project]
+[project] -> [milestone]
+[milestone] -> [issue]
+[issue] -> [note]
+[note] -> [review]
+[review] --> [milestone]: revise scope

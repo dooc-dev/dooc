@@ -22,7 +22,7 @@ export interface WorkspaceServer<Session> {
 
 export const createWorkspaceServer = <Session>(
     ops: WorkspaceOps<Session>,
-    info: Pick<WorkspaceHello, "boot" | "shared"> = {},
+    info: Pick<WorkspaceHello, "boot" | "shared" | "readOnly"> = {},
 ): WorkspaceServer<Session> => {
     const ports = new Set<WorkspacePort>();
     const hello: WorkspaceHello = {

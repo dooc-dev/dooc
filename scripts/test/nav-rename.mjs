@@ -60,11 +60,13 @@ window.testNavRename = async () => {
     form.elements.name.value = originalName;
     form.elements.name.dispatchEvent(new Event("input"));
     form.elements.title.value = `${originalTitle} saved`;
-    const originalFetch = window.fetch;
+    const connections = window.__doocConnections;
+    const transport = connections?.items.get(connections.active) ?? window;
+    const originalFetch = transport.fetch;
     let release;
     let fail = true;
     let requests = 0;
-    window.fetch = async (url, options) => {
+    transport.fetch = async (url, options) => {
         if (new URL(url, location.href).pathname === "/api/save" && fail) {
             requests++;
             await new Promise((resolve) => {
@@ -72,7 +74,7 @@ window.testNavRename = async () => {
             });
             return Response.json({ error: "Test save failure" }, { status: 500 });
         }
-        return originalFetch(url, options);
+        return originalFetch.call(transport, url, options);
     };
     try {
         submit.focus();
@@ -110,6 +112,6 @@ window.testNavRename = async () => {
         );
         return "Passed: action layout, Cancel, focus, validation, pending state, failure, retry and Enter";
     } finally {
-        window.fetch = originalFetch;
+        transport.fetch = originalFetch;
     }
 };

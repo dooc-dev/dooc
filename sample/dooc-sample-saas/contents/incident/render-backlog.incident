@@ -1,0 +1,9 @@
+title: Render backlog after bulk admission
+severity: SEV2
+status: Resolved
+started: 2026-11-12T14:05:00Z
+resolved: 2026-11-12T15:20:00Z
+service: contents/worker/render-queue.worker
+owner: contents/team/platform.team
+runbook: contents/md/runbooks.md
+summary: "A synthetic bulk import outpaced render completion. Optional admission was paused; accepted jobs were retained and drained. Follow-up: bound bulk admission and verify idempotent retries."

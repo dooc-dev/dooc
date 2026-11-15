@@ -1,4 +1,8 @@
 {
+    "version": "バージョン",
+    "Unsaved drafts": "未保存の下書き",
+    "Choose an unsaved draft": "下書きを選択",
+    "Read-only version": "閲覧専用のバージョン",
     "Site title": "サイト名",
     "Edit site title": "サイト名を編集",
     "Editor font": "エディターのフォント",
@@ -414,5 +418,12 @@
     "Your name": "名前",
     "Email (optional)": "メールアドレス(任意)",
     "Shared workspace": "共有ワークスペース",
-    "Join": "参加"
+    "Join": "参加",
+    "View": "表示",
+    "Cards": "カード",
+    "List": "リスト",
+    "SVG icon": "SVGアイコン",
+    "SVG icon path": "SVGアイコンのパス",
+    "SVG icon path (optional)": "SVGアイコンのパス（任意）",
+    "Leave empty to remove. New Pages entries copy this path; existing pages keep their own icon.": "空欄で解除できます。Pagesへの新規追加時にパスをコピーし、既存ページのアイコンは保持します。"
 }

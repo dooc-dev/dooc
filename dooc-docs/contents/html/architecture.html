@@ -1,0 +1,70 @@
+<!--fig
+title: Source, runtime and output
+desc: Three architectural boundaries: workspace files, the dooc engine and application, and the artifacts a reader opens.
+-->
+<style>
+
+  .dooc-architecture { color: var(--doc-fg, #172534); background: var(--doc-bg, #fff); font: 14px/1.6 system-ui, sans-serif; container-type: inline-size; }
+  .dooc-architecture * { box-sizing: border-box; }
+  .dooc-architecture h2 { margin: 0 0 12px; font-size: clamp(23px, 4cqw, 32px); line-height: 1.2; letter-spacing: -.025em; text-wrap: balance; }
+  .dooc-architecture h3 { margin: 0 0 10px; font-size: 17px; line-height: 1.4; }
+  .dooc-architecture p { margin: 0 0 16px; max-width: 72ch; }
+  .dooc-architecture .muted { color: var(--doc-fg-2, #465569); }
+  .dooc-architecture .accent { color: var(--doc-accent, #1b4994); }
+  .dooc-architecture .surface { background: var(--doc-panel-2, #f1f5fa); }
+  .dooc-architecture .intro { padding: 28px 28px 22px; border-bottom: 1px solid var(--doc-border-2, #c4ccd8); }
+  .dooc-architecture .body { padding: 24px 28px; }
+  .dooc-architecture .split { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 28px; }
+  .dooc-architecture .split > * { min-width: 0; }
+  .dooc-architecture .foot { max-width: none; margin: 0; padding: 16px 28px; border-top: 1px solid var(--doc-border-2, #c4ccd8); color: var(--doc-fg-2, #465569); font-size: 12px; }
+  .dooc-architecture code, .dooc-architecture pre { font: 12px/1.75 ui-monospace, monospace; }
+  .dooc-architecture pre { overflow: auto; margin: 0; padding: 16px; background: var(--doc-panel-2, #f1f5fa); }
+  .dooc-architecture .scroll { overflow-x: auto; scrollbar-color: var(--doc-border-2, #c4ccd8) var(--doc-bg, #fff); }
+  .dooc-architecture :focus-visible { outline: 2px solid var(--doc-accent, #1b4994); outline-offset: 4px; }
+  .dooc-architecture ::selection { background: var(--doc-accent, #1b4994); color: var(--doc-accent-fg, #fff); }
+  .dooc-architecture table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .dooc-architecture caption { text-align: left; font-weight: 650; margin-bottom: 10px; }
+  .dooc-architecture th, .dooc-architecture td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--doc-border, #dde3eb); vertical-align: top; }
+  .dooc-architecture th { font-weight: 650; }
+  .dooc-architecture thead { background: var(--doc-panel-2, #f1f5fa); }
+  .dooc-architecture details { border-top: 1px solid var(--doc-border-2, #c4ccd8); padding: 16px 28px; }
+  .dooc-architecture summary { cursor: pointer; font-weight: 650; }
+  .dooc-architecture summary:hover { color: var(--doc-accent, #1b4994); }
+  .dooc-architecture details[open] summary { margin-bottom: 16px; }
+  .dooc-architecture .rail { margin: 0; padding: 0; list-style: none; }
+  .dooc-architecture .rail li { padding: 12px 0; border-bottom: 1px solid var(--doc-border, #dde3eb); }
+  .dooc-architecture .rail strong { display: block; }
+  .dooc-architecture svg { display: block; max-width: 100%; height: auto; }
+  @container (max-width: 580px) { .dooc-architecture .split { grid-template-columns: 1fr; gap: 24px; } .dooc-architecture .intro, .dooc-architecture .body, .dooc-architecture details, .dooc-architecture .foot { padding-left: 16px; padding-right: 16px; } }
+
+  .dooc-architecture svg { min-width: 700px; width: 100%; }
+
+</style>
+<section class="dooc-architecture" aria-label="Source, runtime and output">
+
+  <header class="intro"><h2>One source, several ways to read it.</h2><p class="muted">Compilation connects the file model to the viewer. Saving and publishing remain explicit operations.</p></header>
+  <div class="body scroll" tabindex="0" role="region" aria-label="Architecture diagram; scroll horizontally on narrow screens">
+    <svg viewBox="0 0 900 360" role="img" aria-labelledby="architecture-title architecture-desc">
+      <title id="architecture-title">Workspace to engine to document</title><desc id="architecture-desc">Manifest, Markdown, schemas and assets enter the engine. The frontend uses the compiled document through the workspace protocol and server. HTML and source ZIP are separate outputs.</desc>
+      <defs><marker id="architecture-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 8 4 0 8" fill="var(--doc-accent, #1b4994)"/></marker></defs>
+      <g fill="var(--doc-panel-2, #f1f5fa)"><rect x="0" y="45" width="230" height="278" rx="8"/><rect x="310" y="45" width="280" height="278" rx="8"/><rect x="670" y="45" width="230" height="278" rx="8"/></g>
+      <g font-family="system-ui, sans-serif" fill="var(--doc-fg, #172534)" font-size="16">
+        <text x="0" y="24" font-weight="650">Workspace files</text><text x="310" y="24" font-weight="650">dooc runtime</text><text x="670" y="24" font-weight="650">Reader and handoff</text>
+        <text x="20" y="85" font-weight="650">dooc.yaml</text><text x="20" y="113" font-size="13">Navigation and settings</text>
+        <text x="20" y="160" font-weight="650">Pages and records</text><text x="20" y="188" font-size="13">Schemas and relationships</text>
+        <text x="20" y="235" font-weight="650">Diagrams and media</text><text x="20" y="263" font-size="13">Theme and language variants</text>
+        <text x="330" y="85" font-weight="650">Engine</text><text x="330" y="113" font-size="13">Parse → validate → compile</text>
+        <text x="330" y="160" font-weight="650">Frontend</text><text x="330" y="188" font-size="13">Browse, edit and preview</text>
+        <text x="330" y="235" font-weight="650">Workspace + server</text><text x="330" y="263" font-size="13">Requests, saves and CLI commands</text>
+        <text x="690" y="85" font-weight="650">Live workspace</text><text x="690" y="113" font-size="13">Edit or read with a local service</text>
+        <text x="690" y="160" font-weight="650">Standalone HTML</text><text x="690" y="188" font-size="13">A compiled document snapshot</text>
+        <text x="690" y="235" font-weight="650">Source ZIP</text><text x="690" y="263" font-size="13">Editable files for the next author</text>
+      </g>
+      <g fill="none" stroke="var(--doc-accent, #1b4994)" stroke-width="2" marker-end="url(#architecture-arrow)"><path d="M234 166h68"/><path d="M594 166h68"/></g>
+      <g stroke="var(--doc-border-2, #c4ccd8)"><path d="M20 132h190M20 207h190M330 132h240M330 207h240M690 132h190M690 207h190"/></g>
+    </svg>
+  </div>
+  <details><summary>Where a change becomes durable</summary><div class="scroll" tabindex="0" role="region" aria-label="Operation boundaries"><table><thead><tr><th>Operation</th><th>Changes</th><th>Does not imply</th></tr></thead><tbody><tr><th>Preview</th><td>Rendered draft and diagnostics</td><td>A saved file</td></tr><tr><th>Save</th><td>Workspace source</td><td>A published artifact</td></tr><tr><th>Build</th><td>Output files</td><td>A deployment to hosting</td></tr></tbody></table></div></details>
+  <p class="foot">Package names describe implementation boundaries. Every document still starts from its own manifest folder.</p>
+
+</section>

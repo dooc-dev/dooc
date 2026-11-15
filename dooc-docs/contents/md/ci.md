@@ -1,62 +1,43 @@
-`dooc.yaml` already says which record types exist, how each is stored, and which schema describes it. A pipeline can read that list instead of repeating it, so a new record type is picked up without touching the pipeline.
+A document pipeline should check the source before creating a shareable artifact. Keep document validation separate from any action that changes an external service.
 
-![From dooc.yaml to a pipeline](contents/graphth/pipeline.graphth)
+![Document validation pipeline](contents/graphth/pipeline.graphth)
 
-## What a pipeline reads
+## Check and build
 
-| From `json_subformats` | Tells the pipeline                           |
-| ---------------------- | -------------------------------------------- |
-| `ext`                  | Which files are records of this type         |
-| `format`               | How to parse them: `yaml`, `json`, or `toml` |
-| `schema`               | Which JSON Schema validates them             |
-
-## The script
-
-[records.mjs](contents/mjs/records.mjs) reads `dooc.yaml`, validates every record against its schema, and prints all records as one JSON array. It exits with `1` when a record is invalid.
+Run these commands from the folder containing `dooc.yaml`:
 
 ```sh
-node contents/mjs/records.mjs dooc.yaml              # every type
-node contents/mjs/records.mjs dooc.yaml container    # one type
+dooc check dooc.yaml
+dooc build html dooc.yaml dist --url_preview network
+dooc build zip dooc.yaml dist
 ```
 
-![](contents/mjs/records.mjs)
+| Stage | Input | Output | Failure means |
+| --- | --- | --- | --- |
+| Check | Pages, manifests, schemas and local assets | A JSON diagnostic report | Source content needs correction |
+| HTML build | Checked source and selected URL mode | `dist/bundle.html` | The document could not be compiled or packaged |
+| ZIP build | Source workspace | `dist/bundle.zip` | Editable source could not be collected |
+| Review | The built artifacts | A release decision | A reviewer has not accepted the output |
 
-Each element of the output has the type, the file, and the parsed data:
+`dooc check` runs offline and reports remote content as unchecked. Network-mode HTML preserves supported remote references; it does not make those resources available offline. See [Build output](contents/md/cli.md#build-output) for embed mode and download limits.
 
-```json
-{
-  "type": "container",
-  "file": "contents/container/api.container",
-  "data": { "name": "API", "runtime": "Kubernetes", "image": "registry.example.org/fieldnotes/api:2.4.1" }
-}
+## Consume structured records
+
+Each `json_subformats` declaration supplies an extension, storage format and schema. A pipeline can read those declarations rather than hard-coding a second list of types.
+
+| Manifest field | Pipeline use |
+| --- | --- |
+| `ext` | Find records with that extension |
+| `format` | Choose JSON, YAML or TOML parsing |
+| `schema` | Validate the parsed record |
+
+The [SaaS operations sample](contents/md/samples.md) contains `contents/mjs/records.mjs`, which validates registered records and prints JSON, plus an illustrative workflow under `contents/yaml/records-pipeline.yaml`. The workflow is a document asset, so keeping the sample in this repository does not run it.
+
+From a source checkout with dependencies installed:
+
+```sh
+node sample/dooc-sample-saas/contents/mjs/records.mjs sample/dooc-sample-saas/dooc.yaml
+node sample/dooc-sample-saas/contents/mjs/records.mjs sample/dooc-sample-saas/dooc.yaml container
 ```
 
-A `$ref` to another schema file, such as `runtime.schema.json#/$defs/image`, is loaded when it is first needed, so [shared definitions](contents/md/system.md#shared-definitions) work without extra configuration.
-
-## The workflow
-
-A GitHub Actions workflow built on the script. It checks the document, validates the records, builds the HTML bundle, and deploys one job per [container record](contents/md/system.md#compute).
-
-![](contents/yaml/records-pipeline.yaml)
-
-| Step              | Uses                                   | Fails when                                  |
-| ----------------- | -------------------------------------- | ------------------------------------------- |
-| `dooc check`      | Pages, local links and embeds          | A page does not compile or a local reference is broken |
-| `records.mjs`     | `ext`, `format`, `schema` of each type | A record does not match its schema          |
-| `jq` filter       | Record data                            | Never; it selects what to deploy            |
-| `dooc build html` | The whole workspace                    | Compilation or a remote embed download fails |
-| `deploy` matrix   | One selected record per job            | The rollout command fails                   |
-
-`dooc check` runs offline and reports remote content as unchecked. The HTML build downloads embedded URLs by default; ordinary links stay links. See [Build output](contents/md/cli.md#build-output) for network mode and download limits.
-
-## Other things to do with records
-
-| Record type                        | Pipeline action                                         |
-| ---------------------------------- | ------------------------------------------------------- |
-| `container`, `worker`              | Deploy the image; set replicas, schedule, and resources |
-| `vpc`, `loadbalancer`, `datastore` | Generate infrastructure variables                       |
-| `log`                              | Configure retention and sinks                           |
-| `issue`, `milestone`               | Fail a release while a blocking issue is open           |
-| any                                | Publish `records.json` for other tools                  |
-
-The schema checks the shape of a reference, not that its target exists. To check targets, compare each path-valued field in the output against the `file` values.
+The sample's rollout step only prints a proposed action. Deployment needs a platform-specific implementation, credentials, target selection and a review policy supplied by its operator.

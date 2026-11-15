@@ -1,0 +1,13 @@
+{
+  "name": "Customer portal",
+  "status": "Active",
+  "team": "contents/team/product.team",
+  "owner": "alice",
+  "start": "2026-11-09",
+  "target": "2026-11-27",
+  "summary": "Give pilot customers a clear invitation flow, an onboarding checklist and a workspace overview.",
+  "docs": [
+    "contents/md/roadmap.md",
+    "contents/md/workflow.md"
+  ]
+}

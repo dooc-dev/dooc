@@ -94,6 +94,7 @@ import { type WorkspaceSource, workspaceLabel } from "../../engine/src/core/work
 import type * as Tools from "../../server/src/editor-tools.js";
 import type * as GitDiff from "../../server/src/git-diff.js";
 import type { SiteLanguages } from "../../server/src/languages.js";
+import { clientPath } from "../../workspace/src/client-path.js";
 import { codeFileResponse } from "../../workspace/src/code-file.js";
 import { workspaceFetch } from "../../workspace/src/connection.js";
 import { readDownloadFile } from "../../workspace/src/resource-download.js";
@@ -111,7 +112,7 @@ import { focusNavTree } from "./nav-focus.js";
 import { updateNav } from "./nav-update.js";
 import { PLUGIN_BLOCK_CSS } from "./plugin-style.js";
 import { mountPanelResize } from "./resize.js";
-import { mountResourceDownloads } from "./resource-download.js";
+import { mountResourceDownloads, mountResourceExpand } from "./resource-download.js";
 import {
     libraryPageHtml,
     resourceIndex,
@@ -121,7 +122,7 @@ import {
 import { mountSearch, SEARCH_LABELS, searchIndex, searchSections } from "./search.js";
 import { mountTables } from "./table-ui.js";
 import { mountTerms } from "./terms-ui.js";
-import { initializeThemes, mountThemePickers } from "./theme-picker.js";
+import { DARK_C, initializeThemes, LIGHT_C, mountThemePickers } from "./theme-picker.js";
 import { mountToc } from "./toc-ui.js";
 import { mountVideos } from "./video-ui.js";
 
@@ -242,6 +243,7 @@ interface Resource {
  * display.
  */
 export interface EditorBoot {
+    readOnly?: boolean;
     gitBase: string | null;
     filePreviews: FilePreviewResults;
     previews?: PreviewSettings;
@@ -287,6 +289,7 @@ export interface ApplicationHost {
 }
 
 export const createDocumentApplication = (root: string, host: ApplicationHost) => {
+    let historicalReadOnly = false;
     const {
         fontCss,
         readWorkspaceSource,
@@ -809,28 +812,7 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
               };
     };
 
-    // Default palette — resolves the figures' var(--doc-*) and color-mix() following the theme. The
-    // theme has 3 states: default = follow the OS (prefers-color-scheme), explicitly overridden via
-    // <html data-theme="light|dark">.
     // Maps the viewer's --c-* palette onto the body's --doc-* tokens. Unmapped tokens use defaults.
-    const DARK_C = `
-  color-scheme: dark;
-  --c-bg0:#101316; --c-bg1:#16191d; --c-surface:#1b1f24; --c-raised:#22272d;
-  --c-line:#2a3037; --c-line-soft:#22272c;
-  --c-fg:#f5f6f7; --c-fg-muted:#b4bac0; --c-fg-faint:#8a939b; --fw-body:400;
-  --c-accent:#e65100; --c-ok:#4f9e6a; --c-danger:#c65b52; --c-warn:#c99a3a; --c-info:#6b8fbf;
-  --c-shadow:rgba(0,0,0,.4);
-  --doc-fg-4:#525a66; --doc-accent-2:#4a8bff; --doc-accent-fg:#ffffff;
-  --doc-ok-2:#56d364; --doc-warn-2:#ffc14d; --doc-danger-2:#ff7a7a; --doc-info-2:#79b0ff;`;
-    const LIGHT_C = `
-  color-scheme: light;
-  --c-bg0:#ffffff; --c-bg1:#f5f7f9; --c-surface:#fbfcfd; --c-raised:#e9edf2;
-  --c-line:#d5dae0; --c-line-soft:#e4e8ec;
-  --c-fg:#1a1e23; --c-fg-muted:#5a636c; --c-fg-faint:#687079; --fw-body:300;
-  --c-accent:#c24800; --c-ok:#2f7d4f; --c-danger:#b23c31; --c-warn:#8a6516; --c-info:#3a6ea5;
-  --c-shadow:rgba(15,23,32,.14);
-  --doc-fg-4:#9099a8; --doc-accent-2:#0277bd; --doc-accent-fg:#ffffff;
-  --doc-ok-2:#2ea043; --doc-warn-2:#f59f00; --doc-danger-2:#f04848; --doc-info-2:#4a8bff;`;
     const DOC_FROM_C = `
   --doc-bg:var(--c-bg0); --doc-bg-2:var(--c-bg1); --doc-bg-3:var(--c-surface);
   --doc-panel:var(--c-surface); --doc-panel-2:var(--c-raised); --doc-rail:var(--c-bg1);
@@ -1089,9 +1071,51 @@ body.sidebar-closed #sidebar-toggle { position: absolute; inset: 0; width: 100%;
 body.sidebar-closed #sidebar-toggle svg { visibility: hidden; }
 .site-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
   padding-right: 12px; color: var(--c-fg); white-space: nowrap; }
-#sidebar-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
-  scrollbar-gutter: stable;
+#sidebar-content { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
   padding: 10px 0 8px; }
+#nav-groups { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#nav-groups > .nav-root { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
+.language-select, .language-picker { font: 13px/18px var(--font-sans); font-weight: var(--fw-body); }
+.language-select { position: relative; }
+.language-select-input { width: 100%; min-width: 0; height: 28px; padding: 4px 26px 4px 8px;
+  border: 1px solid var(--c-line); border-radius: 5px; color: var(--c-fg);
+  background: var(--c-surface); font: inherit; text-overflow: ellipsis; }
+.language-select::after { content: ""; position: absolute; right: 10px; top: 9px; width: 6px; height: 6px; pointer-events: none;
+  border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg); }
+.language-select-input:hover { background: var(--c-raised); }
+select:focus-visible, .language-select-input:focus-visible, .subformat-control > button:focus-visible { outline: none; background: var(--c-raised); }
+.language-picker :focus-visible { outline: 1px solid var(--c-fg-muted); outline-offset: 1px; }
+.language-select-input[aria-disabled="true"] { opacity: .5; cursor: wait; }
+.fm-language > .nav-icon { color: var(--c-fg-muted); }
+.fm-language .language-select::after { display: none; }
+.fm-language .language-select-input { padding: 4px; border: 0; border-bottom: 1px solid var(--c-line);
+  border-radius: 0; background: transparent; }
+.fm-language .language-select-input:hover { border-bottom-color: var(--c-fg-muted); }
+.fm-language .language-select-input:focus-visible { outline: none; border-bottom-color: var(--c-accent); }
+.language-picker { position: fixed; margin: 0; padding: 0; overflow: hidden; border: 1px solid var(--c-line);
+  border-radius: 5px; color: var(--c-fg); background: var(--c-surface); box-shadow: 0 8px 24px var(--c-shadow); }
+.language-picker:popover-open { display: flex; flex-direction: column; }
+.language-options { overflow-y: auto; min-height: 0; }
+.language-options button { display: block; width: 100%; padding: 6px 8px; border: 0;
+  color: inherit; background: transparent; font: inherit; text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.language-options button:hover, .language-options button[data-active="true"] { background: var(--c-raised); }
+.language-options button[aria-selected="true"] { color: var(--c-fg); }
+.language-toggle { display: inline-block; width: 24px; margin: -6px 0 -6px -8px; padding: 6px 0; text-align: center; }
+.language-toggle:hover { color: var(--c-accent); background: var(--c-line); }
+.language-options button:disabled { opacity: .5; cursor: wait; }
+.language-empty { padding: 8px; color: var(--c-fg-muted); }
+#document-versions { flex: none; display: grid; gap: 10px; padding: 8px 16px 12px; }
+#document-versions[hidden], #document-versions [hidden], body.sidebar-closed #document-versions { display: none; }
+#document-versions .language-select, #document-versions .language-select-input { min-width: 0; width: 100%; }
+#document-versions .version-select .language-select-input { padding-right: 76px; background: transparent; font-variant-numeric: tabular-nums; }
+#document-versions > .subformat-control { width: 100%; max-width: none; }
+#document-versions p { margin: 0; color: var(--c-danger); font-size: 12px; overflow-wrap: anywhere; }
+.version-select > .version-status { position: absolute; right: 26px; top: 5px; pointer-events: none; }
+.version-status { flex: none; color: var(--c-fg-muted); font-size: 12px; }
+.version-picker .language-options button { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-variant-numeric: tabular-nums; }
+.version-picker .language-options button > :first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+body[data-version-read-only="true"] :is(.nav-doc-actions, .nav-icon-clear, #site-icon-slot input, #save, #validate, .cm-textfile-validate) { display: none; }
 .nav-link { position: relative; display: flex; align-items: center; gap: 14px; padding: 10px 16px;
   color: var(--c-fg-muted); text-decoration: none; background: transparent; border: none;
   font: inherit; text-align: left; cursor: pointer; min-width: 0; }
@@ -1193,9 +1217,6 @@ body.sidebar-closed #nav-groups .nav-doc-row { padding-left: 0; gap: 0; }
 body.sidebar-closed #nav-groups .nav-doc-row > a { padding-left: 0; }
 body.sidebar-closed #nav-groups :is(.nav-doc-icon, .nav-row > a > .nav-icon, .nav-row > a > .doc-icon-frame) { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; }
 body.sidebar-closed #nav-groups .nav-doc-icon { z-index: 1; pointer-events: none; }
-body.edit #sidebar-content { display: flex; flex-direction: column; overflow: hidden; scrollbar-gutter: auto; }
-body.edit #nav-groups { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-#nav-docs { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable; }
 #nav-tools { position: relative; flex: none; margin: 10px 8px 4px; padding: 12px 4px 4px; border: 1px solid var(--c-line); border-radius: 8px; background: var(--c-bg1); }
 .nav-tool-cards { max-height: max(36px, calc(50dvh - 40px)); overflow: auto; }
 #nav-tools .nav-resources { height: 36px; margin: 0; border: 0; border-radius: 4px; }
@@ -1251,6 +1272,13 @@ article { max-width: 860px; margin: 0 auto; font-family: var(--viewer-font, syst
 .resource-download:hover { background: var(--doc-panel); color: var(--doc-accent); }
 .resource-download:focus-visible { outline: 2px solid var(--doc-accent); outline-offset: 2px; }
 .resource-download[aria-busy="true"] { cursor: progress; }
+.resource-expand { padding: 0; border: 0; background: none; cursor: pointer; }
+.resource-modal { width: 94vw; height: 92dvh; max-width: none; max-height: none; padding: 0; overflow: hidden; border: 1px solid var(--doc-border); border-radius: 10px; color: var(--doc-fg); background: var(--doc-panel); }
+.resource-modal::backdrop { background: #0008; }
+.resource-stage { position: absolute; top: 50%; left: 50%; }
+.resource-stage > * { margin: 0; }
+.resource-surface { position: absolute; inset: 0; touch-action: none; }
+.resource-modal-bar { position: absolute; top: 8px; right: 8px; display: flex; align-items: center; gap: 8px; padding-left: 8px; border-radius: 4px; background: var(--doc-panel); font: 12px/1.5 var(--font-sans); color: var(--doc-fg-2); }
 .res-file-page h1 > .resource-download { margin-left: 8px; vertical-align: middle; }
 .resource-download-tools [role="status"] { font: 12px/1.5 var(--font-sans); color: var(--doc-fg-2); }
 .plugin { position: relative; min-width: 0; border: 2px solid var(--doc-border); border-top: 0; }
@@ -1592,6 +1620,7 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .git-page :is(input:not([type=checkbox]), select) { height: 28px; }
 .git-branches :is(input, select), .git-actions select { border-color: transparent; background: transparent; }
 .git-page :is(input, textarea, select):focus-visible { outline: 1px solid var(--c-fg-muted); outline-offset: -1px; }
+.git-page select:focus-visible { outline: none; background: var(--c-raised); }
 .git-page select option { background: var(--c-bg1); color: var(--c-fg); }
 .git-page .git-text-button { width: auto; padding: 0 8px; font: inherit; }
 .git-page .pbtn:disabled { opacity: .45; cursor: default; }
@@ -1746,6 +1775,32 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .subformat-card-details dd, .subformat-detail dd { white-space: pre-wrap; overflow-wrap: anywhere; }
 .subformat-card-details label { margin-top: 12px; }
 .subformat-card [hidden] { display: none; }
+[data-subformat-view="list"] { container-type: inline-size; }
+[data-subformat-view="list"] .subformat-columns { flex-direction: column; gap: 20px; overflow-x: visible; }
+[data-subformat-view="list"] .subformat-column { flex: none; }
+[data-subformat-view="list"] .subformat-column > h2 { margin-bottom: 0; }
+[data-subformat-view="list"] .subformat-cards { min-height: 40px; }
+.subformat-list-record { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(180px, 1.5fr) auto; align-items: center; gap: 10px 20px; margin: 0; padding: 12px 2px; border: 0; border-bottom: 1px solid var(--c-line); border-radius: 0; }
+.subformat-list-record > h3 { grid-column: 1; grid-row: 1; }
+.subformat-list-record > .subformat-card-tools { grid-column: 3; grid-row: 1; margin: 0; padding: 0; background: transparent; }
+.subformat-list-record > .subformat-card-meta { grid-column: 2; grid-row: 1; min-width: 0; margin: 0; padding: 0; border: 0; gap: 6px 16px; }
+.subformat-list-record > .subformat-card-details { grid-column: 1 / -1; margin: 0; }
+@container (max-width: 700px) {
+  .subformat-list-record { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+  .subformat-list-record > .subformat-card-tools { grid-column: 2; }
+  .subformat-list-record > .subformat-card-meta { grid-column: 1 / -1; grid-row: 2; }
+  .subformat-list-record .subformat-card-file { max-width: 90px; }
+}
+@container (max-width: 420px) {
+  .subformat-list-record .subformat-card-file { display: none; }
+}
+.subformat-icon-form { flex: 1 0 100%; min-width: 0; padding-block: 8px; }
+.subformat-icon-form fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
+.subformat-icon-form label { display: flex; flex-direction: column; gap: 6px; text-align: left; }
+.subformat-icon-form input { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px; color: var(--c-fg); background: var(--c-bg0); border: 1px solid var(--c-line); border-radius: 4px; font: 12px/1.6 var(--doc-mono); }
+.subformat-icon-form p { margin: 8px 0 12px; color: var(--c-fg-muted); font-size: 12px; }
+.subformat-icon-form :focus-visible { outline-color: var(--c-fg-muted); }
+.subformat-create-form .subformat-register-icon { flex: none; padding: 12px; margin: 0; font-size: 12px; }
 .subformat-drag-preview { position: fixed; z-index: 1000; box-sizing: border-box; pointer-events: none; background: var(--c-bg1); will-change: transform; }
 .app-dialog { width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 22px;
   color: var(--c-fg); background: color-mix(in srgb, var(--c-bg1) 90%, transparent);
@@ -1871,7 +1926,7 @@ body.textfile-open #phead :is(.fm-language, #status, #validate, #save, #split-pr
 #file-editor:is([data-subformat-register], [data-subformat-record]) fieldset { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .subformat-register-fields { display: grid; flex: 1; min-width: 0; grid-template-columns: minmax(0, .5fr) 60px minmax(0, 1.5fr); gap: 6px; margin: 0; padding: 0; border: 0; }
 .subformat-register-fields :is(input, select) { width: 100%; min-width: 0; height: 28px; padding: 4px; background: transparent; color: var(--c-fg); border: 0; border-bottom: 1px solid var(--c-line); border-radius: 0; font: 12px/18px var(--font-sans); }
-.subformat-register-fields input:hover, .subformat-register-fields input:focus-visible { background: transparent; outline: none; border-bottom-color: var(--c-fg-muted); }
+.subformat-register-fields > input:hover, .subformat-register-fields > input:focus-visible { background: transparent; outline: none; border-bottom-color: var(--c-fg-muted); }
 .subformat-register-fields .language-select { min-width: 0; }
 .subformat-register-fields .subformat-control { align-self: center; min-width: 0; max-width: none; margin: 3px 0 0; }
 .subformat-register-fields .subformat-control-label { top: -5px; left: 5px; padding: 0 3px; font-size: 9px; line-height: 10px; }
@@ -1896,6 +1951,7 @@ body.textfile-open #phead :is(.fm-language, #status, #validate, #save, #split-pr
 .schema-builder :is(input:not([type="checkbox"]), select, textarea) { padding: 4px 6px; border: 0; border-radius: 3px; background: var(--c-bg1); }
 .schema-builder :is(input:not([type="checkbox"]), select, textarea):hover { background: var(--c-raised); }
 .schema-builder :is(input:not([type="checkbox"]), select, textarea):focus-visible { outline: 1px solid var(--c-fg-muted); outline-offset: 1px; }
+.schema-builder :is(select, input.language-select-input):focus-visible { outline: none; background: var(--c-raised); }
 .schema-builder .schema-type-control { display: block; min-width: 0; max-width: none; margin: 0; }
 .schema-builder .schema-type-control .language-select-input { height: 28px; padding: 5px 22px 2px 8px; border: 1px solid var(--c-line); border-radius: 4px; background: var(--c-bg1); }
 .schema-type-control .language-select::after { right: 8px; top: 10px; width: 5px; height: 5px; }
@@ -2121,38 +2177,11 @@ body.edit #nav-groups { --nav-rail: 22px; --nav-icon-half: 9px; }
 
 .fm-language { display: flex; align-items: center; flex: 0 1 220px; min-width: 0; gap: 4px; }
 .fm-language > .language-select { flex: 1; width: 0; min-width: 0; }
-.language-select, .language-picker { font: 13px/18px var(--font-sans); font-weight: var(--fw-body); }
-.language-select { position: relative; }
-.language-select-input { width: 100%; min-width: 0; height: 28px; padding: 4px 26px 4px 8px;
-  border: 1px solid var(--c-line); border-radius: 5px; color: var(--c-fg);
-  background: var(--c-surface); font: inherit; text-overflow: ellipsis; }
-.language-select::after { content: ""; position: absolute; right: 10px; top: 9px; width: 6px; height: 6px; pointer-events: none;
-  border-right: 1px solid currentColor; border-bottom: 1px solid currentColor; transform: rotate(45deg); }
-.language-select-input:hover { background: var(--c-raised); }
-.language-select-input:focus-visible, .language-picker :focus-visible { outline: 1px solid var(--c-fg-muted); outline-offset: 1px; }
-.language-select-input[aria-disabled="true"] { opacity: .5; cursor: wait; }
-.fm-language > .nav-icon { color: var(--c-fg-muted); }
-.fm-language .language-select::after { display: none; }
-.fm-language .language-select-input { padding: 4px; border: 0; border-bottom: 1px solid var(--c-line);
-  border-radius: 0; background: transparent; }
-.fm-language .language-select-input:hover { border-bottom-color: var(--c-fg-muted); }
-.fm-language .language-select-input:focus-visible { outline: none; border-bottom-color: var(--c-accent); }
-.language-picker { position: fixed; margin: 0; padding: 0; overflow: hidden; border: 1px solid var(--c-line);
-  border-radius: 5px; color: var(--c-fg); background: var(--c-surface); box-shadow: 0 8px 24px var(--c-shadow); }
-.language-picker:popover-open { display: flex; flex-direction: column; }
-.language-options { overflow-y: auto; min-height: 0; }
-.language-options button { display: block; width: 100%; padding: 6px 8px; border: 0;
-  color: inherit; background: transparent; font: inherit; text-align: left;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
-.language-options button:hover, .language-options button[data-active="true"] { background: var(--c-raised); }
-.language-options button[aria-selected="true"] { color: var(--c-fg); }
-.language-toggle { display: inline-block; width: 24px; margin: -6px 0 -6px -8px; padding: 6px 0; text-align: center; }
-.language-toggle:hover { color: var(--c-accent); background: var(--c-line); }
-.language-options button:disabled { opacity: .5; cursor: wait; }
-.language-empty { padding: 8px; color: var(--c-fg-muted); }
+
 
 main.editor-workspace { padding: 0; height: 100vh; display: flex; flex-direction: column; position: sticky; top: 0; }
 #split-preview[aria-pressed="true"] { color: var(--c-accent); background: var(--c-raised); }
+.resources-pane .pane-actions > :is([data-theme-picker], [data-font-picker], .pane-language) { display: none; }
 .pane-actions { flex-wrap: wrap; top: -20px; margin: -20px -24px 16px; padding: 4px 12px; min-height: 38px; height: auto; background: inherit; }
 .pane-resource { min-width: 0; }
 #preview-panes { display: flex; flex: 1; min-height: 0; }
@@ -2402,6 +2431,7 @@ body.edit .nav-row { cursor: grab; }
         currentId?: string,
         currentRes?: string,
     ): string => {
+        if (historicalReadOnly) mode = "preview";
         const open = new Set(
             currentId == null
                 ? []
@@ -2445,6 +2475,7 @@ body.edit .nav-row { cursor: grab; }
         };
         const html =
             list(undefined, 0) +
+            '<div id="document-versions" hidden></div>' +
             (mode === "edit"
                 ? `<template data-page-libraries>${escapeHtml(JSON.stringify([...Object.keys(CODE_TEMPLATES), "urls", "url-previews"].filter((view) => !site.entries.some((entry) => entry.library === view))))}</template><template data-page-subformats>${escapeHtml(JSON.stringify((site.subformats ?? []).filter((format) => !site.entries.some((entry) => entry.subformat?.ext === format.ext))))}</template>${navFilesHtml(site, currentRes)}`
                 : "");
@@ -2844,7 +2875,12 @@ body.edit .nav-row { cursor: grab; }
 
     // Navigation follows the manifest hierarchy via routing.docPath.
     const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
-        const nav = navGroupsHtml(mode, site, opts.currentId, opts.currentRes);
+        const nav = navGroupsHtml(
+            historicalReadOnly ? "preview" : mode,
+            site,
+            opts.currentId,
+            opts.currentRes,
+        );
         const siteTitle = escapeHtml(site.title ?? "dooc");
         const iconImg = `<img id="site-icon" alt=""${site.icon ? ` src="${svgDataUri(site.icon)}"` : " hidden"}>`;
         const iconVariants = Object.entries(site.iconVariants ?? {});
@@ -2891,12 +2927,13 @@ ${opts.publish ? `<meta name="referrer" content="no-referrer"><meta http-equiv="
 <script>
 (${mountThemePickers.toString()})(${JSON.stringify(THEME_ICONS)}, ${JSON.stringify(site.themes)});
 (${mountThemeVariants.toString()})(document);
-${site.ctx.downloads ? `(${mountResourceDownloads.toString()})(${workspaceFetch.toString()});` : ""}
+${site.ctx.downloads ? `(${mountResourceDownloads.toString()})(${workspaceFetch.toString()});(${mountResourceExpand.toString()})();` : ""}
 </script>
 ${bootScripts}${graphScript}
 <script id="code-grammars" type="application/json"${opts.publish ? "" : ' data-src="/assets/code-grammars.json"'}>${opts.publish ? JSON.stringify(site.codeGrammars ?? []).replace(/</g, "\\u003c") : "[]"}</script>
 ${opts.publish ? `<script>${inlineScript(opts.publish.codeJs)}</script>` : `<script>(${loadPreviewScript.toString()})("/assets/code.js", ".codeblk");</script>`}
 <script>
+(() => {
 // Functions toString'd under tsx (esbuild keepNames) contain __name(...) calls; define a no-op.
 var __name = (f) => f;
 const contentLanguage = () => JSON.parse(document.getElementById("boot")?.textContent || "null")?.contentLanguage || ${JSON.stringify(site.contentLanguage ?? site.defaultLang)};
@@ -2996,13 +3033,17 @@ ${
     if (window.__docsRefreshNav) return window.__docsRefreshNav();
     const cur = document.querySelector("#nav-groups .nav-row a.cur");
     const id = (cur && cur.closest(".nav-item").dataset.docId) || "";
-    const rp = location.pathname.startsWith("/_library") ? location.pathname.slice(1) : ["/_git", "/_extensions", "/_subformats"].includes(location.pathname) ? location.pathname.slice(1) : location.pathname.startsWith("/_files") ? location.pathname.slice(8).replace(/^\\/|\\/$/g, "") : null;
+    const pathname = location.pathname.slice((globalThis.__doocClientBase ?? "").length) || "/";
+    const rp = pathname.startsWith("/_library") ? pathname.slice(1) : ["/_git", "/_extensions", "/_subformats"].includes(pathname) ? pathname.slice(1) : pathname.startsWith("/_files") ? pathname.slice(8).replace(/^\\/|\\/$/g, "") : null;
     const res = await localeFetch("/api/nav?current=" + encodeURIComponent(id) + (rp == null ? "" : "&res=" + encodeURIComponent(rp)));
     if (res.ok) {
       const data = await res.json();
       (${updateNav.toString()})(document.getElementById("nav-groups"), data.html);
       const currentPage = document.querySelector('[data-subformat-nav][data-doc-id="' + CSS.escape(id) + '"] > .nav-row > a');
-      if (currentPage && currentPage.pathname !== location.pathname) history.replaceState(null, "", currentPage.href);
+      if (currentPage && currentPage.pathname !== location.pathname) {
+        const href = currentPage.getAttribute("href");
+        history.replaceState(null, "", currentPage.dataset.doocClientHref === href ? href : (globalThis.__doocClientBase ?? "") + href);
+      }
       const label = document.getElementById("site-title");
       if (!label.querySelector("form")) label.textContent = label.title = data.siteTitle || "dooc";
       label.dataset.title = data.siteTitle || "";
@@ -3040,6 +3081,7 @@ ${
     docAction(button.closest(".nav-item"), button.dataset.docAction);
   });
   const editSiteTitle = (label) => {
+    if (document.body.dataset.versionReadOnly === "true") return;
     const target = context();
     if (document.querySelector(".nav-rename-form")) return;
     const original = label.textContent;
@@ -3407,7 +3449,7 @@ ${
       await refresh();
       if (result.path) {
         if (window.__docsNavigate) await window.__docsNavigate(result.path);
-        else location.href = result.path;
+        else location.href = (globalThis.__doocClientBase ?? "") + result.path;
       }
     } catch (error) {
       menuError.textContent = error.message;
@@ -3462,7 +3504,7 @@ document.addEventListener("click", async (event) => {
   const label = (key) => window.__docsTranslate ? window.__docsTranslate(key) : key;
   button.classList.remove("ok", "error");
   try {
-    await navigator.clipboard.writeText(new URL(button.dataset.sectionUrl, location.href).href);
+    await navigator.clipboard.writeText(new URL((${clientPath.toString()})(button.dataset.sectionUrl), location.href).href);
     button.classList.add("ok");
     button.title = label("Copied");
   } catch {
@@ -3504,6 +3546,7 @@ document.addEventListener("click", (ev) => {
     button.setAttribute("aria-label", text);
   }
 });
+})();
 </script>
 <script>${inlineScript(`(${mountSearch.toString()})(${JSON.stringify(opts.publish ? searchIndex(site) : []).replace(/</g, "\\u003c")}, ${searchSections.toString()}, ${JSON.stringify(Object.fromEntries(SEARCH_LABELS.map((key) => [key, translate(site.defaultLang, key)]))).replace(/</g, "\\u003c")}, ${Boolean(opts.publish)}, ${workspaceFetch.toString()});`)}</script>
 ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publish.first)}${opts.publish.network && !opts.publish.pluginJs ? `\n(${mountBundleNetwork.toString()})();` : ""}</script>${opts.publish.pluginJs ? `<script>${inlineScript(opts.publish.pluginJs)}</script>` : ""}` : ""}</body></html>`;
@@ -3676,6 +3719,7 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
                 title: docDisplayName(e.frontmatter, e.id),
             }));
         return {
+            ...(historicalReadOnly ? { readOnly: true } : {}),
             gitBase: entryGitBase(entry, site),
             ...(site.title === undefined ? {} : { siteTitle: site.title }),
             ...(site.icon === undefined ? {} : { siteIcon: svgDataUri(site.icon) }),
@@ -4050,13 +4094,18 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
             return;
         }
         const previous = docIconFile(id, manifest.files);
-        const file =
+        let file =
             manifest.format !== "nested" &&
             manifest.files?.defaultLayout !== false &&
             !Object.hasOwn(manifest.files?.icons ?? {}, id) &&
             !existsSync(textfilePath(root, previous))
                 ? defaultFilePath(`${id}-icon.svg`)
                 : previous;
+        if (body?.data != null && manifest.subformats?.some((format) => format.icon === previous)) {
+            file = defaultFilePath(`${id}-icon.svg`);
+            for (let index = 2; existsSync(textfilePath(root, file)); index++)
+                file = defaultFilePath(`${id}-icon-${index}.svg`);
+        }
         const path = textfilePath(root, file);
         if (body?.data == null) {
             const owned = ownsDocIcon(id, manifest);
@@ -4645,6 +4694,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
         sendJson,
         notFound,
         configure(settings: {
+            readOnly?: boolean;
             languages?: SiteLanguages;
             workspace?: WorkspaceSource;
             previews?: PreviewSettings;
@@ -4652,6 +4702,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
             downloads?: boolean;
             watch?: (files: Iterable<string>) => void;
         }) {
+            if (settings.readOnly !== undefined) historicalReadOnly = settings.readOnly;
             if (settings.languages) siteLanguages = settings.languages;
             workspaceSource = settings.workspace;
             sharedBranch = settings.shared;

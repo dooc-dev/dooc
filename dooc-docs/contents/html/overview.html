@@ -1,0 +1,72 @@
+<!--fig
+title: A document workspace at a glance
+desc: Source files remain editable while the same workspace becomes a navigable document and portable output.
+-->
+<style>
+
+  .dooc-overview { color: var(--doc-fg, #172534); background: var(--doc-bg, #fff); font: 14px/1.6 system-ui, sans-serif; container-type: inline-size; }
+  .dooc-overview * { box-sizing: border-box; }
+  .dooc-overview h2 { margin: 0 0 12px; font-size: clamp(23px, 4cqw, 32px); line-height: 1.2; letter-spacing: -.025em; text-wrap: balance; }
+  .dooc-overview h3 { margin: 0 0 10px; font-size: 17px; line-height: 1.4; }
+  .dooc-overview p { margin: 0 0 16px; max-width: 72ch; }
+  .dooc-overview .muted { color: var(--doc-fg-2, #465569); }
+  .dooc-overview .accent { color: var(--doc-accent, #1b4994); }
+  .dooc-overview .surface { background: var(--doc-panel-2, #f1f5fa); }
+  .dooc-overview .intro { padding: 28px 28px 22px; border-bottom: 1px solid var(--doc-border-2, #c4ccd8); }
+  .dooc-overview .body { padding: 24px 28px; }
+  .dooc-overview .split { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 28px; }
+  .dooc-overview .split > * { min-width: 0; }
+  .dooc-overview .foot { max-width: none; margin: 0; padding: 16px 28px; border-top: 1px solid var(--doc-border-2, #c4ccd8); color: var(--doc-fg-2, #465569); font-size: 12px; }
+  .dooc-overview code, .dooc-overview pre { font: 12px/1.75 ui-monospace, monospace; }
+  .dooc-overview pre { overflow: auto; margin: 0; padding: 16px; background: var(--doc-panel-2, #f1f5fa); }
+  .dooc-overview .scroll { overflow-x: auto; scrollbar-color: var(--doc-border-2, #c4ccd8) var(--doc-bg, #fff); }
+  .dooc-overview :focus-visible { outline: 2px solid var(--doc-accent, #1b4994); outline-offset: 4px; }
+  .dooc-overview ::selection { background: var(--doc-accent, #1b4994); color: var(--doc-accent-fg, #fff); }
+  .dooc-overview table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .dooc-overview caption { text-align: left; font-weight: 650; margin-bottom: 10px; }
+  .dooc-overview th, .dooc-overview td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--doc-border, #dde3eb); vertical-align: top; }
+  .dooc-overview th { font-weight: 650; }
+  .dooc-overview thead { background: var(--doc-panel-2, #f1f5fa); }
+  .dooc-overview details { border-top: 1px solid var(--doc-border-2, #c4ccd8); padding: 16px 28px; }
+  .dooc-overview summary { cursor: pointer; font-weight: 650; }
+  .dooc-overview summary:hover { color: var(--doc-accent, #1b4994); }
+  .dooc-overview details[open] summary { margin-bottom: 16px; }
+  .dooc-overview .rail { margin: 0; padding: 0; list-style: none; }
+  .dooc-overview .rail li { padding: 12px 0; border-bottom: 1px solid var(--doc-border, #dde3eb); }
+  .dooc-overview .rail strong { display: block; }
+  .dooc-overview svg { display: block; max-width: 100%; height: auto; }
+  @container (max-width: 580px) { .dooc-overview .split { grid-template-columns: 1fr; gap: 24px; } .dooc-overview .intro, .dooc-overview .body, .dooc-overview details, .dooc-overview .foot { padding-left: 16px; padding-right: 16px; } }
+
+  .dooc-overview .source-note { margin: 12px 0 0; font-size: 12px; }
+  .dooc-overview .steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 0; padding: 20px 28px; list-style-position: inside; background: var(--doc-panel-2, #f1f5fa); }
+  .dooc-overview .steps strong { font-size: 15px; }
+  .dooc-overview .steps code { display: block; margin-top: 6px; overflow-wrap: anywhere; }
+  @container (max-width: 580px) { .dooc-overview .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 20px 16px; } }
+
+</style>
+<section class="dooc-overview" aria-label="A document workspace at a glance">
+
+  <header class="intro"><h2>Plain files. A document you can explore.</h2><p class="muted">Keep the source close to the explanation. Pages, diagrams and records belong to one workspace, with a path you can inspect for every part.</p></header>
+  <div class="body split">
+    <div><h3>The source you own</h3><pre aria-label="Example workspace structure">my-docs/
+├── dooc.yaml
+├── contents/
+│   ├── md/overview.md
+│   ├── html/architecture.html
+│   ├── graphth/workflow.graphth
+│   ├── json/feature.schema.json
+│   └── feature/search.feature
+└── themes/dark/</pre><p class="muted source-note">The manifest names the pages and types. Paths are relative to this folder.</p></div>
+    <div><h3>The views your readers use</h3><ul class="rail"><li><strong>Pages and previews</strong><span class="muted">Browse the tree, follow a link, inspect a diagram.</span></li><li><strong>Structured records</strong><span class="muted">Switch between boards, lists and validated forms.</span></li><li><strong>Editable source</strong><span class="muted">Preview a draft, review diagnostics and save the file.</span></li></ul></div>
+  </div>
+  <ol class="steps" aria-label="Authoring sequence"><li><strong>Write</strong><code>Editor</code></li><li><strong>Review</strong><code>Viewer</code></li><li><strong>Check</strong><code>dooc check</code></li><li><strong>Share</strong><code>dooc build html</code></li></ol>
+  <details><summary>See the smallest page manifest</summary><pre>system:
+  default_lang: eng
+left_sidebar:
+  title:
+    eng: My document
+center_contents:
+  - file: contents/md/overview.md
+    title: Overview</pre><p class="muted source-note">Create the referenced Markdown file, then open the workspace. Add a schema only when you need records.</p></details>
+
+</section>

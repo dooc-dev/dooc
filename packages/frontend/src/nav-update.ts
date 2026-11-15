@@ -58,6 +58,10 @@ export const updateNav = (root: HTMLElement, html: string): void => {
                 else parent.insertBefore(current, cursor);
             }
             if (current instanceof Element && next instanceof Element) {
+                if (current === candidate && current.id === "document-versions") {
+                    cursor = current.nextSibling;
+                    continue;
+                }
                 const fresh = current !== candidate;
                 for (const name of new Set([
                     ...current.getAttributeNames(),

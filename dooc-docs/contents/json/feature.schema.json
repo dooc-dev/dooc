@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Feature",
+  "type": "object",
+  "required": ["name", "area", "status", "summary"],
+  "properties": {
+    "name": { "type": "string", "minLength": 1, "title": "Name" },
+    "area": {
+      "type": "string",
+      "enum": ["Security", "Supply chain", "Release", "Runtime", "MCP"],
+      "title": "Area"
+    },
+    "status": { "type": "string", "enum": ["Missing", "Planned", "Shipped"], "title": "Status" },
+    "priority": { "type": "string", "enum": ["Low", "Normal", "High"], "title": "Priority" },
+    "summary": { "type": "string", "minLength": 1, "title": "Summary" }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "name": "New feature",
+      "area": "Security",
+      "status": "Missing",
+      "priority": "Normal",
+      "summary": "What it does and why it is needed."
+    }
+  ]
+}

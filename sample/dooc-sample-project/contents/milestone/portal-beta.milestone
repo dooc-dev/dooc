@@ -1,0 +1,6 @@
+name = "Portal beta"
+state = "Open"
+project = "contents/project/customer-portal.project"
+owner = "alice"
+due = "2026-11-20"
+goal = "Invitation and onboarding flows pass review for the pilot cohort."

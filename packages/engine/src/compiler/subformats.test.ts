@@ -127,6 +127,7 @@ it.each([
     expect(subformatResponse(root, { ...request, value: "", base: "due" }).status).toBe(200);
     expect(readManifest(root).subformats?.[0]?.layouts).toEqual({ card_title: "" });
     for (const [key, value] of [
+        ["view", "list"],
         ["group_by", "status"],
         ["sort_by", "due"],
         ["sort_order", "desc"],
@@ -134,6 +135,7 @@ it.each([
         expect(subformatResponse(root, { ...request, key, value }).status).toBe(200);
     }
     expect(readManifest(root).subformats?.[0]?.layouts).toEqual({
+        view: "list",
         card_title: "",
         group_by: "status",
         sort_by: "due",
@@ -141,6 +143,7 @@ it.each([
     });
     const beforeInvalid = readFileSync(join(root, "dooc.yaml"), "utf8");
     for (const change of [
+        { key: "view", value: "grid", base: "list" },
         { key: "group_by", value: "due", base: "status" },
         { key: "sort_order", value: "sideways", base: "desc" },
     ]) {
@@ -148,6 +151,68 @@ it.each([
         expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toBe(beforeInvalid);
     }
     expect(readFileSync(join(root, "one.issue"), "utf8")).toBe(contents.yaml);
+});
+
+it.each(["legacy", "nested"])("registers, changes and clears SVG icons in %s manifests", (kind) => {
+    const { root, config } = fixture();
+    const section = kind === "nested" ? "json_subformats" : "subformats";
+    writeFileSync(
+        join(root, "dooc.yaml"),
+        `# Keep icons\n${kind === "nested" ? "center_contents" : "docs"}: []\n${section}: ${JSON.stringify([config])}\n`,
+    );
+    const svg = '<svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="6"/></svg>';
+    writeFileSync(join(root, "issue.svg"), svg);
+    writeFileSync(join(root, "invalid.svg"), "not an SVG");
+    const original = readFileSync(join(root, "dooc.yaml"), "utf8");
+    const request = { action: "icon", ext: "issue", base: null, value: "issue.svg" };
+    for (const value of [
+        "missing.svg",
+        "invalid.svg",
+        "issue.png",
+        "../issue.svg",
+        "https://example.com/icon.svg",
+        3,
+    ]) {
+        expect(subformatResponse(root, { ...request, value }).status).toBe(400);
+        expect(
+            subformatResponse(root, {
+                action: "register",
+                ext: "note",
+                format: "json",
+                icon: value,
+            }).status,
+        ).toBe(400);
+        expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toBe(original);
+        expect(existsSync(join(root, "note.schema.json"))).toBe(false);
+    }
+    const registered = subformatResponse(root, {
+        action: "register",
+        ext: "note",
+        format: "json",
+        icon: "issue.svg",
+    });
+    expect(registered.status).toBe(200);
+    expect(registered.body.collection).toMatchObject({
+        icon: "issue.svg",
+        iconSvg: expect.stringContaining('<circle cx="10" cy="10" r="6"/>'),
+    });
+    expect(subformatResponse(root, request)).toEqual({
+        status: 200,
+        body: {
+            file: "dooc.yaml",
+            icon: "issue.svg",
+            iconSvg: registered.body.collection?.iconSvg,
+        },
+    });
+    expect(readManifest(root).subformats?.[0]).toEqual({ ...config, icon: "issue.svg" });
+    const saved = readFileSync(join(root, "dooc.yaml"), "utf8");
+    expect(saved).toContain("# Keep icons");
+    expect(subformatResponse(root, request).status).toBe(409);
+    expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toBe(saved);
+    expect(subformatResponse(root, { ...request, value: "", base: "issue.svg" }).status).toBe(200);
+    expect(readManifest(root).subformats?.[0]).toEqual(config);
+    expect(readManifest(root).subformats?.[1]?.icon).toBe("issue.svg");
+    expect(readFileSync(join(root, "issue.svg"), "utf8")).toBe(svg);
 });
 
 it.each([
@@ -512,9 +577,9 @@ it("requires strict 2020-12 schemas before registration writes any files", () =>
 });
 
 it("validates linked sample records, their create templates, and cross-schema references", () => {
-    const root = join(process.cwd(), "dooc-docs");
+    const root = join(process.cwd(), "sample/dooc-sample-project");
     const configs = readManifest(root).subformats ?? [];
-    // The reference workspace grows; every record type listed below must stay in it.
+    // The delivery sample exercises five linked record types.
     expect(configs.map((config) => config.ext)).toEqual(
         expect.arrayContaining(["team", "project", "milestone", "issue", "note"]),
     );

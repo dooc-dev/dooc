@@ -16,7 +16,9 @@ const sample = new URL("../../../../dooc-docs/", import.meta.url);
 
 describe("sample plugin", () => {
     it("makes the mock reject incorrect PKCE proofs, code replay, and missing Bearer authentication", async () => {
-        const module = await import(new URL("../examples/viewer-plugins/mock.mjs", sample).href);
+        const module = await import(
+            new URL("../sample/examples/viewer-plugins/mock.mjs", sample).href
+        );
         const mock = module.createSampleMock();
         const verifier = "a".repeat(43);
         const redirect = "http://localhost:5179/api/plugins/callback/sample";
@@ -81,7 +83,9 @@ describe("sample plugin", () => {
     });
 
     it("fetches matched service URLs and renders their returned data", async () => {
-        const module = await import(new URL("../examples/viewer-plugins/sample.mjs", sample).href);
+        const module = await import(
+            new URL("../sample/examples/viewer-plugins/sample.mjs", sample).href
+        );
         const plugin: DataPlugin = module.createSamplePlugin({
             authorizationUrl: "https://example.com/authorize",
             tokenUrl: "https://example.com/token",
@@ -176,7 +180,7 @@ describe("sample plugin", () => {
 
     it("renders compact pull request details and escapes service values", async () => {
         const viewer = await loadViewerPlugins(
-            fileURLToPath(new URL("../examples/viewer-plugins/index.mjs", sample)),
+            fileURLToPath(new URL("../sample/examples/viewer-plugins/index.mjs", sample)),
         );
         const plugin = viewer.plugins[0];
         if (!plugin) throw new Error("Missing sample plugin");
@@ -213,7 +217,7 @@ describe("sample plugin", () => {
         const config = await loadDocsConfig(root);
         expect(config).not.toHaveProperty("plugins");
         const viewer = await loadViewerPlugins(
-            fileURLToPath(new URL("../examples/viewer-plugins/index.mjs", sample)),
+            fileURLToPath(new URL("../sample/examples/viewer-plugins/index.mjs", sample)),
         );
         expect(viewer).not.toHaveProperty("mounts");
         expect(viewer.plugins.map((plugin) => plugin.id)).toEqual(["sample", "sample-auth"]);
@@ -238,10 +242,10 @@ describe("sample plugin", () => {
 
 it("runs editable sample cards, comments, reactions, conflict checks, and ownership without external services", async () => {
     const { createSampleMock } = await import(
-        new URL("../../../../examples/viewer-plugins/mock.mjs", import.meta.url).href
+        new URL("../../../../sample/examples/viewer-plugins/mock.mjs", import.meta.url).href
     );
     const { createSamplePlugin } = await import(
-        new URL("../../../../examples/viewer-plugins/sample.mjs", import.meta.url).href
+        new URL("../../../../sample/examples/viewer-plugins/sample.mjs", import.meta.url).href
     );
     const mock = createSampleMock({ autoConnect: true });
     const plugin = createSamplePlugin({
@@ -316,7 +320,7 @@ it("runs editable sample cards, comments, reactions, conflict checks, and owners
 it("loads the ZIP demo entry with valid SVG asset icons for every service", async () => {
     const config = await loadViewerPlugins(
         fileURLToPath(
-            new URL("../../../../examples/viewer-plugins/extension.mjs", import.meta.url),
+            new URL("../../../../sample/examples/viewer-plugins/extension.mjs", import.meta.url),
         ),
     );
     const plugin = config.plugins[0];

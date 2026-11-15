@@ -231,7 +231,7 @@ export const mountSearch = (
     const currentPath = (): string =>
         published
             ? location.hash.slice(1).split(/[?#]/)[0] || initial[0]?.path || ""
-            : location.pathname;
+            : location.pathname.slice((globalThis.__doocClientBase ?? "").length) || "/";
     // Wrap query words in <mark>, comparing each character the way searchSections() does.
     const highlight = (target: HTMLElement, text: string, words: string[]): HTMLElement => {
         let folded = "";
@@ -621,3 +621,5 @@ export const mountSearch = (
     void open();
     if (saved.pending) flash(saved.pending);
 };
+
+import type {} from "../../workspace/src/client-path.js";

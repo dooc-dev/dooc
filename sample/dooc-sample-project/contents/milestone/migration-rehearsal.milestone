@@ -1,0 +1,6 @@
+name = "Migration rehearsal"
+state = "Closed"
+project = "contents/project/tenant-migration.project"
+owner = "dave"
+due = "2026-11-13"
+goal = "Migration and rollback complete in a disposable test environment with reconciled row counts."

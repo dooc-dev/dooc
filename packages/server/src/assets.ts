@@ -2,6 +2,12 @@ import { readFileSync } from "node:fs";
 
 export const prebuilt = import.meta.url.endsWith(".js");
 export const standalone = false;
+export const packageVersion: string = JSON.parse(
+    readFileSync(
+        new URL(prebuilt ? "../../package.json" : "../../../package.json", import.meta.url),
+        "utf8",
+    ),
+).version;
 
 export const readInstaller = (): Buffer =>
     readFileSync(

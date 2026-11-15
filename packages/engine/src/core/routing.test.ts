@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { fileDocumentId } from "./files.js";
 import {
     ancestorsOf,
     childrenOf,
     docPath,
+    documentPathErrors,
     headingAnchor,
     isReferenceUrl,
     parseDocLink,
@@ -86,4 +88,71 @@ it("keeps hierarchy paths separate from heading fragments and rejects old aliase
     expect(resolveDocPath(docs, "/reference/deep")).toBeUndefined();
     expect(resolveDocPath(docs, "/guide/setup/deep#heading")).toBeUndefined();
     expect(resolveDocPath(docs, "/unknown")).toBeUndefined();
+});
+
+it("uses file stems in manifest order without exposing source directories or internal IDs", () => {
+    const parent = { id: fileDocumentId("contents/md/guide.md"), file: "contents/md/guide.md" };
+    const child = {
+        id: fileDocumentId("other/start.md"),
+        sourceFile: "other/start.md",
+        file: "internal.md",
+        parent: parent.id,
+    };
+    const pages = [parent, child];
+    expect(docPath(pages, parent.id)).toBe("/guide");
+    expect(docPath(pages, child.id)).toBe("/guide/start");
+    expect(resolveDocPath(pages, "/guide/start")).toBe(child.id);
+    expect(resolveDocPath(pages, "/start")).toBeUndefined();
+    expect(resolveDocPath(pages, "/_docs/other/start.md")).toBeUndefined();
+    expect(
+        docPath(
+            [{ ...parent, file: "moved/guide.md", id: fileDocumentId("moved/guide.md") }],
+            fileDocumentId("moved/guide.md"),
+        ),
+    ).toBe("/guide");
+});
+
+it("uses declared Library and subformat names as hierarchy segments", () => {
+    const pages = [
+        { id: "reference" },
+        { id: "library-internal", library: "termth", parent: "reference" },
+        { id: "board-internal", subformat: { ext: "issue" }, parent: "reference" },
+        { id: "notes", parent: "board-internal" },
+    ];
+    expect(docPath(pages, "library-internal")).toBe("/reference/termth");
+    expect(docPath(pages, "board-internal")).toBe("/reference/issue");
+    expect(docPath(pages, "notes")).toBe("/reference/issue/notes");
+    expect(resolveDocPath(pages, "/reference/issue/notes")).toBe("notes");
+});
+
+it("encodes Unicode, spaces and literal percent signs exactly once", () => {
+    const pages = ["日本語 %", "a b", "a%20b"].map((name) => ({
+        id: fileDocumentId(`contents/${name}.md`),
+        file: `contents/${name}.md`,
+    }));
+    for (const [index, name] of ["日本語 %", "a b", "a%20b"].entries()) {
+        const id = pages[index]?.id ?? "";
+        const path = `/${encodeURIComponent(name)}`;
+        expect(docPath(pages, id)).toBe(path);
+        expect(resolveDocPath(pages, new URL(path, "https://dooc.invalid").pathname)).toBe(id);
+    }
+});
+
+it("detects sibling path collisions and reserved roots without choosing an arbitrary page", () => {
+    const pages = ["one/start.md", "two/start.md"].map((file) => ({
+        id: fileDocumentId(file),
+        file,
+    }));
+    expect(documentPathErrors(pages)).toEqual(["Duplicate page path: /start"]);
+    expect(resolveDocPath(pages, "/start")).toBeUndefined();
+    expect(
+        documentPathErrors(
+            pages.map((page, index) => (index ? { ...page, parent: pages[0]?.id } : page)),
+        ),
+    ).toEqual([]);
+    for (const name of ["_files", "_git", "api", "assets"]) {
+        const page = { id: fileDocumentId(`${name}.md`), file: `${name}.md` };
+        expect(documentPathErrors([page])[0]).toContain(`Reserved page path: /${name}`);
+        expect(documentPathErrors([{ id: "guide" }, { ...page, parent: "guide" }])).toEqual([]);
+    }
 });

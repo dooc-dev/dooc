@@ -1,0 +1,16 @@
+{
+  "id": "TASK-001",
+  "title": "Try every record form control",
+  "status": "Todo",
+  "priority": "High",
+  "due": "2026-12-04",
+  "progress": 25,
+  "estimate": 2.5,
+  "approved": false,
+  "owner": "alice",
+  "project": "contents/project/customer-portal.project",
+  "notes": "Try the date, status, and boolean controls.\nThen edit the nested review and switch to JSON text.",
+  "tags": ["forms", "keyboard"],
+  "review": { "reviewer": "Bob", "approved": false },
+  "updated": "2026-11-16T09:00:00Z"
+}

@@ -1,0 +1,14 @@
+title: Customer portal kickoff
+kind: Meeting
+date: 2026-11-09
+team: contents/team/product.team
+project: contents/project/customer-portal.project
+milestone: contents/milestone/portal-beta.milestone
+issues:
+  - contents/issue/draft-onboarding.issue
+  - contents/issue/test-invitations.issue
+attendees:
+  - alice
+  - bob
+  - carol
+body: Pilot five fictional customer workspaces. Alice owns the onboarding flow; Bob checks invitations and expired links; Carol reviews the empty states. Customer data is synthetic throughout the rehearsal. The beta gate requires the acceptance evidence listed in the work guide.

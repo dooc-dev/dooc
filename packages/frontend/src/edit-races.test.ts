@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { createContext, runInContext } from "node:vm";
 import { ScriptTarget, transpileModule } from "typescript";
 import { expect, it, vi } from "vitest";
+import { clientPath, workspacePath } from "../../workspace/src/client-path.js";
 
 const source = readFileSync(new URL("./edit-client.ts", import.meta.url), "utf8");
 const extract = (start: string, end: string): string => {
@@ -13,7 +14,7 @@ const extract = (start: string, end: string): string => {
 };
 // Exercise the actual controller with delayed responses without booting the entire editor DOM.
 const run = (code: string, globals: Record<string, unknown>) => {
-    const context = createContext(globals);
+    const context = createContext({ clientPath, workspacePath, ...globals });
     runInContext(
         transpileModule(code, { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText,
         context,
@@ -27,6 +28,32 @@ const deferred = <T>() => {
     });
     return { promise, resolve };
 };
+
+it("keeps the active version in document, resource and anchor navigation URLs", () => {
+    let revision: { version: string } | undefined = { version: "1.0.0" };
+    const context = run(
+        [
+            extract("const localeUrl =", "\nconst localeFetch ="),
+            extract("let currentPath =", "\n// Handling of leaving"),
+            "globalThis.pageUrl = localeUrl; globalThis.currentUrl = currentUrl;",
+        ].join("\n"),
+        {
+            URL,
+            location: { origin: "http://localhost:3000" },
+            boot: { path: "/guide/start", docId: "start", contentLanguage: "eng" },
+            workspaceConnection: () => ({ revision }),
+            clientPath: (path: string) => `/client${path}`,
+            resourceView: undefined,
+        },
+    );
+    expect(context.pageUrl("/guide/start#details")).toBe(
+        "/client/guide/start?lang=eng&version=1.0.0#details",
+    );
+    context.resourceView = { path: "/_files" };
+    expect(context.currentUrl()).toBe("/client/_files?lang=eng&version=1.0.0&editor=start");
+    revision = undefined;
+    expect(context.pageUrl("/guide/start")).toBe("/client/guide/start?lang=eng");
+});
 
 const optionController = (
     panes: { id: number; workspace: string }[],

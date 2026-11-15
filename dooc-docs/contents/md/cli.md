@@ -1,60 +1,64 @@
-Commands that operate on a workspace accept an optional manifest path and default to `./dooc.yaml`. A named manifest, `<name>.dooc.yaml`, works the same way. `edit` and `view` also accept a folder or local `file://` URL. Add `--repo <url>` to resolve the document path inside a Git clone instead of the local filesystem. `client`, `build client`, and `self` do not take a manifest. Run `dooc help`, or `dooc <command> --help` for command details.
+Workspace application commands use `--project <path>` and default to `./dooc.yaml`. Local folders, named manifests (`<name>.dooc.yaml`) and local `file://` URLs are accepted. Add `--repo <url>` to `run node` to resolve the project inside a Git clone. Document commands such as `check`, `build html`, `build zip` and `export` accept a positional manifest path. Run `dooc help` or `dooc <command> --help` for details.
+
+`dooc editor` and `dooc viewer` are aliases for `dooc editor run node --all` and `dooc viewer run node --all`. They read `dooc.yaml` from the directory where the command is run and start the client, workspace server and MCP on port `3000`. Viewer workspace and MCP operations remain read-only. Options are forwarded: `dooc editor --port 4000 --project docs/team.dooc.yaml` overrides the port and manifest, and `--no-mcp` disables MCP.
+
+Use the explicit `build`/`run` form to choose components and runtimes. [App runtimes](contents/md/runtimes.md) describes these options and single-port routing.
 
 ## Commands
 
-| Command                                 | Use it to                                           |
-| --------------------------------------- | --------------------------------------------------- |
-| `dooc init [path]`                      | Create a manifest; never overwrites an existing one |
-| `dooc edit [path] [port]`               | Write and reorganize pages, records, and schemas    |
-| `dooc view [path] [port]`               | Read the workspace without editing controls         |
-| `dooc server [dooc.yaml] [port]`        | Serve the workspace WebSocket without frontend assets |
-| `dooc client [port]`                    | Serve the static editor without a workspace API     |
-| `dooc check [dooc.yaml]`                | Print a JSON consistency report                     |
-| `dooc build html [dooc.yaml] [out-dir]` | Build a standalone `bundle.html`                    |
-| `dooc build zip [dooc.yaml] [out-dir]`  | Build `bundle.zip`                                  |
-| `dooc build client [out-dir]`           | Generate a static editor for independent hosting    |
-| `dooc export [dooc.yaml] [out-dir]`     | Collect the source files the workspace depends on   |
-| `dooc mcp [dooc.yaml]`                  | Serve read and write operations to an MCP client    |
-| `dooc plugin pack <built-dir> [zip]`    | Package a plugin as a ZIP                           |
-| `dooc plugin add <zip> [dooc.yaml] [port]` | Install a plugin ZIP and print login links        |
-| `dooc plugin login <id> [dooc.yaml] [port]` | Open the login flow of an installed plugin      |
-| `dooc font add <file> [dooc.yaml]`       | Register a font in `.dooc/fonts/`                   |
-| `dooc font list [dooc.yaml]`             | List project fonts                                  |
-| `dooc font remove <name> [dooc.yaml]`    | Remove a project font                               |
-| `dooc self update`                      | Update dooc to the latest release                   |
-| `dooc self docs`                        | Download GitHub documentation and open a local viewer |
+| Command | Purpose |
+| --- | --- |
+| `dooc editor [options]` | Alias for `dooc editor run node --all [options]` |
+| `dooc viewer [options]` | Alias for `dooc viewer run node --all [options]` |
+| `dooc editor <build\|run> <node\|web> [components]` | Build or run selected editor components |
+| `dooc viewer <build\|run> <node\|web> [components]` | Build or run selected read-only components |
+| `dooc init [path]` | Create a manifest without overwriting an existing one |
+| `dooc check [dooc.yaml]` | Print a JSON consistency report |
+| `dooc build html [dooc.yaml] [out-dir]` | Build a standalone `bundle.html` |
+| `dooc build zip [dooc.yaml] [out-dir]` | Build `bundle.zip` |
+| `dooc export [dooc.yaml] [out-dir]` | Collect source dependencies into `bundle.zip` |
+| `dooc mcp [dooc.yaml]` | Serve workspace operations over stdio |
+| `dooc mcp relay --stdio` | Connect a Desktop MCP host to a browser workspace |
+| `dooc mcp relay --public-url <origin> --client-origin <origin>` | Host a browser MCP relay |
+| `dooc plugin pack <built-dir> [zip]` | Package a plugin |
+| `dooc plugin add <zip> [dooc.yaml] [port]` | Install a plugin and print login links |
+| `dooc plugin login <id> [dooc.yaml] [port]` | Open an installed plugin's login flow |
+| `dooc font add <file> [dooc.yaml]` | Register a project font |
+| `dooc font list [dooc.yaml]` | List project fonts |
+| `dooc font remove <name> [dooc.yaml]` | Remove a project font |
+| `dooc self update` | Update this dooc installation |
+| `dooc self docs` | Download documentation and open a local viewer |
+| `dooc help`, `dooc --help`, `dooc -h` | Show command help |
 
-`edit`, `view`, and `server` default to port `5179`; `client` defaults to `5180`. All bind to loopback. Workspace bundles default to `dist/` beside the manifest; `build client` defaults to `./dooc-client`. See [Editor](contents/md/editor.md#separate-server-and-client) for origin, proxy, and static-host requirements.
+Explicit application commands require at least one of `--client`, `--server`, or `--mcp`; `--all` selects all three. The shortcuts supply `run node --all` when no action or runtime is given. Runs default to port `3000` and bind to loopback. Document bundles default to `dist/` beside the manifest. Application builds default to `./dooc-<editor\|viewer>-<node\|web>` and require an empty output directory.
 
 ## Options
 
-| Command        | Option                             | Effect                                                |
-| -------------- | ---------------------------------- | ----------------------------------------------------- |
-| `edit`         | `--shared <branch>`                | Several people edit; snapshots go to the branch       |
-| `edit`, `view` | `--repo <url>`                     | Resolve the document path inside a Git clone          |
-| `edit`, `view` | `--tls-cert <pem> --tls-key <pem>` | Serve over HTTPS                                      |
-| `edit`, `view` | `--viewer-plugins <module>`        | Load a viewer plugin module                           |
-| `server`       | `--viewer-plugins <module>`        | Load plugins for the workspace service                |
-| `server`       | `--client-origin <origin>`         | Allow one browser origin; default `http://localhost:5180` |
-| `client`, `build client` | `--server <ws-url>`       | Preconfigure an optional workspace connection          |
-| `build`        | `--viewer-plugins <module>`        | Load a build plugin module                            |
-| `build`        | `--url_preview embed\|network`     | Store URL content in the bundle, or fetch when opened |
-| `build html`   | `--mode static\|live`              | Snapshot plugin cards, or keep them fetching          |
-| `build html`   | `--auth external`                  | The host supplies authentication for live HTML        |
-| `build html`   | `--source-url <url>`               | Base URL for the copy link on record cards            |
-| `build html`   | `--easy-download`                  | Offer each embedded file as a download                |
-| `check`        | `--only render,languages,themes`   | Select checks; the manifest is always checked         |
-| `check`        | `--allow-shared-svg`               | Allow identical SVG bytes across themes               |
-| `check`        | `--warnings-as-errors`             | Fail on warnings                                      |
-| `mcp`          | `--git-origin <module>`            | Take the Git origin from a plugin module              |
+| Command | Option | Effect |
+| --- | --- | --- |
+| `editor run node` | `--shared <branch>` | Record shared-workspace snapshots on the named branch; requires `--server` without `--mcp` |
+| `editor/viewer run node` | `--repo <url>` | Resolve `--project` inside a Git clone; requires `--server` or `--mcp` |
+| `editor/viewer run node` | `--tls-cert <pem> --tls-key <pem>` | Serve HTTPS and secure WebSockets |
+| `editor/viewer … node` | `--viewer-plugins <module>` | Load an explicit workspace plugin module |
+| `editor/viewer … node` | `--server-url <ws-url>` | Set the client's workspace connection |
+| `build` | `--viewer-plugins <module>` | Load a build plugin module |
+| `build` | `--url_preview embed\|network` | Embed URL content or fetch it when opened |
+| `build html` | `--mode static\|live` | Snapshot plugin cards or keep them fetching |
+| `build html` | `--auth external` | Use host authentication for live HTML |
+| `build html` | `--source-url <url>` | Set the base URL for record copy links |
+| `build html` | `--easy-download` | Offer each embedded file as a download |
+| `check` | `--only render,languages,themes` | Select checks; the manifest is always checked |
+| `check` | `--allow-shared-svg` | Allow identical SVG bytes across themes |
+| `check` | `--warnings-as-errors` | Fail on warnings |
+| `mcp` | `--git-origin <module>` | Take the Git origin from a plugin module |
 
-| Environment variable            | Effect                                                       |
-| ------------------------------- | ------------------------------------------------------------ |
-| `DOOC_TLS_CERT`, `DOOC_TLS_KEY` | Defaults for `edit`/`view` `--tls-cert` and `--tls-key`       |
-| `DOOC_VIEWER_PLUGINS`           | Default for `edit`/`view` `--viewer-plugins`                  |
-| `DOOC_USER_DIR`                 | Moves `~/.dooc/` (plugin logins and approvals)                |
+| Environment variable | Effect |
+| --- | --- |
+| `DOOC_TLS_CERT`, `DOOC_TLS_KEY` | TLS defaults for `run node` |
+| `DOOC_VIEWER_PLUGINS` | Viewer-plugin default for `run node` |
+| `DOOC_USER_DIR` | Move personal plugin logins and approvals from `~/.dooc/` |
 
-Explicit TLS and viewer-plugin flags override their environment defaults. `server` and `build` require the explicit `--viewer-plugins` flag.
+Explicit flags override their environment defaults. Builds require explicit plugin flags. See [App runtimes](contents/md/runtimes.md#component-options) for all component options.
 
 ## Plugins and fonts
 
@@ -67,35 +71,35 @@ Explicit TLS and viewer-plugin flags override their environment defaults. `serve
 ```sh
 mkdir my-docs && cd my-docs
 dooc init
-dooc edit
+dooc editor
 dooc check
 dooc build html ./dooc.yaml ./dist
 ```
 
-`dooc edit` keeps running while the editor is open. Save your changes and stop it with `Ctrl+C` before continuing, or run `check` and `build` in another terminal.
+`dooc editor` keeps running while the editor is open. Save your changes and stop it with `Ctrl+C` before continuing, or run `check` and `build` in another terminal.
 
 ## Git repositories
 
 ```sh
-dooc view dooc-docs --repo https://github.com/dooc-dev/dooc.git
-dooc edit dooc-docs --repo https://github.com/dooc-dev/dooc.git
-dooc edit dooc-docs/dooc.yaml --repo https://github.com/dooc-dev/dooc.git
-dooc edit handbook --repo git@example.com:team/docs.git
+dooc viewer run node --client --server --project dooc-docs --repo https://github.com/dooc-dev/dooc.git
+dooc editor run node --client --server --project dooc-docs --repo https://github.com/dooc-dev/dooc.git
+dooc editor run node --client --server --project dooc-docs/dooc.yaml --repo https://github.com/dooc-dev/dooc.git
+dooc editor run node --client --server --project handbook --repo git@example.com:team/docs.git
 ```
 
-The first argument selects a folder or manifest; `--repo` supplies the repository's clone URL. A folder must contain `dooc.yaml`; an explicit path may select `<name>.dooc.yaml`. Omitting the document path with `--repo` selects `dooc.yaml` at the repository root. HTTPS, HTTP, and SSH repositories on GitHub or other Git hosts use system Git and its configured credentials. Install Git before using remote sources. Use a clone URL, not a GitHub page URL, `owner/repo` shorthand, or a URL containing passwords, query parameters, or fragments.
+`--project` selects a folder or manifest; `--repo` supplies the repository's clone URL. A folder must contain `dooc.yaml`; an explicit path may select `<name>.dooc.yaml`. Omitting `--project` with `--repo` selects `dooc.yaml` at the repository root. HTTPS, HTTP, and SSH repositories on GitHub or other Git hosts use system Git and its configured credentials. Install Git before using remote sources. Use a clone URL, not a GitHub page URL, `owner/repo` shorthand, or a URL containing passwords, query parameters, or fragments.
 
 Cloning opens the remote's default branch and retains the full Git repository, including history and the origin remote, so branch switching, commits, and pushes remain available. Use the editor's branch selector to open another branch.
 
-`edit` saves the clone under `$XDG_DATA_HOME/dooc/workspaces` or `~/.local/share/dooc/workspaces`. Repeating the same normalized clone URL reopens that clone without fetching, pulling, or resetting it. Different document paths selected with that URL share the clone and its working tree. Use the editor's Git tools or Git directly to fetch remote updates. `view` creates a fresh temporary clone on each launch and removes it on exit.
+`editor run node` saves the clone under `$XDG_DATA_HOME/dooc/workspaces` or `~/.local/share/dooc/workspaces`. Repeating the same normalized clone URL reopens that clone without fetching, pulling, or resetting it. Different document paths selected with that URL share the clone and its working tree. Use the editor's Git tools or Git directly to fetch remote updates. `viewer run node` creates a fresh temporary clone on each launch and removes it on exit.
 
 Remote sessions do not execute `docs.config.mjs`, activate workspace plugin ZIPs, or run configured external editor commands. An explicit local `--viewer-plugins` module remains supported. Git hooks and checkout filters are disabled in saved clones; submodules are not initialized, and Git LFS content is not downloaded automatically. Documents that depend on these features need a locally prepared checkout opened without `--repo`.
 
-Without `--repo`, the path is local: `dooc edit ./dooc-docs`. Local folders, manifest paths, and local `file://` URLs open directly, without cloning or deleting the original files. With `--repo`, the document path must be relative and stay within the cloned repository.
+Without `--repo`, the path is local: `dooc editor run node --client --server --project ./dooc-docs`. Local folders, manifest paths, and local `file://` URLs open directly, without cloning or deleting the original files. With `--repo`, the document path must be relative and stay within the cloned repository.
 
 The terminal shows the local URL, operation logs, and Git clone progress. Other downloads show bytes and a percentage when the server supplies a size. Output is plain when redirected or when `NO_COLOR` is set. These messages go to stderr; JSON reports and MCP stdout stay machine-readable.
 
-See [Install](contents/md/install.md#open-the-documentation) for opening this documentation, [Update](contents/md/install.md#update) for installation-specific update behavior, and [Development](contents/md/development.md) for source builds and release commands.
+See [Install](contents/md/install.md#open-the-documentation) for opening this documentation, [Update](contents/md/install.md#update) for installation-specific update behavior, [Development](contents/md/development.md) for source builds, and [Release](contents/md/release.md) for publishing.
 
 ## Check report
 

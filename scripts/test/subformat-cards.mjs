@@ -35,7 +35,7 @@ window.testSubformatCards = async () => {
             {
                 file: "card.issue",
                 references: [
-                    { file: "guide.md", line: 4, href: "/_docs/guide.md" },
+                    { file: "guide.md", line: 4, href: "/guide" },
                     { file: "notes.md", line: 12 },
                 ],
                 content: "original",
@@ -74,6 +74,8 @@ window.testSubformatCards = async () => {
     let failRegister = false;
     let failDelete = false;
     const deletions = [];
+    const icons = [];
+    let failIcon = false;
     let failLayout = false;
     let delayLayout = false;
     let finishLayout;
@@ -122,6 +124,15 @@ window.testSubformatCards = async () => {
     window.fetch = async (url, options) => {
         if (url !== "/api/subformat") return originalFetch(url, options);
         const input = JSON.parse(options.body);
+        if (input.action === "icon") {
+            icons.push(input);
+            if (failIcon)
+                return Response.json({ error: "Icon changed externally" }, { status: 409 });
+            return Response.json({
+                icon: input.value || undefined,
+                iconSvg: input.value ? '<svg viewBox="0 0 20 20"></svg>' : undefined,
+            });
+        }
         if (input.action === "delete") {
             deletions.push(input);
             if (failDelete) return Response.json({ error: "Save failed" }, { status: 409 });
@@ -144,6 +155,10 @@ window.testSubformatCards = async () => {
             assert(
                 JSON.parse(input.content).$schema.endsWith("2020-12/schema"),
                 "New definitions include a 2020-12 schema",
+            );
+            assert(
+                input.icon === "icons/ticket.svg",
+                "Registration includes the optional SVG path",
             );
             if (failRegister)
                 return Response.json({ error: "Schema file already exists" }, { status: 409 });
@@ -217,6 +232,58 @@ window.testSubformatCards = async () => {
                 .click();
             assert(!menu(key).matches(":popover-open"), "Choosing a value closes its menu");
         };
+        chooseSetting("view", "list");
+        assert(
+            card().getAttribute("role") === "listitem" &&
+                card().parentElement.getAttribute("role") === "list",
+            "List view has list semantics",
+        );
+        assert(
+            getComputedStyle(card()).display === "grid" &&
+                getComputedStyle(card()).borderTopWidth === "0px",
+            "List records use rows without card boxes",
+        );
+        card().querySelector(".subformat-card-toggle").click();
+        assert(!details().hidden, "List rows retain expandable details");
+        chooseSetting("view", "card");
+        assert(
+            !card().hasAttribute("role") && !details().hidden,
+            "Changing views preserves expanded records",
+        );
+        card().querySelector(".subformat-card-toggle").click();
+        root.querySelector("[data-subformat-icon]").click();
+        let iconForm = root.querySelector(".subformat-icon-form");
+        iconForm.elements.icon.value = "icons/issue.svg";
+        failIcon = true;
+        iconForm.requestSubmit();
+        await wait(() => !iconForm.querySelector("fieldset").disabled);
+        assert(
+            iconForm.isConnected && iconForm.elements.icon.value === "icons/issue.svg",
+            "Icon errors preserve the path for retry",
+        );
+        assert(icons.at(-1).base === null, "New icons use an empty conflict guard");
+        document.querySelector(".subformat-toast")?.remove();
+        failIcon = false;
+        iconForm.requestSubmit();
+        await wait(() => !root.querySelector(".subformat-icon-form"));
+        assert(
+            root.querySelector("[data-subformat-trigger] img"),
+            "Saved SVG icons update the type picker",
+        );
+        root.querySelector("[data-subformat-icon]").click();
+        iconForm = root.querySelector(".subformat-icon-form");
+        assert(
+            iconForm.elements.icon.value === "icons/issue.svg",
+            "Icon settings reopen with the saved path",
+        );
+        iconForm.elements.icon.value = "";
+        iconForm.requestSubmit();
+        await wait(() => !root.querySelector(".subformat-icon-form"));
+        assert(
+            icons.at(-1).base === "icons/issue.svg" &&
+                !root.querySelector("[data-subformat-trigger] img"),
+            "Clearing an icon retains conflict protection and removes its preview",
+        );
         const chooseTitle = (value) => chooseSetting("card_title", value);
         const saveDefault = async (key, value) => {
             if (!menu(key).matches(":popover-open")) setting(key).click();
@@ -305,6 +372,7 @@ window.testSubformatCards = async () => {
         delayLayout = false;
         await saveDefault("card_title", "due");
         for (const [key, value] of [
+            ["view", "list"],
             ["group_by", ""],
             ["sort_by", "due"],
             ["sort_order", "desc"],
@@ -331,8 +399,8 @@ window.testSubformatCards = async () => {
         );
         assert(
             toolOrder.join(",") ===
-                "subformat-card-file,subformat-card-toggle,subformat-card-references,subformat-card-copy",
-            "Card tools follow filename, collapse, usage, copy order",
+                "subformat-card-file,subformat-card-toggle,subformat-card-references,subformat-card-copy,resource-download",
+            "Card tools follow filename, collapse, usage, copy, download order",
         );
         assert(
             card().querySelector(".subformat-card-references").textContent === "2",
@@ -353,7 +421,7 @@ window.testSubformatCards = async () => {
         );
         const sourceLink = referenceList.querySelector("a");
         assert(
-            sourceLink.getAttribute("href") === "/_docs/guide.md",
+            sourceLink.getAttribute("href") === "/guide",
             "References link to their document in read-only views",
         );
         assert(sourceLink.textContent === "guide.mdL4", "References identify the file and line");
@@ -432,8 +500,10 @@ window.testSubformatCards = async () => {
         opened = undefined;
         const file = card().querySelector(".subformat-card-file");
         assert(
-            !card().querySelector('a:not([draggable="false"]), [title]'),
-            "Cards have no native link drags or tooltips",
+            !card().querySelector(
+                'a:not([draggable="false"]):not([data-resource-download]), [title]:not([data-resource-download])',
+            ),
+            "Record content has no native link drags or tooltips",
         );
         file.click();
         assert(
@@ -790,6 +860,7 @@ window.testSubformatCards = async () => {
         registration.elements.schema.value = "";
         registration.elements.ext.value = "ticket";
         registration.elements.ext.dispatchEvent(new Event("input", { bubbles: true }));
+        registration.elements.icon.value = "icons/ticket.svg";
         failRegister = true;
         registration.requestSubmit();
         await wait(() => !registration.querySelector("fieldset").disabled);
@@ -889,12 +960,11 @@ window.testSubformatCards = async () => {
         document.body.classList.remove("edit");
         root = createRoot(false);
         const publishedPage = document.createElement("template");
-        publishedPage.dataset.route = "_docs/guide.md";
+        publishedPage.dataset.route = "guide";
         host.append(publishedPage);
         filterSubformats(root, []);
         assert(
-            card().querySelector(".subformat-reference-list a").getAttribute("href") ===
-                "#/_docs/guide.md",
+            card().querySelector(".subformat-reference-list a").getAttribute("href") === "#/guide",
             "Published reference links use the bundle's document routes",
         );
         publishedPage.remove();
@@ -940,6 +1010,13 @@ window.testSubformatCards = async () => {
             "Published boards allow temporary title changes",
         );
         assert(layouts.length === savesBefore, "Published boards do not write settings");
+        chooseSetting("view", "list");
+        assert(
+            card().classList.contains("subformat-list-record") &&
+                !root.querySelector("[data-subformat-icon]"),
+            "Published lists are available without icon editing",
+        );
+        assert(layouts.length === savesBefore, "Published view choices do not write defaults");
         const configuredLayouts = collection.layouts;
         delete collection.layouts;
         collection.records[0].data.name = "Legacy name";
@@ -950,7 +1027,26 @@ window.testSubformatCards = async () => {
         );
         collection.layouts = configuredLayouts;
         delete collection.records[0].data.name;
-        return "Passed: transparent cards, subformat edit/delete/confirmation/conflicts/last deletion/read-only actions, collapse, state restoration, click/keyboard editing, escaping, focus, whole-card dragging, same-column drop, drag preview/cancel, temporary error toast without layout shift, save failure/retry, read-only details";
+        document.body.classList.add("edit");
+        root = createRoot();
+        chooseSetting("view", "list");
+        const listSaves = saves;
+        const listTransfer = new DataTransfer();
+        listTransfer.setDragImage = () => {};
+        card().dispatchEvent(
+            new DragEvent("dragstart", { bubbles: true, dataTransfer: listTransfer }),
+        );
+        root.querySelector('.subformat-column[aria-label="Done"] .subformat-cards').dispatchEvent(
+            new DragEvent("drop", { bubbles: true, dataTransfer: listTransfer }),
+        );
+        await wait(() => root.querySelector('[data-subformat-board][aria-busy="false"]'));
+        assert(
+            saves === listSaves + 1 &&
+                card().closest(".subformat-column").getAttribute("aria-label") === "Done" &&
+                card().classList.contains("subformat-list-record"),
+            "List rows can be dragged between groups and keep their layout after saving",
+        );
+        return "Passed: card/list views, SVG registration/edit/clear/conflicts, transparent cards, subformat edit/delete/confirmation/conflicts/last deletion/read-only actions, collapse, state restoration, click/keyboard editing, escaping, focus, whole-card dragging, same-column drop, drag preview/cancel, temporary error toast without layout shift, save failure/retry, read-only details";
     } finally {
         document.removeEventListener("docs:subformat-add", openRegistration);
         document.removeEventListener("docs:subformat-create", openRegistration);

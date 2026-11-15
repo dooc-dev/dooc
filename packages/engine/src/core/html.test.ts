@@ -71,6 +71,23 @@ describe("blocksHtml", () => {
         expect(rendered).not.toContain('download="missing.txt"');
         expect(blocksHtml(blocks, CTX)).not.toContain('class="resource-download"');
     });
+    it("puts the expand button left of the download on overlay blocks only", () => {
+        const downloads = new Map([
+            ["https://example.com/a.png", "https://example.com/a.png"],
+            ["a.txt", "data:,a"],
+        ]);
+        const rendered = blocksHtml(
+            [
+                { type: "external", url: "https://example.com/a.png" } as Block,
+                { type: "code", filename: "a.txt", lines: ["a"] },
+            ],
+            { ...CTX, downloads },
+        );
+        expect(rendered.match(/data-resource-expand/g)).toHaveLength(1);
+        expect(rendered).toMatch(
+            /class="resource-download-tools"><button [^>]*data-resource-expand[^>]*>.*?<\/button><a class="resource-download"/,
+        );
+    });
     it("renders Markdown emphasis, nested formatting, links and literal escapes", () => {
         const source =
             "**Bold** and _italic_ and ***both***.\n\n[**Linked** *label*](https://example.com)\n\n\\*literal\\* and \\_literal\\_ and a_b_c and ``a ` b``.";

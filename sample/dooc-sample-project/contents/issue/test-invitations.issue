@@ -1,0 +1,10 @@
+title: Test invitations and expired links
+status: Doing
+priority: Normal
+due: 2026-11-17
+points: 2
+project: contents/project/customer-portal.project
+milestone: contents/milestone/portal-beta.milestone
+assignee: bob
+blocked_by:
+  - contents/issue/draft-onboarding.issue

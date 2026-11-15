@@ -1,0 +1,13 @@
+{
+  "name": "Tenant migration",
+  "status": "Active",
+  "team": "contents/team/platform.team",
+  "owner": "dave",
+  "start": "2026-11-02",
+  "target": "2026-12-11",
+  "summary": "Rehearse a tenant migration and its rollback before onboarding the first pilot cohort.",
+  "docs": [
+    "contents/md/roadmap.md",
+    "contents/md/decisions.md"
+  ]
+}

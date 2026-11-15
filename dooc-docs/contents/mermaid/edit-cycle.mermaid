@@ -1,0 +1,16 @@
+sequenceDiagram
+  participant Author
+  participant Editor
+  participant Workspace
+  participant Compiler
+  Author->>Editor: Change source
+  Editor->>Workspace: Request draft preview
+  Workspace->>Compiler: Compile draft
+  Compiler-->>Editor: Preview and diagnostics
+  Author->>Editor: Save
+  Editor->>Workspace: Save with base content
+  alt Source has not changed
+    Workspace-->>Editor: Saved source
+  else Another writer changed the file
+    Workspace-->>Editor: Conflict to resolve
+  end

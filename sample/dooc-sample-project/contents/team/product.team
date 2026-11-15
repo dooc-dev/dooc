@@ -1,0 +1,19 @@
+name = "Product"
+focus = "Product"
+lead = "alice"
+contact = "product@example.org"
+
+[[members]]
+id = "alice"
+name = "Alice"
+role = "Writer"
+
+[[members]]
+id = "bob"
+name = "Bob"
+role = "Reviewer"
+
+[[members]]
+id = "carol"
+name = "Carol"
+role = "Designer"

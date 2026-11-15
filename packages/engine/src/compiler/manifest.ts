@@ -4,12 +4,14 @@
 import { parse } from "yaml";
 import {
     type DocNode,
+    flattenTree,
     isManifestFile,
     MANIFEST_FILE,
     type ParsedManifest,
     parseManifest,
     serializeManifest,
 } from "../core/content-metadata.js";
+import { documentPathErrors } from "../core/routing.js";
 import { createFileCache } from "./file-cache.js";
 import { basename, dirname, existsSync, join, resolve, statSync, writeFileSync } from "./host.js";
 
@@ -39,6 +41,11 @@ export const parseManifestText = (raw: string, file: string = MANIFEST_FILE): Pa
         };
     }
     const manifest = parseManifest(value);
+    manifest.errors.push(
+        ...documentPathErrors(flattenTree(manifest.tree)).map(
+            (error) => `${MANIFEST_FILE}: ${error}`,
+        ),
+    );
     manifest.errors = manifest.errors.map((error) => error.replace(/^dooc\.yaml(?=:)/, () => file));
     return manifest;
 };

@@ -1,0 +1,14 @@
+name = "Platform"
+focus = "Platform"
+lead = "dave"
+contact = "platform@example.org"
+
+[[members]]
+id = "dave"
+name = "Dave"
+role = "Engineer"
+
+[[members]]
+id = "erin"
+name = "Erin"
+role = "Engineer"

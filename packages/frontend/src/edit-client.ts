@@ -1,4 +1,4 @@
-// Browser client for dooc edit (bundled by serve.ts with esbuild, served at
+// Browser client for the dooc editor (bundled by serve.ts with esbuild, served at
 // /assets/edit.js). Sidebar: document properties. Right panel: language + CodeMirror. Insertion is done via in-editor
 // autocomplete (the `/` palette and contextual completion). Toggles (autosave / correspondence
 // view / fm visibility / theme) live in the header's gear hover menu. Width is adjustable by drag
@@ -33,19 +33,22 @@ import { tags } from "@lezer/highlight";
 import type { TocEntry } from "../../engine/src/core/blocks.js";
 import { isManifestFile, subformatPageId } from "../../engine/src/core/content-metadata.js";
 import type { TermEntry } from "../../engine/src/core/content-types.js";
-import { isDocumentFileName } from "../../engine/src/core/files.js";
+import { fileDocumentId, isDocumentFileName } from "../../engine/src/core/files.js";
 import { formatJson } from "../../engine/src/core/json-tools.js";
 import type { PreviewSettings } from "../../engine/src/core/previewers.js";
 import { CODE_LANGS, CODE_TEMPLATES } from "../../engine/src/core/taxonomy.js";
 import { isTermFile, termFileUrl } from "../../engine/src/core/term-reference.js";
 import type { HmrBridge } from "../../server/src/hmr.js";
 import { pageWorkspace } from "../../workspace/src/client.js";
+import { clientPath, workspacePath } from "../../workspace/src/client-path.js";
 import {
     selectWorkspace,
+    workspaceConnection,
     workspaceConnections,
     workspaceFetch,
     workspaceId,
 } from "../../workspace/src/connection.js";
+import { type DraftLocation, mountDocumentVersions } from "./document-versions-ui.js";
 import { codeFileButtons } from "./edit-code-file.js";
 import { editorCodeHighlight } from "./edit-code-highlight.js";
 import { chooseConflict } from "./edit-conflict.js";
@@ -85,6 +88,7 @@ import { hasSubformatDraft, showSubformatError } from "./subformats-ui.js";
 import { readWorkspaceOptions, type WorkspaceOption } from "./workspace-options.js";
 
 interface Boot {
+    readOnly?: boolean;
     gitBase: string | null;
     resource?: ResourcePage;
     previews?: PreviewSettings;
@@ -252,7 +256,9 @@ let siteIcon = boot.siteIcon;
 const localeUrl = (path: string): string => {
     const url = new URL(path, location.origin);
     url.searchParams.set("lang", boot.contentLanguage ?? boot.defaultLang);
-    return url.pathname + url.search + url.hash;
+    const revision = workspaceConnection()?.revision;
+    if (revision) url.searchParams.set("version", revision.version);
+    return clientPath(url.pathname) + url.search + url.hash;
 };
 const localeFetch = (
     url: string,
@@ -409,6 +415,7 @@ const setDirty = (v: boolean): void => {
                 ),
             ),
     );
+    document.dispatchEvent(new Event("dooc:drafts-changed"));
 };
 let corrOn = false;
 let ranges: Corr[] = [];
@@ -833,7 +840,9 @@ const workspaceTextfiles = (id: string) => {
     return files;
 };
 let textfiles = workspaceTextfiles(workspaceId());
+const revisionEditing = new Compartment();
 const editorExtensions = (): Extension[] => [
+    revisionEditing.of(EditorState.readOnly.of(!!boot.readOnly)),
     keymap.of([
         {
             key: "Mod-s",
@@ -946,6 +955,7 @@ const setValidationState = (state: "pending" | "checking" | "valid" | "error"): 
     button.setAttribute("aria-label", t(label));
 };
 const autoValidationReady = (): boolean =>
+    !boot.readOnly &&
     autovalidateEl.checked &&
     !document.activeElement?.closest(".cm-textfile, .cm-textfile-controls") &&
     !isEditingCodeBlock(view);
@@ -955,6 +965,7 @@ const markValidationPending = (): void =>
 let codeToolBusy = false;
 let applyingValidation = false;
 const validatePage = async (automatic = false): Promise<void> => {
+    if (boot.readOnly) return;
     if (automatic && !autoValidationReady()) {
         markValidationPending();
         return;
@@ -1094,15 +1105,15 @@ const updateNavLocation = (): void => {
     const docTitle = boot.title.trim() || boot.docId;
     document.title =
         resourceView?.title ??
-        (docTitle === siteTitle ? docTitle : `${docTitle} — ${siteTitle ?? "dooc edit"}`);
+        (docTitle === siteTitle ? docTitle : `${docTitle} — ${siteTitle ?? "dooc editor"}`);
     for (const link of document.querySelectorAll<HTMLAnchorElement>(
         "#nav-files a, #nav-git a, #nav-library a, #nav-subformats a, #nav-extensions a",
     )) {
         const current =
             resourceView !== undefined &&
-            (["/_git", "/_extensions", "/_subformats"].includes(link.pathname)
-                ? resourceView.path === link.pathname
-                : link.pathname === "/_library"
+            (["/_git", "/_extensions", "/_subformats"].includes(workspacePath(link.pathname))
+                ? resourceView.path === workspacePath(link.pathname)
+                : workspacePath(link.pathname) === "/_library"
                   ? resourceView.path.startsWith("/_library") ||
                     /^\/_files\/(codeblocks|urls|url-previews|dictionary|code)$/.test(
                         resourceView.path,
@@ -1117,7 +1128,7 @@ const updateNavLocation = (): void => {
     }
     const item = resourceView
         ? [...document.querySelectorAll<HTMLAnchorElement>("[data-subformat-nav] > .nav-row > a")]
-              .find((link) => link.pathname === resourceView?.path)
+              .find((link) => workspacePath(link.pathname) === resourceView?.path)
               ?.closest<HTMLElement>("[data-doc-id]")
         : document.querySelector<HTMLElement>(
               `#nav-groups .nav-item[data-doc-id="${CSS.escape(boot.docId)}"]`,
@@ -1265,7 +1276,7 @@ const refreshNav = async (): Promise<void> => {
     const pageId = [
         ...document.querySelectorAll<HTMLAnchorElement>("[data-subformat-nav] > .nav-row > a"),
     ]
-        .find((link) => link.pathname === requestedResource?.path)
+        .find((link) => workspacePath(link.pathname) === requestedResource?.path)
         ?.closest<HTMLElement>("[data-doc-id]")?.dataset.docId;
     try {
         const res = await localeFetch(
@@ -1289,8 +1300,8 @@ const refreshNav = async (): Promise<void> => {
                 const link = navGroups.querySelector<HTMLAnchorElement>(
                     `[data-doc-id="${CSS.escape(pageId)}"] > .nav-row > a`,
                 );
-                if (link && resourceView.path !== link.pathname) {
-                    resourceView.path = link.pathname;
+                if (link && resourceView.path !== workspacePath(link.pathname)) {
+                    resourceView.path = workspacePath(link.pathname);
                     history.replaceState(null, "", currentUrl(location.hash));
                 }
             }
@@ -1301,7 +1312,7 @@ const refreshNav = async (): Promise<void> => {
                 const link = navGroups.querySelector<HTMLAnchorElement>(
                     `[data-doc-id="${CSS.escape(state.docId)}"] > .nav-row > a`,
                 );
-                if (link) state.path = new URL(link.href).pathname;
+                if (link) state.path = workspacePath(new URL(link.href).pathname);
             }
             if (currentPath !== boot.path) {
                 currentPath = boot.path;
@@ -1412,6 +1423,7 @@ const save = (): Promise<void> => {
     return saveTask;
 };
 const saveCurrent = async (): Promise<void> => {
+    if (boot.readOnly) return;
     const savingWorkspace = workspaceId();
     const savingBoot = boot;
     const savingDoc = view.state.doc;
@@ -1831,6 +1843,7 @@ const uploadFigure = async (file: File, target: Boot, id: string): Promise<strin
     return path;
 };
 const insertFigures = async (files: File[], pos?: number): Promise<void> => {
+    if (boot.readOnly) return;
     const target = boot;
     const targetWorkspace = workspaceId();
     const targetPane = activePane;
@@ -2338,6 +2351,15 @@ const invalidateWorkspaceOptions = (): void => {
     }
 };
 const syncPane = (): void => {
+    document.body.dataset.versionReadOnly = String(!!boot.readOnly);
+    view.dispatch({
+        effects: revisionEditing.reconfigure(EditorState.readOnly.of(!!boot.readOnly)),
+    });
+    for (const element of document.querySelectorAll<HTMLInputElement>(
+        "#fm input, #fm textarea, #fm select",
+    ))
+        element.disabled = !!boot.readOnly;
+    if (boot.readOnly) setStatus("Read-only version");
     activePane.element.dataset.language = boot.contentLanguage ?? boot.defaultLang;
     currentPath = boot.path;
     closeLanguageMenu();
@@ -2355,6 +2377,7 @@ const syncPane = (): void => {
     for (const pane of panes)
         if (!workspaceOptions.has(pane.workspace)) void refreshWorkspaceOptions(pane);
     updateLanguageControls();
+    document.dispatchEvent(new Event("dooc:drafts-changed"));
 };
 const restorePane = (pane: PreviewPane): void => {
     const draft = pane.draft;
@@ -2452,21 +2475,22 @@ const openFileEditor = async (file?: string, line?: number): Promise<void> => {
     heading.className = "file-editor-heading";
     // The path links to the page that shows this file: its document, its subformat board, or
     // failing both its file page.
-    const navPath = (selector: string): string | undefined =>
-        document.querySelector<HTMLAnchorElement>(`${selector} > .nav-row > a`)?.pathname;
-    const docPage = `/_docs/${file.split("/").map(encodeURIComponent).join("/")}`;
+    const navPath = (selector: string): string | undefined => {
+        const path = document.querySelector<HTMLAnchorElement>(
+            `${selector} > .nav-row > a`,
+        )?.pathname;
+        return path && workspacePath(path);
+    };
     const page = /^https?:\/\//i.test(file)
         ? undefined
-        : [
-                ...document.querySelectorAll<HTMLAnchorElement>(
-                    "#nav-groups [data-doc-id] > .nav-row > a",
-                ),
-            ].some((link) => link.pathname === docPage)
-          ? docPage
-          : (navPath(
-                `[data-subformat-nav][data-doc-id="${CSS.escape(subformatPageId(file.split(".").pop() ?? ""))}"]`,
-            ) ?? `/_files/file/${encodeURIComponent(file)}`);
-    const title = document.createElement(page && page !== location.pathname ? "a" : "span");
+        : (navPath(`#nav-groups [data-doc-id="${fileDocumentId(file)}"]`) ??
+          navPath(
+              `[data-subformat-nav][data-doc-id="${CSS.escape(subformatPageId(file.split(".").pop() ?? ""))}"]`,
+          ) ??
+          `/_files/file/${encodeURIComponent(file)}`);
+    const title = document.createElement(
+        page && page !== workspacePath(location.pathname) ? "a" : "span",
+    );
     if (title instanceof HTMLAnchorElement && page) title.href = page;
     title.className = "file-editor-title";
     title.textContent = title.title = file;
@@ -2489,6 +2513,7 @@ const openFileEditor = async (file?: string, line?: number): Promise<void> => {
     };
 };
 const openSubformatEditor = async (form: HTMLFormElement): Promise<void> => {
+    if (boot.readOnly) return;
     if (fileEditor?.element === form) return;
     if (fileEditor?.element.matches("form") && !(await confirmFileEditorLeave())) {
         form.querySelector<HTMLButtonElement>("[data-cancel]")?.click();
@@ -2846,7 +2871,8 @@ const changeWorkspace = async (id: string, pane = activePane): Promise<void> => 
         let page: PageResponse | undefined;
         let nav = "";
         if (!saved) {
-            const response = await workspaceFetch("/", undefined, id);
+            let response = await workspaceFetch(localeUrl(currentPath), undefined, id);
+            if (!response.ok) response = await workspaceFetch("/", undefined, id);
             if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
             const document = new DOMParser().parseFromString(await response.text(), "text/html");
             const data = document.getElementById("boot");
@@ -3003,6 +3029,16 @@ document.addEventListener("dooc:select-workspace", (event) => {
         return;
     }
     void changeWorkspace(id, pane);
+});
+document.addEventListener("dooc:select-draft", (event) => {
+    const draft = (event as CustomEvent<DraftLocation>).detail;
+    const pane = panes.find((pane) => pane.id === draft.pane) ?? activePane;
+    void (async () => {
+        if (pane !== activePane) await activatePane(pane);
+        await changeWorkspace(draft.workspace, pane);
+        if (pane === activePane && pane.workspace === draft.workspace && draft.file !== boot.file)
+            await openFileEditor(draft.file);
+    })().catch((error) => setStatus(String(error), true));
 });
 for (const event of ["pointerdown", "focusin"]) {
     paneHost.addEventListener(event, (ev) => {
@@ -3280,7 +3316,7 @@ const scrollToAnchor = (hash: string): void => {
 
 const isResourcePath = (path: string): boolean =>
     [...document.querySelectorAll<HTMLAnchorElement>("[data-subformat-nav] > .nav-row > a")].some(
-        (link) => link.pathname === path,
+        (link) => workspacePath(link.pathname) === path,
     ) ||
     path === "/_extensions" ||
     path === "/_subformats" ||
@@ -3323,7 +3359,7 @@ const docAction = async (id: string, action: string): Promise<void> => {
             `#nav-groups [data-doc-id="${CSS.escape(id)}"] > .nav-row > a`,
         );
         if (!link) return;
-        await navigateTo(new URL(link.href).pathname);
+        await navigateTo(workspacePath(new URL(link.href).pathname));
     }
     if (boot.docId !== id || paneBusy) return;
     if (action === "rename") startRename();
@@ -3340,7 +3376,7 @@ if (initialAction) {
 const isDocPath = (path: string): boolean =>
     [
         ...document.querySelectorAll<HTMLAnchorElement>("#nav-groups [data-doc-id] > .nav-row > a"),
-    ].some((link) => new URL(link.href).pathname === path);
+    ].some((link) => workspacePath(new URL(link.href).pathname) === path);
 
 document.addEventListener("click", (ev) => {
     if (
@@ -3358,16 +3394,14 @@ document.addEventListener("click", (ev) => {
         return;
     }
     const url = new URL(a.href, location.href);
-    if (
-        url.origin !== location.origin ||
-        (!isDocPath(url.pathname) && !isResourcePath(url.pathname))
-    ) {
+    const path = workspacePath(url.pathname);
+    if (url.origin !== location.origin || (!isDocPath(path) && !isResourcePath(path))) {
         if (url.protocol !== "http:" && url.protocol !== "https:") return;
         ev.preventDefault();
         void leavePage(url.href);
         return;
     }
-    if (url.pathname === currentPath) {
+    if (path === currentPath) {
         ev.preventDefault();
         void (async () => {
             if (!(await confirmFileEditorLeave())) return;
@@ -3381,14 +3415,14 @@ document.addEventListener("click", (ev) => {
         return;
     }
     ev.preventDefault();
-    void navigateTo(url.pathname, url.hash);
+    void navigateTo(path, url.hash);
 });
 
 // Back / forward. Going back to a non-doc page or a fetch failure falls back to normal
 // navigation. When leaving is cancelled, restore the URL to the current location (so history
 // never moves without the display following).
 window.addEventListener("popstate", () => {
-    const target = location.pathname;
+    const target = workspacePath(location.pathname);
     const language =
         new URL(location.href).searchParams.get("lang") ?? boot.sourceLanguage ?? boot.defaultLang;
     void (async () => {
@@ -3414,7 +3448,9 @@ window.addEventListener("popstate", () => {
                 const link = document.querySelector<HTMLAnchorElement>(
                     `#nav-docs [data-doc-id="${CSS.escape(editor ?? boot.docId)}"] > .nav-row > a`,
                 );
-                const opened = link ? await openDoc(new URL(link.href).pathname, language) : false;
+                const opened = link
+                    ? await openDoc(workspacePath(new URL(link.href).pathname), language)
+                    : false;
                 if (!opened) {
                     if (opened === undefined || !(await leavePage(location.href)))
                         history.pushState(null, "", currentUrl());
@@ -3442,6 +3478,32 @@ window.addEventListener("popstate", () => {
 });
 
 syncPane();
+mountDocumentVersions(() => {
+    const locations: DraftLocation[] = [];
+    if (dirty || hasSubformatFormDraft(view.state))
+        locations.push({ workspace: activePane.workspace, file: boot.file, pane: activePane.id });
+    if (fileEditor?.element.dataset.dirty === "true")
+        locations.push({
+            workspace: activePane.workspace,
+            file: fileEditor.file || boot.file,
+            pane: activePane.id,
+        });
+    for (const pane of panes)
+        for (const [workspace, draft] of pane.drafts) {
+            if (pane === activePane && workspace === activePane.workspace) continue;
+            if (draft.dirty || hasSubformatFormDraft(draft.state))
+                locations.push({ workspace, file: draft.boot.file, pane: pane.id });
+            if (draft.fileEditor?.element.dataset.dirty === "true")
+                locations.push({
+                    workspace,
+                    file: draft.fileEditor.file || draft.boot.file,
+                    pane: pane.id,
+                });
+        }
+    for (const [workspace, files] of textfileWorkspaces)
+        for (const file of files.unsavedFiles()) locations.push({ workspace, file });
+    return locations;
+});
 if (initialResource) showResource(initialResource);
 if (location.hash) requestAnimationFrame(() => scrollToAnchor(location.hash));
 

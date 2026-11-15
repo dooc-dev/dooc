@@ -14,7 +14,11 @@ window.testNavCreate = async () => {
     const childTrigger = document.querySelector(".nav-row > .new");
     const template = document.querySelector("[data-page-subformats]");
     const originalFormats = template.innerHTML;
-    const originalFetch = window.fetch;
+    const libraries = document.querySelector("[data-page-libraries]");
+    const originalLibraries = libraries.innerHTML;
+    const connections = window.__doocConnections;
+    const transport = connections?.items.get(connections.active) ?? window;
+    const originalFetch = transport.fetch;
     const originalRefresh = window.__docsRefreshNav;
     const originalNavigate = window.__docsNavigate;
     const requests = [];
@@ -24,9 +28,9 @@ window.testNavCreate = async () => {
     window.__docsNavigate = async (path) => {
         navigation = path;
     };
-    window.fetch = async (url, options) => {
+    transport.fetch = async (url, options) => {
         if (new URL(url, location.href).pathname !== "/api/create")
-            return originalFetch(url, options);
+            return originalFetch.call(transport, url, options);
         requests.push(JSON.parse(options.body));
         return fail
             ? Response.json({ error: "Try again" }, { status: 409 })
@@ -39,6 +43,7 @@ window.testNavCreate = async () => {
         );
     try {
         template.content.textContent = JSON.stringify([{ ext: "issue" }, { ext: "release" }]);
+        libraries.content.textContent = JSON.stringify(["csv"]);
         rootTrigger.click();
         assert(
             menu.matches(":popover-open") && !document.querySelector(".nav-new"),
@@ -54,15 +59,15 @@ window.testNavCreate = async () => {
             [...menu.querySelectorAll(":scope > button")].every((button) =>
                 button.firstElementChild?.matches("svg"),
             ),
-            "Both page types begin with their icon in matching menu rows",
+            "All page types begin with their icon in matching menu rows",
         );
         key("End");
-        assert(document.activeElement.dataset.pageType === "subformat", "End focuses Subformat");
+        assert(document.activeElement.dataset.pageType === "library", "End focuses Library");
         key("Home");
         assert(document.activeElement.dataset.pageType === "markdown", "Home focuses Markdown");
         key("ArrowUp");
         assert(
-            document.activeElement.dataset.pageType === "subformat",
+            document.activeElement.dataset.pageType === "library",
             "Menu keyboard navigation wraps",
         );
         key("Escape");
@@ -116,7 +121,7 @@ window.testNavCreate = async () => {
         );
         key("End");
         assert(
-            document.activeElement.dataset.subformat === "release",
+            document.activeElement.dataset.page === "release",
             "Dropdown keyboard navigation stays within existing formats",
         );
         key("Escape");
@@ -128,7 +133,7 @@ window.testNavCreate = async () => {
         );
         fail = true;
         dropdown.click();
-        formatsMenu.querySelector('[data-subformat="release"]').click();
+        formatsMenu.querySelector('[data-page="release"]').click();
         assert(
             dropdown.disabled && menu.getAttribute("aria-busy") === "true",
             "Choosing a format blocks duplicate requests while adding",
@@ -140,7 +145,7 @@ window.testNavCreate = async () => {
         );
         fail = false;
         dropdown.click();
-        formatsMenu.querySelector('[data-subformat="release"]').click();
+        formatsMenu.querySelector('[data-page="release"]').click();
         await wait(() => navigation);
         const added = requests.at(-1);
         assert(
@@ -157,7 +162,7 @@ window.testNavCreate = async () => {
         navigation = undefined;
         childTrigger.click();
         dropdown.click();
-        formatsMenu.querySelector('[data-subformat="issue"]').click();
+        formatsMenu.querySelector('[data-page="issue"]').click();
         await wait(() => navigation);
         assert(
             requests.at(-1).parent === childTrigger.dataset.parent,
@@ -173,8 +178,27 @@ window.testNavCreate = async () => {
         );
         key("ArrowDown");
         assert(
+            document.activeElement.dataset.pageType === "library",
+            "Keyboard navigation skips the unavailable subformat choice",
+        );
+        navigation = undefined;
+        document.activeElement.click();
+        const library = formatsMenu.querySelector("button[data-page]");
+        const libraryName = library.dataset.page;
+        library.click();
+        await wait(() => navigation);
+        const libraryRequest = requests.at(-1);
+        assert(
+            libraryRequest.library === libraryName &&
+                libraryRequest.title === libraryName &&
+                !("subformat" in libraryRequest) &&
+                !("parent" in libraryRequest),
+            "Library choices create a root library page with the selected name",
+        );
+        rootTrigger.click();
+        assert(
             document.activeElement.dataset.pageType === "markdown",
-            "Keyboard navigation skips the unavailable choice",
+            "Reopening the menu focuses Markdown",
         );
         document.activeElement.click();
         form = document.querySelector(".nav-new");
@@ -188,7 +212,8 @@ window.testNavCreate = async () => {
         if (menu.matches(":popover-open")) menu.hidePopover();
         document.querySelector(".nav-new-item")?.remove();
         template.innerHTML = originalFormats;
-        window.fetch = originalFetch;
+        libraries.innerHTML = originalLibraries;
+        transport.fetch = originalFetch;
         window.__docsRefreshNav = originalRefresh;
         window.__docsNavigate = originalNavigate;
     }

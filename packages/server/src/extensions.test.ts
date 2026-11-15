@@ -57,7 +57,9 @@ const setup = () => {
 it("lists viewer-provided plugins with their names and icons without reading service data", async () => {
     const { root, registry } = setup();
     const config = await loadViewerPlugins(
-        fileURLToPath(new URL("../../../examples/viewer-plugins/index.mjs", import.meta.url)),
+        fileURLToPath(
+            new URL("../../../sample/examples/viewer-plugins/index.mjs", import.meta.url),
+        ),
     );
     const reads = config.plugins.map((plugin) => vi.spyOn(plugin, "read"));
     const manager = createExtensionManager(root, registry, config);

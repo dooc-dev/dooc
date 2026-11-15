@@ -1,0 +1,4 @@
+{
+    "formatter": ["node", ".dooc/editor-tools/json.mjs", "format"],
+    "linter": ["node", ".dooc/editor-tools/json.mjs", "lint"]
+}

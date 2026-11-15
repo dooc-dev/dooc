@@ -1,0 +1,6 @@
+/.dooc/user/
+/.dooc/snapshots/
+/.dooc/versions/
+/.dooc/versions.json
+/dist/
+/node_modules/

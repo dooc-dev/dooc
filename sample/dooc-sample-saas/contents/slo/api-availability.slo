@@ -1,0 +1,9 @@
+name: API availability
+kind: Request
+service: contents/container/api.container
+owner: contents/team/platform.team
+window_days: 30
+target_percent: 99.9
+total_events: 1000000
+good_events: 999600
+summary: Valid authenticated API requests complete without a server error or timeout.

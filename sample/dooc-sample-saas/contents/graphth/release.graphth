@@ -1,0 +1,17 @@
+[change]: Review change and target
+[staging]: Verify in staging
+[recovery]: Confirm recovery path
+[hold]: Check active incident holds
+[limited]: Limited rollout
+[verify]: Observe user paths and dependencies
+[full]: Complete rollout
+[inventory]: Update inventory and evidence
+[rollback]: Stop and recover
+[change] -> [staging]
+[staging] -> [recovery]
+[recovery] -> [hold]
+[hold] -> [limited]: approved
+[limited] -> [verify]
+[verify] -> [full]: healthy
+[verify] --> [rollback]: regression
+[full] -> [inventory]

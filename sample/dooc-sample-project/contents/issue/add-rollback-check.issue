@@ -1,0 +1,10 @@
+title: Verify the migration rollback procedure
+status: Done
+priority: Normal
+due: 2026-11-13
+points: 3
+project: contents/project/tenant-migration.project
+milestone: contents/milestone/migration-rehearsal.milestone
+assignee: erin
+blocked_by:
+  - contents/issue/rehearse-migration.issue

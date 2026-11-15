@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "title": "Service objective",
+  "required": [
+    "name",
+    "kind",
+    "service",
+    "owner",
+    "window_days",
+    "target_percent",
+    "total_events",
+    "good_events",
+    "summary"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Name"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "Request",
+        "Job"
+      ],
+      "title": "Metric type"
+    },
+    "service": {
+      "title": "Workload",
+      "anyOf": [
+        {
+          "$ref": "container.schema.json#/$defs/ref"
+        },
+        {
+          "$ref": "worker.schema.json#/$defs/ref"
+        }
+      ]
+    },
+    "owner": {
+      "$ref": "team.schema.json#/$defs/ref",
+      "title": "Owner"
+    },
+    "window_days": {
+      "type": "integer",
+      "minimum": 1,
+      "title": "Window (days)"
+    },
+    "target_percent": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "exclusiveMaximum": 100,
+      "title": "Target (%)"
+    },
+    "total_events": {
+      "type": "integer",
+      "minimum": 1,
+      "title": "Eligible events"
+    },
+    "good_events": {
+      "type": "integer",
+      "minimum": 0,
+      "title": "Good events"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Definition"
+    }
+  },
+  "examples": [
+    {
+      "name": "API availability",
+      "kind": "Request",
+      "service": "contents/container/api.container",
+      "owner": "contents/team/platform.team",
+      "window_days": 30,
+      "target_percent": 99.9,
+      "total_events": 1000000,
+      "good_events": 999600,
+      "summary": "Valid authenticated API requests complete without a server error or timeout."
+    }
+  ],
+  "additionalProperties": false
+}

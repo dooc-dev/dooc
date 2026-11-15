@@ -37,7 +37,7 @@ import {
 } from "./host.js";
 import { ignoredFiles, withinRead } from "./ignored-files.js";
 import { translationFile, translationFiles, translationLanguages } from "./locales.js";
-import { manifestFile, readManifest } from "./manifest.js";
+import { manifestFile, parseManifestText, readManifest } from "./manifest.js";
 import { rewriteSchemaFiles } from "./schema-file-references.js";
 import { textfilePath, writeTextfile } from "./textfile.js";
 import { themeNames, themeVariants } from "./theme-variants.js";
@@ -454,14 +454,14 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
             mode: statSync(textfilePath(root, file)).mode,
         });
     }
+    const nextManifest =
+        manifest.format === "nested" ? serializeManifest(manifest.tree, manifest) : yaml.toString();
+    const errors = parseManifestText(nextManifest, manifestFile(root)).errors;
+    if (errors.length) throw new Error(errors.join(" / "));
     writes.push({
         file: manifestFile(root),
         base: rawManifest === null ? null : Buffer.from(rawManifest),
-        data: Buffer.from(
-            manifest.format === "nested"
-                ? serializeManifest(manifest.tree, manifest)
-                : yaml.toString(),
-        ),
+        data: Buffer.from(nextManifest),
     });
     const originalModes = new Map(
         [...moves.keys()].map((file) => [file, statSync(textfilePath(root, file)).mode]),

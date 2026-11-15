@@ -29,6 +29,8 @@ jobs:
   binaries:
     if: github.repository == 'dooc-dev/dooc' && github.ref_name == github.event.repository.default_branch
     uses: ./.github/workflows/binaries.yml
+    with:
+      bump: ${{ inputs.bump }}
   release:
     needs: binaries
     if: github.repository == 'dooc-dev/dooc'
@@ -67,6 +69,7 @@ jobs:
           esac
           npm version "$BUMP" --no-git-tag-version --ignore-scripts --package-lock=false
           echo "tag=dooc-v$(node -p 'require("./package.json").version')" >> "$GITHUB_OUTPUT"
+      - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm check
       - uses: actions/download-artifact@v4
         with:
@@ -95,3 +98,12 @@ jobs:
         env:
           TAG: ${{ steps.version.outputs.tag }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # After publishing, so the tap never points at archives that do not exist yet.
+      - name: Update Homebrew formula and install example
+        run: |
+          node --import tsx scripts/release/formula.ts
+          git add Formula/dooc.rb dooc-docs/contents/md/install.md
+          git commit -m "Update Homebrew formula and install example for $TAG"
+          git push origin "HEAD:refs/heads/$DEFAULT_BRANCH"
+        env:
+          TAG: ${{ steps.version.outputs.tag }}

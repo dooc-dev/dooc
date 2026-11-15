@@ -1,0 +1,62 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "Playground task",
+    "type": "object",
+    "required": ["id", "title", "status", "due", "owner", "project"],
+    "properties": {
+        "id": { "type": "string", "pattern": "^TASK-[0-9]{3}$", "readOnly": true, "title": "ID" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 80, "title": "Title" },
+        "status": { "type": "string", "enum": ["Todo", "Doing", "Done"], "title": "Status" },
+        "priority": {
+            "$ref": "issue.schema.json#/properties/priority",
+            "default": "Normal",
+            "title": "Priority"
+        },
+        "due": { "type": "string", "format": "date", "title": "Due" },
+        "progress": { "type": "integer", "minimum": 0, "maximum": 100, "title": "Progress" },
+        "estimate": {
+            "type": "number",
+            "minimum": 0,
+            "multipleOf": 0.5,
+            "title": "Estimate (days)"
+        },
+        "approved": { "type": "boolean", "default": false, "title": "Approved" },
+        "owner": { "$ref": "team.schema.json#/$defs/member_id", "title": "Owner" },
+        "project": { "$ref": "project.schema.json#/$defs/ref" },
+        "notes": { "type": "string", "title": "Notes" },
+        "tags": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "uniqueItems": true,
+            "title": "Tags"
+        },
+        "review": {
+            "type": "object",
+            "title": "Review",
+            "properties": {
+                "reviewer": { "type": "string", "title": "Reviewer" },
+                "approved": { "type": "boolean", "title": "Approved" }
+            },
+            "additionalProperties": false
+        },
+        "updated": { "type": "string", "format": "date-time", "readOnly": true, "title": "Updated" }
+    },
+    "additionalProperties": false,
+    "examples": [
+        {
+            "id": "TASK-100",
+            "title": "New playground task",
+            "status": "Todo",
+            "priority": "Normal",
+            "due": "2026-12-18",
+            "progress": 0,
+            "estimate": 0.5,
+            "approved": false,
+            "owner": "alice",
+            "project": "contents/project/customer-portal.project",
+            "notes": "Describe the task.\nAdd a second paragraph here.",
+            "tags": ["playground"],
+            "review": { "reviewer": "Bob", "approved": false }
+        }
+    ]
+}

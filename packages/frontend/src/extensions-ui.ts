@@ -5,6 +5,7 @@ import {
     MAX_EXTENSION_BYTES,
 } from "../../engine/src/core/extension-package.js";
 import { PLUGINS_ICON } from "../../engine/src/core/icons.js";
+import { workspacePath } from "../../workspace/src/client-path.js";
 import {
     workspaceConnection,
     workspaceFetch,
@@ -58,7 +59,7 @@ const mountWorkspaceExtensions = (workspace: string): void => {
               })
               .catch(() => {})
         : Promise.resolve();
-    const scope = nav.dataset.scope ?? location.pathname;
+    const scope = nav.dataset.scope ?? workspacePath(location.pathname);
     let state: ExtensionList = { scope: connection ? `${workspace}:${scope}` : scope, items: [] };
     let host: HTMLElement | null = null;
     let busy = false;

@@ -1,0 +1,74 @@
+system:
+  default_lang: eng
+  files:
+    default_layout: false
+left_sidebar:
+  title:
+    eng: Atlas · Project delivery
+center_contents:
+  - file: contents/md/index.md
+    title: Delivery overview
+  - file: contents/md/roadmap.md
+    title: Roadmap & milestones
+    children:
+      - subformat: project
+        title: Projects
+      - subformat: milestone
+        title: Milestones
+  - file: contents/md/workflow.md
+    title: Work & acceptance
+    children:
+      - subformat: issue
+        title: Issues
+  - file: contents/md/decisions.md
+    title: Decisions & reviews
+    children:
+      - subformat: note
+        title: Notes
+  - file: contents/md/records.md
+    title: Record model
+    children:
+      - subformat: team
+        title: Teams
+json_subformats:
+  - ext: team
+    format: toml
+    schema: contents/json/team.schema.json
+    icon: contents/svg/icons/team.svg
+    layouts:
+      card_title: name
+      group_by: focus
+  - ext: project
+    format: json
+    schema: contents/json/project.schema.json
+    icon: contents/svg/icons/project.svg
+    layouts:
+      card_title: name
+      group_by: status
+      sort_by: target
+  - ext: milestone
+    format: toml
+    schema: contents/json/milestone.schema.json
+    icon: contents/svg/icons/milestone.svg
+    layouts:
+      card_title: name
+      group_by: state
+      sort_by: due
+  - ext: issue
+    format: yaml
+    schema: contents/json/issue.schema.json
+    icon: contents/svg/icons/issue.svg
+    layouts:
+      card_title: title
+      group_by: status
+      sort_by: due
+  - ext: note
+    format: yaml
+    schema: contents/json/note.schema.json
+    icon: contents/svg/icons/note.svg
+    layouts:
+      card_title: title
+      group_by: kind
+      sort_by: date
+      sort_order: desc
+default_subformat_folder: contents/issue

@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 
@@ -20,7 +20,11 @@ const assets = [
         .filter((name) => name.endsWith(".js"))
         .map((name) => `graph/${name}`),
     "client.global.js",
+    "mcp-client.js",
     "workspace-worker.global.js",
+    "workspace-viewer-worker.global.js",
+    "workspace-mcp-worker.global.js",
+    "workspace-viewer-mcp-worker.global.js",
     "edit.global.js",
     "ui.global.js",
     "code.global.js",
@@ -63,6 +67,7 @@ const assets = { ${assets.map((name, i) => `${JSON.stringify(name)}: asset${i}`)
 export const dictionaryFiles = [${dictFiles.map((_, i) => `asset${i + assets.length}`).join(",")}];
 export const prebuilt = true;
 export const standalone = true;
+export const packageVersion = ${JSON.stringify(JSON.parse(readFileSync("package.json", "utf8")).version)};
 export const readViewerAsset = (name) => readFileSync(assets[name]);
 export const readInstaller = () => readFileSync(asset${installerIndex});
 `,

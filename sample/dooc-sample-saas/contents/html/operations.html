@@ -1,0 +1,62 @@
+<!--fig
+title: Field Notes operations review
+desc: A synthetic operational snapshot showing the active response, workload paths and the decisions due at the next checkpoint.
+-->
+<style>
+
+  .saas-operations { color: var(--doc-fg, #172534); background: var(--doc-bg, #fff); font: 14px/1.6 system-ui, sans-serif; container-type: inline-size; }
+  .saas-operations * { box-sizing: border-box; }
+  .saas-operations h2 { margin: 0 0 12px; font-size: clamp(23px, 4cqw, 32px); line-height: 1.2; letter-spacing: -.025em; text-wrap: balance; }
+  .saas-operations h3 { margin: 0 0 10px; font-size: 17px; line-height: 1.4; }
+  .saas-operations p { margin: 0 0 16px; max-width: 72ch; }
+  .saas-operations .muted { color: var(--doc-fg-2, #465569); }
+  .saas-operations .accent { color: var(--doc-accent, #1b4994); }
+  .saas-operations .surface { background: var(--doc-panel-2, #f1f5fa); }
+  .saas-operations .intro { padding: 28px 28px 22px; border-bottom: 1px solid var(--doc-border-2, #c4ccd8); }
+  .saas-operations .body { padding: 24px 28px; }
+  .saas-operations .split { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 28px; }
+  .saas-operations .split > * { min-width: 0; }
+  .saas-operations .foot { max-width: none; margin: 0; padding: 16px 28px; border-top: 1px solid var(--doc-border-2, #c4ccd8); color: var(--doc-fg-2, #465569); font-size: 12px; }
+  .saas-operations code, .saas-operations pre { font: 12px/1.75 ui-monospace, monospace; }
+  .saas-operations pre { overflow: auto; margin: 0; padding: 16px; background: var(--doc-panel-2, #f1f5fa); }
+  .saas-operations .scroll { overflow-x: auto; scrollbar-color: var(--doc-border-2, #c4ccd8) var(--doc-bg, #fff); }
+  .saas-operations :focus-visible { outline: 2px solid var(--doc-accent, #1b4994); outline-offset: 4px; }
+  .saas-operations ::selection { background: var(--doc-accent, #1b4994); color: var(--doc-accent-fg, #fff); }
+  .saas-operations table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .saas-operations caption { text-align: left; font-weight: 650; margin-bottom: 10px; }
+  .saas-operations th, .saas-operations td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--doc-border, #dde3eb); vertical-align: top; }
+  .saas-operations th { font-weight: 650; }
+  .saas-operations thead { background: var(--doc-panel-2, #f1f5fa); }
+  .saas-operations details { border-top: 1px solid var(--doc-border-2, #c4ccd8); padding: 16px 28px; }
+  .saas-operations summary { cursor: pointer; font-weight: 650; }
+  .saas-operations summary:hover { color: var(--doc-accent, #1b4994); }
+  .saas-operations details[open] summary { margin-bottom: 16px; }
+  .saas-operations .rail { margin: 0; padding: 0; list-style: none; }
+  .saas-operations .rail li { padding: 12px 0; border-bottom: 1px solid var(--doc-border, #dde3eb); }
+  .saas-operations .rail strong { display: block; }
+  .saas-operations svg { display: block; max-width: 100%; height: auto; }
+  @container (max-width: 580px) { .saas-operations .split { grid-template-columns: 1fr; gap: 24px; } .saas-operations .intro, .saas-operations .body, .saas-operations details, .saas-operations .foot { padding-left: 16px; padding-right: 16px; } }
+
+
+  .saas-operations .facts { margin: 20px 0; font-variant-numeric: tabular-nums; }
+  .saas-operations .facts > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; padding: 8px 0; border-bottom: 1px solid var(--doc-border, #dde3eb); }
+  .saas-operations dt { color: var(--doc-fg-2, #465569); }
+  .saas-operations dd { margin: 0; font-weight: 650; }
+  .saas-operations .notice { padding: 12px 16px; background: var(--doc-panel-2, #f1f5fa); font-size: 13px; }
+  .saas-operations .journeys { margin: 0; padding-left: 24px; }
+  .saas-operations .journeys li { padding: 0 0 22px 8px; }
+  .saas-operations .journeys strong, .saas-operations .journeys span { display: block; }
+  .saas-operations .journeys span { color: var(--doc-fg-2, #465569); font-size: 13px; margin-top: 6px; }
+
+</style>
+<section class="saas-operations" aria-label="Field Notes operations review">
+
+  <header class="intro"><h2>Keep the user path in view.</h2><p class="muted">Field Notes · 16 November 2026, 09:00 UTC<br>Synthetic operations snapshot. No live monitoring connection.</p></header>
+  <div class="body split">
+    <div><h3>API incident: monitoring</h3><p>Requests have recovered after optional batch admission was reduced. Connection headroom is still under observation; the cause has not been confirmed.</p><dl class="facts"><div><dt>Lead</dt><dd>Platform</dd></div><div><dt>Next checkpoint</dt><dd>09:15 UTC</dd></div><div><dt>Release decision</dt><dd>Hold API 2.4.2</dd></div></dl><p class="notice">Do not lift the hold until the incident lead accepts recovery evidence.</p></div>
+    <div><h3>User journeys</h3><ol class="journeys"><li><strong>Read a page</strong><span>Public edge → Web → API → Database</span></li><li><strong>Export a workspace</strong><span>API → Render jobs → Worker → Assets</span></li><li><strong>Search knowledge</strong><span>API → Search → Search index</span></li></ol></div>
+  </div>
+  <div class="body surface"><h3>Review queue</h3><div class="scroll" tabindex="0" role="region" aria-label="Operational review queue"><table><thead><tr><th>Signal</th><th>Observed state</th><th>Next decision</th></tr></thead><tbody><tr><th>API connections</th><td>68% utilization</td><td>Verify pool limits before another rollout</td></tr><tr><th>Render completion</th><td>70% of request budget consumed</td><td>Review capacity before admitting optional batches</td></tr><tr><th>Read-only fallback</th><td>12 seconds of replica lag</td><td>Keep writer promotion outside the routine response</td></tr><tr><th>Audit logging</th><td>Retention configured; producers unassigned</td><td>Assign ownership and confirm coverage</td></tr></tbody></table></div></div>
+  <details><summary>Read the snapshot boundaries</summary><p>Inventory: 3 networks, 6 containers, 4 workers, 7 datastores and 4 log streams. Objectives use a rolling 30-day event window; the incident state is a point-in-time observation.</p><p class="muted">A configured backup, retention value or objective is not evidence that recovery has been exercised. Review the source records and the runbook before adapting this sample.</p></details>
+
+</section>

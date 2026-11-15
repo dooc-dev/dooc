@@ -1,58 +1,65 @@
-Work from a source checkout to change dooc itself. Project authoring and installation are covered in [Install](contents/md/install.md); plugin authors can start with [Write a plugin](contents/md/plugin-dev.md).
+Work from a source checkout to change dooc itself. Project authoring starts with [First document](contents/md/quickstart.md), and installation is covered in [Install](contents/md/install.md); plugin authors can start with [Write a plugin](contents/md/plugin-dev.md).
 
 ## Set up and run
 
 ```sh
 mise install
 pnpm install --frozen-lockfile
-mise run dev edit
+mise run editor
 ```
 
-`mise.toml` pins Node.js, pnpm, and Bun. `mise run dev` defaults to the editor for `dooc-docs/dooc.yaml`, with demo plugins and hot reload for content and application code. Choose the viewer, another manifest, or a port explicitly:
+Use `mise run editor` or `mise run viewer` to develop dooc itself with source hot reload. The editor opens at `http://localhost:3000/client/`; the viewer uses `http://localhost:3001/client/`. Choose another port with `mise run editor --port 3100` or `mise run viewer --port 3101`.
 
-```sh
-mise run dev view
-mise run dev view ../my-docs/dooc.yaml 5180
-```
+Opening that URL connects to the generated workspace directly. Source changes restart the server and reload the browser; unsaved editor changes defer the browser reload until they are saved.
 
-Run the local source CLI with `mise run dooc`. Arguments are forwarded unchanged, paths use the directory where you invoke it, and the default manifest is `./dooc.yaml`:
+Each task first generates a disposable workspace under `build/dev/editor/` or `build/dev/viewer/`. `build/` is ignored by the source repository. The generated pages include Markdown, code, a figure, a diagram, records and a schema for feature checks. Each workspace has its own Git repository with `main` and `example` branches, so Git checks stay inside the disposable documents. Starting the task again resets its workspace. Source hot reload restarts only the application and preserves the current disposable edits.
+
+These tasks do not open `dooc-docs` or load sample plugins automatically. Use the regular CLI to edit real documents, including this documentation:
 
 ```sh
 mise run dooc --help
-mise run dooc view dooc-docs/dooc.yaml
+mise run dooc editor run node --client --server --project dooc-docs
+mise run dooc viewer run node --client --server --project dooc-docs
 mise run dooc build html dooc-docs/dooc.yaml
 ```
 
-`mise run packed` accepts the same arguments, builds first, and runs only the npm package's published files through its `bin` entry. Use it to catch files that are present in a checkout but missing from an installation.
+From inside `dooc-docs/`, `mise run dooc editor` or `mise run dooc viewer` opens that directory's `dooc.yaml` with all components. These are aliases for `run node --all`; options such as `--port 4000` and `--project team.dooc.yaml` override the defaults.
+
+`mise run dooc` forwards arguments unchanged and resolves project paths from the invocation directory. Regular editor and viewer commands watch document changes and update the page automatically. Only `mise run editor` and `mise run viewer` also watch application source code. `mise run packed` takes the same CLI arguments, builds first, and runs only the npm package's published files through its `bin` entry.
 
 ## Build and verify
 
 ```sh
+pnpm exec playwright install --with-deps chromium
 pnpm check
 mise run packed --help
 mise run binary
 ./build/bin/dooc --help
 ```
 
-`pnpm check` runs Biome, TypeScript, the production build, unit tests, installer tests, and a packed plugin SDK consumer check. `mise run binary` builds and tests a standalone executable for the current machine. Binary CI builds and tests Linux (glibc) and macOS on x64 and arm64; Windows and musl Linux are not targets.
+`pnpm check` runs Biome, TypeScript, the production build, unit tests, Chromium browser tests, installer tests, npm package contents checks, and a packed plugin SDK consumer check. Install Chromium once after installing dependencies. To rerun only browser checks, use `pnpm build && pnpm test:browser`; each check uses an isolated browser context and disposable document workspaces. Check and release CI install Chromium before running the same suite. `pnpm test:package` verifies that the npm package includes runtime files without bundling documentation or sample workspaces. `mise run binary` builds and tests a standalone executable for the current machine. Binary CI builds and tests Linux (glibc) and macOS on x64 and arm64; Windows and musl Linux are not targets.
 
-Production npm packages and standalone executables include runtime assets such as fonts, syntax grammars, and the Japanese proofreading dictionary. They do not bundle `dooc-docs`; `dooc view dooc-docs --repo https://github.com/dooc-dev/dooc.git` clones the repository at runtime using system Git. Edit this documentation in `dooc-docs`, and register new pages in its `dooc.yaml`.
+Production npm packages and standalone executables include runtime assets such as fonts, syntax grammars, and the Japanese proofreading dictionary. They do not bundle `dooc-docs`; `dooc viewer run node --client --server --project dooc-docs --repo https://github.com/dooc-dev/dooc.git` clones the repository at runtime using system Git. Edit this documentation in `dooc-docs`, and register new pages in its `dooc.yaml`.
 
 ## Release
-
-Authenticate GitHub CLI with an account permitted to run the repository's release workflows, then dispatch the appropriate release:
 
 ```sh
 mise run release dooc patch
 mise run release dooc-plugin patch
 ```
 
-Both commands also accept `minor` or `major`. They dispatch GitHub Actions on `main` in `dooc-dev/dooc` and wait for publishing to finish. If a command times out, inspect its existing workflow run before retrying.
+Both commands dispatch GitHub Actions on `main` and wait for publishing to finish. The checklist, what each workflow publishes, and failure recovery are in [Release](contents/md/release.md).
 
-The dooc workflow tests all four binary targets, bumps and commits the package version on the default branch, tags it as `dooc-v<version>`, publishes `@dooc-dev/dooc`, and attaches the executable archives, `SHA256SUMS`, and `install.sh` to a GitHub release. The command reports success after the GitHub release is published.
+## Repository documents and samples
 
-The plugin workflow validates the runtime and packed SDK, commits the SDK version, tags it as `dooc-plugin-v<version>`, and publishes `@dooc-dev/dooc-plugin`. Its command waits for npm publishing to succeed. Both workflows run only through `workflow_dispatch`, either from these commands or GitHub Actions' **Run workflow** button. Pushes and tags do not publish packages.
+`dooc-docs/` contains the product reference, UX notes and development guides. Standalone fictional workspaces live in `sample/dooc-sample-saas/` and `sample/dooc-sample-project/`; see [Sample workspaces](contents/md/samples.md) for their contents and launch commands.
 
-### Update the Homebrew formula manually
+Integration source lives in `sample/examples/`. Pass `--viewer-plugins ./sample/examples/viewer-plugins/index.mjs` explicitly when checking demo integrations. Build its installable extension with `pnpm build:sample-extension`; the output is `build/sample-extension.zip`.
 
-After each dooc release, update `Formula/dooc.rb` with the new version, all four release archive URLs, and their SHA-256 values from the release's `SHA256SUMS`. Commit and push that formula change. The source repository is also the Homebrew tap; Homebrew keeps installing the previous version until this manual update is published.
+Keep each sample self-contained: no links or schema references to sibling workspaces. Update its authored HTML snapshots when the source data changes. The workspace tests check compilation, local links, record templates, and paths stored in records.
+
+## Keep documentation organized
+
+The sidebar groups pages by reader task: getting started, writing, editing, publishing, reference and development. Put a procedure in its task guide and link to the command or configuration reference for exact options. The screen guide names visible UI areas; the editor guide explains how to use them. Keep fictional operational content in the standalone samples.
+
+Register new pages in `dooc-docs/dooc.yaml`, update links when a section moves, and run the document export checks after changing embedded assets. The dated license audit is retained as a historical appendix.

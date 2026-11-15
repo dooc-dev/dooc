@@ -63,7 +63,6 @@ window.testViewLoading = async () => {
     const figure = { name: "large", file: "large.svg", kind: "svg", markup: "x".repeat(100_001) };
     document.querySelector("main").innerHTML = deferredFigureHtml(figure);
     document.querySelector("main").scrollTop = 0;
-    mountFigurePreviews();
     const originalFetch = window.fetch;
     let requests = 0;
     window.fetch = async () => {
@@ -75,6 +74,7 @@ window.testViewLoading = async () => {
         return new Response('<iframe title="Large preview" sandbox="" srcdoc="Preview"></iframe>');
     };
     try {
+        mountFigurePreviews();
         const button = document.querySelector("[data-figure-preview] > button");
         assert(requests === 0, "Heavy preview fetched before activation");
         button.click();

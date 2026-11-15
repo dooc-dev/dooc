@@ -1,0 +1,8 @@
+title: API connection saturation
+severity: SEV2
+status: Monitoring
+started: 2026-11-16T08:10:00Z
+service: contents/container/api.container
+owner: contents/team/platform.team
+runbook: contents/md/runbooks.md
+summary: "Valid requests timed out while database connections were saturated. Errors recovered at 08:42 after optional batch admission was reduced. Pool limits are a suspected contributor; the cause remains under investigation. Next checkpoint: 09:15 UTC. The release hold remains active."

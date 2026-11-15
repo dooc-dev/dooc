@@ -1,0 +1,122 @@
+<!--fig
+title: Sidebar
+desc: A screen-like sidebar diagram using the same named callouts and visual language as Screen layout.
+-->
+<style>
+  .ux-figure { --ink: var(--doc-fg, #263244); --muted: var(--doc-fg-2, #526174);
+    --line: var(--doc-border-2, #c4ccd8); --paper: var(--doc-bg, #fff);
+    --rail: var(--doc-rail, #f3f6fa); --raised: var(--doc-panel-2, #eef2f7);
+    --accent: var(--doc-accent, #1b4994); color: var(--ink); font: 14px/1.6 system-ui, sans-serif;
+    container-type: inline-size; }
+  .ux-figure * { box-sizing: border-box; }
+  .ux-figure .map-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 24px; }
+  .ux-figure .map-controls p { flex: 1 1 240px; margin: 0; color: var(--muted); }
+  .ux-figure .map-controls label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .ux-figure input { accent-color: var(--accent); }
+  .ux-figure :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .ux-figure .screen-map { max-width: 100%; overflow-x: auto; scrollbar-width: thin;
+    scrollbar-color: var(--line) var(--paper); }
+  .ux-figure svg { display: block; width: 100%; min-width: 800px; height: auto; color: var(--ink); }
+  .ux-figure svg text { fill: currentColor; font: 13px system-ui, sans-serif; }
+  .ux-figure .muted, .ux-figure .muted text { fill: var(--muted); }
+  .ux-figure .ui-line { fill: none; stroke: var(--line); stroke-width: 1; }
+  .ux-figure .ui-icon { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .ux-figure .callouts path { fill: none; stroke: var(--accent); stroke-width: 1.2; }
+  .ux-figure .callouts circle { fill: var(--paper); stroke: var(--accent); stroke-width: 1.5; }
+  .ux-figure .callouts text { fill: var(--accent); font-size: 16px; font-weight: 600; }
+  .ux-figure:not(:has(.map-names:checked)) .callouts { visibility: hidden; }
+  .ux-figure .map-hint { display: none; margin: 0 0 16px; color: var(--muted); font-size: 12px; }
+  .ux-figure dl { margin: 20px 0 0; }
+  .ux-figure dl > div { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 8px 20px;
+    padding: 12px 0; border-top: 1px solid var(--line); }
+  .ux-figure dt { font-weight: 600; }
+  .ux-figure dd { margin: 0; color: var(--muted); }
+  .ux-figure h3 { margin: 28px 0 8px; font-size: 16px; }
+  .ux-figure p { margin: 0; }
+  @container (max-width: 800px) { .ux-figure .map-hint { display: block; } }
+  @container (max-width: 420px) {
+    .ux-figure dl > div { grid-template-columns: 1fr; gap: 4px; }
+  }
+
+  .ux-figure ::selection { background: var(--accent); color: var(--doc-accent-fg, #fff); }
+  .ux-figure .map-controls { padding: 4px 0; }
+  .ux-figure .map-controls label { min-height: 36px; }
+  .ux-figure .map-controls input { width: 16px; height: 16px; }
+</style>
+<div class="ux-figure">
+  <div class="map-controls">
+    <p>The document tree and workspace tools in <b>edit mode</b>.</p>
+    <label><input class="map-names" type="checkbox" checked>Show area names</label>
+  </div>
+  <div class="screen-map" tabindex="0" role="region" aria-label="Sidebar diagram; scroll horizontally on smaller screens">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 800" role="img" aria-labelledby="sidebar-title sidebar-description">
+      <title id="sidebar-title">The dooc sidebar, with named areas</title>
+      <desc id="sidebar-description">A sidebar with its site icon and title, close control, document tree, selected Screen layout page, add-page control and a workspace group containing Files, Library, Subformats, Plugins and Git. Blue callouts connect names to their screen positions.</desc>
+      <defs>
+        <g id="sidebar-file" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1h7l4 4v12H3zM10 1v4h4M6 9h5M6 12h5"/></g>
+        <g id="sidebar-chevron" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m3 5 4 4 4-4"/></g>
+      </defs>
+      <rect x="340" y="140" width="300" height="592" rx="4" fill="var(--rail)"/>
+      <path class="ui-line" d="M340 184h300"/>
+      <g aria-hidden="true">
+        <g class="ui-icon" transform="translate(356 153)"><circle cx="4" cy="12" r="3"/><circle cx="12" cy="4" r="3"/><path d="m6 10 4-4m4 4 3-3"/></g>
+        <text x="386" y="167">dooc documentation</text>
+        <g class="ui-icon"><rect x="608" y="154" width="15" height="13" rx="1"/><path d="M614 154v13"/></g>
+        <use href="#sidebar-chevron" x="350" y="203"/><use href="#sidebar-file" x="372" y="202"/><text x="396" y="216">Getting started</text>
+        <path class="ui-line" d="M379 230v51m0-36h12m-12 30h12"/>
+        <text x="400" y="250" class="muted">Install &amp; update</text><text x="400" y="280" class="muted">First document</text>
+        <use href="#sidebar-file" x="372" y="312"/><text x="396" y="326">Writing content</text>
+        <use href="#sidebar-chevron" x="350" y="351"/><use href="#sidebar-file" x="372" y="350"/><text x="396" y="364">Using the editor</text>
+        <path class="ui-line" d="M379 378v26h12m10-10v36h12"/>
+        <use href="#sidebar-chevron" x="389" y="389"/><text x="415" y="402">Screen guide</text>
+        <rect x="409" y="416" width="221" height="30" rx="2" fill="var(--raised)"/>
+        <use href="#sidebar-file" x="420" y="422"/><text x="444" y="436">Screen layout</text>
+        <g class="ui-icon"><path d="M610 426v10m-5-5h10"/></g>
+        <use href="#sidebar-file" x="372" y="466"/><text x="396" y="480">Reference</text>
+        <use href="#sidebar-file" x="372" y="500"/><text x="396" y="514">Development</text>
+        <rect x="352" y="560" width="276" height="160" rx="5" fill="none" stroke="var(--line)"/>
+        <use href="#sidebar-chevron" x="355" y="540"/><text x="378" y="550" class="muted" style="font-size:11px">main / project</text>
+        <g class="ui-icon">
+          <path d="M367 578h5l2 3h11v12h-18z"/>
+          <path d="M367 605v15h18m-13-4v-5m5 5v-9m5 9v-12"/>
+          <path d="M368 633h16v16h-16zM372 637h8v8h-8z"/>
+          <path d="M371 663v-5m10 5v-5m-13 5h16v6l-5 5v4h-5v-4l-6-5z"/>
+          <circle cx="372" cy="688" r="2.5"/><circle cx="382" cy="693" r="2.5"/><circle cx="372" cy="704" r="2.5"/><path d="M372 691v10m0-3h4a6 6 0 0 0 6-3"/>
+        </g>
+        <text x="398" y="590">Files</text><text x="398" y="618">Library</text><text x="398" y="646">Subformats</text><text x="398" y="674">Plugins</text><text x="398" y="702">Git</text>
+      </g>
+      <rect x="340" y="140" width="300" height="592" rx="4" class="ui-line"/>
+      <g class="callouts" aria-hidden="true">
+        <g><text x="80" y="60">Site icon</text><path d="M160 72v38l202 50"/><circle cx="362" cy="160" r="3"/></g>
+        <g><text x="370" y="60">Site title</text><path d="M420 72v40l32 48"/><circle cx="452" cy="160" r="3"/></g>
+        <g><text x="800" y="60">Close sidebar</text><path d="M844 72v40l-229 48"/><circle cx="615" cy="160" r="3"/></g>
+        <g><text x="48" y="250">Document tree</text><path d="M214 244h80l58 4"/><circle cx="352" cy="248" r="3"/></g>
+        <g><text x="48" y="398">Page row</text><path d="M156 392h138l120 39"/><circle cx="414" cy="431" r="3"/></g>
+        <g><text x="800" y="432">Add a page</text><path d="M790 426h-90l-89 5"/><circle cx="611" cy="431" r="3"/></g>
+        <g><text x="48" y="566">Workspace tools</text><path d="M230 560h122"/><circle cx="352" cy="560" r="3"/></g>
+        <g><text x="800" y="560">Files</text><path d="M790 554h-76l-92 31"/><circle cx="622" cy="585" r="3"/></g>
+        <g><text x="800" y="610">Library</text><path d="M790 604h-76l-92 9"/><circle cx="622" cy="613" r="3"/></g>
+        <g><text x="800" y="660">Subformats</text><path d="M790 654h-76l-92-13"/><circle cx="622" cy="641" r="3"/></g>
+        <g><text x="800" y="710">Plugins</text><path d="M790 704h-76l-92-35"/><circle cx="622" cy="669" r="3"/></g>
+        <g><text x="800" y="760">Git</text><path d="M790 754h-76l-92-57"/><circle cx="622" cy="697" r="3"/></g>
+      </g>
+    </svg>
+  </div>
+  <p class="map-hint">Scroll the diagram horizontally to inspect each area.</p>
+  <dl>
+    <div><dt>Site icon</dt><dd>The icon from <code>left_sidebar.icon</code>. In edit mode, select it to replace the SVG.</dd></div>
+    <div><dt>Site title</dt><dd>The title from <code>left_sidebar.title</code> in the current language. In edit mode, select it to rename the site.</dd></div>
+    <div><dt>Close sidebar</dt><dd>Collapses the sidebar; the same control expands it again.</dd></div>
+    <div><dt>Document tree</dt><dd>Pages, boards and Library pages from <code>center_contents</code>. Tree edits rewrite <code>dooc.yaml</code>.</dd></div>
+    <div><dt>Page row</dt><dd>The page icon, title and a chevron for children. Select a page to open it; row actions rename, move or change its icon. Renaming updates references.</dd></div>
+    <div><dt>Add a page</dt><dd>Creates a Markdown page, a record board or a Library page at that position in the tree. The diagram shows the add control beside the selected row.</dd></div>
+    <div><dt>Workspace tools</dt><dd>A foldable group named after the open workspace. The tools below act on that workspace.</dd></div>
+    <div><dt>Files</dt><dd>Browse, upload, rename and reorganize files; copy a path for an embed. <b>History</b> saves and restores snapshots where supported.</dd></div>
+    <div><dt>Library</dt><dd>Find blocks, code fences, URLs and terms, and see where they are used.</dd></div>
+    <div><dt>Subformats</dt><dd>Open record boards, register a type and edit its schema.</dd></div>
+    <div><dt>Plugins</dt><dd>Add, enable and sign in to plugins. <b>Add plugins</b> accepts a dropped plugin file.</dd></div>
+    <div><dt>Git</dt><dd>Stage, commit, switch branch, fetch, pull and push. Available actions depend on the workspace connection.</dd></div>
+  </dl>
+<h3>In <code>Viewer</code></h3>
+  <p>Navigation remains available. Editing actions such as renaming the site or adding a page are not shown.</p>
+</div>

@@ -2,6 +2,17 @@ A page is a Markdown file. dooc accepts a fixed subset of Markdown and reports a
 
 A page has no front matter: a leading `---` block is an error. Its title and its position in the tree are set in [dooc.yaml](contents/md/manifest.md), and a translated page takes its language from its `locales/<language>/` path.
 
+## Choose the right source
+
+| Content | Use | Guide |
+| --- | --- | --- |
+| Explanation and navigation | Markdown pages | This page |
+| Relationships and reusable blocks | Graph, schema, term and callout blocks | [Diagrams and blocks](contents/md/blocks.md) |
+| Code, data and existing files | File embeds | [File embeds](contents/md/embeds.md) |
+| Images, HTML and other visual media | Media assets | [Images, video and HTML](contents/md/media.md) |
+| A repeatable set of fields | Schema-backed records | [Structured records](contents/md/subformats.md) |
+| Alternative language or appearance | Locale and theme files | [Themes and languages](contents/md/variants.md) |
+
 ## Text
 
 Paragraphs take **bold**, *emphasis*, `inline code`, and [links](contents/md/index.md).
@@ -27,7 +38,7 @@ Paragraphs take **bold**, *emphasis*, `inline code`, and [links](contents/md/ind
 | Heading  | `[Text](contents/md/markdown.md#text)`               | [Text](contents/md/markdown.md#text)               |
 | Figure   | `[the workflow](contents/svg/workflow.svg)`          | [the workflow](contents/svg/workflow.svg)          |
 | Term     | `[workspace](contents/termth/workspace.termth)`      | [workspace](contents/termth/workspace.termth)      |
-| Record   | `[an issue](contents/issue/write-cheat-sheet.issue)` | [an issue](contents/issue/write-cheat-sheet.issue) |
+| Record   | `[a feature](contents/feature/mcp-subformat-tools.feature)` | [a feature](contents/feature/mcp-subformat-tools.feature) |
 | External | `[example](https://example.org/)`                    | [example](https://example.org/)                    |
 
 Local paths are relative to `dooc.yaml`, never to the current page. Query strings are not allowed on local paths.

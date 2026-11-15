@@ -141,6 +141,44 @@ describe("consistency report", () => {
         expect(checkSite(root, { only: ["render"] }).exitCode).toBe(0);
     });
 
+    it("checks generated pages in translated sites without treating them as Markdown files", () => {
+        const root = fixture();
+        put(root, "locales/jpn/content/guide.md", japanese);
+        put(
+            root,
+            "dooc.yaml",
+            JSON.stringify({
+                system: { default_lang: "eng" },
+                center_contents: [
+                    { file: "content/guide.md" },
+                    { subformat: "task" },
+                    { library: "csv" },
+                ],
+                json_subformats: [{ ext: "task", format: "json", schema: "files/task.json" }],
+            }),
+        );
+        put(
+            root,
+            "files/task.json",
+            JSON.stringify({
+                type: "object",
+                properties: { title: { type: "string" } },
+                required: ["title"],
+            }),
+        );
+        put(root, "files/one.task", '{"title":"First task"}');
+        expect(checkSite(root, { only: ["render"] }).diagnostics).toEqual([]);
+        put(root, "files/one.task", "{}");
+        expect(checkSite(root, { only: ["render"] }).diagnostics).toContainEqual(
+            expect.objectContaining({
+                code: "DOCUMENT_INVALID",
+                file: "subformat:task",
+                language: "jpn",
+                message: expect.stringContaining("title"),
+            }),
+        );
+    });
+
     it("uses declared theme resolution and reports the viewer's fallback as a missing variant", () => {
         const root = fixture(
             "languages: [eng], themes: [dark]",

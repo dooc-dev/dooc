@@ -1,3 +1,22 @@
+export const DARK_C = `
+  color-scheme: dark;
+  --c-bg0:#101316; --c-bg1:#16191d; --c-surface:#1b1f24; --c-raised:#22272d;
+  --c-line:#2a3037; --c-line-soft:#22272c;
+  --c-fg:#f5f6f7; --c-fg-muted:#b4bac0; --c-fg-faint:#8a939b; --fw-body:400;
+  --c-accent:#e65100; --c-ok:#4f9e6a; --c-danger:#c65b52; --c-warn:#c99a3a; --c-info:#6b8fbf;
+  --c-shadow:rgba(0,0,0,.4);
+  --doc-fg-4:#525a66; --doc-accent-2:#4a8bff; --doc-accent-fg:#ffffff;
+  --doc-ok-2:#56d364; --doc-warn-2:#ffc14d; --doc-danger-2:#ff7a7a; --doc-info-2:#79b0ff;`;
+export const LIGHT_C = `
+  color-scheme: light;
+  --c-bg0:#ffffff; --c-bg1:#f5f7f9; --c-surface:#fbfcfd; --c-raised:#e9edf2;
+  --c-line:#d5dae0; --c-line-soft:#e4e8ec;
+  --c-fg:#1a1e23; --c-fg-muted:#5a636c; --c-fg-faint:#687079; --fw-body:300;
+  --c-accent:#c24800; --c-ok:#2f7d4f; --c-danger:#b23c31; --c-warn:#8a6516; --c-info:#3a6ea5;
+  --c-shadow:rgba(15,23,32,.14);
+  --doc-fg-4:#9099a8; --doc-accent-2:#0277bd; --doc-accent-fg:#ffffff;
+  --doc-ok-2:#2ea043; --doc-warn-2:#f59f00; --doc-danger-2:#f04848; --doc-info-2:#4a8bff;`;
+
 /** Run in the head before any themed content can be painted. */
 export const initializeThemes = (themes = ["light", "dark"]): void => {
     const root = document.documentElement;

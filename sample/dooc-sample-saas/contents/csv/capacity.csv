@@ -1,0 +1,5 @@
+Component,Illustrative observation,Review boundary,Next action
+API,3 of 10 replicas active,Database connection headroom,Inspect pool limits before scaling
+Render worker,4 concurrent jobs,Oldest accepted job age,Reduce optional batch admission
+Main database,68 percent connection utilization,80 percent review threshold,Compare active and idle pools
+On-premise replica,12 seconds replication lag,60 seconds review threshold,Confirm read-only fallback freshness

@@ -1,0 +1,29 @@
+### Source
+workspace:
+  manifest: pk
+  title: string
+  default_lang: string
+
+page:
+  file: pk
+  workspace: fk(workspace)
+  title: string
+  children: fk[](page)
+  figures: fk[](figure)
+
+figure:
+  file: pk
+  kind: string
+  caption: string
+
+### Structured content
+subformat:
+  extension: pk
+  workspace: fk(workspace)
+  format: enum("JSON"|"YAML"|"TOML")
+  schema: string
+
+record:
+  file: pk
+  type: fk(subformat)
+  data: json

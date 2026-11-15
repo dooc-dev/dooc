@@ -2,6 +2,12 @@ name: Binaries
 
 on:
   workflow_call:
+    inputs:
+      bump:
+        description: Version increment to apply before building, so release executables embed the released version
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -35,6 +41,11 @@ jobs:
         with:
           bun-version: '1.4.4'
       - run: pnpm install --frozen-lockfile
+      - name: Apply the release version
+        if: inputs.bump != ''
+        run: npm version "$BUMP" --no-git-tag-version --ignore-scripts --package-lock=false
+        env:
+          BUMP: ${{ inputs.bump }}
       - run: pnpm build
       - run: pnpm build:binary "$BUN_TARGET"
         env:

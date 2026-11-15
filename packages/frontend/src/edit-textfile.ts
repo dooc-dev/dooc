@@ -4,7 +4,11 @@ import { Decoration, type DecorationSet, EditorView, keymap, WidgetType } from "
 import { CHECK_ICON } from "../../engine/src/core/icons.js";
 import type { PreviewSettings } from "../../engine/src/core/previewers.js";
 import { isRemoteTextfile, textfileName } from "../../engine/src/core/textfile.js";
-import { workspaceFetch, workspaceId } from "../../workspace/src/connection.js";
+import {
+    workspaceConnection,
+    workspaceFetch,
+    workspaceId,
+} from "../../workspace/src/connection.js";
 import { editorCodeHighlight } from "./edit-code-highlight.js";
 import { chooseConflict } from "./edit-conflict.js";
 import { previewSettingsState, setPreviewSettings } from "./edit-file-preview.js";
@@ -59,6 +63,7 @@ export const createTextfileEditors = (
     onDirty: () => void,
     workspace = workspaceId(),
 ) => {
+    const readOnly = !!workspaceConnection(workspace)?.readOnly;
     const drafts = new Map<string, FileDraft>();
     let previews: Record<string, FilePreview> = {};
     const cleanup = new WeakMap<HTMLElement, () => void>();
@@ -73,6 +78,7 @@ export const createTextfileEditors = (
         clearTimeout(draft.timer);
         draft.timer = undefined;
         if (
+            readOnly ||
             isRemoteTextfile(file) ||
             !dirty(draft) ||
             draft.error ||
@@ -119,7 +125,8 @@ export const createTextfileEditors = (
         return result;
     };
     const save = async (file: string, draft: FileDraft): Promise<void> => {
-        if (isRemoteTextfile(file) || draft.operation || !draft.state || !dirty(draft)) return;
+        if (readOnly || isRemoteTextfile(file) || draft.operation || !draft.state || !dirty(draft))
+            return;
         clearTimeout(draft.timer);
         if (!prepareSchemaBuilder(draft.state)) {
             draft.error = t("Check the parameter value.");
@@ -175,7 +182,7 @@ export const createTextfileEditors = (
         }
     };
     const validate = async (file: string, draft: FileDraft): Promise<void> => {
-        if (isRemoteTextfile(file) || draft.operation || !draft.state) return;
+        if (readOnly || isRemoteTextfile(file) || draft.operation || !draft.state) return;
         if (!prepareSchemaBuilder(draft.state)) return;
         const doc = draft.state.doc;
         draft.operation = "validate";
@@ -252,8 +259,8 @@ export const createTextfileEditors = (
             draft.state = EditorState.create({
                 doc: content ?? "",
                 extensions: [
-                    EditorState.readOnly.of(isRemoteTextfile(file)),
-                    EditorView.editable.of(!isRemoteTextfile(file)),
+                    EditorState.readOnly.of(readOnly || isRemoteTextfile(file)),
+                    EditorView.editable.of(!readOnly && !isRemoteTextfile(file)),
                     keymap.of([
                         {
                             key: "Mod-s",
@@ -385,7 +392,7 @@ export const createTextfileEditors = (
                 format.type = "button";
                 format.className = "pbtn cm-textfile-validate";
                 const validateIcon = document.getElementById("validate")?.innerHTML ?? "";
-                format.hidden = remote;
+                format.hidden = readOnly || remote;
                 const saveStatus = document.createElement("span");
                 saveStatus.className = "cm-textfile-save-status";
                 saveStatus.setAttribute("role", "status");
@@ -560,6 +567,10 @@ export const createTextfileEditors = (
             };
         },
         content: (file: string): string | undefined => drafts.get(file)?.state?.sliceDoc(),
+        unsavedFiles: () =>
+            [...drafts]
+                .filter(([, draft]) => dirty(draft) || hasSubformatFormDraft(draft.state))
+                .map(([file]) => file),
         hasUnsavedChanges: () =>
             [...drafts.values()].some(
                 (draft) =>

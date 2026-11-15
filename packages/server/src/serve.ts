@@ -351,7 +351,7 @@ export const startServer = async (
 
     // DOCS_HMR=0 = no hot reload (nothing is watched = changes need a manual reload).
     if (process.env.DOCS_HMR !== "0") {
-        const watcher = watchProject(root, pkgRoot, (kind, files) => {
+        const watcher = watchProject(root, "", (kind, files) => {
             terminal.operation(kind === "client" ? "Reloaded client" : "Changed", files.join(", "));
             if (kind === "client") {
                 bundleCache.clear();

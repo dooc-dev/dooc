@@ -24,13 +24,14 @@ export const mountSelectPickers = (
     for (const select of selects) {
         const translations = select.id === "fm-lang";
         const workspace = select.hasAttribute("data-workspace-pane");
+        const versions = select.id === "document-version-select";
         const trigger = select
             .closest(".fm-language")
             ?.querySelector<HTMLButtonElement>("[data-language-open]");
         const wrapper = document.createElement("div");
-        wrapper.className = `language-select${workspace ? " workspace-select" : ""}`;
+        wrapper.className = `language-select${workspace ? " workspace-select" : ""}${versions ? " version-select" : ""}`;
         const popup = document.createElement("div");
-        popup.className = `language-picker${workspace ? " workspace-picker" : ""}`;
+        popup.className = `language-picker${workspace ? " workspace-picker" : ""}${versions ? " version-picker" : ""}`;
         popup.id = `${select.id}-picker`;
         popup.popover = "manual";
         const input = document.createElement("input");
@@ -59,11 +60,18 @@ export const mountSelectPickers = (
         popup.append(list, empty);
         select.before(wrapper);
         wrapper.append(select, input, popup);
+        const status = versions ? document.createElement("span") : undefined;
+        if (status) {
+            status.className = "version-status";
+            status.setAttribute("aria-hidden", "true");
+            wrapper.append(status);
+        }
         select.hidden = true;
         let active = 0;
         let query = "";
         const isOpen = (): boolean => popup.matches(":popover-open");
-        const selectedText = (): string => select.selectedOptions[0]?.text ?? "";
+        const selectedText = (): string =>
+            (versions ? select.selectedOptions[0]?.value : select.selectedOptions[0]?.text) ?? "";
         const position = (): void => {
             const rect = input.getBoundingClientRect();
             const width = workspace
@@ -115,6 +123,15 @@ export const mountSelectPickers = (
                 item.id = `${select.id}-option-${i}`;
                 item.dataset.value = option.value;
                 item.textContent = item.title = option.text;
+                if (versions) {
+                    item.setAttribute("aria-label", option.text);
+                    const number = document.createElement("span");
+                    number.textContent = option.value;
+                    const status = document.createElement("span");
+                    status.className = "version-status";
+                    status.textContent = option.dataset.status ?? "";
+                    item.replaceChildren(number, status);
+                }
                 if (workspace) {
                     item.dataset.change = option.dataset.change ?? "";
                     if (option.dataset.create) item.dataset.create = option.dataset.create;
@@ -165,7 +182,12 @@ export const mountSelectPickers = (
             highlight(preserved ?? selected);
         };
         const sync = (): void => {
-            input.title = selectedText();
+            input.title = select.selectedOptions[0]?.text ?? "";
+            if (status) {
+                status.textContent = select.selectedOptions[0]?.dataset.status ?? "";
+                status.hidden = !!query;
+                input.setAttribute("aria-description", status.textContent);
+            }
             input.readOnly = workspace || select.disabled;
             if (workspace) {
                 wrapper.dataset.workspacePane = input.dataset.workspacePane =
@@ -202,6 +224,7 @@ export const mountSelectPickers = (
                 position();
             } else {
                 query = "";
+                if (status) status.hidden = false;
                 if (workspace) fitWorkspaceLabel(input, selectedText());
                 else input.value = selectedText();
                 input.removeAttribute("aria-activedescendant");
@@ -244,6 +267,7 @@ export const mountSelectPickers = (
         });
         input.addEventListener("input", () => {
             query = input.value;
+            if (status) status.hidden = !!query;
             if (isOpen()) render();
             else popup.showPopover();
         });

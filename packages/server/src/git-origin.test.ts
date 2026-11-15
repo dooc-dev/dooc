@@ -56,7 +56,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 const adapter = async () =>
-    (await import(new URL("../../../examples/git-origin/github.mjs", import.meta.url).href))
+    (await import(new URL("../../../sample/examples/git-origin/github.mjs", import.meta.url).href))
         .githubOrigin;
 const context = { root: "/fixture", branch: "topic", head: "a".repeat(40) };
 afterEach(() => {

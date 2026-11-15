@@ -1,0 +1,22 @@
+sequenceDiagram
+  participant Reader
+  participant Edge
+  participant Web
+  participant API
+  participant DB as Main database
+  participant Queue as Render jobs
+  participant Worker as Render worker
+  participant Assets
+  Reader->>Edge: HTTPS page request
+  Edge->>Web: Forward request
+  Web->>API: Read workspace
+  API->>DB: Tenant-scoped query
+  DB-->>API: Workspace data
+  API-->>Web: Response
+  Web-->>Reader: Page
+  Reader->>API: Request an export
+  API->>Queue: Enqueue accepted job
+  API-->>Reader: Job identifier
+  Queue->>Worker: Deliver job
+  Worker->>DB: Read source
+  Worker->>Assets: Write rendered output

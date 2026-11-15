@@ -65,6 +65,7 @@ export const createPluginHandler = (
     plugins: readonly DataPlugin[],
     presentation: Pick<ViewerPlugins, "mocks"> = { mocks: {} },
     credentials?: PluginCredentialStore,
+    changed: (revision: string) => void = () => {},
 ) => {
     let config = validateViewerPlugins({ plugins, ...presentation });
     let mocks = new Map(Object.entries(config.mocks));
@@ -88,6 +89,7 @@ export const createPluginHandler = (
         origins = new Map([...mocks].map(([id, mock]) => [mock.origin, { id, ...mock }]));
         revision++;
         for (const stream of streams) notify(stream);
+        changed(`${cookie}:${revision}`);
     };
     const registry: ViewerPluginRegistry = {
         register(plugin, options = {}) {
@@ -118,13 +120,16 @@ export const createPluginHandler = (
             });
         },
     };
-    const tickets = new Map<string, { plugin: string; origin: string; expires: number }>();
-    const loginLink = (plugin: string, origin: string): string => {
+    const tickets = new Map<
+        string,
+        { plugin: string; origin: string; expires: number; session?: string }
+    >();
+    const loginLink = (plugin: string, origin: string, session?: string): string => {
         if (!config.plugins.some((item) => item.id === plugin))
             throw new Error("Plugin is not configured");
         for (const [key, value] of tickets) if (value.expires <= Date.now()) tickets.delete(key);
         const ticket = randomBytes(32).toString("hex");
-        tickets.set(ticket, { plugin, origin, expires: Date.now() + 10 * 60 * 1000 });
+        tickets.set(ticket, { plugin, origin, expires: Date.now() + 10 * 60 * 1000, session });
         return `${origin}/api/plugins/login/${plugin}?ticket=${ticket}`;
     };
     const authorizationUrl = async (
@@ -143,6 +148,33 @@ export const createPluginHandler = (
         return mock
             ? `${base}/api/plugins/mock/${mock.id}${authorization.pathname}${authorization.search}`
             : authorization.href;
+    };
+    const request = async (input: Record<string, unknown>, session: string, base: string) => {
+        if (input.action === "resolve") {
+            const plugin = runtime.resolve(input.url);
+            return {
+                plugin,
+                ...(plugin && runtime.hasSession(session) && runtime.status(session, plugin)
+                    ? { connected: true }
+                    : {}),
+                ...(plugin && mocks.get(plugin)?.autoConnect ? { autoConnect: true } : {}),
+            };
+        }
+        if (typeof input.plugin !== "string" || !/^[a-z][a-z0-9-]{0,63}$/.test(input.plugin))
+            throw new PluginError(400, "Invalid plugin ID");
+        if (input.action === "connect")
+            return { url: await authorizationUrl(session, input.plugin, base) };
+        if (input.action === "status")
+            return { user: runtime.status(session, input.plugin) ?? null };
+        if (input.action === "disconnect") {
+            if (runtime.hasSession(session)) runtime.disconnect(session, input.plugin);
+            return { disconnected: true };
+        }
+        if (input.action === "read") return runtime.read(session, input.plugin, input.url);
+        if (input.action === "actions") return runtime.actions(session, input.plugin, input.url);
+        if (input.action === "act")
+            return runtime.act(session, input.plugin, input.url, input.operation, input.requestId);
+        throw new PluginError(400, "Invalid plugin action");
     };
     const handle = async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
         const url = new URL(req.url ?? "/", "http://localhost");
@@ -231,8 +263,9 @@ export const createPluginHandler = (
                     .map((part) => part.trim())
                     .find((part) => part.startsWith(`${cookie}=`))
                     ?.slice(cookie.length + 1) ?? "";
-            const createSession = () => {
-                session = runtime.createSession();
+            const createSession = (selected?: string) => {
+                session =
+                    selected && runtime.hasSession(selected) ? selected : runtime.createSession();
                 res.setHeader(
                     "set-cookie",
                     `${cookie}=${session}; HttpOnly; SameSite=Lax; Path=/api/plugins; Max-Age=28800`,
@@ -250,7 +283,11 @@ export const createPluginHandler = (
                 )
                     throw new PluginError(400, "Invalid or expired login link");
                 tickets.delete(key);
-                if (!runtime.hasSession(session)) createSession();
+                if (ticket.session) {
+                    if (!runtime.hasSession(ticket.session))
+                        throw new PluginError(400, "Expired workspace session");
+                    createSession(ticket.session);
+                } else if (!runtime.hasSession(session)) createSession();
                 res.writeHead(303, {
                     location: await authorizationUrl(session, ticket.plugin, base),
                 });
@@ -341,47 +378,21 @@ setTimeout(poll, ${pending.retryAfter * 1000});
                 throw new PluginError(403, "Plugins require a same-origin local request");
             const input = await readInput(req);
             if (input.action === "resolve") {
-                const plugin = runtime.resolve(input.url);
-                if (plugin && credentials && !runtime.hasSession(session)) createSession();
-                send(200, {
-                    plugin,
-                    ...(plugin && runtime.hasSession(session) && runtime.status(session, plugin)
-                        ? { connected: true }
-                        : {}),
-                    ...(plugin && mocks.get(plugin)?.autoConnect ? { autoConnect: true } : {}),
-                });
-                return true;
+                if (runtime.resolve(input.url) && credentials && !runtime.hasSession(session))
+                    createSession();
+            } else {
+                if (
+                    typeof input.plugin !== "string" ||
+                    !/^[a-z][a-z0-9-]{0,63}$/.test(input.plugin)
+                )
+                    throw new PluginError(400, "Invalid plugin ID");
+                if (
+                    !runtime.hasSession(session) &&
+                    (credentials || input.action === "connect" || input.action === "status")
+                )
+                    createSession();
             }
-            if (typeof input.plugin !== "string" || !/^[a-z][a-z0-9-]{0,63}$/.test(input.plugin))
-                throw new PluginError(400, "Invalid plugin ID");
-            if (
-                !runtime.hasSession(session) &&
-                (credentials || input.action === "connect" || input.action === "status")
-            )
-                createSession();
-            if (input.action === "connect") {
-                send(200, { url: await authorizationUrl(session, input.plugin, base) });
-            } else if (input.action === "status") {
-                send(200, { user: runtime.status(session, input.plugin) ?? null });
-            } else if (input.action === "disconnect") {
-                if (runtime.hasSession(session)) runtime.disconnect(session, input.plugin);
-                send(200, { disconnected: true });
-            } else if (input.action === "read") {
-                send(200, await runtime.read(session, input.plugin, input.url));
-            } else if (input.action === "actions") {
-                send(200, await runtime.actions(session, input.plugin, input.url));
-            } else if (input.action === "act") {
-                send(
-                    200,
-                    await runtime.act(
-                        session,
-                        input.plugin,
-                        input.url,
-                        input.operation,
-                        input.requestId,
-                    ),
-                );
-            } else throw new PluginError(400, "Invalid plugin action");
+            send(200, await request(input, session, base));
         } catch (error) {
             send(isPluginError(error) ? error.status : 502, {
                 error: isPluginError(error) ? error.message : "Plugin request failed",
@@ -391,6 +402,9 @@ setTimeout(poll, ${pending.retryAfter * 1000});
     };
     return Object.assign(handle, registry, {
         loginLink,
+        request,
+        createSession: runtime.createSession,
+        hasSession: runtime.hasSession,
         configuration: () => config,
     });
 };

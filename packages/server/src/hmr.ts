@@ -107,7 +107,7 @@ export const watchProject = (
         }
     };
     // Skip missing folders (checkouts / test fixtures without optional asset folders) to avoid ENOENT.
-    const dirs: [string, string][] = [["packages", join(pkgRoot, "packages")]];
+    const dirs: [string, string][] = pkgRoot ? [["packages", join(pkgRoot, "packages")]] : [];
     const watchers = dirs
         .filter(([, abs]) => !prebuilt && existsSync(abs))
         .map(([dir, abs]) =>
@@ -164,6 +164,11 @@ export const watchProject = (
                 }),
             );
     }
+    for (const watcher of watchers)
+        watcher.on("error", (error: NodeJS.ErrnoException) => {
+            // Recursive watches can race with a build renaming its staging directory.
+            if (error.code !== "ENOENT") throw error;
+        });
     // shortcut: keep encountered file watches until shutdown; prune if sessions collect many removed references.
     const watchTextfiles = (files: Iterable<string>): void => {
         for (const file of files) {

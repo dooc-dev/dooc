@@ -3,6 +3,7 @@
 // Failures are returned as { error, status } (status is HTTP-like) with no partial updates.
 
 import {
+    type DocNode,
     flattenTree,
     insertDoc,
     isDocId,
@@ -21,7 +22,7 @@ import {
     isDocumentFileName,
     parseFileLayout,
 } from "../core/files.js";
-import { parseDocLink } from "../core/routing.js";
+import { documentPathErrors, parseDocLink } from "../core/routing.js";
 import { collectDocLinks, compileSite } from "./compile.js";
 import { figureName, figureUploadName } from "./figures.js";
 import { filesSnapshot, projectFiles, rewriteFileLinks, updateFiles } from "./files.js";
@@ -69,6 +70,13 @@ export const createDocOps = (root: string) => {
         return manifest.errors.length > 0
             ? { error: manifest.errors.join(" / "), status: 409 }
             : manifest;
+    };
+
+    const pathError = (tree: readonly DocNode[], manifest: ParsedManifest): OpError | undefined => {
+        const errors = documentPathErrors(
+            flattenTree(tree).map((doc) => ({ ...doc, file: docFile(doc.id, manifest.files) })),
+        );
+        return errors.length ? { error: errors.join(" / "), status: 409 } : undefined;
     };
 
     const existingDoc = (id: unknown): OpResult<{ id: string }> =>
@@ -144,6 +152,8 @@ export const createDocOps = (root: string) => {
                 ? defaultFilePath(filename ?? `${id}.md`)
                 : `content/${filename}`;
         }
+        const invalidPath = pathError(tree, loaded);
+        if (invalidPath) return invalidPath;
         const file = textfilePath(root, docFile(id, loaded.files));
         if (existsSync(file)) return { error: "File already exists", status: 409 };
         mkdirSync(dirname(file), { recursive: true });
@@ -178,11 +188,19 @@ export const createDocOps = (root: string) => {
     ): OpResult<{ id: string }> => {
         const loaded = loadTree();
         if (isOpError(loaded)) return loaded;
-        if (!loaded.subformats?.some((format) => format.ext === ext) || !title.trim())
+        const format = loaded.subformats?.find((format) => format.ext === ext);
+        if (!format || !title.trim())
             return { error: "Choose an existing subformat and enter a title", status: 400 };
         const id = subformatPageId(ext);
         const tree = insertDoc(loaded.tree, id, parent, { subformat: ext, title: title.trim() });
         if (!tree) return { error: "Page already exists or parent is missing", status: 409 };
+        const invalidPath = pathError(tree, loaded);
+        if (invalidPath) return invalidPath;
+        if (format.icon) {
+            loaded.files ??= parseFileLayout({});
+            loaded.files.icons ??= {};
+            loaded.files.icons[id] = format.icon;
+        }
         writeManifest(root, tree, loaded);
         return { id };
     };
@@ -195,6 +213,8 @@ export const createDocOps = (root: string) => {
         const id = libraryPageId(view);
         const tree = insertDoc(loaded.tree, id, parent, { library: view, title: title.trim() });
         if (!tree) return { error: "Page already exists or parent is missing", status: 409 };
+        const invalidPath = pathError(tree, loaded);
+        if (invalidPath) return invalidPath;
         writeManifest(root, tree, loaded);
         return { id };
     };
@@ -235,6 +255,8 @@ export const createDocOps = (root: string) => {
                 status: 409,
             };
         }
+        const invalidPath = pathError(tree, loaded);
+        if (invalidPath) return invalidPath;
         writeManifest(root, tree, loaded);
         return { id };
     };
@@ -298,6 +320,8 @@ export const createDocOps = (root: string) => {
         if (!tree) {
             return { error: "doc is not in dooc.yaml", status: 404 };
         }
+        const invalidPath = pathError(tree, loaded);
+        if (invalidPath) return invalidPath;
         const oldFile = docFile(oldId, loaded.files);
         const mapped = loaded.files && Object.hasOwn(loaded.files.documents, oldId);
         const newFile = mapped ? oldFile : docFile(newId, loaded.files);

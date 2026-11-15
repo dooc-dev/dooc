@@ -1,0 +1,6 @@
+title: Evidence needed for the launch review
+kind: Memo
+date: 2026-11-12
+team: contents/team/platform.team
+project: contents/project/launch-readiness.project
+body: Collect invitation-flow results, migration and rollback evidence, and the support handoff. The launch review remains open until Erin links every criterion to a reviewed result. This note records required evidence, not approval to launch.

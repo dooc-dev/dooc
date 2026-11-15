@@ -4,6 +4,7 @@ import { createContext, runInContext } from "node:vm";
 import git from "isomorphic-git";
 import { ScriptTarget, transpileModule } from "typescript";
 import { afterEach, expect, it, vi } from "vitest";
+import { parseVersionSelection } from "../../engine/src/core/document-version.js";
 import { createBrowserGit } from "../../workspace/src/browser-git.js";
 import { fs } from "../../workspace/src/browser-host.js";
 import { memoryFiles, replaceMemory } from "../../workspace/src/browser-storage.js";
@@ -23,6 +24,8 @@ const extract = (start: string, end: string): string => {
 const worker = (manifest: string) => {
     const context = createContext({
         repository,
+        readOnly: false,
+        mcpEnabled: false,
         manifest,
         git,
         fs,
@@ -41,7 +44,12 @@ const worker = (manifest: string) => {
         memoryFiles,
         persistFiles: vi.fn(),
         projectRoot: dirname,
-        createDocumentApplication: vi.fn(() => ({ configure: vi.fn() })),
+        makeApp: vi.fn(() => ({ configure: vi.fn() })),
+        parseVersionSelection,
+        selectionText: "*",
+        selection: parseVersionSelection("*"),
+        catalog: undefined,
+        createBrowserVersions: vi.fn(),
         server: { broadcast: vi.fn() },
         runCodeTool: vi.fn(),
         validateCodeTools: vi.fn(),

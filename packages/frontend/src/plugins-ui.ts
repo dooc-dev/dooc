@@ -482,17 +482,15 @@ const mountWorkspacePlugins = (
                         const url = new URL(data.url);
                         if (
                             url.origin !== location.origin ||
-                            !url.pathname.startsWith("/api/plugins/mock/")
+                            (!url.pathname.startsWith("/api/plugins/mock/") &&
+                                url.pathname !== `/api/plugins/login/${plugin}`)
                         )
                             throw new Error("Plugin request failed");
-                        const authorization = await workspaceFetch(
-                            url.href,
-                            {
-                                credentials: "same-origin",
-                                cache: "no-store",
-                            },
-                            workspace,
-                        );
+                        // OAuth redirects need browser cookies outside the document transport.
+                        const authorization = await fetch(url.href, {
+                            credentials: "same-origin",
+                            cache: "no-store",
+                        });
                         if (!authorization.ok) throw new Error("Plugin request failed");
                     })();
                     connections.set(plugin, connection);

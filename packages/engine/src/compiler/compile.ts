@@ -586,7 +586,8 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                 errors: errs,
             });
         }
-        const subformatPages = flattenTree(manifest.tree).filter((node) => node.subformat);
+        const pages = flattenTree(manifest.tree);
+        const subformatPages = pages.filter((node) => node.subformat);
         const recordReferences = new Map<string, NonNullable<SubformatRecord["references"]>>();
         if (subformatPages.length)
             for (const { doc, parsed } of files)
@@ -595,7 +596,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                     references.push({
                         file: doc.file,
                         line: ref.line,
-                        href: docPath(docs, doc.id),
+                        href: docPath(pages, doc.id),
                     });
                     recordReferences.set(ref.file, references);
                 }

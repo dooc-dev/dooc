@@ -1,4 +1,8 @@
 {
+    "version": "version",
+    "Unsaved drafts": "Unsaved drafts",
+    "Choose an unsaved draft": "Choose an unsaved draft",
+    "Read-only version": "Read-only version",
     "Site title": "Site title",
     "Edit site title": "Edit site title",
     "Editor font": "Editor font",
@@ -414,5 +418,12 @@
     "Your name": "Your name",
     "Email (optional)": "Email (optional)",
     "Shared workspace": "Shared workspace",
-    "Join": "Join"
+    "Join": "Join",
+    "View": "View",
+    "Cards": "Cards",
+    "List": "List",
+    "SVG icon": "SVG icon",
+    "SVG icon path": "SVG icon path",
+    "SVG icon path (optional)": "SVG icon path (optional)",
+    "Leave empty to remove. New Pages entries copy this path; existing pages keep their own icon.": "Leave empty to remove. New Pages entries copy this path; existing pages keep their own icon."
 }

@@ -184,10 +184,12 @@ describe("local plugin HTTP boundary", () => {
         });
         vi.stubGlobal("fetch", network);
         const config = await loadViewerPlugins(
-            fileURLToPath(new URL("../../../examples/viewer-plugins/index.mjs", import.meta.url)),
+            fileURLToPath(
+                new URL("../../../sample/examples/viewer-plugins/index.mjs", import.meta.url),
+            ),
         );
         const module = await import(
-            new URL("../../../examples/viewer-plugins/mock.mjs", import.meta.url).href
+            new URL("../../../sample/examples/viewer-plugins/mock.mjs", import.meta.url).href
         );
         const handler = createPluginHandler(config.plugins, {
             mocks: { sample: module.createSampleMock() },
@@ -303,7 +305,9 @@ describe("local plugin HTTP boundary", () => {
         });
         vi.stubGlobal("fetch", network);
         const config = await loadViewerPlugins(
-            fileURLToPath(new URL("../../../examples/viewer-plugins/index.mjs", import.meta.url)),
+            fileURLToPath(
+                new URL("../../../sample/examples/viewer-plugins/index.mjs", import.meta.url),
+            ),
         );
         const handler = createPluginHandler(config.plugins, config);
         const url = "https://sample.dooc.invalid/tickets/DOC-42";
@@ -488,13 +492,60 @@ it("exchanges one-use terminal login tickets for browser-bound OAuth sessions", 
     );
 });
 
+it("binds workspace login tickets to the socket's plugin session", async () => {
+    vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(Response.json({ access_token: "private-token" })),
+    );
+    const handler = createPluginHandler([definition]);
+    const session = handler.createSession();
+    const link = new URL(handler.loginLink("sample", "http://localhost:5179", session));
+    const started = await call(handler, undefined, {
+        method: "GET",
+        path: link.pathname + link.search,
+    });
+    expect(started.status).toBe(303);
+    const authorization = new URL(started.headers.location ?? "");
+    const callback = await call(handler, undefined, {
+        method: "GET",
+        path: `/api/plugins/callback/sample?state=${authorization.searchParams.get("state")}&code=private-code`,
+        cookie: started.headers["set-cookie"]?.split(";")[0],
+    });
+    expect(callback.status).toBe(200);
+    expect(
+        await handler.request(
+            { action: "status", plugin: "sample" },
+            session,
+            "http://localhost:5179",
+        ),
+    ).toMatchObject({ user: { id: "alice" } });
+    expect(
+        await handler.request(
+            { action: "status", plugin: "sample" },
+            handler.createSession(),
+            "http://localhost:5179",
+        ),
+    ).toEqual({ user: null });
+    expect(
+        JSON.stringify(
+            await handler.request(
+                { action: "read", plugin: "sample", url: "https://service.example/item" },
+                session,
+                "http://localhost:5179",
+            ),
+        ),
+    ).not.toContain("private-token");
+});
+
 it("keeps the automatic demo usable while the separate mock login is approved or cancelled", async () => {
     const network = vi.fn(() => {
         throw new Error("The demo must not use the network");
     });
     vi.stubGlobal("fetch", network);
     const config = await loadViewerPlugins(
-        fileURLToPath(new URL("../../../examples/viewer-plugins/index.mjs", import.meta.url)),
+        fileURLToPath(
+            new URL("../../../sample/examples/viewer-plugins/index.mjs", import.meta.url),
+        ),
     );
     const handler = createPluginHandler(config.plugins, config);
     const automaticUrl = "https://sample.dooc.invalid/tickets/DOC-42";

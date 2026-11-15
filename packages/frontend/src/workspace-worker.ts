@@ -7,6 +7,12 @@ import {
     uploadFile,
 } from "../../engine/src/compiler/files.js";
 import { projectRoot } from "../../engine/src/compiler/manifest.js";
+import {
+    type DocumentRevision,
+    latestVersionOnly,
+    parseVersionSelection,
+    selectVersions,
+} from "../../engine/src/core/document-version.js";
 import type { WorkspaceSource } from "../../engine/src/core/workspace.js";
 import {
     type BrowserGitOptions,
@@ -23,17 +29,26 @@ import {
     readDirectory,
     replaceMemory,
 } from "../../workspace/src/browser-storage.js";
+import { createBrowserVersions } from "../../workspace/src/browser-versions.js";
 import {
     runCodeTool,
     validateCodeTools,
     validateTextfileCode,
 } from "../../workspace/src/editor-tools.js";
 import type { GitState } from "../../workspace/src/git-types.js";
+import { callMcpTool } from "../../workspace/src/mcp.js";
+import { createMcpTools } from "../../workspace/src/mcp-tools.js";
+import { assertReadOnlyOperation } from "../../workspace/src/read-only.js";
 import { createWorkspaceServer } from "../../workspace/src/server.js";
 import { type ApplicationRequest, applicationRequest } from "./application-request.js";
 import { createDocumentApplication } from "./document-application.js";
+import { createMcpOperations } from "./mcp-operations.js";
 
 const repository = "/workspace";
+declare const DOOC_READ_ONLY: boolean;
+declare const DOOC_MCP: boolean;
+const readOnly = typeof DOOC_READ_ONLY !== "undefined" && DOOC_READ_ONLY;
+const mcpEnabled = typeof DOOC_MCP !== "undefined" && DOOC_MCP;
 let directory: FileSystemDirectoryHandle;
 let root: string;
 let app: ReturnType<typeof createDocumentApplication>;
@@ -45,6 +60,44 @@ let queue: Promise<unknown> = Promise.resolve();
 let manifest = "dooc.yaml";
 let label = "Documents";
 let baseHead: string | undefined;
+let catalog: ReturnType<typeof createBrowserVersions>;
+let selection = parseVersionSelection(readOnly ? "latest" : "*");
+let selectionText = readOnly ? "latest" : "*";
+const historicalApps = new Map<string, ReturnType<typeof createDocumentApplication>>();
+
+const makeApp = (path: string) =>
+    createDocumentApplication(path, {
+        fontCss: () =>
+            "@font-face{font-family:'UDEV Gothic';font-style:normal;font-weight:400;font-display:swap;src:url(/assets/fonts/udev-gothic-regular.woff2) format('woff2')}",
+        readWorkspaceSource: () => source,
+        sourceFileBase: () => undefined,
+        gitBaseText: (_root, file) =>
+            path.startsWith(`${repository}/`) || path === repository
+                ? (base.get(file) ?? null)
+                : null,
+        gitBaseBody: (_root, file) => {
+            const raw =
+                path.startsWith(`${repository}/`) || path === repository
+                    ? base.get(file)
+                    : undefined;
+            return raw == null ? null : parseDoc(raw).body;
+        },
+        setSubformatChanges: () => {},
+        runCodeTool,
+        validateCodeTools,
+        validateTextfileCode,
+    });
+const versionRows = async () => {
+    const all = await catalog.list();
+    const rows = selectVersions(all, selection);
+    if (readOnly && !all.length && catalog.enabled())
+        throw new Error(
+            "No published document versions. Commit Git sources or build a source snapshot first.",
+        );
+    if (readOnly && !rows.length && (all.length || selectionText !== "latest"))
+        throw new Error("No document versions match the publication selection");
+    return rows;
+};
 
 const manifestAt = async (ref: string): Promise<boolean> => {
     try {
@@ -74,9 +127,14 @@ const configure = async () => {
 
 const initialize = async (input: Record<string, unknown>) => {
     if (directory) throw new Error("Workspace is already open");
+    if (readOnly && (input.create || input.clone || input.files))
+        throw new Error("This workspace is read-only");
     directory = input.directory as FileSystemDirectoryHandle;
     if (!directory || directory.kind !== "directory") throw new Error("Choose a storage directory");
     options = (input.git ?? {}) as BrowserGitOptions;
+    selectionText =
+        readOnly && typeof input.versions === "string" ? input.versions : readOnly ? "latest" : "*";
+    selection = parseVersionSelection(selectionText);
     label = typeof input.label === "string" ? input.label : directory.name;
     manifest = typeof input.manifest === "string" ? input.manifest : "dooc.yaml";
     if (
@@ -128,24 +186,11 @@ const initialize = async (input: Record<string, unknown>) => {
         driver = fs.existsSync(`${repository}/.git`)
             ? createBrowserGit(repository, options, label)
             : undefined;
-        app = createDocumentApplication(root, {
-            fontCss: () =>
-                "@font-face{font-family:'UDEV Gothic';font-style:normal;font-weight:400;font-display:swap;src:url(/assets/fonts/udev-gothic-regular.woff2) format('woff2')}",
-            readWorkspaceSource: () => source,
-            sourceFileBase: () => undefined,
-            gitBaseText: (_root, file) => base.get(file) ?? null,
-            gitBaseBody: (_root, file) => {
-                const raw = base.get(file);
-                return raw == null ? null : parseDoc(raw).body;
-            },
-            setSubformatChanges: () => {},
-            runCodeTool,
-            validateCodeTools,
-            validateTextfileCode,
-        });
+        app = makeApp(root);
+        catalog = createBrowserVersions(repository, root);
         await configure();
         server.broadcast("phase", "storage");
-        await persistFiles(directory, before, memoryFiles(repository));
+        if (!readOnly) await persistFiles(directory, before, memoryFiles(repository));
         return {
             label:
                 source.protocol === "git" ? `${directory.name} / ${source.branch}` : directory.name,
@@ -160,10 +205,43 @@ const initialize = async (input: Record<string, unknown>) => {
 
 const operations = {
     initialize,
+    versions: async (input: Record<string, unknown>) => {
+        const rows = await versionRows();
+        if (input.action === "list")
+            return {
+                versions: rows,
+                current: rows.find((row) => row.current)?.version,
+                selected:
+                    rows.find((row) => row.revision === input.revision)?.version ??
+                    (readOnly ? rows[0]?.version : rows.find((row) => row.current)?.version),
+                selector: selectionText,
+                showSelector: rows.length > 1 && !(readOnly && latestVersionOnly(selection)),
+            };
+        if (input.action !== "open") throw new Error("Invalid version action");
+        const row =
+            input.version === "latest"
+                ? rows[0]
+                : rows.find((row) => row.version === input.version);
+        if (!row) throw new Error("Document version is not published");
+        return row;
+    },
+    ...(mcpEnabled
+        ? {
+              mcp: (input: Record<string, unknown>) => {
+                  const operations = createMcpOperations(root);
+                  const tools = createMcpTools(
+                      (name, args) => operations[name]?.(args),
+                      readOnly || typeof input.revision === "string",
+                      true,
+                  );
+                  return callMcpTool(tools, input.name, input.args);
+              },
+          }
+        : {}),
     http: async (input: Record<string, unknown>) => {
         const result = await applicationRequest(
             app,
-            "edit",
+            readOnly ? "preview" : "edit",
             input as unknown as ApplicationRequest,
         );
         return {
@@ -221,9 +299,50 @@ const server = createWorkspaceServer(
         Object.entries(operations).map(([name, op]) => [
             name,
             (input: Record<string, unknown>) => {
+                const checkDeadline = () => {
+                    if (
+                        name === "mcp" &&
+                        input.deadline !== undefined &&
+                        (typeof input.deadline !== "number" ||
+                            !Number.isFinite(input.deadline) ||
+                            Date.now() >= input.deadline)
+                    )
+                        throw new Error("MCP request expired before execution");
+                };
                 const run = async (): Promise<unknown> => {
                     if (name === "initialize") return initialize(input);
                     if (!app) throw new Error("Open a workspace first");
+                    checkDeadline();
+                    if (readOnly && name !== "mcp") assertReadOnlyOperation(name, input);
+                    const execute = async () => {
+                        if (name === "versions" || (!readOnly && input.revision === undefined))
+                            return op(input);
+                        const rows = await versionRows();
+                        const row: DocumentRevision | undefined =
+                            input.revision === undefined
+                                ? rows[0]
+                                : rows.find((row) => row.revision === input.revision);
+                        if (!row && input.revision !== undefined)
+                            throw new Error("Document version is not published");
+                        if (!row) return op(input);
+                        if (name !== "mcp") assertReadOnlyOperation(name, input, !readOnly);
+                        const previousRoot = root;
+                        const previousApp = app;
+                        root = await catalog.open(row.revision);
+                        let historical = historicalApps.get(root);
+                        if (!historical) {
+                            historical = makeApp(root);
+                            historical.configure({ readOnly: true, workspace: source });
+                            historicalApps.set(root, historical);
+                        }
+                        app = historical;
+                        try {
+                            return await op(input);
+                        } finally {
+                            root = previousRoot;
+                            app = previousApp;
+                        }
+                    };
                     // Draft previews use the current snapshot; saves and navigation resync storage.
                     if (
                         name === "http" &&
@@ -231,19 +350,22 @@ const server = createWorkspaceServer(
                         typeof input.url === "string" &&
                         ["/api/render", "/api/lint"].includes(input.url.split("?")[0] ?? "")
                     )
-                        return op(input);
+                        return execute();
                     const known = memoryFiles(repository);
                     const before = await readDirectory(directory);
                     replaceMemory(repository, before);
                     await configure();
+                    checkDeadline();
+                    if (readOnly || input.revision !== undefined) return execute();
                     try {
-                        const value = await op(input);
+                        const value = await execute();
                         if (
-                            name === "http" &&
                             value &&
                             typeof value === "object" &&
-                            "status" in value &&
-                            Number(value.status) >= 400
+                            ((name === "http" &&
+                                "status" in value &&
+                                Number(value.status) >= 400) ||
+                                (name === "mcp" && "error" in value))
                         ) {
                             replaceMemory(repository, before);
                             return value;

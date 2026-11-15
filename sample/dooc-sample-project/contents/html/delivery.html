@@ -1,0 +1,59 @@
+<!--fig
+title: Atlas delivery review
+desc: A fictional launch review connects six issue states to the three project outcomes and the next acceptance gate.
+-->
+<style>
+
+  .project-delivery { color: var(--doc-fg, #172534); background: var(--doc-bg, #fff); font: 14px/1.6 system-ui, sans-serif; container-type: inline-size; }
+  .project-delivery * { box-sizing: border-box; }
+  .project-delivery h2 { margin: 0 0 12px; font-size: clamp(23px, 4cqw, 32px); line-height: 1.2; letter-spacing: -.025em; text-wrap: balance; }
+  .project-delivery h3 { margin: 0 0 10px; font-size: 17px; line-height: 1.4; }
+  .project-delivery p { margin: 0 0 16px; max-width: 72ch; }
+  .project-delivery .muted { color: var(--doc-fg-2, #465569); }
+  .project-delivery .accent { color: var(--doc-accent, #1b4994); }
+  .project-delivery .surface { background: var(--doc-panel-2, #f1f5fa); }
+  .project-delivery .intro { padding: 28px 28px 22px; border-bottom: 1px solid var(--doc-border-2, #c4ccd8); }
+  .project-delivery .body { padding: 24px 28px; }
+  .project-delivery .split { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 28px; }
+  .project-delivery .split > * { min-width: 0; }
+  .project-delivery .foot { max-width: none; margin: 0; padding: 16px 28px; border-top: 1px solid var(--doc-border-2, #c4ccd8); color: var(--doc-fg-2, #465569); font-size: 12px; }
+  .project-delivery code, .project-delivery pre { font: 12px/1.75 ui-monospace, monospace; }
+  .project-delivery pre { overflow: auto; margin: 0; padding: 16px; background: var(--doc-panel-2, #f1f5fa); }
+  .project-delivery .scroll { overflow-x: auto; scrollbar-color: var(--doc-border-2, #c4ccd8) var(--doc-bg, #fff); }
+  .project-delivery :focus-visible { outline: 2px solid var(--doc-accent, #1b4994); outline-offset: 4px; }
+  .project-delivery ::selection { background: var(--doc-accent, #1b4994); color: var(--doc-accent-fg, #fff); }
+  .project-delivery table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .project-delivery caption { text-align: left; font-weight: 650; margin-bottom: 10px; }
+  .project-delivery th, .project-delivery td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--doc-border, #dde3eb); vertical-align: top; }
+  .project-delivery th { font-weight: 650; }
+  .project-delivery thead { background: var(--doc-panel-2, #f1f5fa); }
+  .project-delivery details { border-top: 1px solid var(--doc-border-2, #c4ccd8); padding: 16px 28px; }
+  .project-delivery summary { cursor: pointer; font-weight: 650; }
+  .project-delivery summary:hover { color: var(--doc-accent, #1b4994); }
+  .project-delivery details[open] summary { margin-bottom: 16px; }
+  .project-delivery .rail { margin: 0; padding: 0; list-style: none; }
+  .project-delivery .rail li { padding: 12px 0; border-bottom: 1px solid var(--doc-border, #dde3eb); }
+  .project-delivery .rail strong { display: block; }
+  .project-delivery svg { display: block; max-width: 100%; height: auto; }
+  @container (max-width: 580px) { .project-delivery .split { grid-template-columns: 1fr; gap: 24px; } .project-delivery .intro, .project-delivery .body, .project-delivery details, .project-delivery .foot { padding-left: 16px; padding-right: 16px; } }
+
+
+  .project-delivery .distribution { display: flex; min-height: 44px; margin-top: 24px; font-variant-numeric: tabular-nums; }
+  .project-delivery .distribution span { display: flex; align-items: center; justify-content: center; padding: 8px; font-weight: 650; font-size: 12px; white-space: nowrap; }
+  .project-delivery .done { flex: 3; background: var(--doc-accent, #1b4994); color: var(--doc-accent-fg, #fff); }
+  .project-delivery .doing { flex: 1; background: var(--doc-panel-2, #f1f5fa); border: 1px solid var(--doc-border-2, #c4ccd8); }
+  .project-delivery .todo { flex: 2; background: var(--doc-bg-3, #eef2f7); }
+  .project-delivery .chart-note { margin: 10px 0 0; font-size: 12px; color: var(--doc-fg-2, #465569); }
+
+</style>
+<section class="project-delivery" aria-label="Atlas delivery review">
+
+  <header class="intro"><h2>Make the launch decision traceable.</h2><p class="muted">Atlas customer portal · Fictional delivery review · 16 November 2026</p></header>
+  <div class="body split">
+    <div><h3>Next gate: portal beta, 20 November</h3><p>The onboarding draft is reviewed. Invitation testing is in progress, and the acceptance criteria are still open. The beta gate needs both results.</p><div class="distribution" role="img" aria-label="Six issues: three Done, one Doing, two Todo"><span class="done">3 Done</span><span class="doing">1 Doing</span><span class="todo">2 Todo</span></div><p class="chart-note">Issue count is a progress signal. Acceptance evidence decides whether a milestone can close.</p></div>
+    <div><h3>Decisions due this week</h3><ul class="rail"><li><strong>Bob · 17 November</strong><span class="muted">Complete invitation and expired-link checks.</span></li><li><strong>Alice · 19 November</strong><span class="muted">Attach the portal acceptance criteria.</span></li><li><strong>Alice · 20 November</strong><span class="muted">Review the beta gate against the evidence.</span></li></ul></div>
+  </div>
+  <div class="body surface"><div class="scroll" tabindex="0" role="region" aria-label="Project outcomes"><table><caption>Follow the outcome, then the work</caption><thead><tr><th>Project</th><th>Owner</th><th>State</th><th>Target</th></tr></thead><tbody><tr><th>Customer portal</th><td>Alice</td><td>Active</td><td>27 Nov</td></tr><tr><th>Tenant migration</th><td>Dave</td><td>Active</td><td>11 Dec</td></tr><tr><th>Launch readiness</th><td>Erin</td><td>Planned</td><td>18 Dec</td></tr></tbody></table></div></div>
+  <details><summary>Why a closed rehearsal does not approve the launch</summary><p>The migration rehearsal closed on 13 November after the synthetic data move and rollback checks. The portal beta and launch review remain open: they ask different questions and need their own evidence.</p><p class="muted">This HTML figure is an authored snapshot of the records. It is not a live project-management integration.</p></details>
+
+</section>

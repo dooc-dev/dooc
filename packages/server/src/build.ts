@@ -7,16 +7,20 @@ import { compileSite } from "../../engine/src/compiler/compile.js";
 import { exportEntries } from "../../engine/src/compiler/export.js";
 import { filesSnapshot } from "../../engine/src/compiler/files.js";
 import { loadProjectFonts } from "../../engine/src/compiler/fonts.js";
-import { manifestFile, projectRoot } from "../../engine/src/compiler/manifest.js";
+import { manifestFile, projectRoot, readManifest } from "../../engine/src/compiler/manifest.js";
+import { prepareStoredVersion } from "../../engine/src/compiler/stored-versions.js";
 import { textfilePath } from "../../engine/src/compiler/textfile.js";
+import { versionInput } from "../../engine/src/compiler/version-input.js";
 import { zip } from "../../engine/src/compiler/zip.js";
 import { walkBlocks } from "../../engine/src/core/blocks.js";
 import { selectCodeGrammars } from "../../engine/src/core/code-grammars.js";
+import { parseVersionConfig } from "../../engine/src/core/document-version.js";
 import { type PreviewSettings, parsePreviewSettings } from "../../engine/src/core/previewers.js";
 import { loadBuildPlugins, pluginSnapshot } from "./build-plugins.js";
+import { createDocumentVersions } from "./document-versions.js";
 import { loadSiteLanguages } from "./languages.js";
 import { loadViewerPlugins } from "./plugin-config.js";
-import { sourceFileBase } from "./workspace.js";
+import { gitHeadFile, sourceFileBase } from "./workspace.js";
 
 export interface BuildOptions {
     format: "html" | "zip";
@@ -69,6 +73,40 @@ export const buildBundle = async (root: string, options: BuildOptions) => {
         return compiled;
     };
     let entries = exportEntries(root);
+    const versionConfig = readManifest(root).version;
+    if (
+        versionConfig &&
+        [versionConfig.minor, versionConfig.patch].includes("git") &&
+        !gitHeadFile(root)
+    )
+        throw new Error("Git versioning requires a Git workspace");
+    const stored =
+        versionConfig &&
+        ([versionConfig.minor, versionConfig.patch].includes("hash") || !gitHeadFile(root))
+            ? prepareStoredVersion(root, versionConfig)
+            : undefined;
+    let version = stored?.version;
+    let revision: string | undefined;
+    if (!stored && gitHeadFile(root)) {
+        const catalog = createDocumentVersions(root);
+        try {
+            const current = (await catalog.list()).find((row) => row.current);
+            if (current) {
+                const committed = await catalog.open(current.revision);
+                const expected = versionInput(
+                    committed,
+                    readManifest(committed).version ?? parseVersionConfig({}),
+                );
+                const actual = versionInput(root, versionConfig ?? parseVersionConfig({}), entries);
+                version =
+                    current.version +
+                    (JSON.stringify(expected) === JSON.stringify(actual) ? "" : "+dirty");
+                revision = current.revision;
+            }
+        } finally {
+            catalog.close();
+        }
+    }
     const downloadSources = options.easyDownload
         ? new Map(entries.map(({ name, data }) => [name, data]))
         : undefined;
@@ -100,7 +138,14 @@ export const buildBundle = async (root: string, options: BuildOptions) => {
             rmSync(temp, { recursive: true, force: true });
         }
     }
-    if (format === "zip") return { data: zip(entries), docs: compiled.docs.length };
+    if (format === "zip")
+        return {
+            data: zip(entries),
+            docs: compiled.docs.length,
+            version,
+            revision,
+            commitVersion: stored?.commit,
+        };
     const config = await loadSiteLanguages(root);
     const { bundleClient, publishHtml, siteFrom } = await import("./serve.js");
     const linkable = new Set(filesSnapshot(root).files.map((file) => file.path));
@@ -131,20 +176,29 @@ export const buildBundle = async (root: string, options: BuildOptions) => {
             block.type === "schemaGraph" ||
             (block.type === "code" && block.lang === "mermaid" && !block.unavailable),
     );
+    const html = publishHtml(
+        site,
+        diagrams ? await bundleClient("schema-graph-global.tsx") : "",
+        undefined,
+        code.length ? await bundleClient("code-highlight.ts") : "",
+        options.mode === "live" ? "live" : urlPreview === "embed" ? "static" : "network",
+        options.mode === "live" && blocks.some((block) => block.type === "external")
+            ? await bundleClient("published-plugins.ts")
+            : "",
+        compiled.docs.some((doc) => doc.subformat || doc.library)
+            ? await bundleClient("published-subformats.ts")
+            : "",
+    );
     return {
-        data: publishHtml(
-            site,
-            diagrams ? await bundleClient("schema-graph-global.tsx") : "",
-            undefined,
-            code.length ? await bundleClient("code-highlight.ts") : "",
-            options.mode === "live" ? "live" : urlPreview === "embed" ? "static" : "network",
-            options.mode === "live" && blocks.some((block) => block.type === "external")
-                ? await bundleClient("published-plugins.ts")
-                : "",
-            compiled.docs.some((doc) => doc.subformat || doc.library)
-                ? await bundleClient("published-subformats.ts")
-                : "",
-        ),
+        data: version
+            ? html.replace(
+                  "</head>",
+                  `<meta name="dooc-version" content="${version}">${revision ? `<meta name="dooc-revision" content="${revision}">` : ""}</head>`,
+              )
+            : html,
         docs: compiled.docs.length,
+        version,
+        revision,
+        commitVersion: stored?.commit,
     };
 };

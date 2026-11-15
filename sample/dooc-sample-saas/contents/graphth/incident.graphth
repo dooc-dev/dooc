@@ -1,0 +1,14 @@
+[signal]: Alert or customer report
+[scope]: Confirm scope and impact
+[lead]: Name lead and next update
+[mitigate]: Apply a reversible mitigation
+[verify]: Verify the user path and dependencies
+[monitor]: Monitor through a checkpoint
+[close]: Close with evidence and follow-ups
+[signal] -> [scope]
+[scope] -> [lead]
+[lead] -> [mitigate]
+[mitigate] -> [verify]
+[verify] -> [monitor]: recovered
+[verify] --> [scope]: impact continues
+[monitor] -> [close]: evidence accepted

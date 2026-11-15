@@ -1,79 +1,65 @@
-Five record types track the work on this workspace. A reference is the project-relative path of another record, and the schemas share the definition of that path with `$ref`.
+A record reference is a project-relative file path. Schemas describe which paths a field accepts; dooc uses those definitions to offer record choices and draw relationships. Keep the complete working data in its own workspace, as in the [project delivery and SaaS operations samples](contents/md/samples.md).
 
-![Record model](contents/schemath/records.schemath)
+## Model one fact once
 
-## Who references whom
+```graphth Record relationships
+[team]: Team
+[project]: Project
+[milestone]: Milestone
+[issue]: Issue
+[note]: Decision or meeting
+[project] -> [team]: owned by
+[milestone] -> [project]: delivers
+[issue] -> [milestone]: contributes to
+[note] -> [issue]: explains
+```
 
-| Record    | Storage | References                                                            |
-| --------- | ------- | --------------------------------------------------------------------- |
-| team      | TOML    | none; lists its members and their ids                                 |
-| project   | JSON    | `team`, `owner` (member id), `docs` (pages)                           |
-| milestone | TOML    | `project`, `owner` (member id)                                        |
-| issue     | YAML    | `project`, `milestone`, `assignee` (member id), `blocked_by` (issues) |
-| note      | YAML    | `team`, `project`, `milestone`, `issues`, `attendees` (member ids)    |
+A project names its team. The team does not need a second list of projects: reverse references can be derived from the projects. This avoids maintaining the same relationship in two places.
 
-References point one way: note → issue → milestone → project → team. A team does not list its projects, so each fact is stored once.
+## Publish a reference definition
 
-## Shared definitions
-
-Each schema publishes the path pattern of its own records in `$defs/ref`. The team schema also publishes `$defs/member_id`. Other schemas reuse them instead of repeating the pattern.
-
-| Definition                          | Used by                               |
-| ----------------------------------- | ------------------------------------- |
-| `team.schema.json#/$defs/ref`       | project, note                         |
-| `team.schema.json#/$defs/member_id` | team, project, milestone, issue, note |
-| `project.schema.json#/$defs/ref`    | milestone, issue, note                |
-| `milestone.schema.json#/$defs/ref`  | issue, note                           |
-| `issue.schema.json#/$defs/ref`      | issue (`blocked_by`), note            |
-
-The three ways to write the reference:
+The project schema in `sample/dooc-sample-project` publishes the shape of a project path:
 
 ```json
 {
-  "project": { "$ref": "project.schema.json#/$defs/ref" },
-  "assignee": { "$ref": "team.schema.json#/$defs/member_id", "title": "Assignee" },
-  "blocked_by": { "type": "array", "items": { "$ref": "#/$defs/ref" } }
+  "$defs": {
+    "ref": {
+      "type": "string",
+      "pattern": "^contents/project/[a-z0-9-]+\\.project$"
+    }
+  }
 }
 ```
 
-| Form                            | Meaning                                          |
-| ------------------------------- | ------------------------------------------------ |
-| `other.schema.json#/$defs/name` | A definition in a sibling schema file            |
-| `$ref` with a sibling `title`   | The same definition under a field-specific label |
-| `#/$defs/name`                  | A definition in the same file                    |
+An issue schema uses that definition:
 
-Renaming a record folder means changing one pattern. A schema checks the shape of a reference, not that the target file exists.
+```json
+{
+  "properties": {
+    "project": { "$ref": "project.schema.json#/$defs/ref" },
+    "blocked_by": { "type": "array", "items": { "$ref": "#/$defs/ref" } }
+  }
+}
+```
 
-## The five schemas
+| Form | Meaning | Example use |
+| --- | --- | --- |
+| `other.schema.json#/$defs/ref` | A definition in a sibling schema | An issue belongs to a project |
+| `#/$defs/ref` | A definition in the same schema | An issue waits for another issue |
+| `$ref` with a sibling `title` | Reuse a rule with a field-specific label | Owner and assignee share an identifier format |
+| `anyOf` containing two `$ref` entries | Accept one of several record types | A service depends on another service or a datastore |
 
-![Team schema](contents/json/team.schema.json)
+## Shared definitions
 
-![Project schema](contents/json/project.schema.json)
+A schema may contain only `$defs` and need no subformat registration. In the SaaS sample, `runtime.schema.json` defines environments, ports, resources and dependencies for several record types. Fields that resolve to an enum remain available for board grouping.
 
-![Milestone schema](contents/json/milestone.schema.json)
+Schema validation checks a value's shape. A path-shaped string alone does not prove that a target exists, that a team member belongs to the selected team, or that a subnet belongs to a network. Keep actual references inside the workspace, use the editor's reference choices, and check these business relationships when consuming records in another tool.
 
-![Issue schema](contents/json/issue.schema.json)
+## Explore a complete model
 
-![Note schema](contents/json/note.schema.json)
+| Workspace | Follow this chain |
+| --- | --- |
+| `sample/dooc-sample-project` | Team → project → milestone → issue → decision |
+| `sample/dooc-sample-saas` | Network → service → datastore → log stream, with SLOs and incidents |
 
-## One thread through all five
-
-The [Docs team](contents/team/docs.team) owns the project:
-
-![Feature reference](contents/project/feature-reference.project)
-
-The project has a milestone:
-
-![Cheat sheet draft](contents/milestone/cheat-sheet-draft.milestone)
-
-An issue belongs to both and waits for [another issue](contents/issue/write-cheat-sheet.issue):
-
-![List every embed format with one example](contents/issue/list-embed-formats.issue)
-
-The kickoff note names the team, the project, the milestone, and two issues:
-
-![Feature reference kickoff](contents/note/reference-kickoff.note)
-
-The [Platform team](contents/team/platform.team) runs [Record model](contents/project/record-model.project) with the milestone [Five record types](contents/milestone/five-record-types.milestone). The decision to use paths is [a note](contents/note/path-references.note) that cites [the schema issue](contents/issue/share-reference-definitions.issue).
-
-Each link above adds this page to the reference dropdown on the target's card.
+Both workspaces have editable boards and schemas. Their data is fictional; dooc's own feature tracking remains in this document's **Development → Feature gaps** board.

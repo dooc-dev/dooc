@@ -1,4 +1,5 @@
 import type { WorkspaceClient } from "./client.js";
+import { clientPath, workspacePath } from "./client-path.js";
 
 /** Requests stay on the connection captured here, even when another pane becomes active. */
 export const workspaceHttp =
@@ -6,6 +7,8 @@ export const workspaceHttp =
     async (input: string | URL, init?: RequestInit): Promise<Response> => {
         let url = new URL(input, location.href);
         if (url.origin !== location.origin) return fetch(input, init);
+        if (typeof input !== "string" || /^[a-z]+:/i.test(input))
+            url.pathname = workspacePath(url.pathname);
         const request = new Request(url, init);
         const body =
             request.method === "GET" || request.method === "HEAD" ? "" : await request.text();
@@ -35,7 +38,9 @@ export const workspaceHttp =
                       : new Uint8Array(result.body),
                 { status: result.status, headers: result.headers },
             );
-            Object.defineProperty(response, "url", { value: url.href });
+            const browserUrl = new URL(url);
+            browserUrl.pathname = clientPath(url.pathname);
+            Object.defineProperty(response, "url", { value: browserUrl.href });
             return response;
         }
         throw new Error("Too many workspace redirects");

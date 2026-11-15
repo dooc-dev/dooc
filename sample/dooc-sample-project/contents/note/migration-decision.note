@@ -1,0 +1,12 @@
+title: Rehearse migration before accepting pilot tenants
+kind: Decision
+date: 2026-11-10
+team: contents/team/platform.team
+project: contents/project/tenant-migration.project
+milestone: contents/milestone/migration-rehearsal.milestone
+issues:
+  - contents/issue/rehearse-migration.issue
+attendees:
+  - dave
+  - erin
+body: Move only the synthetic pilot cohort in the rehearsal. Compare row counts and tenant ownership before and after the change. Keep the previous routing configuration until rollback has been exercised. Dave owns the migration; Erin records restore evidence and the stop conditions.

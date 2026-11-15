@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 // CLI entry shared by npx and mise. The manifest defaults to ./dooc.yaml; project paths use its parent directory.
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { setDownloadProgressListener } from "../../engine/src/compiler/download-progress.js";
 import { projectRoot } from "../../engine/src/compiler/manifest.js";
@@ -19,28 +18,25 @@ process.env.NODE_ENV = prebuilt ? "production" : "development";
 const USAGE = `usage: dooc <command>
 
 commands:
+  editor [options]                    alias for editor run node --all (default: ./dooc.yaml)
+  viewer [options]                    alias for viewer run node --all (default: ./dooc.yaml)
+  editor <build|run> <node|web>         build or run selected editor components
+  viewer <build|run> <node|web>         build or run selected read-only viewer components
+     --client --server --mcp           select components (explicit build/run: all off by default)
+     --all --no-client --no-server --no-mcp  select all, with explicit exclusions
+     --port <port>                     shared run port (default: 3000); node: /client/, /server, /mcp
+     --project <path> --out <dir>       workspace path / empty build output directory
+     --relay-url <https-origin>        optional hosted relay for web --mcp; omit for Desktop
+     --repo <git-url>                   resolve --project inside a Git clone (run node)
+     --tls-cert <pem> --tls-key <pem>  serve HTTPS (run node)
+     --shared <branch>                 record shared editor snapshots on a branch (run node --server)
   init [path]                          create a manifest in a directory or at a manifest path
-  edit [path] [port]                   edit a local workspace or a path in a Git repository
-     --repo <git-url>                   resolve the path inside a cloned repository
-     --viewer-plugins <module>         inject an external viewer plugin module
-     --shared <branch>                 several people edit; snapshots are recorded on <branch>
-     --tls-cert <pem> --tls-key <pem>  serve over HTTPS (or DOOC_TLS_CERT / DOOC_TLS_KEY)
-  server [dooc.yaml] [port]            serve the workspace socket only (default: 5179)
-     --client-origin <origin>           permit the static client origin (default: http://localhost:5180)
-  client [port]                        serve the static client only (default: 5180)
-     --server <ws-url>                  connect to an optional workspace server
-  view [path] [port]                   view a local workspace or a path in a Git repository
-     --repo <git-url>                   resolve the path inside a cloned repository
-     --viewer-plugins <module>         inject an external viewer plugin module
-     --tls-cert <pem> --tls-key <pem>  serve over HTTPS (or DOOC_TLS_CERT / DOOC_TLS_KEY)
   build                                build the selected bundle (default <project>/dist)
      html [dooc.yaml] [out-dir]        build bundle.html
         --mode static|live             HTML snapshot or runtime plugin API
         --auth external                host supplies live HTML authentication and transport
         --source-url <url>             source directory URL for card copy links
         --easy-download                enable resource downloads in HTML
-     client [out-dir]                  build the standalone static editor
-        --server <ws-url>               preconfigure an optional workspace socket
      zip [dooc.yaml] [out-dir]         build bundle.zip
      --url_preview embed|network       URL handling for either format (default: embed)
      --viewer-plugins <module>         inject an external build plugin module
@@ -59,12 +55,13 @@ commands:
      docs                             download GitHub docs and open the local viewer
   mcp [dooc.yaml]                      stdio MCP server (all read / write operations)
      --git-origin <module>             inject gitOrigin from an external viewer plugin module
+  mcp relay                            host the HTTPS browser MCP relay (relay --help for options)
   help, --help, -h                     show this help
 
-Details: dooc <command> --help (init, edit, view, server, client, build, export, check, plugin, font, self, mcp).
+Details: dooc <command> --help (editor, viewer, init, build, export, check, plugin, font, self, mcp).
 Default manifest: ./dooc.yaml. Named manifests (<name>.dooc.yaml) are also accepted.
 Paths use the current directory, or the repository root when --repo is given.
-Example: dooc view dooc-docs --repo https://github.com/dooc-dev/dooc.git
+Example: dooc viewer run node --client --server --project dooc-docs --repo https://github.com/dooc-dev/dooc.git
 Paths and .dooc/ are relative to the selected manifest's directory.`;
 
 const fail = (message: string): never => {
@@ -79,9 +76,19 @@ const writeOut = (out: string, data: string | Buffer): void => {
 };
 
 const [command, ...args] = process.argv.slice(2);
-if (["edit", "view", "self", "build", "server"].includes(command ?? ""))
+if (["editor", "viewer", "self", "build"].includes(command ?? ""))
     setDownloadProgressListener(terminal.download);
 switch (command) {
+    case "editor":
+    case "viewer": {
+        try {
+            const { applicationCommand } = await import("./application.js");
+            await applicationCommand(command, args);
+        } catch (error) {
+            fail(error instanceof Error ? error.message : String(error));
+        }
+        break;
+    }
     case "self": {
         try {
             const { positionals, values } = parseArgs({
@@ -137,7 +144,7 @@ options:
 
 Create dooc.yaml in the selected directory (default: current directory), or specify
 a dooc.yaml / <name>.dooc.yaml file path. Missing directories are created.
-Existing files are never overwritten. Run dooc edit <manifest-path> to add your first document.
+Existing files are never overwritten. Run dooc editor run node --client --server --project <manifest-path> to add your first document.
 
 options:
   --help, -h  show this help`);
@@ -149,7 +156,7 @@ options:
             mkdirSync(dirname(file), { recursive: true });
             writeFileSync(file, serializeManifest([], { format: "nested" }), { flag: "wx" });
             console.log(
-                `Created ${file}\nRun dooc edit '${file.replaceAll("'", "'\\''")}' to add your first document.`,
+                `Created ${file}\nRun dooc editor run node --client --server --project '${file.replaceAll("'", "'\\''")}' to add your first document.`,
             );
         } catch (error) {
             fail(
@@ -365,166 +372,6 @@ Report:
         process.exitCode = report.exitCode;
         break;
     }
-    case "server":
-    case "client": {
-        try {
-            const { positionals, values } = parseArgs({
-                args,
-                allowPositionals: true,
-                options: {
-                    "client-origin": { type: "string" },
-                    server: { type: "string" },
-                    "viewer-plugins": { type: "string" },
-                    help: { type: "boolean", short: "h" },
-                },
-            });
-            if (values.help) {
-                console.log(
-                    command === "server"
-                        ? "usage: dooc server [dooc.yaml] [port] [--client-origin http://localhost:5180] [--viewer-plugins module]\nServes /api/workspace over WebSocket on loopback. No frontend assets."
-                        : "usage: dooc client [port] [--server ws://localhost:5179/api/workspace]\nServes static assets only. Open local storage or connect to an optional workspace server.",
-                );
-                break;
-            }
-            if (positionals.length > (command === "server" ? 2 : 1))
-                throw new Error("Too many positional arguments");
-            const port = Number(
-                positionals[command === "server" ? 1 : 0] ?? (command === "server" ? 5179 : 5180),
-            );
-            if (!Number.isInteger(port) || port < 1024 || port > 65535)
-                throw new Error("Choose a port between 1024 and 65535");
-            if (command === "server") {
-                const { startWorkspaceServer } = await import("./workspace-server.js");
-                await startWorkspaceServer(
-                    positionals[0] ?? "dooc.yaml",
-                    port,
-                    values["client-origin"],
-                    values["viewer-plugins"],
-                );
-            } else {
-                const { startStaticClient } = await import("./static-client.js");
-                await startStaticClient(port, values.server);
-            }
-        } catch (error) {
-            fail(error instanceof Error ? error.message : String(error));
-        }
-        break;
-    }
-    case "view":
-    case "edit": {
-        try {
-            const { positionals, values } = parseArgs({
-                args,
-                allowPositionals: true,
-                options: {
-                    "viewer-plugins": { type: "string" },
-                    "tls-cert": { type: "string" },
-                    "tls-key": { type: "string" },
-                    shared: { type: "string" },
-                    repo: { type: "string" },
-                    help: { type: "boolean", short: "h" },
-                },
-            });
-            if (values.help) {
-                console.log(`usage: dooc ${command} [path] [port] [options]
-
-path:
-  ./dooc.yaml               manifest (default); folders are also accepted
-  ./docs                    folder containing dooc.yaml
-  docs/team.dooc.yaml       named manifest
-  file:///home/me/docs      local folder or manifest URL (without --repo)
-
-Paths use the current directory, or the cloned repository root with --repo.
-The repository's default branch is opened. Use the clone URL supplied by your Git host.
-
-Remote sources require Git. Cloning finishes before the server starts.
-Edit clones retain Git history and local changes, and reopen without fetching or resetting.
-View clones are temporary and removed on exit.
-
-options:
-  --repo <git-url>            clone an HTTPS/SSH Git repository and resolve path inside it
-  --viewer-plugins <module>   load an explicit local viewer plugin module
-  --tls-cert <pem>            HTTPS certificate (requires --tls-key)
-  --tls-key <pem>             HTTPS key (requires --tls-cert)
-  --shared <branch>           record shared-workspace snapshots on a branch
-  --help, -h                 show this help
-
-Example: dooc ${command} dooc-docs --repo https://github.com/dooc-dev/dooc.git`);
-                break;
-            }
-            if (positionals.length > 2) throw new Error("Too many positional arguments");
-            const port = Number(positionals[1] ?? 5179);
-            if (!Number.isInteger(port) || port < 0 || port > 65535)
-                throw new Error("Choose a port between 0 and 65535");
-            const cert = values["tls-cert"] ?? process.env.DOOC_TLS_CERT;
-            const key = values["tls-key"] ?? process.env.DOOC_TLS_KEY;
-            if (!cert !== !key) throw new Error("--tls-cert and --tls-key must be given together");
-            let source = positionals[0];
-            const remote = values.repo !== undefined;
-            if (values.repo !== undefined) {
-                // A caller's Git context must never redirect operations outside the cloned repo.
-                for (const key of Object.keys(process.env))
-                    if (
-                        /^GIT_(?:DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|NAMESPACE|CEILING_DIRECTORIES|CONFIG|CONFIG_PARAMETERS|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+)$/.test(
-                            key,
-                        )
-                    )
-                        delete process.env[key];
-                const { prepareGitWorkspace } = await import("./git-workspace.js");
-                const workspace = await prepareGitWorkspace(values.repo, command, {
-                    path: source,
-                });
-                process.once("exit", workspace.dispose);
-                process.once("SIGINT", () => process.exit(130));
-                process.once("SIGTERM", () => process.exit(143));
-                source = workspace.manifest;
-                if (command === "edit")
-                    terminal.info(
-                        `${workspace.reused ? "Reusing" : "Saved"} workspace: ${workspace.root}`,
-                    );
-            } else if (source && /^file:/i.test(source)) {
-                const url = new URL(source);
-                if (url.username || url.password || url.search || url.hash)
-                    throw new Error(
-                        "Local file URLs must not contain credentials, query or fragment",
-                    );
-                source = fileURLToPath(url);
-            } else if (
-                source &&
-                !isAbsolute(source) &&
-                !existsSync(resolve(source)) &&
-                /^(?:[a-z][a-z\d+.-]*:|[^/\s]+@[^/\s]+:)/i.test(source)
-            ) {
-                throw new Error("Pass Git repository URLs with --repo <git-url>");
-            }
-            if (source && existsSync(resolve(source)) && statSync(resolve(source)).isDirectory())
-                source = join(source, MANIFEST_FILE);
-            process.env.DOCS_ROOT = projectRoot(source);
-            process.env.DOCS_HMR = remote && command === "view" ? "0" : "1";
-            process.env.DOOC_REMOTE_WORKSPACE = remote ? "1" : "0";
-            // serve.ts reads DOCS_ROOT at import time, so import it after the env is set.
-            const { startServer } = await import("./serve.js");
-            await startServer(
-                command === "view" ? "preview" : "edit",
-                port,
-                values["viewer-plugins"] ?? process.env.DOOC_VIEWER_PLUGINS,
-                ...(remote || (cert && key) || values.shared !== undefined
-                    ? [
-                          {
-                              ...(remote ? { open: true } : {}),
-                              ...(cert && key
-                                  ? { tls: { cert: resolve(cert), key: resolve(key) } }
-                                  : {}),
-                              ...(values.shared === undefined ? {} : { shared: values.shared }),
-                          },
-                      ]
-                    : []),
-            );
-        } catch (error) {
-            fail(error instanceof Error ? error.message : String(error));
-        }
-        break;
-    }
     case "export": {
         try {
             const { positionals, values } = parseArgs({
@@ -562,7 +409,6 @@ options:
                 args,
                 allowPositionals: true,
                 options: {
-                    server: { type: "string" },
                     url_preview: { type: "string" },
                     mode: { type: "string" },
                     auth: { type: "string" },
@@ -573,7 +419,7 @@ options:
                 },
             });
             if (values.help) {
-                console.log(`usage: dooc build <html|zip|client> [dooc.yaml] [out-dir] [options]
+                console.log(`usage: dooc build <html|zip> [dooc.yaml] [out-dir] [options]
 
 commands:
   html [dooc.yaml] [out-dir]   build bundle.html
@@ -582,8 +428,6 @@ commands:
      --source-url <url>        HTTP(S) directory URL for card copy links
                                paths are relative to dooc.yaml; overrides GitHub origin/HEAD
      --easy-download           enable resource downloads (default: off)
-  client [out-dir]            build a standalone static editor (default: ./dooc-client)
-     --server <ws-url>         optional workspace socket
   zip [dooc.yaml] [out-dir]    build bundle.zip
 
 options (html and zip):
@@ -618,17 +462,8 @@ URL handling:
                 break;
             }
             const [format, rootArg, outArg] = positionals;
-            if (format === "client") {
-                if (positionals.length > 2)
-                    throw new Error("build client accepts one output directory");
-                const { buildStaticClient } = await import("./static-client.js");
-                const out = resolve(rootArg ?? "dooc-client");
-                await buildStaticClient(out, values.server);
-                console.log(`${out} — static client (serve index.html for document routes)`);
-                break;
-            }
             if (format !== "html" && format !== "zip")
-                throw new Error("build format must be html | zip | client");
+                throw new Error("build format must be html | zip");
             if (positionals.length > 3)
                 throw new Error(`build ${format} accepts a dooc.yaml path and an output directory`);
             const urlPreview = values.url_preview ?? (values.mode === "live" ? "network" : "embed");
@@ -647,7 +482,10 @@ URL handling:
                 easyDownload: values["easy-download"],
             });
             writeOut(out, bundle.data);
-            console.log(`${out} — ${bundle.docs} docs (url_preview=${urlPreview})`);
+            bundle.commitVersion?.();
+            console.log(
+                `${out} — ${bundle.docs} docs${bundle.version ? `, version ${bundle.version}` : ""} (url_preview=${urlPreview})`,
+            );
         } catch (error) {
             fail(error instanceof Error ? error.message : String(error));
         }
@@ -655,6 +493,11 @@ URL handling:
     }
     case "mcp": {
         try {
+            if (args[0] === "relay") {
+                const { relayCommand } = await import("./mcp-relay.js");
+                await relayCommand(args.slice(1));
+                break;
+            }
             const { positionals, values } = parseArgs({
                 args,
                 allowPositionals: true,
@@ -673,6 +516,7 @@ options:
 Server:
   Exposes docs, files, Library, fonts, check, build and Git over stdio.
   Build accepts format=html|zip and url_preview=embed|network (default embed).
+  Use dooc mcp relay --help to host the browser MCP relay.
 
 Git origin:
   The external module's default export must contain gitOrigin (the same provider used by edit/view).

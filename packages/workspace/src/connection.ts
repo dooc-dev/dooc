@@ -1,3 +1,4 @@
+import type { DocumentRevision } from "../../engine/src/core/document-version.js";
 import type { WorkspaceClient } from "./client.js";
 
 export interface WorkspaceConnection {
@@ -5,10 +6,13 @@ export interface WorkspaceConnection {
     label: string;
     family?: string;
     branch?: string;
+    readOnly?: boolean;
+    revision?: DocumentRevision;
     readonly branches?: readonly string[];
     client: WorkspaceClient;
     fetch(input: string | URL, init?: RequestInit): Promise<Response>;
     openBranch?(branch: string, create?: boolean): Promise<WorkspaceConnection>;
+    openVersion?(version: string): Promise<WorkspaceConnection>;
     close?(): void;
 }
 

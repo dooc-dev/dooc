@@ -150,6 +150,7 @@ it.each([true, false])("shows unavailable options only in workspace pickers (%s)
     };
     run(`${extract("const render =", "\n        const sync =")}\nrender();`, {
         workspace,
+        versions: false,
         translations: false,
         isOpen: () => false,
         query: "",

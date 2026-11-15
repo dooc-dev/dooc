@@ -370,7 +370,7 @@ describe("navGroupsHtml", () => {
 
     it("with no docs, shows an empty root placeholder only in edit mode", () => {
         expect(navGroupsHtml("preview", emptySite(), undefined)).toBe(
-            '<div class="nav-list nav-root" data-parent=""></div>',
+            '<div class="nav-list nav-root" data-parent=""></div><div id="document-versions" hidden></div>',
         );
         const edit = navGroupsHtml("edit", emptySite());
         expect(edit.match(/class="nav-create"/g)).toHaveLength(1);
@@ -880,7 +880,7 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
                 `<template data-route="${docPath(site.entries, e.id).slice(1)}"`,
             );
         }
-        expect(html).toContain('href="#/_docs/contents/md/blocks.md"');
+        expect(html).toContain('href="#/markdown/blocks"');
         expect(html).not.toMatch(/href="\/(?!\/)/);
     });
 
@@ -895,11 +895,10 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
         };
         const output = publishHtml(emptyGuide, "");
         const guide =
-            /<template data-route="_docs\/contents\/md\/embeds.md"[^>]*>(.*?)<\/template>/s.exec(
-                output,
-            )?.[1] ?? "";
+            /<template data-route="markdown\/embeds"[^>]*>(.*?)<\/template>/s.exec(output)?.[1] ??
+            "";
         expect(guide).toContain(
-            '<ul class="idx"><li><a href="#/_docs/contents/md/media.md">Media</a>',
+            '<ul class="idx"><li><a href="#/markdown/embeds/media">Images, video &amp; HTML</a>',
         );
     });
 

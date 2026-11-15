@@ -1,0 +1,9 @@
+name: Search availability
+kind: Request
+service: contents/container/search.container
+owner: contents/team/platform.team
+window_days: 30
+target_percent: 99.5
+total_events: 500000
+good_events: 499200
+summary: Valid search requests receive a non-error response within two seconds.

@@ -89,7 +89,7 @@ tags:
 
 From a file, the model behind [Linked records](contents/md/records.md):
 
-![Record model](contents/schemath/records.schemath)
+![Document model](contents/schemath/document.schemath)
 
 ## termth
 

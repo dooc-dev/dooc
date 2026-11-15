@@ -1,0 +1,15 @@
+{
+  "id": "TASK-003",
+  "title": "Review languages and shared references",
+  "status": "Todo",
+  "priority": "Low",
+  "due": "2026-12-11",
+  "progress": 0,
+  "estimate": 0.5,
+  "approved": false,
+  "owner": "erin",
+  "project": "contents/project/launch-readiness.project",
+  "notes": "Switch the start page to Japanese or Chinese, then follow the Atlas record links.",
+  "tags": ["languages", "references"],
+  "review": { "reviewer": "Dave", "approved": false }
+}

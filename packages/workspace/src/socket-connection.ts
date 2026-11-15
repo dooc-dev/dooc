@@ -18,6 +18,8 @@ interface ServerWorkspace {
     id: string;
     label: string;
     branch?: string;
+    readOnly?: boolean;
+    revision?: WorkspaceConnection["revision"];
 }
 
 const serverConnections = new Map<string, WorkspaceClient>();
@@ -33,7 +35,7 @@ const socketUrl = (value: string) => {
         url.hash
     )
         throw new Error("Enter a ws:// or wss:// workspace address without credentials");
-    if (url.pathname === "/") url.pathname = "/api/workspace";
+    if (url.pathname === "/") url.pathname = "/server";
     return url.href;
 };
 
@@ -45,7 +47,11 @@ const localViewerUrl =
         ? socketUrl(`${location.origin}/api/workspace`)
         : undefined;
 
-export async function connectServer(value: string, local = false): Promise<WorkspaceConnection> {
+export async function connectServer(
+    value: string,
+    local = false,
+    readOnly = false,
+): Promise<WorkspaceConnection> {
     const url = socketUrl(value);
     local ||= url === localViewerUrl;
     let client = serverConnections.get(url);
@@ -53,6 +59,8 @@ export async function connectServer(value: string, local = false): Promise<Works
         client = local ? pageWorkspace("local") : createWorkspaceClient(webSocketPort(url));
         serverConnections.set(url, client);
     }
+    if (readOnly && !(await client.request<{ readOnly?: boolean }>("hello")).readOnly)
+        throw new Error("Connect to a read-only workspace server");
     const all = await client.request<ServerWorkspace[]>("workspaces", {
         action: "list",
     });
@@ -81,20 +89,25 @@ export async function connectServer(value: string, local = false): Promise<Works
             label: info.label,
             family: url,
             branch: info.branch,
+            readOnly: readOnly || info.readOnly,
+            revision: info.revision,
             client: id === "local" ? shared : scoped,
             fetch: id === "local" ? (input, init) => fetch(input, init) : workspaceHttp(scoped),
-            openBranch: info.branch
-                ? (branch, create = false) =>
-                      openBranchWorkspace(url, branch, create, async () =>
-                          bind(
-                              await scoped.request("workspaces", {
-                                  action: "branch",
-                                  branch,
-                                  create,
-                              }),
-                          ),
-                      )
-                : undefined,
+            openVersion: async (version) =>
+                bind(await scoped.request("versions", { action: "open", version })),
+            openBranch:
+                !readOnly && !info.readOnly && info.branch
+                    ? (branch, create = false) =>
+                          openBranchWorkspace(url, branch, create, async () =>
+                              bind(
+                                  await scoped.request("workspaces", {
+                                      action: "branch",
+                                      branch,
+                                      create,
+                                  }),
+                              ),
+                          )
+                    : undefined,
         };
         registerWorkspace(connection);
         return connection;

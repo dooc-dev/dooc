@@ -20,14 +20,14 @@ Three fictional services show what a card can do. They run on a local mock: no a
 | [GitApp](contents/md/gitapp.md)   | A pull request | Read the diff, change review status, comment |
 | [ChatApp](contents/md/chatapp.md) | A message      | Reply to the thread, toggle reactions        |
 
-The demo modules are development files in a source checkout; they are not bundled with dooc. After [development setup](contents/md/development.md#set-up-and-run), `mise run dev` loads them automatically. To use them with a cloned documentation workspace, run from that trusted source checkout:
+The demo modules are development files in a source checkout; they are not bundled with dooc. After [development setup](contents/md/development.md#set-up-and-run), load a module explicitly with `--viewer-plugins`. To use them with a cloned documentation workspace, run from that trusted source checkout:
 
 ```sh
-dooc edit dooc-docs --repo https://github.com/dooc-dev/dooc.git \
-  --viewer-plugins ./examples/viewer-plugins/index.mjs
+dooc editor run node --client --server --project dooc-docs --repo https://github.com/dooc-dev/dooc.git \
+  --viewer-plugins ./sample/examples/viewer-plugins/index.mjs
 ```
 
-The **Plugins** tool then lists **Sample plugin** (`sample`) and **Sample plugin (sign-in demo)** (`sample-auth`). Opening the documentation with `dooc view dooc-docs --repo https://github.com/dooc-dev/dooc.git` or `dooc self docs` does not load these modules; the demo cards stay links.
+The **Plugins** tool then lists **Sample plugin** (`sample`) and **Sample plugin (sign-in demo)** (`sample-auth`). Opening the documentation with `dooc viewer run node --client --server --project dooc-docs --repo https://github.com/dooc-dev/dooc.git` or `dooc self docs` does not load these modules; the demo cards stay links.
 
 ## Card controls
 
@@ -45,7 +45,7 @@ Values save as you leave a field. Cards refresh every five seconds and when you 
 | Source        | How                                                                 | Kept in               |
 | ------------- | ------------------------------------------------------------------- | --------------------- |
 | Plugin ZIP    | `dooc plugin add <zip>`, or **Add plugins** in the **Plugins** tool | `.dooc/plugins/`      |
-| Viewer module | `dooc edit --viewer-plugins <module>`, or `DOOC_VIEWER_PLUGINS`     | Outside the workspace |
+| Viewer module | `dooc editor run node --client --server --viewer-plugins <module>`, or `DOOC_VIEWER_PLUGINS`     | Outside the workspace |
 
 A ZIP is installed per project and can be enabled, disabled, replaced, or deleted in the **Plugins** tool. A viewer module is trusted code chosen by whoever starts dooc; its plugins show as **Provided by viewer**.
 

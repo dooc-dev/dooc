@@ -2,6 +2,7 @@
 // by complete source paths; legacy manifests retain their authored IDs during migration.
 
 import { stringify } from "yaml";
+import { parseVersionConfig, type VersionConfig } from "./document-version.js";
 import { docFile, type FileLayout, fileDocumentId, localFile, parseFileLayout } from "./files.js";
 import { contentLanguageCode, DEFAULT_LANG, isLangTag } from "./language.js";
 import { parseSubformats, type Subformat } from "./subformats.js";
@@ -21,6 +22,7 @@ export interface DocNode {
 }
 
 export interface ParsedManifest {
+    version?: VersionConfig;
     format?: "nested";
     titles?: Record<string, string>;
     themeIcons?: Record<string, string>;
@@ -72,6 +74,7 @@ export const parseManifest = (value: unknown): ParsedManifest => {
         return parseNestedManifest(value);
     const errors: string[] = [];
     let title: string | undefined;
+    let version: VersionConfig | undefined;
     let icon: string | undefined;
     let defaultLang: string | undefined;
     let files: FileLayout | undefined;
@@ -84,6 +87,7 @@ export const parseManifest = (value: unknown): ParsedManifest => {
         for (const key of Object.keys(manifest))
             if (
                 key !== "title" &&
+                key !== "version" &&
                 key !== "icon" &&
                 key !== "defaultLang" &&
                 key !== "docs" &&
@@ -94,6 +98,13 @@ export const parseManifest = (value: unknown): ParsedManifest => {
                 key !== "default_subformat_folder"
             )
                 errors.push(`${MANIFEST_FILE}: unknown field "${key}"`);
+        if (manifest.version !== undefined) {
+            try {
+                version = parseVersionConfig(manifest.version);
+            } catch (error) {
+                errors.push(`${MANIFEST_FILE}: ${error instanceof Error ? error.message : error}`);
+            }
+        }
         if (manifest.title !== undefined) {
             if (typeof manifest.title !== "string" || !manifest.title.trim())
                 errors.push(`${MANIFEST_FILE}: title must be a non-empty string`);
@@ -287,6 +298,7 @@ export const parseManifest = (value: unknown): ParsedManifest => {
     }
     return {
         tree,
+        ...(version === undefined ? {} : { version }),
         ...(title === undefined ? {} : { title }),
         ...(icon === undefined ? {} : { icon }),
         ...(defaultLang === undefined ? {} : { defaultLang }),
@@ -311,6 +323,7 @@ const parseNestedManifest = (input: object): ParsedManifest => {
         const root = object(
             input,
             [
+                "version",
                 "system",
                 "left_sidebar",
                 "center_contents",
@@ -453,6 +466,7 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                         : node.id,
             );
         const parsed = parseManifest({
+            ...(root.version === undefined ? {} : { version: root.version }),
             docs: legacyTree(tree),
             defaultLang: language,
             ...(system.languages === undefined ? {} : { languages: system.languages }),
@@ -493,6 +507,7 @@ export const serializeManifest = (
     tree: readonly DocNode[],
     {
         format,
+        version,
         titles,
         themeIcons,
         title,
@@ -522,6 +537,7 @@ export const serializeManifest = (
             }));
         return stringify(
             {
+                ...(version === undefined ? {} : { version }),
                 system: {
                     ...(languages ? { languages } : {}),
                     default_lang: defaultLang ?? DEFAULT_LANG,
@@ -581,6 +597,7 @@ export const serializeManifest = (
                         : node.id,
             );
         return stringify({
+            ...(version === undefined ? {} : { version }),
             ...(title ? { title } : {}),
             ...(icon ? { icon } : {}),
             ...(defaultLang ? { defaultLang } : {}),
@@ -599,6 +616,7 @@ export const serializeManifest = (
                 : [`${indent}- ${n.id}`],
         );
     if (
+        version !== undefined ||
         title !== undefined ||
         icon !== undefined ||
         defaultLang !== undefined ||
@@ -610,7 +628,7 @@ export const serializeManifest = (
     ) {
         const lines = write(tree, "  ");
         const metadata = `${title === undefined ? "" : `title: ${JSON.stringify(title)}\n`}${icon === undefined ? "" : `icon: ${JSON.stringify(icon)}\n`}${defaultLang === undefined ? "" : `defaultLang: ${JSON.stringify(defaultLang)}\n`}${defaultSubformatFolder === undefined ? "" : `default_subformat_folder: ${JSON.stringify(defaultSubformatFolder)}\n`}`;
-        return `${metadata}${files ? `files: ${JSON.stringify(files)}\n` : ""}${languages ? `languages: ${JSON.stringify(languages)}\n` : ""}${themes ? `themes: ${JSON.stringify(themes)}\n` : ""}${subformats ? `subformats: ${JSON.stringify(subformats)}\n` : ""}docs:${lines.length ? `\n${lines.join("\n")}\n` : " []\n"}`;
+        return `${version === undefined ? "" : `version: ${JSON.stringify(version)}\n`}${metadata}${files ? `files: ${JSON.stringify(files)}\n` : ""}${languages ? `languages: ${JSON.stringify(languages)}\n` : ""}${themes ? `themes: ${JSON.stringify(themes)}\n` : ""}${subformats ? `subformats: ${JSON.stringify(subformats)}\n` : ""}docs:${lines.length ? `\n${lines.join("\n")}\n` : " []\n"}`;
     }
     const lines = write(tree, "");
     return `# Doc hierarchy and order (each id = content/<id>.md)\n${lines.join("\n")}${lines.length > 0 ? "\n" : ""}`;

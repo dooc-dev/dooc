@@ -1,0 +1,9 @@
+title: Search timeouts during index refresh
+severity: SEV3
+status: Resolved
+started: 2026-11-09T02:20:00Z
+resolved: 2026-11-09T02:55:00Z
+service: contents/container/search.container
+owner: contents/team/platform.team
+runbook: contents/md/runbooks.md
+summary: "An index refresh competed with interactive queries. Deferring the refresh restored query response time. Follow-up: review refresh scheduling against the request workload."

@@ -7,7 +7,9 @@ export const loadPreviewScript = (src: string, selector: string, type = ""): voi
         requested = true;
         const script = document.createElement("script");
         script.type = type;
-        script.src = src;
+        script.src = src.startsWith("/assets/")
+            ? `${globalThis.__doocClientBase ?? ""}${src}`
+            : src;
         script.onload = () => {
             observer.disconnect();
             visibility.disconnect();
@@ -43,3 +45,5 @@ export const loadPreviewScript = (src: string, selector: string, type = ""): voi
     observer.observe(root, { childList: true, subtree: true });
     watch();
 };
+
+import type {} from "../../workspace/src/client-path.js";

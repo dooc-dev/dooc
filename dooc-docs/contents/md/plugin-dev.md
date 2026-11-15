@@ -1,4 +1,4 @@
-A plugin is a JavaScript object that matches service URLs and returns a view. Types and OAuth helpers come from `@dooc-dev/dooc-plugin`. The demo source is `examples/viewer-plugins/` in the dooc repository.
+A plugin is a JavaScript object that matches service URLs and returns a view. Types and OAuth helpers come from `@dooc-dev/dooc-plugin`. The demo source is `sample/examples/viewer-plugins/` in the dooc repository.
 
 ## Contract
 

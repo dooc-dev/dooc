@@ -11,7 +11,12 @@ import {
     subformatChange,
     subformatSourcePath,
 } from "../../engine/src/core/subformats.js";
-import { workspaceFetch, workspaceId } from "../../workspace/src/connection.js";
+import { clientPath, workspacePath } from "../../workspace/src/client-path.js";
+import {
+    workspaceConnection,
+    workspaceFetch,
+    workspaceId,
+} from "../../workspace/src/connection.js";
 import { confirmDialog, showDialog } from "./edit-dialog.js";
 import { t } from "./i18n.js";
 
@@ -20,6 +25,7 @@ interface State {
     fetch: (url: string, init?: RequestInit) => Promise<Response>;
     registrationForm?: HTMLFormElement;
     recordForm?: HTMLFormElement;
+    iconForm?: HTMLFormElement;
     collections: SubformatCollection[];
     views: Map<string, Required<NonNullable<Subformat["layouts"]>>>;
     expanded: Set<string>;
@@ -128,8 +134,8 @@ export const mountSubformatPageActions = (): void => {
                 const navigate = (
                     window as unknown as { __docsNavigate?: (path: string) => Promise<void> }
                 ).__docsNavigate;
-                if (navigate) await navigate(next?.pathname ?? "/");
-                else location.href = next?.href ?? "/";
+                if (navigate) await navigate(next ? workspacePath(next.pathname) : "/");
+                else location.href = next?.href ?? clientPath("/");
             }
             document.dispatchEvent(new Event("docs:files-changed"));
         } catch (error) {
@@ -189,7 +195,8 @@ export const filterSubformats = (
     if (
         select?.hasAttribute("data-subformat-filter") &&
         state.openSource &&
-        document.body.classList.contains("edit")
+        document.body.classList.contains("edit") &&
+        !workspaceConnection(state.workspace)?.readOnly
     ) {
         if (![...select.options].some((option) => option.value === "+"))
             select.add(new Option(t("Add subformat…"), "+"));
@@ -288,7 +295,12 @@ const syncSubformatPicker = (root: HTMLElement, select: HTMLSelectElement, state
         row.setAttribute("role", "none");
         row.append(button);
         const collection = state.collections.find((item) => item.ext === option.value);
-        if (collection && state.openSource && document.body.classList.contains("edit")) {
+        if (
+            collection &&
+            state.openSource &&
+            document.body.classList.contains("edit") &&
+            !workspaceConnection(state.workspace)?.readOnly
+        ) {
             for (const action of ["edit", "delete"] as const) {
                 const control = document.createElement("button");
                 control.type = "button";
@@ -434,7 +446,7 @@ const addSubformat = (root: HTMLElement, state: State, select: HTMLSelectElement
     form.className = "subformat-create-form";
     form.dataset.subformatRegister = "";
     form.setAttribute("aria-label", t("Add subformat"));
-    form.innerHTML = `<fieldset class="subformat-register-fields"><input name="ext" required placeholder="ext." aria-label="${t("Extension")}" autocomplete="off" spellcheck="false"><label class="subformat-control"><span class="subformat-control-label">format</span><select id="subformat-format" name="format" data-placeholder="format" aria-label="${t("Storage format")}"><option value="json">json</option><option value="yaml">yaml</option><option value="toml">toml</option></select></label><input name="schema" placeholder="path" aria-label="${t("Schema file (optional)")}" autocomplete="off" spellcheck="false"></fieldset><fieldset><textarea name="content" hidden></textarea><div data-subformat-schema-editor></div><div class="subformat-create-actions"><button type="button" data-format>${t("Validate and apply")}</button><button type="button" data-cancel>${t("Cancel")}</button><button type="submit">${t("Add subformat")}</button></div></fieldset>`;
+    form.innerHTML = `<fieldset class="subformat-register-fields"><input name="ext" required placeholder="ext." aria-label="${t("Extension")}" autocomplete="off" spellcheck="false"><label class="subformat-control"><span class="subformat-control-label">format</span><select id="subformat-format" name="format" data-placeholder="format" aria-label="${t("Storage format")}"><option value="json">json</option><option value="yaml">yaml</option><option value="toml">toml</option></select></label><input name="schema" placeholder="path" aria-label="${t("Schema file (optional)")}" autocomplete="off" spellcheck="false"></fieldset><fieldset><label class="subformat-register-icon">${t("SVG icon path (optional)")}<input name="icon" placeholder="icons/example.svg" autocomplete="off" spellcheck="false"></label><textarea name="content" hidden></textarea><div data-subformat-schema-editor></div><div class="subformat-create-actions"><button type="button" data-format>${t("Validate and apply")}</button><button type="button" data-cancel>${t("Cancel")}</button><button type="submit">${t("Add subformat")}</button></div></fieldset>`;
     (form.elements.namedItem("content") as HTMLTextAreaElement).value = SUBFORMAT_SCHEMA_TEMPLATE;
     const extension = form.elements.namedItem("ext") as HTMLInputElement;
     const path = form.elements.namedItem("schema") as HTMLInputElement;
@@ -490,6 +502,7 @@ const addSubformat = (root: HTMLElement, state: State, select: HTMLSelectElement
                     ext: value("ext"),
                     format: value("format"),
                     schema: value("schema"),
+                    icon: value("icon"),
                     content: (form.elements.namedItem("content") as HTMLTextAreaElement).value,
                 }),
             });
@@ -547,6 +560,7 @@ const render = (
     const published = !!document.querySelector("template[data-route]");
     const enums = collection.fields.filter((field) => field.enum?.length);
     const view = state.views.get(collection.ext) ?? {
+        view: collection.layouts?.view ?? "card",
         card_title: collection.layouts?.card_title ?? "",
         group_by: collection.layouts?.group_by ?? enums[0]?.name ?? "",
         sort_by: collection.layouts?.sort_by ?? "",
@@ -580,6 +594,13 @@ const render = (
         key: keyof NonNullable<Subformat["layouts"]>;
         fields: { name: string; title: string }[];
     }[] = [
+        {
+            key: "view",
+            fields: [
+                { name: "card", title: t("Cards") },
+                { name: "list", title: t("List") },
+            ],
+        },
         { key: "card_title", fields: [{ name: "", title: t("File name") }, ...collection.fields] },
         ...(enums.length
             ? [
@@ -601,7 +622,7 @@ const render = (
     for (const { key, fields } of settings) {
         const control = document.createElement("div");
         control.className = "subformat-control";
-        const label = key.replaceAll("_", " ");
+        const label = key === "view" ? t("View") : key.replaceAll("_", " ");
         const id = `subformat-${collection.ext}-${key}`;
         const current = fields.find((field) => field.name === view[key])?.title ?? t("File name");
         control.innerHTML = `<span class="subformat-control-label" id="${id}-label">${label}</span><button type="button" data-subformat-setting="${key}" aria-labelledby="${id}-label ${id}-value" aria-haspopup="menu" aria-expanded="false" aria-controls="${id}-menu"${state.busy ? " disabled" : ""}><span id="${id}-value">${escapeHtml(current)}</span><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m5 7 5 5 5-5"/></svg></button><div class="subformat-picker-menu subformat-setting-menu" id="${id}-menu" popover="auto" role="menu" aria-label="${label}"></div>`;
@@ -610,7 +631,13 @@ const render = (
         const popup = control.querySelector("[popover]") as HTMLElement;
         const defaultValue =
             collection.layouts?.[key] ??
-            (key === "sort_order" ? "asc" : key === "group_by" ? (enums[0]?.name ?? "") : "");
+            (key === "view"
+                ? "card"
+                : key === "sort_order"
+                  ? "asc"
+                  : key === "group_by"
+                    ? (enums[0]?.name ?? "")
+                    : "");
         for (const field of fields) {
             const row = document.createElement("div");
             row.className = "subformat-setting-option";
@@ -625,13 +652,16 @@ const render = (
             choose.addEventListener("click", () => {
                 if (state.busy) return;
                 if (key === "sort_order") view.sort_order = field.name as "asc" | "desc";
+                else if (key === "view") view.view = field.name as "card" | "list";
                 else view[key] = field.name;
                 popup.hidePopover();
                 render(root, board, state, collection, words);
                 controls.querySelector<HTMLElement>(`[data-subformat-setting="${key}"]`)?.focus();
             });
             row.append(choose);
-            const editable = document.body.classList.contains("edit");
+            const editable =
+                document.body.classList.contains("edit") &&
+                !workspaceConnection(state.workspace)?.readOnly;
             const marker = document.createElement(editable ? "button" : "span");
             marker.className = "subformat-default";
             marker.dataset.defaultValue = field.name;
@@ -691,7 +721,79 @@ const render = (
         });
         if (openSetting === key && trigger.isConnected) trigger.click();
     }
-    if (state.openSource && document.body.classList.contains("edit")) {
+    if (
+        state.openSource &&
+        document.body.classList.contains("edit") &&
+        !workspaceConnection(state.workspace)?.readOnly
+    ) {
+        const icon = document.createElement("button");
+        icon.type = "button";
+        icon.dataset.subformatIcon = "";
+        icon.textContent = t("SVG icon");
+        icon.disabled = state.busy;
+        icon.setAttribute("aria-expanded", String(state.iconForm?.dataset.ext === collection.ext));
+        controls.append(icon);
+        icon.addEventListener("click", () => {
+            if (state.busy) return;
+            if (state.iconForm?.dataset.ext === collection.ext) {
+                state.iconForm = undefined;
+                render(root, board, state, collection, words);
+                controls.querySelector<HTMLElement>("[data-subformat-icon]")?.focus();
+                return;
+            }
+            const form = document.createElement("form");
+            state.iconForm = form;
+            form.className = "subformat-icon-form";
+            form.dataset.ext = collection.ext;
+            form.innerHTML = `<fieldset><label>${t("SVG icon path")}<input name="icon" placeholder="icons/${escapeHtml(collection.ext)}.svg" autocomplete="off" spellcheck="false"></label><p>${t("Leave empty to remove. New Pages entries copy this path; existing pages keep their own icon.")}</p><div class="subformat-create-actions"><button type="button" data-cancel>${t("Cancel")}</button><button type="submit">${t("Save")}</button></div></fieldset>`;
+            const input = form.elements.namedItem("icon") as HTMLInputElement;
+            input.value = collection.icon ?? "";
+            const base = collection.icon ?? null;
+            form.querySelector("[data-cancel]")?.addEventListener("click", () => {
+                controls.querySelector<HTMLButtonElement>("[data-subformat-icon]")?.click();
+            });
+            form.addEventListener("submit", async (event) => {
+                event.preventDefault();
+                if (state.busy) return;
+                state.busy = true;
+                const fields = form.querySelector("fieldset") as HTMLFieldSetElement;
+                fields.disabled = true;
+                try {
+                    const response = await state.fetch("/api/subformat", {
+                        method: "POST",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({
+                            action: "icon",
+                            ext: collection.ext,
+                            value: input.value.trim(),
+                            base,
+                        }),
+                    });
+                    const result = await response.json();
+                    if (!response.ok) throw new Error(t(result.error ?? "Save failed"));
+                    collection.icon = result.icon;
+                    collection.iconSvg = result.iconSvg;
+                    state.iconForm = undefined;
+                    document.dispatchEvent(
+                        new CustomEvent("docs:subformat-saved", {
+                            detail: { file: result.file, workspace: state.workspace },
+                        }),
+                    );
+                } catch (error) {
+                    showSubformatError(error);
+                } finally {
+                    state.busy = false;
+                    fields.disabled = false;
+                    filterSubformats(root, words);
+                    (
+                        state.iconForm?.querySelector("input") ??
+                        controls.querySelector<HTMLElement>("[data-subformat-icon]")
+                    )?.focus();
+                }
+            });
+            render(root, board, state, collection, words);
+            input.focus();
+        });
         const create = document.createElement("button");
         create.type = "button";
         create.dataset.subformatCreate = "";
@@ -820,12 +922,20 @@ const render = (
             file.select();
         });
     }
+    if (state.iconForm?.dataset.ext === collection.ext) controls.append(state.iconForm);
     board.setAttribute("aria-busy", String(state.busy));
+    board.dataset.subformatView = view.view;
     board.innerHTML = '<div class="subformat-columns"></div>';
     const columns = board.querySelector(".subformat-columns") as HTMLElement;
     const writable =
-        !!state.openSource && document.body.classList.contains("edit") && !grouping?.readOnly;
-    const editable = !!state.openSource && document.body.classList.contains("edit");
+        !!state.openSource &&
+        document.body.classList.contains("edit") &&
+        !workspaceConnection(state.workspace)?.readOnly &&
+        !grouping?.readOnly;
+    const editable =
+        !!state.openSource &&
+        document.body.classList.contains("edit") &&
+        !workspaceConnection(state.workspace)?.readOnly;
     const refresh = (): void => {
         const query = root.querySelector<HTMLInputElement>("[data-resource-search]")?.value ?? "";
         filterSubformats(
@@ -963,6 +1073,7 @@ const render = (
         column.innerHTML = `<h2>${escapeHtml(label)} <span class="subformat-count">${countHtml(matches)}</span></h2>`;
         const cards = document.createElement("div");
         cards.className = "subformat-cards";
+        if (view.view === "list") cards.setAttribute("role", "list");
         column.append(cards);
         dropAreas.set(value, cards);
         if (writable && value !== undefined) {
@@ -983,6 +1094,10 @@ const render = (
         for (const record of matches) {
             const card = document.createElement("article");
             card.className = "subformat-card";
+            if (view.view === "list") {
+                card.classList.add("subformat-list-record");
+                card.setAttribute("role", "listitem");
+            }
             card.dataset.recordFile = record.file;
             if (record.change) card.dataset.recordChange = record.change;
             const titleValue =

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
-import { createServer } from "node:http";
+import type { Server } from "node:http";
 import { basename, dirname, join, resolve } from "node:path";
 import { WebSocketServer } from "ws";
 import {
@@ -10,30 +10,49 @@ import {
     uploadFile,
 } from "../../engine/src/compiler/files.js";
 import { manifestFile, projectRoot } from "../../engine/src/compiler/manifest.js";
+import {
+    type DocumentRevision,
+    latestVersionOnly,
+    parseVersionSelection,
+    selectVersions,
+} from "../../engine/src/core/document-version.js";
 import { MAX_FILE_UPLOAD_BYTES } from "../../engine/src/core/files.js";
-import { defaultPreviewSettings } from "../../engine/src/core/previewers.js";
+import { parsePreviewSettings } from "../../engine/src/core/previewers.js";
+import { parseWorkspaceSource } from "../../engine/src/core/workspace.js";
 import {
     type ApplicationRequest,
     applicationRequest,
 } from "../../frontend/src/application-request.js";
 import { createDocumentApplication } from "../../frontend/src/document-application.js";
-import { createHistoryOp } from "../../workspace/src/history.js";
-import { WORKSPACE_PATH } from "../../workspace/src/protocol.js";
+import { createHistoryOp, type Person, parsePerson } from "../../workspace/src/history.js";
+import { assertReadOnlyOperation } from "../../workspace/src/read-only.js";
 import { createWorkspaceServer, type WorkspaceOps } from "../../workspace/src/server.js";
+import { createDocumentVersions } from "./document-versions.js";
 import {
     isLocalHost,
+    requestScheme,
     runCodeTool,
     validateCodeTools,
     validateTextfileCode,
 } from "./editor-tools.js";
+import { createExtensionManager } from "./extensions.js";
 import { fontCss } from "./fonts.js";
-import { createGitHandler, git, gitManifestPath, gitWorktrees, hasGitManifest } from "./git.js";
+import {
+    createGitHandler,
+    git,
+    gitManifestPath,
+    gitWorktrees,
+    hasGitManifest,
+    validateGitOrigin,
+} from "./git.js";
 import { gitBaseBody, gitBaseText, setSubformatChanges } from "./git-diff.js";
 import { workspaceHistory } from "./history.js";
 import { watchProject } from "./hmr.js";
-import { loadSiteLanguages } from "./languages.js";
+import { DEFAULT_SITE_LANGUAGES, loadSiteLanguages } from "./languages.js";
 import { loggedWorkspaceOps } from "./operation-log.js";
-import { loadViewerPlugins } from "./plugin-config.js";
+import { loadViewerPlugins, type ViewerRuntime } from "./plugin-config.js";
+import { createLocalPluginStorage } from "./plugins/local-storage.js";
+import { createPluginHandler } from "./plugins.js";
 import { terminal } from "./terminal.js";
 import { readWorkspaceSource, sourceFileBase } from "./workspace.js";
 
@@ -41,6 +60,8 @@ export interface WorkspaceDescription {
     id: string;
     label: string;
     branch?: string;
+    readOnly?: boolean;
+    revision?: DocumentRevision;
 }
 
 export const clientOrigin = (value: string): string => {
@@ -61,8 +82,12 @@ export const nodeWorkspaceOperations = async (
     manifest: string,
     pluginModule?: string,
     notify: (event: string, data: unknown) => void = () => {},
+    readOnly = false,
+    shared?: string,
+    versions = "latest",
 ) => {
     const primary = projectRoot(manifest);
+    const selection = parseVersionSelection(readOnly ? versions : "*");
     const entries = new Map<
         string,
         {
@@ -71,15 +96,55 @@ export const nodeWorkspaceOperations = async (
             app: ReturnType<typeof createDocumentApplication>;
             git: ReturnType<typeof createGitHandler>;
             history: ReturnType<typeof createHistoryOp>;
+            versions: ReturnType<typeof createDocumentVersions>;
+            owner: string;
         }
     >();
     const closes: (() => void)[] = [];
-    type Session = { local: boolean; user?: import("../../workspace/src/history.js").Person };
-    const add = async (root: string, id: string) => {
+    type Session = { local: boolean; user?: Person; origin?: string; pluginSession?: string };
+    const plugins = await loadViewerPlugins(pluginModule);
+    let workspace = plugins.workspace;
+    let gitOrigin = plugins.gitOrigin;
+    let previews = parsePreviewSettings({ domains: plugins.allowedDomains ?? [] });
+    const personal = createLocalPluginStorage();
+    const handlePlugins = createPluginHandler(
+        plugins.plugins,
+        plugins,
+        personal.credentials,
+        (revision) => notify("plugins", revision),
+    );
+    const extensions = createExtensionManager(primary, handlePlugins, plugins, personal);
+    closes.push(extensions.dispose);
+    const configure = () => {
+        for (const { root, app } of entries.values())
+            app.configure({
+                workspace: workspace ?? readWorkspaceSource(root),
+                previews,
+                shared,
+                downloads: !readOnly,
+            });
+        notify("change", { kind: "content", files: [] });
+    };
+    const viewer: ViewerRuntime = {
+        register: handlePlugins.register,
+        unregister: handlePlugins.unregister,
+        setWorkspace(source) {
+            workspace = source === undefined ? undefined : parseWorkspaceSource(source);
+            configure();
+        },
+        setGitOrigin(origin) {
+            gitOrigin = origin === undefined ? undefined : validateGitOrigin(origin);
+        },
+        setAllowedDomains(domains) {
+            if (!Array.isArray(domains)) throw new Error("Allowed domains must be a list");
+            previews = parsePreviewSettings({ domains });
+            configure();
+        },
+    };
+    const add = async (root: string, id: string, owner = id, revision?: DocumentRevision) => {
         const existing = entries.get(id);
         if (existing) return existing;
-        const source = readWorkspaceSource(root);
-        const plugins = await loadViewerPlugins(pluginModule);
+        const source = workspace ?? readWorkspaceSource(root);
         const app = createDocumentApplication(root, {
             fontCss,
             readWorkspaceSource,
@@ -98,13 +163,22 @@ export const nodeWorkspaceOperations = async (
                     ? `${source.branch}/${source.repo ?? basename(root)}`
                     : basename(root),
             ...(source.protocol === "git" ? { branch: source.branch } : {}),
+            ...(revision
+                ? { revision, readOnly: true, label: `${revision.version}/${basename(primary)}` }
+                : {}),
         };
+        const catalog = entries.get(owner)?.versions ?? createDocumentVersions(root);
         const entry = {
             description,
             root,
             app,
-            git: createGitHandler(root, () => plugins.gitOrigin),
-            history: createHistoryOp(() => workspaceHistory(root)),
+            git: createGitHandler(root, () => gitOrigin),
+            history: createHistoryOp(
+                () => workspaceHistory(root, shared),
+                shared === undefined ? {} : { idleMs: 5 * 60_000, leaveMs: 30_000 },
+            ),
+            versions: catalog,
+            owner,
         };
         entries.set(id, entry);
         const watcher = watchProject(root, "", (kind, files) =>
@@ -112,11 +186,13 @@ export const nodeWorkspaceOperations = async (
         );
         closes.push(watcher.close);
         app.configure({
-            languages: await loadSiteLanguages(root),
+            languages: revision ? DEFAULT_SITE_LANGUAGES : await loadSiteLanguages(root),
             workspace: source,
-            previews: defaultPreviewSettings(),
-            downloads: true,
+            previews,
+            downloads: !readOnly,
+            shared,
             watch: watcher.watchTextfiles,
+            readOnly: !!revision,
         });
         return entry;
     };
@@ -126,10 +202,58 @@ export const nodeWorkspaceOperations = async (
         return value;
     };
     let opening = false;
+    const versionRows = async (current: ReturnType<typeof entry>) => {
+        const all = await current.versions.list();
+        const rows = selectVersions(all, selection);
+        if (readOnly && !all.length && current.versions.enabled())
+            throw new Error(
+                "No published document versions. Commit Git sources or build a source snapshot first.",
+            );
+        if (readOnly && !rows.length && (all.length || versions !== "latest"))
+            throw new Error("No document versions match the publication selection");
+        return rows;
+    };
+    const openVersion = async (current: ReturnType<typeof entry>, value: string) => {
+        const rows = await versionRows(current);
+        const revision = value === "latest" ? rows[0] : rows.find((row) => row.version === value);
+        if (!revision) throw new Error("Document version is not published");
+        const owner = entries.get(current.owner);
+        if (!owner) throw new Error("Version workspace is not open");
+        if (revision.current && !readOnly) return owner;
+        const id = `${owner.description.id}@${revision.revision}`;
+        const opened = entries.get(id);
+        if (opened) return opened;
+        return add(
+            await owner.versions.open(revision.revision),
+            id,
+            owner.description.id,
+            revision,
+        );
+    };
     const ops: WorkspaceOps<Session> = {
+        versions: async (input) => {
+            const current = entry(input);
+            if (input.action === "open") {
+                if (typeof input.version !== "string") throw new Error("Choose a document version");
+                return (await openVersion(current, input.version)).description;
+            }
+            if (input.action !== "list") throw new Error("Invalid version action");
+            const rows = await versionRows(current);
+            return {
+                versions: rows,
+                selected:
+                    current.description.revision?.version ??
+                    (readOnly ? rows[0]?.version : rows.find((row) => row.current)?.version),
+                current: rows.find((row) => row.current)?.version,
+                selector: readOnly ? versions : "*",
+                showSelector: rows.length > 1 && !(readOnly && latestVersionOnly(selection)),
+            };
+        },
         workspaces: async (input) => {
             if (input.action === "list")
                 return [...entries.values()].map(({ description }) => description);
+            if (shared !== undefined)
+                throw new Error("Shared workspaces stay on their snapshot branch");
             if (
                 input.action !== "branch" ||
                 typeof input.branch !== "string" ||
@@ -211,15 +335,19 @@ export const nodeWorkspaceOperations = async (
                 typeof input.body !== "string"
             )
                 throw new Error("Invalid document request");
-            const result = await applicationRequest(entry(input).app, "edit", {
-                url: input.url,
-                method: String(input.method),
-                body: input.body,
-                headers:
-                    input.headers && typeof input.headers === "object"
-                        ? (input.headers as ApplicationRequest["headers"])
-                        : {},
-            });
+            const result = await applicationRequest(
+                entry(input).app,
+                readOnly ? "preview" : "edit",
+                {
+                    url: input.url,
+                    method: String(input.method),
+                    body: input.body,
+                    headers:
+                        input.headers && typeof input.headers === "object"
+                            ? (input.headers as ApplicationRequest["headers"])
+                            : {},
+                },
+            );
             return {
                 ...result,
                 body: typeof result.body === "string" ? result.body : Array.from(result.body),
@@ -235,20 +363,80 @@ export const nodeWorkspaceOperations = async (
                     ? uploadFile(root, input)
                     : updateFiles(root, input);
         },
-        git: (input) => {
+        git: (input, session) => {
+            if (!session.local) throw new Error("Git requires a same-origin local editor request");
             if (input.action === "switch" || input.action === "branch")
                 throw new Error("Open the branch in a separate workspace");
             return entry(input).git(input);
         },
         history: (input, session) => entry(input).history.op(input, session),
+        extensions: (input, session) => {
+            if (!session.local)
+                throw new Error("Plugins require a same-origin local editor request");
+            return extensions(input);
+        },
+        plugins: (input, session) => {
+            if (!session.local || !session.origin)
+                throw new Error("Plugins require a same-origin local editor request");
+            if (!session.pluginSession || !handlePlugins.hasSession(session.pluginSession))
+                session.pluginSession = handlePlugins.createSession();
+            if (input.action === "connect") {
+                if (typeof input.plugin !== "string") throw new Error("Invalid plugin ID");
+                return {
+                    url: handlePlugins.loginLink(
+                        input.plugin,
+                        session.origin,
+                        session.pluginSession,
+                    ),
+                };
+            }
+            return handlePlugins.request(input, session.pluginSession, session.origin);
+        },
     };
+    if (shared !== undefined) {
+        delete ops.git;
+        ops.identify = (input, session) => {
+            session.user = parsePerson(input);
+            return session.user;
+        };
+    }
     const queues = new Map<string, Promise<unknown>>();
     const serial = Object.fromEntries(
         Object.entries(ops).map(([name, operation]) => [
             name,
             (input: Record<string, unknown>, session: Session) => {
+                if (readOnly) assertReadOnlyOperation(name, input);
                 const id = typeof input.workspace === "string" ? input.workspace : "main";
-                const run = () => operation(input, session);
+                const run = async () => {
+                    let target = entry(input);
+                    if (
+                        readOnly &&
+                        target.description.revision &&
+                        !["versions", "workspaces"].includes(name)
+                    ) {
+                        const rows = await versionRows(target);
+                        if (
+                            !rows.some(
+                                (row) => row.revision === target.description.revision?.revision,
+                            )
+                        )
+                            throw new Error("Document version is not published");
+                    }
+                    if (
+                        readOnly &&
+                        !["versions", "workspaces"].includes(name) &&
+                        !target.description.revision
+                    ) {
+                        const rows = await versionRows(target);
+                        if (rows.length)
+                            target = await openVersion(target, rows[0]?.version ?? "latest");
+                    }
+                    if (target.description.readOnly) {
+                        if (name !== "http" || input.method !== "GET")
+                            assertReadOnlyOperation(name, input, !readOnly);
+                    }
+                    return operation({ ...input, workspace: target.description.id }, session);
+                };
                 const next = (queues.get(id) ?? Promise.resolve()).then(run, run);
                 queues.set(
                     id,
@@ -258,48 +446,85 @@ export const nodeWorkspaceOperations = async (
             },
         ]),
     );
-    await add(primary, "main");
+    try {
+        await plugins.setup?.(viewer);
+        const errors = await extensions.restore();
+        for (const error of errors) terminal.error(`Plugin: ${error}`);
+        await add(primary, "main");
+    } catch (error) {
+        for (const close of closes) close();
+        throw error;
+    }
     return {
         ops: serial,
+        plugins: handlePlugins,
+        left: (session: Session) => {
+            for (const { history } of entries.values()) history.left(session);
+        },
         close: () => {
             for (const close of closes) close();
+            for (const { history } of entries.values()) void history.flush();
+            for (const catalog of new Set([...entries.values()].map((value) => value.versions)))
+                catalog.close();
         },
     };
 };
 
-export const startWorkspaceServer = async (
+export const attachWorkspaceServer = async (
+    server: Server,
     manifest: string,
-    port = 5179,
-    origin = "http://localhost:5180",
+    origin = "http://localhost:3000",
     pluginModule?: string,
+    readOnly = false,
+    path = "/server",
+    shared?: string,
+    versions = "latest",
 ) => {
     const allowed = clientOrigin(origin);
     let channel: ReturnType<typeof createWorkspaceServer<{ local: boolean }>> | undefined;
-    const manager = await nodeWorkspaceOperations(manifest, pluginModule, (event, data) =>
-        channel?.broadcast(event, data),
+    const manager = await nodeWorkspaceOperations(
+        manifest,
+        pluginModule,
+        (event, data) => channel?.broadcast(event, data),
+        readOnly,
+        shared,
+        versions,
     );
     const activeChannel = createWorkspaceServer(loggedWorkspaceOps(manager.ops), {
         boot: crypto.randomUUID(),
+        readOnly,
+        ...(shared === undefined ? {} : { shared: true }),
     });
     channel = activeChannel;
-    const server = createServer((_req, res) => {
-        res.writeHead(404);
-        res.end("Connect using the dooc workspace socket");
-    });
     const sockets = new WebSocketServer({
         noServer: true,
         maxPayload: Math.ceil((MAX_FILE_UPLOAD_BYTES * 4) / 3) + 16_384,
     });
+    const alive = new WeakSet<object>();
+    const heartbeat = setInterval(() => {
+        for (const ws of sockets.clients) {
+            if (!alive.has(ws)) ws.terminate();
+            else {
+                alive.delete(ws);
+                ws.ping();
+            }
+        }
+    }, 30_000);
+    heartbeat.unref();
     server.on("upgrade", (req, socket, head) => {
         if (
             !isLocalHost(req.headers.host ?? "") ||
             req.headers.origin !== allowed ||
-            req.url !== WORKSPACE_PATH
+            req.url !== path
         ) {
             socket.destroy();
             return;
         }
         sockets.handleUpgrade(req, socket, head, (ws) => {
+            const session = {
+                local: (req.headers.host ?? "").endsWith(`:${req.socket.localPort}`),
+                origin: `${requestScheme(req)}://${req.headers.host}`,
+            };
             const detach = activeChannel.connect(
                 {
                     send: (message) => {
@@ -314,33 +539,32 @@ export const startWorkspaceServer = async (
                             }
                         }),
                 },
-                { local: true },
+                session,
             );
-            ws.on("close", detach);
-            ws.on("error", detach);
+            alive.add(ws);
+            ws.on("pong", () => alive.add(ws));
+            const leave = () => {
+                detach();
+                manager.left(session);
+            };
+            ws.on("close", leave);
+            ws.on("error", leave);
         });
     });
-    server.on("close", () => {
+    let closed = false;
+    const dispose = () => {
+        if (closed) return;
+        closed = true;
+        clearInterval(heartbeat);
         manager.close();
         for (const ws of sockets.clients) ws.terminate();
         sockets.close();
-    });
-    try {
-        await new Promise<void>((resolve, reject) => {
-            server.once("error", reject);
-            server.listen(port, "127.0.0.1", resolve);
-        });
-    } catch (error) {
-        manager.close();
-        sockets.close();
-        throw error;
-    }
-    const address = server.address();
-    terminal.ready(
-        "server",
-        manifest,
-        `ws://localhost:${typeof address === "object" && address ? address.port : port}${WORKSPACE_PATH}`,
-    );
-    terminal.info(`Client origin: ${allowed}`);
-    return server;
+    };
+    server.once("close", dispose);
+    const close = server.close.bind(server);
+    server.close = (callback) => {
+        for (const ws of sockets.clients) ws.terminate();
+        return close(callback);
+    };
+    return Object.assign(dispose, { plugins: manager.plugins });
 };

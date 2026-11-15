@@ -1,146 +1,52 @@
-A design for a fictional system, **Field Notes**, written entirely as records. Six runtime record types describe where things run, how traffic reaches them, what they need, and where their logs go. The same types describe the cloud side and the on-premise side.
+dooc has four implementation packages: the engine reads and compiles a document, the frontend renders and edits it, the workspace layer carries requests, and the server hosts the application and CLI. A document workspace is a separate folder containing `dooc.yaml` and its source files.
 
-## Architecture
+![From source files to a document](contents/html/architecture.html)
 
-Field Notes serves pages from a cloud network and from an on-premise site. The on-premise site reads from a database replica and keeps serving if the cloud side is unreachable.
+## Package boundaries
 
-![Field Notes runtime](contents/graphth/system.graphth)
+| Package | Responsibility | Source of truth |
+| --- | --- | --- |
+| `packages/engine` | Parse manifests and Markdown; validate schemas; resolve references; compile pages and figures | Files below the selected manifest |
+| `packages/frontend` | Navigation, previews, source editing, record forms and browser workspace support | The selected workspace and editor state |
+| `packages/workspace` | Request protocol, connections, workspace operations and MCP tools | Requests sent to a workspace |
+| `packages/server` | CLI, local HTTP services, plugin execution, build and export commands | Explicit command options and project configuration |
+| `plugins` | Public plugin SDK and service integrations | A plugin's declared capabilities |
 
-## Record types
+The engine does not require the documentation or sample directories at runtime. Installed packages and standalone executables load a user's workspace from disk or a repository selected with `--repo`.
 
-| Type                                                   | Storage | Describes                                            | Board grouped by |
-| ------------------------------------------------------ | ------- | ---------------------------------------------------- | ---------------- |
-| [vpc](contents/json/vpc.schema.json)                   | TOML    | A network: provider, location, CIDR, subnets, peers  | Provider         |
-| [loadbalancer](contents/json/loadbalancer.schema.json) | YAML    | Listeners, targets, health check                     | Scheme           |
-| [container](contents/json/container.schema.json)       | YAML    | A long-running service: image, CPU, memory, replicas | Runtime          |
-| [worker](contents/json/worker.schema.json)             | JSON    | A background job: trigger, concurrency, timeout      | Trigger          |
-| [datastore](contents/json/datastore.schema.json)       | TOML    | A database, cache, queue, object store, or index     | Kind             |
-| [log](contents/json/log.schema.json)                   | YAML    | A log stream: format, level, retention, sink         | Category         |
+## Compile and publish
 
-Their boards are the pages below this one in the tree.
+![Compilation and publishing](contents/graphth/compiler.graphth)
 
-![Runtime model](contents/schemath/runtime.schemath)
+| Input | Processing | Result |
+| --- | --- | --- |
+| `dooc.yaml` | Validate settings, flatten the page tree and register subformats | Navigation and workspace configuration |
+| Markdown | Parse blocks, resolve local links and collect embeds | Page content, headings and source locations |
+| Schemas and records | Load local schema references and validate records | Boards, fields, forms and relationship graphs |
+| Diagrams and media | Parse diagrams or select the matching previewer | Figures embedded in pages |
+| Theme and language variants | Select files for the requested theme and language | A consistent document variant |
 
-## One structure for cloud and on-premise
+`dooc check` audits local inputs without fetching remote URLs. `dooc build html` compiles the document and, by default, downloads supported remote embeds into a standalone bundle. Use `--url_preview network` to retain network references. [Commands](contents/md/cli.md) documents the exact build options.
 
-Only the network record says where something runs. Every other record points at a network with `network` and at one of its subnets with `subnet`, so a workload record has the same fields on both sides.
+## Editing a page
 
-| Field                 | Cloud                                           | On-premise                                            |
-| --------------------- | ----------------------------------------------- | ----------------------------------------------------- |
-| Network               | [Production cloud](contents/vpc/prod-cloud.vpc) | [Production on-premise](contents/vpc/prod-onprem.vpc) |
-| `provider`            | `Cloud`                                         | `On-premise`                                          |
-| `location`            | A region                                        | A datacenter and rack row                             |
-| Subnet `zone`         | Availability zone                               | Omitted                                               |
-| Container `runtime`   | `Kubernetes`, `Managed containers`              | `Docker host`                                         |
-| Container `replicas`  | `min` below `max`: autoscaled                   | `min` equals `max`: fixed hosts                       |
-| Load balancer `layer` | `L7`                                            | `L4`                                                  |
+![Edit, preview and save](contents/mermaid/edit-cycle.mermaid)
 
-The same service on each side:
+A preview is a rendering of a draft. Saving writes source files; publishing creates an output artifact. These are separate steps, so reviewing a preview alone does not publish a document.
 
-![API in the cloud](contents/container/api.container)
+## Document model
 
-![API on-premise](contents/container/api-onprem.container)
+![Document relationships](contents/schemath/document.schemath)
 
-## Shared definitions
+Paths are relative to the selected manifest's folder. Two workspaces can have files named `contents/md/index.md` without sharing their pages, records or configuration. This is why each [sample workspace](contents/md/samples.md) includes its own manifest, schemas and assets.
 
-[runtime.schema.json](contents/json/runtime.schema.json) is not a record type. It holds the definitions that every runtime schema reuses.
+## Runtime boundaries
 
-| Definition                               | Meaning                                  | Used by                                    |
-| ---------------------------------------- | ---------------------------------------- | ------------------------------------------ |
-| `runtime.schema.json#/$defs/provider`    | `Cloud` or `On-premise`                  | vpc                                        |
-| `runtime.schema.json#/$defs/environment` | `Production`, `Staging`, `Development`   | vpc                                        |
-| `runtime.schema.json#/$defs/cidr`        | IPv4 CIDR block                          | vpc                                        |
-| `runtime.schema.json#/$defs/port`        | Integer from 1 to 65535                  | loadbalancer, container                    |
-| `runtime.schema.json#/$defs/image`       | Image name with an explicit tag          | container, worker                          |
-| `runtime.schema.json#/$defs/resources`   | `cpu`, `memory_mb`, optional `disk_gb`   | container, worker, datastore               |
-| `runtime.schema.json#/$defs/replicas`    | `min` and `max`                          | container                                  |
-| `runtime.schema.json#/$defs/dependency`  | A container path or a datastore path     | container, worker                          |
-| `vpc.schema.json#/$defs/ref`             | Path of a network record                 | every other runtime type except log        |
-| `vpc.schema.json#/$defs/subnet_name`     | Subnet name inside a network             | loadbalancer, container, worker, datastore |
-| `container.schema.json#/$defs/ref`       | Path of a container record               | loadbalancer, `dependency`                 |
-| `datastore.schema.json#/$defs/ref`       | Path of a datastore record               | worker, log, datastore, `dependency`       |
-| `log.schema.json#/$defs/ref`             | Path of a log stream record              | loadbalancer, container, worker            |
-| `team.schema.json#/$defs/ref`            | Path of a [team](contents/md/records.md) | vpc, container, worker                     |
+| Mode | Editable | Needs a running service | Intended use |
+| --- | --- | --- | --- |
+| `dooc editor run node --client --server` | Yes | Yes | Author and save source files |
+| `dooc viewer run node --client --server` | No | Yes | Review a local or cloned workspace |
+| Standalone HTML | No | No for embedded local content | Share a document snapshot |
+| Source ZIP | After opening with dooc | Only while viewing or editing | Hand off editable source files |
 
-![Runtime definitions](contents/json/runtime.schema.json)
-
-`provider` and `environment` are enums behind a `$ref`. The network board still offers them as columns.
-
-## Networks
-
-| Network                                               | Provider   | Environment | CIDR           | Subnets                 |
-| ----------------------------------------------------- | ---------- | ----------- | -------------- | ----------------------- |
-| [Production cloud](contents/vpc/prod-cloud.vpc)       | Cloud      | Production  | `10.20.0.0/16` | `public`, `app`, `data` |
-| [Production on-premise](contents/vpc/prod-onprem.vpc) | On-premise | Production  | `10.40.0.0/16` | `dmz`, `app`, `data`    |
-| [Staging cloud](contents/vpc/staging-cloud.vpc)       | Cloud      | Staging     | `10.30.0.0/16` | `app`                   |
-
-![Production cloud](contents/vpc/prod-cloud.vpc)
-
-## Traffic
-
-| Load balancer                                                     | Scheme   | Layer | Listens on | Target                                                      |
-| ----------------------------------------------------------------- | -------- | ----- | ---------- | ----------------------------------------------------------- |
-| [Public edge](contents/loadbalancer/public-edge.loadbalancer)     | Public   | L7    | 443, 80    | [Web](contents/container/web.container)                     |
-| [Internal API](contents/loadbalancer/internal-api.loadbalancer)   | Internal | L7    | 8443       | [API](contents/container/api.container)                     |
-| [On-premise edge](contents/loadbalancer/onprem-edge.loadbalancer) | Public   | L4    | 443        | [Web (on-premise)](contents/container/web-onprem.container) |
-
-![Public edge](contents/loadbalancer/public-edge.loadbalancer)
-
-## Compute
-
-| Container                                                   | Network    | CPU  | Memory   | Replicas |
-| ----------------------------------------------------------- | ---------- | ---- | -------- | -------- |
-| [Web](contents/container/web.container)                     | Cloud      | 0.5  | 512 MiB  | 2–6      |
-| [API](contents/container/api.container)                     | Cloud      | 1    | 1024 MiB | 3–10     |
-| [Search](contents/container/search.container)               | Cloud      | 2    | 4096 MiB | 2        |
-| [Web (on-premise)](contents/container/web-onprem.container) | On-premise | 1    | 1024 MiB | 2        |
-| [API (on-premise)](contents/container/api-onprem.container) | On-premise | 2    | 2048 MiB | 2        |
-| [API (staging)](contents/container/api-staging.container)   | Staging    | 0.25 | 256 MiB  | 0–1      |
-
-| Worker                                                    | Trigger  | Source or schedule                                      | Concurrency |
-| --------------------------------------------------------- | -------- | ------------------------------------------------------- | ----------- |
-| [Render queue](contents/worker/render-queue.worker)       | Queue    | [Render jobs](contents/datastore/render-jobs.datastore) | 4           |
-| [Search indexer](contents/worker/search-indexer.worker)   | Stream   | [Render jobs](contents/datastore/render-jobs.datastore) | 2           |
-| [Nightly export](contents/worker/nightly-export.worker)   | Schedule | `0 18 * * *` UTC                                        | 1           |
-| [Replica lag check](contents/worker/replica-check.worker) | Schedule | `*/5 * * * *` UTC                                       | 1           |
-
-![Render queue](contents/worker/render-queue.worker)
-
-## State
-
-| Datastore                                                             | Kind       | Engine         | Network    | Backups |
-| --------------------------------------------------------------------- | ---------- | -------------- | ---------- | ------- |
-| [Main database](contents/datastore/main-db.datastore)                 | Relational | PostgreSQL 17  | Cloud      | 35 days |
-| [Main database replica](contents/datastore/main-db-replica.datastore) | Relational | PostgreSQL 17  | On-premise | 7 days  |
-| [Session cache](contents/datastore/session-cache.datastore)           | Cache      | Valkey 8       | Cloud      | none    |
-| [Render jobs](contents/datastore/render-jobs.datastore)               | Queue      | NATS JetStream | Cloud      | none    |
-| [Search index](contents/datastore/search-index.datastore)             | Search     | OpenSearch 2   | Cloud      | none    |
-| [Assets](contents/datastore/assets.datastore)                         | Object     | Object storage | Cloud      | 90 days |
-| [Log archive](contents/datastore/log-archive.datastore)               | Object     | Object storage | Cloud      | none    |
-
-The replica names its primary with `replica_of`:
-
-![Main database replica](contents/datastore/main-db-replica.datastore)
-
-## Logs
-
-A workload names its log stream with `logs`. The stream record holds the format, the minimum level, the retention, and the datastore that keeps it.
-
-| Log stream                                  | Category    | Level | Retention | Sink                                                      | Written by               |
-| ------------------------------------------- | ----------- | ----- | --------- | --------------------------------------------------------- | ------------------------ |
-| [Edge access](contents/log/edge-access.log) | Access      | Info  | 90 days   | [Log archive](contents/datastore/log-archive.datastore)   | All three load balancers |
-| [Application](contents/log/application.log) | Application | Info  | 30 days   | [Search index](contents/datastore/search-index.datastore) | Web, API, Search         |
-| [Jobs](contents/log/jobs.log)               | Job         | Warn  | 30 days   | [Search index](contents/datastore/search-index.datastore) | All four workers         |
-| [Audit](contents/log/audit.log)             | Audit       | Info  | 400 days  | [Log archive](contents/datastore/log-archive.datastore)   | Not yet assigned         |
-
-![Edge access](contents/log/edge-access.log)
-
-## Follow one request
-
-1. A reader connects to [Public edge](contents/loadbalancer/public-edge.loadbalancer) on port 443. The request is written to [Edge access](contents/log/edge-access.log).
-2. The listener forwards to [Web](contents/container/web.container) on port 8080.
-3. Web calls [API](contents/container/api.container) through [Internal API](contents/loadbalancer/internal-api.loadbalancer).
-4. API reads [Main database](contents/datastore/main-db.datastore) and [Session cache](contents/datastore/session-cache.datastore), and puts a job on [Render jobs](contents/datastore/render-jobs.datastore).
-5. [Render queue](contents/worker/render-queue.worker) takes the job and writes the result to [Assets](contents/datastore/assets.datastore).
-
-A schema checks that each reference has the shape of a path for the right record type. It does not check that the file exists or that a subnet name belongs to the named network.
+Remote links, live plugin data and network-mode embeds still need their services. Repository workspaces also have execution restrictions; see [Git repositories](contents/md/cli.md#git-repositories) and [Plugins](contents/md/plugins.md).

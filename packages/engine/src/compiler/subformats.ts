@@ -213,6 +213,8 @@ export const subformatResponse = (
     status: number;
     body: {
         file?: string;
+        icon?: string;
+        iconSvg?: string;
         content?: string;
         data?: Record<string, unknown>;
         collection?: SubformatCollection;
@@ -234,10 +236,39 @@ export const subformatResponse = (
             });
             return { status: 200, body: {} };
         }
+        if (input?.action === "icon") {
+            if (
+                typeof input.value !== "string" ||
+                (input.base !== null && typeof input.base !== "string")
+            )
+                throw new Error("An icon path and previous value are required");
+            const raw = readTextfile(root, manifestFile(root));
+            const manifest = parseManifestText(raw, manifestFile(root));
+            if (manifest.errors.length) throw new Error(manifest.errors.join("\n"));
+            const index =
+                manifest.subformats?.findIndex((format) => format.ext === input.ext) ?? -1;
+            const config = manifest.subformats?.[index];
+            if (!config) throw new Error("Unknown subformat");
+            if ((config.icon ?? null) !== input.base)
+                return {
+                    status: 409,
+                    body: { error: "Subformat changed externally. Reload and try again." },
+                };
+            const icon = input.value || undefined;
+            const [next] = parseSubformats([{ ...config, icon }]);
+            const iconSvg = subformatIconSvg(root, next as Subformat);
+            const document = parseDocument(raw);
+            const section = manifest.format === "nested" ? "json_subformats" : "subformats";
+            if (icon) document.setIn([section, index, "icon"], icon);
+            else document.deleteIn([section, index, "icon"]);
+            if (!writeTextfile(root, manifestFile(root), document.toString(), raw))
+                return { status: 409, body: { error: "Manifest changed externally. Try again." } };
+            return { status: 200, body: { file: manifestFile(root), icon, iconSvg } };
+        }
         if (input?.action === "layouts") {
             if (
                 typeof input.key !== "string" ||
-                !["card_title", "group_by", "sort_by", "sort_order"].includes(input.key) ||
+                !["view", "card_title", "group_by", "sort_by", "sort_order"].includes(input.key) ||
                 typeof input.value !== "string" ||
                 (input.base !== null && typeof input.base !== "string")
             )
@@ -256,7 +287,7 @@ export const subformatResponse = (
                     body: { error: "Default changed externally. Reload and try again." },
                 };
             parseSubformats([{ ...config, layouts: { ...config.layouts, [key]: input.value } }]);
-            if (key !== "sort_order" && input.value) {
+            if (key !== "sort_order" && key !== "view" && input.value) {
                 const field = loadSubformat(root, config, domains).fields.find(
                     (field) => field.name === input.value,
                 );
@@ -322,9 +353,15 @@ export const subformatResponse = (
                     : input.schema;
             const configs = parseSubformats([
                 ...(manifest.subformats ?? []),
-                { ext: input.ext, format: input.format, schema },
+                {
+                    ext: input.ext,
+                    format: input.format,
+                    schema,
+                    icon: input.icon === "" ? undefined : input.icon,
+                },
             ]);
             const config = configs[configs.length - 1] as Subformat;
+            const iconSvg = subformatIconSvg(root, config);
             if (!managedFile(config.schema)) throw new Error("Schema must be a local project file");
             if (input.content !== undefined && typeof input.content !== "string")
                 throw new Error("Schema content must be text");
@@ -364,6 +401,7 @@ export const subformatResponse = (
                 body: {
                     collection: {
                         ...config,
+                        iconSvg,
                         fields: loaded.fields,
                         template: loaded.template,
                         defaultFolder: manifest.defaultSubformatFolder,

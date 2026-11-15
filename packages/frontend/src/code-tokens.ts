@@ -1,6 +1,7 @@
 import { createHighlighterCore, type LanguageRegistration, type ThemedToken } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import { selectCodeGrammars } from "../../engine/src/core/code-grammars.js";
+import { clientPath } from "../../workspace/src/client-path.js";
 import { workspaceFetch, workspaceId } from "../../workspace/src/connection.js";
 
 const initialWorkspace = workspaceId();
@@ -31,7 +32,7 @@ const pending = new Map<
 const workerTokens = (input: Omit<CodeTokenRequest, "id">): Promise<ThemedToken[][]> => {
     if (workerError) return Promise.reject(workerError);
     if (!worker) {
-        worker = new Worker("/assets/code-worker.js");
+        worker = new Worker(clientPath("/assets/code-worker.js"));
         worker.onmessage = ({ data }: MessageEvent<CodeTokenResponse>) => {
             const request = pending.get(data.id);
             pending.delete(data.id);

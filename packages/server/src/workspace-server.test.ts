@@ -5,7 +5,11 @@ import { afterEach, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import { createWorkspaceClient } from "../../workspace/src/client.js";
 import { git } from "./git.js";
-import { clientOrigin, nodeWorkspaceOperations, startWorkspaceServer } from "./workspace-server.js";
+import {
+    attachWorkspaceServer,
+    clientOrigin,
+    nodeWorkspaceOperations,
+} from "./workspace-server.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -20,6 +24,142 @@ it("requires an exact client origin", () => {
         "ws://editor.example",
     ])
         expect(() => clientOrigin(url)).toThrow();
+});
+
+it("keeps shared editors on one branch and credits their snapshots", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dooc-shared-application-"));
+    roots.push(root);
+    writeFileSync(join(root, "dooc.yaml"), "docs: []\n");
+    await git(root, ["init", "-b", "main"]);
+    await git(root, ["config", "user.name", "Workspace"]);
+    await git(root, ["config", "user.email", "workspace@example.com"]);
+    await git(root, ["add", "."]);
+    await git(root, ["commit", "-m", "Initial"]);
+    const manager = await nodeWorkspaceOperations(
+        join(root, "dooc.yaml"),
+        undefined,
+        undefined,
+        false,
+        "main",
+    );
+    const session = { local: true };
+    try {
+        expect(manager.ops.git).toBeUndefined();
+        await expect(
+            manager.ops.workspaces?.({ action: "branch", branch: "other", create: true }, session),
+        ).rejects.toThrow("snapshot branch");
+        await manager.ops.identify?.({ name: "Alice", email: "alice@example.com" }, session);
+        await manager.ops.history?.({ action: "contribute" }, session);
+        writeFileSync(join(root, "notes.txt"), "Shared edit\n");
+        await manager.ops.history?.({ action: "snapshot", message: "Shared change" }, session);
+        expect((await git(root, ["log", "-1", "--format=%an"])).trim()).toBe("Alice");
+        expect((await git(root, ["branch", "--show-current"])).trim()).toBe("main");
+    } finally {
+        manager.close();
+    }
+});
+
+it("exposes a read-only viewer over the socket and closes active connections on shutdown", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dooc-viewer-socket-"));
+    roots.push(root);
+    mkdirSync(join(root, "content"));
+    writeFileSync(join(root, "dooc.yaml"), "docs: [guide]\n");
+    writeFileSync(join(root, "content/guide.md"), "Viewer content.\n");
+    const server = createServer();
+    await attachWorkspaceServer(
+        server,
+        join(root, "dooc.yaml"),
+        "http://localhost:3000",
+        undefined,
+        true,
+    );
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing port");
+    const socket = new WebSocket(`ws://127.0.0.1:${address.port}/server`, {
+        origin: "http://localhost:3000",
+    });
+    try {
+        await new Promise<void>((resolve, reject) => {
+            socket.on("open", resolve);
+            socket.on("error", reject);
+        });
+        const client = createWorkspaceClient({
+            send: (message) => socket.send(JSON.stringify(message)),
+            receive: (handler) =>
+                socket.on("message", (data) => handler(JSON.parse(data.toString()))),
+            closed: (handler) => socket.on("close", handler),
+        });
+        expect(await client.request("hello")).toMatchObject({ readOnly: true });
+        expect(await client.request("workspaces", { action: "list" })).toHaveLength(1);
+        const response = await client.request<{ status: number; body: string }>("http", {
+            method: "GET",
+            url: "/guide",
+            headers: {},
+            body: "",
+        });
+        expect(response.status).toBe(200);
+        expect(response.body).toContain("Viewer content.");
+        expect(response.body).not.toContain('src="/assets/edit.js"');
+        for (const [op, args] of [
+            ["http", { method: "POST", url: "/api/save", body: "{}", headers: {} }],
+            ["files", { action: "upload", name: "test.txt", data: "eA==" }],
+            ["files", { action: "delete", paths: ["content/guide.md"] }],
+            ["git", { action: "commit", message: "Change" }],
+            ["history", { action: "restore" }],
+            ["workspaces", { action: "branch", branch: "new", create: true }],
+            ["extensions", { action: "install", file: "plugin.zip", data: "", base: null }],
+            ["plugins", { action: "act", plugin: "sample" }],
+        ] as const)
+            await expect(client.request(op, args)).rejects.toThrow("read-only");
+        expect(readFileSync(join(root, "content/guide.md"), "utf8")).toBe("Viewer content.\n");
+        expect(existsSync(join(root, "test.txt"))).toBe(false);
+    } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await new Promise<void>((resolve) => {
+            if (socket.readyState === WebSocket.CLOSED) resolve();
+            else socket.once("close", () => resolve());
+        });
+    }
+});
+
+it("keeps injected plugin setup, network policy and package management available", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dooc-workspace-plugins-"));
+    roots.push(root);
+    mkdirSync(join(root, "content"));
+    writeFileSync(join(root, "dooc.yaml"), "docs: [guide]\n");
+    writeFileSync(join(root, "content/guide.md"), "Plugin setup\n");
+    const module = join(root, "viewer.mjs");
+    writeFileSync(
+        module,
+        `export default {
+        plugins: [],
+        setup(viewer) { viewer.setAllowedDomains(["example.com"]); }
+    };\n`,
+    );
+    const manager = await nodeWorkspaceOperations(join(root, "dooc.yaml"), module);
+    const session = { local: true, origin: "http://localhost:3000" };
+    try {
+        expect(await manager.ops.extensions?.({ action: "list" }, session)).toMatchObject({
+            items: [],
+        });
+        expect(
+            await manager.ops.plugins?.(
+                { action: "resolve", url: "https://example.com/item" },
+                session,
+            ),
+        ).toMatchObject({ plugin: undefined });
+        const page = (await manager.ops.http?.(
+            { url: "/api/page?route=/guide", method: "GET", body: "", headers: {} },
+            session,
+        )) as { body: string };
+        expect(JSON.parse(page.body).boot.previews.domains).toEqual(["example.com"]);
+        await expect(
+            manager.ops.extensions?.({ action: "list" }, { local: false }),
+        ).rejects.toThrow("same-origin local editor");
+    } finally {
+        manager.close();
+    }
 });
 
 it("checks the manifest before creating worktrees and leaves uncommitted progress on its original branch", async () => {
@@ -149,16 +289,21 @@ it("serves only the socket, rejects foreign origins, isolates branches, and acce
     await git(root, ["add", "."]);
     await git(root, ["commit", "-m", "Initial"]);
     await git(root, ["branch", "feature"]);
-    const server = await startWorkspaceServer(join(root, "dooc.yaml"), 0, "http://localhost:5180");
+    const server = createServer((_req, res) => {
+        res.writeHead(404);
+        res.end();
+    });
+    await attachWorkspaceServer(server, join(root, "dooc.yaml"));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Missing port");
     const url = `http://127.0.0.1:${address.port}`;
-    const socket = new WebSocket(url.replace("http:", "ws:") + "/api/workspace", {
-        origin: "http://localhost:5180",
+    const socket = new WebSocket(`${url.replace("http:", "ws:")}/server`, {
+        origin: "http://localhost:3000",
     });
     try {
-        expect((await fetch(url + "/")).status).toBe(404);
-        const rejected = new WebSocket(url.replace("http:", "ws:") + "/api/workspace", {
+        expect((await fetch(`${url}/`)).status).toBe(404);
+        const rejected = new WebSocket(`${url.replace("http:", "ws:")}/server`, {
             origin: "https://other.example",
         });
         await new Promise<void>((resolve, reject) => {
@@ -248,3 +393,5 @@ it("serves only the socket, rejects foreign origins, isolates branches, and acce
         );
     }
 }, 30_000);
+
+import { createServer } from "node:http";

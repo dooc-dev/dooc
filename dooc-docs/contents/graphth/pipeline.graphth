@@ -1,14 +1,12 @@
-[manifest]: dooc.yaml @Workspace
-[schemas]: JSON Schemas @Workspace
-[records]: Record files @Workspace
-[script]: records.mjs @Pipeline
-[json]: records.json @Pipeline
-[deploy]: Deploy jobs @Pipeline
-[bundle]: bundle.html @Pipeline
-
-[manifest] -> [script]: ext, format, schema
-[schemas] -> [script]: validate
-[records] -> [script]: parse
-[script] -> [json]
-[json] -> [deploy]: matrix
-[manifest] --> [bundle]: dooc build
+[source]: Commit source files
+[check]: Check local content
+[fix]: Correct source
+[build]: Build HTML and source ZIP
+[review]: Review artifacts
+[share]: Share accepted artifacts
+[source] -> [check]
+[check] -> [build]: valid
+[check] --> [fix]: diagnostics
+[fix] -> [source]
+[build] -> [review]
+[review] -> [share]: accepted

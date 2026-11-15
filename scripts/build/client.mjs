@@ -45,6 +45,7 @@ export const buildBrowserWorkspace = (options = {}) =>
         ...browserBuild,
         entryPoints: [fileURLToPath(new URL("packages/frontend/src/workspace-worker.ts", root))],
         outfile: fileURLToPath(new URL("dist/workspace-worker.global.js", root)),
+        define: { DOOC_READ_ONLY: "false", DOOC_MCP: "false" },
         ...options,
     });
 
@@ -60,5 +61,33 @@ export const buildClientEntry = (options = {}) =>
         ...options,
     });
 
+export const buildMcpClient = (options = {}) =>
+    build({
+        entryPoints: [fileURLToPath(new URL("packages/frontend/src/mcp-client.ts", root))],
+        outfile: fileURLToPath(new URL("dist/mcp-client.js", root)),
+        bundle: true,
+        platform: "browser",
+        target: "es2022",
+        format: "esm",
+        minify: true,
+        ...options,
+    });
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1])
-    await Promise.all([buildBrowserWorkspace(), buildClientEntry()]);
+    await Promise.all([
+        buildBrowserWorkspace(),
+        buildBrowserWorkspace({
+            define: { DOOC_READ_ONLY: "true", DOOC_MCP: "false" },
+            outfile: fileURLToPath(new URL("dist/workspace-viewer-worker.global.js", root)),
+        }),
+        buildBrowserWorkspace({
+            define: { DOOC_READ_ONLY: "false", DOOC_MCP: "true" },
+            outfile: fileURLToPath(new URL("dist/workspace-mcp-worker.global.js", root)),
+        }),
+        buildBrowserWorkspace({
+            define: { DOOC_READ_ONLY: "true", DOOC_MCP: "true" },
+            outfile: fileURLToPath(new URL("dist/workspace-viewer-mcp-worker.global.js", root)),
+        }),
+        buildClientEntry(),
+        buildMcpClient(),
+    ]);

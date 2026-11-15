@@ -66,6 +66,7 @@ export const PLUGIN_BLOCK_CSS = `
 .plugin-editor { display: grid; gap: 6px; margin: 0; padding: 0; border: 0; font: inherit; font-size: 12px; line-height: 1.5; color: var(--doc-fg, #000000); background: var(--doc-bg, #ffffff); min-width: 0; }
 .plugin-editor label { display: grid; gap: 0; font-size: 0; }
 .plugin-editor :is(input, textarea, select) { box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; padding: 3px 6px; border: 1px solid var(--doc-border, #dde3eb); border-radius: 4px; color: var(--doc-fg, #000000); background: var(--doc-bg, #ffffff); font: inherit; font-size: 12px; line-height: 1.5; }
+.plugin select:focus-visible { outline: none; background: var(--doc-bg-2, #f6f8fb); }
 .plugin-editor textarea { resize: vertical; min-height: 54px; max-height: 40vh; }
 .plugin-editor .plugin-submit { background: var(--doc-accent, #1b4994); color: var(--doc-accent-fg, #ffffff); border-color: transparent; }
 .plugin-editor-notice { color: var(--doc-danger, #b53030); font-size: 11px; }

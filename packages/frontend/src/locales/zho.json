@@ -1,4 +1,8 @@
 {
+    "version": "版本",
+    "Unsaved drafts": "未保存的草稿",
+    "Choose an unsaved draft": "选择未保存的草稿",
+    "Read-only version": "只读版本",
     "Site title": "站点名称",
     "Edit site title": "编辑站点名称",
     "Editor font": "编辑器字体",
@@ -414,5 +418,12 @@
     "Your name": "您的姓名",
     "Email (optional)": "电子邮件（可选）",
     "Shared workspace": "共享工作区",
-    "Join": "加入"
+    "Join": "加入",
+    "View": "视图",
+    "Cards": "卡片",
+    "List": "列表",
+    "SVG icon": "SVG 图标",
+    "SVG icon path": "SVG 图标路径",
+    "SVG icon path (optional)": "SVG 图标路径（可选）",
+    "Leave empty to remove. New Pages entries copy this path; existing pages keep their own icon.": "留空可移除。新添加的 Pages 页面会复制此路径，现有页面保留各自的图标。"
 }

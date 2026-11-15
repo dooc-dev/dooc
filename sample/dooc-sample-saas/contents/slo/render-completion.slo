@@ -1,0 +1,9 @@
+name: Render completion
+kind: Job
+service: contents/worker/render-queue.worker
+owner: contents/team/platform.team
+window_days: 30
+target_percent: 99
+total_events: 200000
+good_events: 198600
+summary: Accepted render jobs complete within 60 seconds; user cancellations are excluded.

@@ -16,6 +16,25 @@ const n = (id: string, ...children: DocNode[]): DocNode => ({ id, children });
 const tree = [n("a", n("b", n("c"))), n("d")];
 
 describe("manifest", () => {
+    it("preserves version settings through every manifest writer", () => {
+        for (const value of [
+            { docs: ["guide"] },
+            { docs: [{ library: "termth" }] },
+            { center_contents: [{ file: "docs/guide.md" }] },
+        ]) {
+            const manifest = parseManifest({
+                ...value,
+                version: { major: 1, minor: 4, patch: "git" },
+            });
+            expect(manifest.errors).toEqual([]);
+            expect(manifest.version).toEqual({ major: 1, minor: 4, patch: "git" });
+            expect(parseManifestText(serializeManifest(manifest.tree, manifest))).toEqual(manifest);
+            expect(
+                parseManifest({ ...value, version: { major: "1" } }).errors.length,
+            ).toBeGreaterThan(0);
+        }
+    });
+
     it("builds a tree from `id` / `{ id: [children] }` / `{ id: null }` and validates id shape and duplicates", () => {
         expect(parseManifest(["a", { b: ["c"] }, { d: null }]).tree).toEqual([
             n("a"),

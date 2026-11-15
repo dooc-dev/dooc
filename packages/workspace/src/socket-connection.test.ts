@@ -14,6 +14,22 @@ afterEach(() => {
     vi.unstubAllGlobals();
 });
 
+it("requires the viewer backend to enforce read-only access and hides branch actions", async () => {
+    vi.stubGlobal("localStorage", { setItem: vi.fn() });
+    client.request.mockImplementation(async (op) =>
+        op === "hello" ? { readOnly: false } : [{ id: "main", label: "Docs", branch: "main" }],
+    );
+    await expect(connectServer("ws://localhost:5301/api/workspace", false, true)).rejects.toThrow(
+        "read-only",
+    );
+    expect(workspaceConnections()).toEqual([]);
+    client.request.mockImplementation(async (op) =>
+        op === "hello" ? { readOnly: true } : [{ id: "main", label: "Docs", branch: "main" }],
+    );
+    const connection = await connectServer("ws://localhost:5301/api/workspace", false, true);
+    expect(connection.openBranch).toBeUndefined();
+});
+
 it("reuses the attached local branch and preserves its HTTP transport", async () => {
     vi.stubGlobal("localStorage", { setItem: vi.fn() });
     const fetch = vi.fn().mockResolvedValue(new Response("local"));
@@ -23,10 +39,10 @@ it("reuses the attached local branch and preserves its HTTP transport", async ()
         return { id: "worktree", label: "feature/docs", branch: "feature" };
     });
 
-    const main = await connectServer("ws://localhost:5179/api/workspace", true);
+    const main = await connectServer("ws://localhost:3000/server", true);
     expect(main).toMatchObject({
         id: "local",
-        family: "ws://localhost:5179/api/workspace",
+        family: "ws://localhost:3000/server",
         branch: "main",
     });
     expect(main.client).toBe(client);
@@ -44,9 +60,9 @@ it("reuses the attached local branch and preserves its HTTP transport", async ()
 it("keeps storage workspaces available without offering Git branch operations", async () => {
     vi.stubGlobal("localStorage", { setItem: vi.fn() });
     client.request.mockResolvedValue([{ id: "main", label: "Documents" }]);
-    const storage = await connectServer("ws://localhost:5181/api/workspace");
+    const storage = await connectServer("http://localhost:5181");
     expect(storage).toMatchObject({
-        family: "ws://localhost:5181/api/workspace",
+        family: "ws://localhost:5181/server",
         label: "Documents",
     });
     expect(storage.openBranch).toBeUndefined();
@@ -62,7 +78,7 @@ it("keeps the local draft identity when the chooser connects before branch navig
     vi.resetModules();
     const { connectServer } = await import("./socket-connection.js");
 
-    const chosen = await connectServer("http://localhost:5182");
+    const chosen = await connectServer("http://localhost:5182/api/workspace");
     expect(chosen.id).toBe("local");
     expect(await connectServer("ws://localhost:5182/api/workspace", true)).toBe(chosen);
     expect(workspaceConnections()).toEqual([chosen]);

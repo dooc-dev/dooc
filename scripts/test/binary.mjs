@@ -11,12 +11,15 @@ import {
     rmSync,
     writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { WebSocket } from "ws";
 
 const root = mkdtempSync(join(tmpdir(), "dooc-binary-"));
 const binary = join(root, "dooc");
 let server;
+let socket;
 try {
     copyFileSync(resolve(process.argv[2] ?? "build/bin/dooc"), binary);
     chmodSync(binary, 0o755);
@@ -46,6 +49,39 @@ try {
     run("build", "html", "--url_preview=embed");
     assert.ok(!existsSync(join(root, "dist/bundle.zip")));
     const html = readFileSync(join(root, "dist/bundle.html"), "utf8");
+    run("viewer", "build", "web", "--client", "--server", "--out", "viewer-web");
+    assert.ok(existsSync(join(root, "viewer-web/assets/workspace-worker.js")));
+    assert.ok(!existsSync(join(root, "viewer-web/assets/edit.js")));
+    for (const product of ["editor", "viewer"]) {
+        const output = `${product}-web-mcp`;
+        run(
+            product,
+            "build",
+            "web",
+            "--all",
+            "--relay-url",
+            "https://relay.example",
+            "--out",
+            output,
+        );
+        assert.ok(existsSync(join(root, output, "assets/mcp.js")));
+        assert.ok(existsSync(join(root, output, "assets/workspace-worker.js")));
+        assert.equal(
+            JSON.parse(readFileSync(join(root, output, "dooc-client.json"), "utf8")).relayUrl,
+            "https://relay.example",
+        );
+    }
+    assert.match(run("mcp", "relay", "--help"), /DOOC_MCP_RELAY_SECRET/);
+    run("editor", "build", "node", "--all", "--out", "editor-node");
+    assert.match(
+        readFileSync(join(root, "editor-node/start.mjs"), "utf8"),
+        /@dooc-dev\/dooc\/runtime/,
+    );
+    assert.match(
+        readFileSync(join(root, "editor-node/client/index.html"), "utf8"),
+        /\/client\/assets\/client.js/,
+    );
+    assert.ok(!existsSync(join(root, "editor-node/client/assets/workspace-worker.js")));
     assert.match(html, /data:font\/woff2;base64,/);
     assert.match(html, /Hello/);
     assert.match(html, /data-mermaid="pending"/);
@@ -116,7 +152,7 @@ try {
             });
             const readOutput = (data) => {
                 output += data;
-                const match = /http:\/\/localhost:\d+\//.exec(output);
+                const match = /http:\/\/localhost:\d+\/client\//.exec(output);
                 if (match) {
                     clearTimeout(timer);
                     resolveUrl(match[0].replace("localhost", "127.0.0.1"));
@@ -126,36 +162,69 @@ try {
             server.stderr.on("data", readOutput);
         });
     };
-    const url = await startServer("edit", join(root, "dooc.yaml"), "0");
+    const probe = createServer();
+    await new Promise((resolve) => probe.listen(0, "127.0.0.1", resolve));
+    const port = probe.address().port;
+    await new Promise((resolve) => probe.close(resolve));
+    const url = await startServer(
+        "editor",
+        "run",
+        "node",
+        "--all",
+        "--project",
+        join(root, "dooc.yaml"),
+        "--port",
+        String(port),
+    );
     for (const path of [
         "guide",
         "assets/edit.js",
         "assets/ui.js",
         "assets/code.js",
         "assets/code-worker.js",
-        "assets/code-grammars.json",
         "assets/graph.js",
-        "assets/graph/schema-graph-global.js",
         "assets/fonts/udev-gothic-regular.woff2",
     ]) {
         const response = await fetch(new URL(path, url), { signal: AbortSignal.timeout(30_000) });
         assert.equal(response.status, 200, path);
         assert.ok((await response.arrayBuffer()).byteLength > 0, path);
     }
+    socket = new WebSocket(`ws://127.0.0.1:${port}/server`, { origin: `http://localhost:${port}` });
+    await once(socket, "open");
+    let nextId = 0;
     const request = async (path, body) => {
-        const response = await fetch(new URL(path, url), {
-            signal: AbortSignal.timeout(30_000),
-            ...(body === undefined
-                ? {}
-                : {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json", Origin: url.slice(0, -1) },
-                      body: JSON.stringify(body),
-                  }),
+        const id = ++nextId;
+        const response = await new Promise((resolve, reject) => {
+            const timer = setTimeout(
+                () => reject(new Error(`Workspace request timed out: ${path}`)),
+                30_000,
+            );
+            const receive = (data) => {
+                const message = JSON.parse(data.toString());
+                if (message.id !== id) return;
+                clearTimeout(timer);
+                socket.off("message", receive);
+                if (message.error) reject(new Error(message.error));
+                else resolve(message.value);
+            };
+            socket.on("message", receive);
+            socket.send(
+                JSON.stringify({
+                    id,
+                    op: "http",
+                    args: {
+                        url: `/${path}`,
+                        method: body === undefined ? "GET" : "POST",
+                        headers: { "content-type": "application/json" },
+                        body: body === undefined ? "" : JSON.stringify(body),
+                    },
+                }),
+            );
         });
-        assert.equal(response.status, 200, await response.clone().text());
-        return response.json();
+        assert.equal(response.status, 200, response.body);
+        return JSON.parse(response.body);
     };
+    assert.ok((await request("assets/code-grammars.json")).length > 0);
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><circle r="4"/></svg>';
     await request("api/icon", { file: "guide.md", data: Buffer.from(svg).toString("base64") });
     assert.ok(existsSync(join(root, "files/svg/guide-icon.svg")));
@@ -189,16 +258,11 @@ try {
     await request("api/translation", { file: "guide.md", language: "eng", added: false });
     assert.equal(existsSync(translated), false);
     assert.equal((await request("api/doc?file=guide.md&lang=eng")).raw, source);
-    const lint = await fetch(new URL("api/lint", url), {
-        signal: AbortSignal.timeout(30_000),
-        method: "POST",
-        headers: { "Content-Type": "application/json", Origin: url.slice(0, -1) },
-        body: JSON.stringify({ lang: "ja", body: "私は彼は好きな食べ物について話した。\n" }),
+    const lint = await request("api/lint", {
+        lang: "ja",
+        body: "私は彼は好きな食べ物について話した。\n",
     });
-    assert.equal(lint.status, 200, await lint.clone().text());
-    assert.ok(
-        (await lint.json()).findings.some((finding) => finding.ruleId === "no-doubled-joshi"),
-    );
+    assert.ok(lint.findings.some((finding) => finding.ruleId === "no-doubled-joshi"));
     const editorExited = once(server, "exit");
     server.kill();
     await editorExited;
@@ -209,6 +273,7 @@ try {
         "Standalone CLI, MCP, bundles, editor assets, Japanese lint, self update, and documentation packaging passed.",
     );
 } finally {
+    socket?.terminate();
     if (server && server.exitCode === null && server.signalCode === null) {
         const exited = once(server, "exit");
         server.kill();

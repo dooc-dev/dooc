@@ -1,0 +1,10 @@
+title: Define portal acceptance criteria
+status: Todo
+priority: Normal
+due: 2026-11-19
+points: 2
+project: contents/project/customer-portal.project
+milestone: contents/milestone/portal-beta.milestone
+assignee: alice
+blocked_by:
+  - contents/issue/draft-onboarding.issue

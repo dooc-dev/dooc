@@ -1,0 +1,117 @@
+<!--fig
+title: Editor header
+desc: A screen-like source editor header, with named callouts and explicit save and validation states.
+-->
+<style>
+  .ux-figure { --ink: var(--doc-fg, #263244); --muted: var(--doc-fg-2, #526174);
+    --line: var(--doc-border-2, #c4ccd8); --paper: var(--doc-bg, #fff);
+    --rail: var(--doc-rail, #f3f6fa); --raised: var(--doc-panel-2, #eef2f7);
+    --accent: var(--doc-accent, #1b4994); color: var(--ink); font: 14px/1.6 system-ui, sans-serif;
+    container-type: inline-size; }
+  .ux-figure * { box-sizing: border-box; }
+  .ux-figure .map-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 24px; }
+  .ux-figure .map-controls p { flex: 1 1 240px; margin: 0; color: var(--muted); }
+  .ux-figure .map-controls label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .ux-figure input { accent-color: var(--accent); }
+  .ux-figure :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .ux-figure .screen-map { max-width: 100%; overflow-x: auto; scrollbar-width: thin;
+    scrollbar-color: var(--line) var(--paper); }
+  .ux-figure svg { display: block; width: 100%; min-width: 800px; height: auto; color: var(--ink); }
+  .ux-figure svg text { fill: currentColor; font: 13px system-ui, sans-serif; }
+  .ux-figure .muted, .ux-figure .muted text { fill: var(--muted); }
+  .ux-figure .accent { fill: var(--accent); }
+  .ux-figure .code, .ux-figure .code text { font: 12px ui-monospace, monospace; }
+  .ux-figure .ui-line { fill: none; stroke: var(--line); stroke-width: 1; }
+  .ux-figure .ui-icon { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .ux-figure .callouts path { fill: none; stroke: var(--accent); stroke-width: 1.2; }
+  .ux-figure .callouts circle { fill: var(--paper); stroke: var(--accent); stroke-width: 1.5; }
+  .ux-figure .callouts text { fill: var(--accent); font-size: 16px; font-weight: 600; }
+  .ux-figure:not(:has(.map-names:checked)) .callouts { visibility: hidden; }
+  .ux-figure .map-hint { display: none; margin: 0 0 16px; color: var(--muted); font-size: 12px; }
+  .ux-figure dl { margin: 20px 0 0; }
+  .ux-figure dl > div { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 8px 20px;
+    padding: 12px 0; border-top: 1px solid var(--line); }
+  .ux-figure dt { font-weight: 600; }
+  .ux-figure dd { margin: 0; color: var(--muted); }
+  .ux-figure h3 { margin: 28px 0 8px; font-size: 16px; }
+  .ux-figure p { margin: 0; }
+  @container (max-width: 800px) { .ux-figure .map-hint { display: block; } }
+  @container (max-width: 420px) {
+    .ux-figure dl > div { grid-template-columns: 1fr; gap: 4px; }
+  }
+
+  .ux-figure ::selection { background: var(--accent); color: var(--doc-accent-fg, #fff); }
+  .ux-figure .map-controls { padding: 4px 0; }
+  .ux-figure .map-controls label { min-height: 36px; }
+  .ux-figure .map-controls input { width: 16px; height: 16px; }
+  .ux-figure table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+  .ux-figure th, .ux-figure td { text-align: left; padding: 10px 12px 10px 0; border-top: 1px solid var(--line); vertical-align: top; }
+  .ux-figure td:nth-child(2) { white-space: nowrap; }
+  .ux-figure .state-dot { display: inline-block; width: 9px; height: 9px; margin-right: 8px; border-radius: 50%; background: var(--state); }
+</style>
+<div class="ux-figure">
+  <div class="map-controls">
+    <p>Header above the source editor, with <b>Split view</b> enabled.</p>
+    <label><input class="map-names" type="checkbox" checked>Show area names</label>
+  </div>
+  <div class="screen-map" tabindex="0" role="region" aria-label="Editor header diagram; scroll horizontally on smaller screens">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 560" role="img" aria-labelledby="header-title header-description">
+      <title id="header-title">The dooc editor header, with named controls</title>
+      <desc id="header-description">A source editor with page language at the left of its header, two workspace and branch selectors in the center for split view, and Validate and apply, Save, Split view, View settings and Open workspace at the right. Blue lines connect each name to its control.</desc>
+      <rect x="24" y="144" width="1032" height="260" rx="4" fill="var(--paper)"/>
+      <path class="ui-line" d="M24 188h1032"/>
+      <g aria-hidden="true">
+        <g class="ui-icon"><circle cx="48" cy="166" r="7"/><ellipse cx="48" cy="166" rx="3" ry="7"/><path d="M41 166h14m88-2 4 4 4-4"/></g>
+        <text x="64" y="171">English</text>
+        <text x="370" y="171">main / project</text><path d="M370 179h100" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="542" y="171" class="muted">review / project</text>
+        <g class="ui-icon"><path d="m494 164 4 4 4-4m164-4 4 4 4-4"/></g>
+        <g class="ui-icon" transform="translate(813 156)"><path d="m5 5-4 5 4 5m10-10 4 5-4 5M7 10l2 2 4-5"/></g>
+        <g fill="none" stroke="var(--doc-ok, #1f7a32)" stroke-width="1.5" stroke-linejoin="round" transform="translate(861 156)"><path d="M3 3h11l3 3v11H3zM6 3v5h7V3M6 17v-6h8v6"/></g>
+        <rect x="900" y="151" width="32" height="30" rx="3" fill="var(--raised)"/>
+        <g class="ui-icon" transform="translate(906 156)"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M10 3v14"/></g>
+        <g class="ui-icon" transform="translate(954 156)"><path d="M2 5h16M2 15h16M7 2v6m6 4v6"/></g>
+        <g class="ui-icon" transform="translate(1002 156)"><path d="M2 5h6l2 2h8v10H2zM2 5V3h6l2 2"/></g>
+        <g class="code"><g class="muted" text-anchor="end"><text x="48" y="224">1</text><text x="48" y="252">2</text><text x="48" y="280">3</text><text x="48" y="308">4</text><text x="48" y="336">5</text><text x="48" y="364">6</text></g>
+          <text x="66" y="224">Keep the team's decisions close to the work.</text>
+          <text x="66" y="280" class="accent">## First review</text>
+          <text x="66" y="336">- Name an owner for the document.</text>
+          <text x="66" y="364">- Review the page before sharing it.</text>
+        </g>
+      </g>
+      <rect x="24" y="144" width="1032" height="260" rx="4" class="ui-line"/>
+      <g class="callouts" aria-hidden="true">
+        <g><text x="48" y="60">Page language</text><path d="M104 72v40l-10 54"/><circle cx="94" cy="166" r="3"/></g>
+        <g><text x="342" y="60">Workspace and branch</text><path d="M430 72v40l10 54"/><circle cx="440" cy="166" r="3"/></g>
+        <g><text x="666" y="60">Validate and apply</text><path d="M760 72v40l63 54"/><circle cx="823" cy="166" r="3"/></g>
+        <g><text x="924" y="60">Save</text><path d="M946 72v40l-75 54"/><circle cx="871" cy="166" r="3"/></g>
+        <g><text x="740" y="458">Split view</text><path d="M848 452h68V182"/><circle cx="916" cy="182" r="3"/></g>
+        <g><text x="740" y="502">View settings</text><path d="M892 496h72V182"/><circle cx="964" cy="182" r="3"/></g>
+        <g><text x="740" y="546">Open workspace</text><path d="M924 540h88V182"/><circle cx="1012" cy="182" r="3"/></g>
+      </g>
+    </svg>
+  </div>
+  <p class="map-hint">Scroll the diagram horizontally to inspect each area.</p>
+  <dl>
+    <div><dt>Page language</dt><dd>Select the page language or use <b>Add translation</b>. This changes document content, not the language of the application controls.</dd></div>
+    <div><dt>Workspace and branch</dt><dd>Select the workspace and branch for the active pane, or use <b>Create branch</b>. Split view shows one selector per pane; the active pane is underlined.</dd></div>
+    <div><dt>Validate and apply</dt><dd>Format and check the whole page. Shortcut: <b>Shift+Alt+F</b>. Inspect any diagnostics before continuing; publishing remains a separate build step.</dd></div>
+    <div><dt>Save</dt><dd>Write the page to its workspace. Shortcut: <b>Ctrl+S</b>. <b>Auto save</b> performs this automatically when enabled.</dd></div>
+    <div><dt>Split view</dt><dd>Open or close a second preview pane. Each preview keeps its own page, language and workspace selection.</dd></div>
+    <div><dt>View settings</dt><dd>Choose editor theme, editor font and application language. Toggle <b>Auto validate</b>, <b>Auto save</b>, <b>Source mapping</b>, <b>Show Git changes</b> and <b>Wrap lines</b>. Preview theme and viewer font remain in the preview pane.</dd></div>
+    <div><dt>Open workspace</dt><dd>Open a local folder, browser workspace, Git clone or server connection for the active pane.</dd></div>
+  </dl>
+  <h3>Read the control states</h3>
+  <table>
+    <thead><tr><th>Control</th><th>State</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><th>Save</th><td><span class="state-dot" style="--state:var(--doc-ok, #1f7a32)" aria-hidden="true"></span>Saved</td><td>The write succeeded.</td></tr>
+      <tr><th>Save</th><td><span class="state-dot" style="--state:var(--doc-warn, #b97600)" aria-hidden="true"></span>Pending</td><td>Manual changes have not been saved.</td></tr>
+      <tr><th>Save</th><td><span class="state-dot" style="--state:var(--doc-danger, #b53030)" aria-hidden="true"></span>Failed</td><td>Read the error and retry after fixing its cause.</td></tr>
+      <tr><th>Validate</th><td><span class="state-dot" style="--state:var(--doc-ok, #1f7a32)" aria-hidden="true"></span>Passed</td><td>The current validation completed successfully.</td></tr>
+      <tr><th>Validate</th><td><span class="state-dot" style="--state:var(--doc-danger, #b53030)" aria-hidden="true"></span>Errors</td><td>Inspect the diagnostics in the source editor.</td></tr>
+      <tr><th>Validate</th><td><span class="state-dot" style="--state:var(--muted)" aria-hidden="true"></span>Pending</td><td>The current draft has not been validated.</td></tr>
+      <tr><th>Validate</th><td><span class="state-dot" style="--state:var(--doc-info, #0277bd)" aria-hidden="true"></span>Checking</td><td>Validation is in progress.</td></tr>
+    </tbody>
+  </table>
+</div>

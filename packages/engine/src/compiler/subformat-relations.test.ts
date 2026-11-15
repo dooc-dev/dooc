@@ -9,7 +9,7 @@ import { createDocOps } from "./ops.js";
 import { loadSubformat, subformatRelations, subformatResponse } from "./subformats.js";
 
 test("derives subformat relations from schema references", () => {
-    const root = resolve(import.meta.dirname, "../../../../dooc-docs");
+    const root = resolve(import.meta.dirname, "../../../../sample/dooc-sample-saas");
     const model = subformatRelations(root, readManifest(root).subformats ?? []);
     const edges = model.edges.map(({ from, field, to, list }) =>
         [from, field, to, list ? "[]" : ""].join(" "),
@@ -26,7 +26,9 @@ test("derives subformat relations from schema references", () => {
 
 test("offers record files for reference fields and saves the chosen one", () => {
     const root = mkdtempSync(join(tmpdir(), "dooc-ref-"));
-    cpSync(resolve(import.meta.dirname, "../../../../dooc-docs"), root, { recursive: true });
+    cpSync(resolve(import.meta.dirname, "../../../../sample/dooc-sample-saas"), root, {
+        recursive: true,
+    });
     const config = readManifest(root).subformats?.find((item) => item.ext === "container");
     if (!config) throw new Error("container subformat missing");
     const network = loadSubformat(root, config).fields.find((field) => field.name === "network");

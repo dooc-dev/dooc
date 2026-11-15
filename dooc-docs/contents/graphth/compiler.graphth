@@ -1,0 +1,22 @@
+[manifest]: dooc.yaml @source
+[pages]: Markdown pages @source
+[assets]: Diagrams and media @source
+[records]: Schemas and records @source
+[parse]: Parse and validate @engine
+[resolve]: Resolve references and variants @engine
+[compile]: Compiled document @engine
+[viewer]: Viewer and editor @output
+[html]: Standalone HTML @output
+[zip]: Source ZIP @output
+[manifest] -> [parse]
+[pages] -> [parse]
+[records] -> [parse]
+[parse] -> [resolve]
+[assets] -> [resolve]
+[resolve] -> [compile]
+[compile] -> [viewer]
+[compile] -> [html]
+[manifest] --> [zip]: source files
+[pages] --> [zip]
+[assets] --> [zip]
+[records] --> [zip]

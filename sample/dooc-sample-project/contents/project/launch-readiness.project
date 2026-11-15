@@ -1,0 +1,12 @@
+{
+  "name": "Launch readiness",
+  "status": "Planned",
+  "team": "contents/team/platform.team",
+  "owner": "erin",
+  "target": "2026-12-18",
+  "summary": "Collect acceptance evidence, name the support owner and review the pilot launch decision.",
+  "docs": [
+    "contents/md/workflow.md",
+    "contents/md/decisions.md"
+  ]
+}

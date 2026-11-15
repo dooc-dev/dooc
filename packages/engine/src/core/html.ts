@@ -463,6 +463,9 @@ export const termsHtml = (
 export const resourceDownloadHtml = (file: string, href: string): string =>
     `<a class="resource-download" href="${escapeHtml(href)}" download="${escapeHtml(textfileName(file))}" data-resource-download title="${escapeHtml(`Download ${textfileName(file)}`)}" aria-label="${escapeHtml(`Download ${textfileName(file)}`)}"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2v10m-4-4 4 4 4-4M3 13v4h14v-4"/></svg></a>`;
 
+const RESOURCE_EXPAND =
+    '<button class="resource-download resource-expand" type="button" data-resource-expand title="Expand" aria-label="Expand"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8V3h5M17 8V3h-5M3 12v5h5M17 12v5h-5"/></svg></button>';
+
 const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
     const html = blockContentHtml(b, ctx, seg);
     if (!ctx.downloads || (b.type === "code" && b.unavailable)) return html;
@@ -487,7 +490,7 @@ const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
     // Code blocks carry the download beside their copy button; other blocks get a corner overlay.
     const copy = '<button class="codecopy"';
     if (b.type === "code" && html.includes(copy)) return html.replace(copy, link + copy);
-    return `<div class="downloadable-resource"><div class="resource-download-tools">${link}</div>${html}</div>`;
+    return `<div class="downloadable-resource"><div class="resource-download-tools">${RESOURCE_EXPAND}${link}</div>${html}</div>`;
 };
 
 const blockContentHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {

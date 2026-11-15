@@ -543,9 +543,9 @@ export const checkSite = (root: string, options: CheckOptions = {}): CheckReport
                     }
                     for (const [sourceFile, source] of compiled.sources) {
                         const candidate =
-                            language === sourceLanguage
-                                ? sourceFile
-                                : translationFile(sourceFile, language);
+                            language !== sourceLanguage && docs.has(sourceFile)
+                                ? translationFile(sourceFile, language)
+                                : sourceFile;
                         const file = cache.get(candidate) ? candidate : sourceFile;
                         for (const message of source.errors)
                             add(

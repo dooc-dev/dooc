@@ -1,37 +1,36 @@
-[settings]
-# `$` in [vars] is expanded by the shell that executes `run`, not by mise.
-env_shell_expand = false
-
 [tools]
 node = "22"
 pnpm = "10.28.2"
 bun = "1.4.4"
 
-# The manifest selects the project root. Relative paths use the invocation directory.
-[vars]
-resolve_manifest = 'r="$(if [ -n "$usage_manifest" ]; then cd "$MISE_ORIGINAL_CWD" && realpath -e "$usage_manifest"; else realpath -e dooc-docs/dooc.yaml; fi)"'
-viewer_plugins = 'if [ "$r" = "$(realpath -e dooc-docs/dooc.yaml)" ]; then export DOOC_VIEWER_PLUGINS="${DOOC_VIEWER_PLUGINS:-$PWD/examples/viewer-plugins/index.mjs}"; fi'
+[tasks.editor]
+description = "Run the editor with hot reload and a disposable feature playground"
+dir = "{{config_root}}"
+env = { DOOC_USER_DIR = "{{config_root}}/build/dev/editor/.dooc/user" }
+usage = 'flag "--port <port>" default="3000"'
+run = [
+  "node --import tsx scripts/dev-workspace.ts editor",
+  "pnpm exec tsx watch --clear-screen=false --include './packages/frontend/src/**' --include './packages/workspace/src/**' packages/server/src/cli.ts editor run node --client --server --mcp --viewer-plugins ./sample/examples/viewer-plugins/index.mjs --project build/dev/editor --port \"$usage_port\"",
+]
 
-[tasks.dev]
-description = "Start edit or view with hot reload and sample demo plugins. e.g. mise run dev view ../my-docs/dooc.yaml 5179"
-usage = '''
-arg "[mode]" default="edit" {
-  choices "edit" "view"
-}
-arg "[manifest]" default=""
-arg "[port]" default="5179"
-'''
-run = '{{vars.resolve_manifest}} && {{vars.viewer_plugins}} && pnpm run dev "$usage_mode" "$r" "$usage_port"'
+[tasks.viewer]
+description = "Run the viewer with hot reload and a fresh disposable workspace"
+dir = "{{config_root}}"
+usage = 'flag "--port <port>" default="3001"'
+run = [
+  "node --import tsx scripts/dev-workspace.ts viewer",
+  "pnpm exec tsx watch --clear-screen=false --include './packages/frontend/src/**' --include './packages/workspace/src/**' packages/server/src/cli.ts viewer run node --client --server --project build/dev/viewer --port \"$usage_port\"",
+]
 
 [tasks.dooc]
-description = "Run dooc from local source. e.g. mise run dooc edit dooc-docs/dooc.yaml"
+description = "Run the source CLI. e.g. mise run dooc editor run node --all --project dooc-docs"
 raw_args = true
 dir = "{{cwd}}"
 # The package.json script owns the entry path and keeps the caller's directory.
 run = 'pnpm --silent --dir "{{config_root}}" run dooc'
 
 [tasks.packed]
-description = "Build, then run the package the way an npm install would (packed files, bin entry). e.g. mise run packed edit dooc-docs/dooc.yaml"
+description = "Build and run the packaged CLI. e.g. mise run packed viewer run node --all --project dooc-docs"
 raw_args = true
 dir = "{{cwd}}"
 # The cache is disabled so every run installs the files that were just built.

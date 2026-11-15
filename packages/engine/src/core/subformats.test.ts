@@ -16,6 +16,8 @@ it("preserves explicit card title layouts and rejects invalid settings", () => {
         expect(() => parseSubformats([{ ...config, icon }])).toThrow("icon");
     for (const layouts of [
         {},
+        { view: "card" },
+        { view: "list" },
         { card_title: "subject" },
         { card_title: "" },
         { group_by: "status", sort_by: "due", sort_order: "desc" },
@@ -33,6 +35,8 @@ it("preserves explicit card title layouts and rejects invalid settings", () => {
         { group_by: 3 },
         { sort_by: null },
         { sort_order: "invalid" },
+        { view: "grid" },
+        { view: null },
     ]) {
         expect(() => parseSubformats([{ ...config, layouts }])).toThrow("layouts");
     }

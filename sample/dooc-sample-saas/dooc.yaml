@@ -1,0 +1,111 @@
+system:
+  default_lang: eng
+  files:
+    default_layout: false
+left_sidebar:
+  title:
+    eng: Field Notes · SaaS operations
+center_contents:
+  - file: contents/md/index.md
+    title: Operations overview
+  - file: contents/md/architecture.md
+    title: System architecture
+    children:
+      - subformat: vpc
+        title: Networks
+      - subformat: loadbalancer
+        title: Traffic
+      - subformat: container
+        title: Services
+      - subformat: worker
+        title: Workers
+      - subformat: datastore
+        title: Datastores
+      - subformat: log
+        title: Logs
+  - file: contents/md/reliability.md
+    title: Reliability & capacity
+    children:
+      - subformat: slo
+        title: Service objectives
+  - file: contents/md/runbooks.md
+    title: Incident response
+    children:
+      - subformat: incident
+        title: Incidents
+  - file: contents/md/releases.md
+    title: Release & recovery
+  - file: contents/md/ci.md
+    title: Record pipeline
+  - file: contents/md/ownership.md
+    title: Ownership
+    children:
+      - subformat: team
+        title: Teams
+json_subformats:
+  - ext: team
+    format: toml
+    schema: contents/json/team.schema.json
+    icon: contents/svg/icons/team.svg
+    layouts:
+      card_title: name
+      group_by: focus
+  - ext: vpc
+    format: toml
+    schema: contents/json/vpc.schema.json
+    icon: contents/svg/icons/vpc.svg
+    layouts:
+      card_title: name
+      group_by: provider
+  - ext: loadbalancer
+    format: yaml
+    schema: contents/json/loadbalancer.schema.json
+    icon: contents/svg/icons/loadbalancer.svg
+    layouts:
+      card_title: name
+      group_by: scheme
+  - ext: container
+    format: yaml
+    schema: contents/json/container.schema.json
+    icon: contents/svg/icons/container.svg
+    layouts:
+      card_title: name
+      group_by: runtime
+  - ext: worker
+    format: json
+    schema: contents/json/worker.schema.json
+    icon: contents/svg/icons/worker.svg
+    layouts:
+      card_title: name
+      group_by: trigger
+  - ext: datastore
+    format: toml
+    schema: contents/json/datastore.schema.json
+    icon: contents/svg/icons/datastore.svg
+    layouts:
+      card_title: name
+      group_by: kind
+  - ext: log
+    format: yaml
+    schema: contents/json/log.schema.json
+    icon: contents/svg/icons/log.svg
+    layouts:
+      card_title: name
+      group_by: category
+      sort_by: retention_days
+      sort_order: desc
+  - ext: slo
+    format: yaml
+    schema: contents/json/slo.schema.json
+    layouts:
+      card_title: name
+      group_by: kind
+  - ext: incident
+    format: yaml
+    schema: contents/json/incident.schema.json
+    layouts:
+      card_title: title
+      group_by: status
+      sort_by: started
+      sort_order: desc
+default_subformat_folder: contents/container

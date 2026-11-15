@@ -1,4 +1,5 @@
 import type { HmrBridge } from "../../server/src/hmr.js";
+import { mountDocumentVersions } from "./document-versions-ui.js";
 import { mountExtensions } from "./extensions-ui.js";
 import { mountFileUpload } from "./file-upload.js";
 import { mountFiles } from "./files-ui.js";
@@ -20,6 +21,7 @@ if (document.body.classList.contains("edit")) mountIdentity();
 mountUiLanguage();
 mountPlugins();
 mountResourceLibrary();
+mountDocumentVersions();
 
 if (document.body.classList.contains("edit")) {
     mountFiles();

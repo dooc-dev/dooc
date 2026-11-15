@@ -1,0 +1,9 @@
+{
+    "name": "taskplan",
+    "scopeName": "source.taskplan",
+    "patterns": [
+        { "match": "\\b(task|owner|status)\\b", "name": "keyword.control.taskplan" },
+        { "match": "\\b(todo|doing|done)\\b", "name": "constant.language.taskplan" },
+        { "begin": "\"", "end": "\"", "name": "string.quoted.double.taskplan" }
+    ]
+}

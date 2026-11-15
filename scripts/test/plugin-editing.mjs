@@ -1,7 +1,7 @@
 import { mountPlugins } from "../../packages/frontend/src/plugins-ui.ts";
 
-// Bundle with esbuild and run testPluginEditing() in a browser on a local HTTP origin.
-window.testPluginEditing = async () => {
+// Bundle with esbuild; run on a local HTTP origin, optionally passing a mock or login path.
+window.testPluginEditing = async (automaticPath) => {
     const assert = (condition, message) => {
         if (!condition) throw new Error(message);
     };
@@ -19,7 +19,8 @@ window.testPluginEditing = async () => {
         description = "Initial description",
         status = "open",
         version = 1;
-    let reads = 0,
+    let authorizations = 0,
+        reads = 0,
         writes = [],
         fail = false,
         release,
@@ -69,8 +70,16 @@ window.testPluginEditing = async () => {
         }
     };
     window.fetch = async (_url, init) => {
+        if (automaticPath && _url === `${location.origin}${automaticPath}`) {
+            assert(init.credentials === "same-origin", "Authorization must keep browser cookies");
+            authorizations++;
+            return new Response(null, { status: 204 });
+        }
         const request = JSON.parse(init.body);
-        if (request.action === "resolve") return Response.json({ plugin: "example" });
+        if (request.action === "resolve")
+            return Response.json({ plugin: "example", autoConnect: Boolean(automaticPath) });
+        if (request.action === "connect")
+            return Response.json({ url: `${location.origin}${automaticPath}` });
         if (request.action === "read") {
             reads++;
             if (holdRead) {
@@ -127,8 +136,9 @@ window.testPluginEditing = async () => {
     try {
         mountPlugins();
         await wait(() => document.querySelector('[data-plugin-action="read"]'));
-        document.querySelector('[data-plugin-action="read"]').click();
+        if (!automaticPath) document.querySelector('[data-plugin-action="read"]').click();
         await wait(() => document.querySelector('[data-actions-ready="true"]'));
+        assert(authorizations === (automaticPath ? 1 : 0), "Authorize the automatic demo once");
         const card = document.querySelector("[data-plugin]");
         const edit = card.querySelector('[data-plugin-action="edit"]');
         assert(

@@ -22,6 +22,7 @@ import { exportEntries } from "./export.js";
 import { filesSnapshot, updateFiles } from "./files.js";
 import { readManifest } from "./manifest.js";
 import { createDocOps } from "./ops.js";
+import { subformatResponse } from "./subformats.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -64,6 +65,53 @@ const fixture = (nested = true) => {
     write("files/one.issue", JSON.stringify({ title: "First <record>", status: "Todo" }));
     return { root, write, ops: createDocOps(root) };
 };
+
+it.each([
+    true,
+    false,
+])("copies a subformat icon once and keeps page overrides (nested: %s)", (nested) => {
+    const { root, ops, write } = fixture(nested);
+    const id = subformatPageId("issue");
+    const svg = '<svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="6"/></svg>';
+    write("files/type.svg", svg);
+    write("files/updated.svg", svg);
+    write("files/page.svg", svg);
+    expect(
+        subformatResponse(root, {
+            action: "icon",
+            ext: "issue",
+            value: "files/type.svg",
+            base: null,
+        }).status,
+    ).toBe(200);
+    expect(ops.addSubformat("issue", "Issues")).toEqual({ id });
+    expect(readManifest(root).files?.icons?.[id]).toBe("files/type.svg");
+    expect(compileSite(root).docs[0]?.icon).toBe(svg);
+    expect(
+        subformatResponse(root, {
+            action: "icon",
+            ext: "issue",
+            value: "files/updated.svg",
+            base: "files/type.svg",
+        }).status,
+    ).toBe(200);
+    expect(readManifest(root).files?.icons?.[id]).toBe("files/type.svg");
+    const manifest = readManifest(root);
+    if (!manifest.files?.icons) throw new Error("Missing page icons");
+    manifest.files.icons[id] = "files/page.svg";
+    write("dooc.yaml", serializeManifest(manifest.tree, manifest));
+    expect(ops.addSubformat("issue", "Duplicate")).toMatchObject({ status: 409 });
+    expect(
+        subformatResponse(root, {
+            action: "icon",
+            ext: "issue",
+            value: "",
+            base: "files/updated.svg",
+        }).status,
+    ).toBe(200);
+    expect(readManifest(root).files?.icons?.[id]).toBe("files/page.svg");
+    expect(compileSite(root).docs[0]?.icon).toBe(svg);
+});
 
 it.each([
     true,
@@ -168,7 +216,16 @@ it("keeps sidebar card references in sync with authored document links and embed
         [5, 6, 7, 16].map((line) => ({
             file: "files/md/guide.md",
             line,
-            href: "/_docs/files/md/guide.md",
+            href: "/guide",
+        })),
+    );
+    if (!("id" in guide)) throw new Error("Guide was not created");
+    expect(ops.move(guide.id, subformatPageId("issue"))).not.toHaveProperty("error");
+    expect(references()).toEqual(
+        [5, 6, 7, 16].map((line) => ({
+            file: "files/md/guide.md",
+            line,
+            href: "/issue/guide",
         })),
     );
     write("files/md/guide.md", "No references.\n");
@@ -210,7 +267,7 @@ it.each([
         subformat: { ext: "issue" },
     });
     const site = siteFrom(compiled);
-    expect(docPath(site.entries, id)).toBe(`/${id}`);
+    expect(docPath(site.entries, id)).toBe("/issue");
     const nav = navGroupsHtml("edit", site);
     expect(nav).toContain('type="file" accept=".svg,image/svg+xml"');
     expect(nav).toContain('class="nav-icon-clear"');

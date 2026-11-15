@@ -1,0 +1,62 @@
+<!--fig
+title: Atlas milestones and review gates
+desc: A dated roadmap places the current review before the portal beta, migration target and final launch review.
+-->
+<style>
+
+  .project-roadmap { color: var(--doc-fg, #172534); background: var(--doc-bg, #fff); font: 14px/1.6 system-ui, sans-serif; container-type: inline-size; }
+  .project-roadmap * { box-sizing: border-box; }
+  .project-roadmap h2 { margin: 0 0 12px; font-size: clamp(23px, 4cqw, 32px); line-height: 1.2; letter-spacing: -.025em; text-wrap: balance; }
+  .project-roadmap h3 { margin: 0 0 10px; font-size: 17px; line-height: 1.4; }
+  .project-roadmap p { margin: 0 0 16px; max-width: 72ch; }
+  .project-roadmap .muted { color: var(--doc-fg-2, #465569); }
+  .project-roadmap .accent { color: var(--doc-accent, #1b4994); }
+  .project-roadmap .surface { background: var(--doc-panel-2, #f1f5fa); }
+  .project-roadmap .intro { padding: 28px 28px 22px; border-bottom: 1px solid var(--doc-border-2, #c4ccd8); }
+  .project-roadmap .body { padding: 24px 28px; }
+  .project-roadmap .split { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 28px; }
+  .project-roadmap .split > * { min-width: 0; }
+  .project-roadmap .foot { max-width: none; margin: 0; padding: 16px 28px; border-top: 1px solid var(--doc-border-2, #c4ccd8); color: var(--doc-fg-2, #465569); font-size: 12px; }
+  .project-roadmap code, .project-roadmap pre { font: 12px/1.75 ui-monospace, monospace; }
+  .project-roadmap pre { overflow: auto; margin: 0; padding: 16px; background: var(--doc-panel-2, #f1f5fa); }
+  .project-roadmap .scroll { overflow-x: auto; scrollbar-color: var(--doc-border-2, #c4ccd8) var(--doc-bg, #fff); }
+  .project-roadmap :focus-visible { outline: 2px solid var(--doc-accent, #1b4994); outline-offset: 4px; }
+  .project-roadmap ::selection { background: var(--doc-accent, #1b4994); color: var(--doc-accent-fg, #fff); }
+  .project-roadmap table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .project-roadmap caption { text-align: left; font-weight: 650; margin-bottom: 10px; }
+  .project-roadmap th, .project-roadmap td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--doc-border, #dde3eb); vertical-align: top; }
+  .project-roadmap th { font-weight: 650; }
+  .project-roadmap thead { background: var(--doc-panel-2, #f1f5fa); }
+  .project-roadmap details { border-top: 1px solid var(--doc-border-2, #c4ccd8); padding: 16px 28px; }
+  .project-roadmap summary { cursor: pointer; font-weight: 650; }
+  .project-roadmap summary:hover { color: var(--doc-accent, #1b4994); }
+  .project-roadmap details[open] summary { margin-bottom: 16px; }
+  .project-roadmap .rail { margin: 0; padding: 0; list-style: none; }
+  .project-roadmap .rail li { padding: 12px 0; border-bottom: 1px solid var(--doc-border, #dde3eb); }
+  .project-roadmap .rail strong { display: block; }
+  .project-roadmap svg { display: block; max-width: 100%; height: auto; }
+  @container (max-width: 580px) { .project-roadmap .split { grid-template-columns: 1fr; gap: 24px; } .project-roadmap .intro, .project-roadmap .body, .project-roadmap details, .project-roadmap .foot { padding-left: 16px; padding-right: 16px; } }
+
+
+  .project-roadmap svg { width: 100%; min-width: 760px; }
+
+</style>
+<section class="project-roadmap" aria-label="Atlas milestones and review gates">
+
+  <header class="intro"><h2>Separate progress from permission to launch.</h2><p class="muted">Fictional plan · Review date: 16 November 2026<br>Bars show planned project dates. Diamonds show milestone gates.</p></header>
+  <div class="body scroll" tabindex="0" role="region" aria-label="Project roadmap; scroll horizontally on narrow screens">
+    <svg viewBox="0 0 960 350" role="img" aria-labelledby="roadmap-title roadmap-desc"><title id="roadmap-title">Project dates and milestones</title><desc id="roadmap-desc">Customer portal runs from November 9 to 27, with beta on November 20. Tenant migration runs from November 2 to December 11; its rehearsal closed November 13. Launch review is due December 18. The review date is November 16.</desc>
+      <g font-family="system-ui, sans-serif" font-size="13" fill="var(--doc-fg-2, #465569)"><text x="180" y="28">2 Nov</text><text x="320" y="28">16 Nov</text><text x="460" y="28">30 Nov</text><text x="600" y="28">14 Dec</text><text x="680" y="28">21 Dec</text></g>
+      <g stroke="var(--doc-border, #dde3eb)"><path d="M180 45v240M320 45v240M460 45v240M600 45v240M670 45v240M180 130h670M180 220h670"/></g>
+      <path d="M320 40v265" stroke="var(--doc-accent, #1b4994)" stroke-dasharray="4 4"/>
+      <g font-family="system-ui, sans-serif" fill="var(--doc-fg, #172534)"><text x="0" y="87" font-size="15" font-weight="650">Customer portal</text><text x="0" y="109" font-size="12">Alice · Active</text><text x="0" y="177" font-size="15" font-weight="650">Tenant migration</text><text x="0" y="199" font-size="12">Dave · Active</text><text x="0" y="267" font-size="15" font-weight="650">Launch readiness</text><text x="0" y="289" font-size="12">Erin · Planned</text></g>
+      <rect x="250" y="70" width="180" height="18" fill="var(--doc-accent, #1b4994)"/>
+      <rect x="180" y="160" width="390" height="18" fill="var(--doc-fg-2, #465569)"/>
+      <g fill="var(--doc-bg, #fff)" stroke="var(--doc-fg, #172534)" stroke-width="2"><path d="m360 65 10 14-10 14-10-14z"/><path d="m290 155 10 14-10 14-10-14z"/><path d="m640 245 10 14-10 14-10-14z"/></g>
+      <g font-family="system-ui, sans-serif" font-size="12" fill="var(--doc-fg, #172534)"><text x="350" y="116">Beta · 20 Nov</text><text x="445" y="84">Target · 27 Nov</text><text x="220" y="205">Rehearsal closed · 13 Nov</text><text x="585" y="174">Target · 11 Dec</text><text x="665" y="265">Launch review · 18 Dec</text><text x="329" y="320" fill="var(--doc-accent, #1b4994)">Current review · 16 Nov</text></g>
+    </svg>
+  </div>
+  <div class="body"><div class="scroll" tabindex="0" role="region" aria-label="Milestone acceptance gates"><table><thead><tr><th>Gate</th><th>State</th><th>Accept when</th></tr></thead><tbody><tr><th>Migration rehearsal · 13 Nov</th><td>Closed</td><td>Tenant data reconciles and rollback has been exercised</td></tr><tr><th>Portal beta · 20 Nov</th><td>Open</td><td>Invitation outcomes and acceptance criteria are reviewed</td></tr><tr><th>Launch review · 18 Dec</th><td>Open</td><td>Delivery, recovery and support evidence are accepted</td></tr></tbody></table></div></div>
+  <p class="foot">Launch readiness has no committed start date in its record, so only its review gate is plotted. A target date is not a deployment authorization.</p>
+
+</section>

@@ -6,7 +6,7 @@ afterEach(() => {
     vi.useRealTimers();
 });
 
-it("rejects requests in the reconnect gap and sends only on the next live socket", async () => {
+it("keeps reconnect listeners and sends requests only on a live socket", async () => {
     vi.useFakeTimers();
     const sockets: Socket[] = [];
     class Socket extends EventTarget {
@@ -32,9 +32,18 @@ it("rejects requests in the reconnect gap and sends only on the next live socket
     }
     vi.stubGlobal("WebSocket", Socket);
     const client = createWorkspaceClient(webSocketPort("ws://test"));
+    const reload = vi.fn();
+    const identify = vi.fn();
+    client.opened(reload);
+    client.opened(identify);
     const first = sockets[0] as Socket;
     const queued = client.request("hello");
     first.open();
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(identify).toHaveBeenCalledTimes(1);
+    const late = vi.fn();
+    client.opened(late);
+    expect(late).toHaveBeenCalledTimes(1);
     expect(first.sent).toHaveLength(1);
     first.close();
     await expect(queued).rejects.toThrow("Workspace connection closed");
@@ -42,6 +51,9 @@ it("rejects requests in the reconnect gap and sends only on the next live socket
     await vi.advanceTimersByTimeAsync(300);
     const next = sockets[1] as Socket;
     next.open();
+    expect(reload).toHaveBeenCalledTimes(2);
+    expect(identify).toHaveBeenCalledTimes(2);
+    expect(late).toHaveBeenCalledTimes(2);
     const fresh = client.request("hello");
     next.dispatchEvent(
         new MessageEvent("message", {

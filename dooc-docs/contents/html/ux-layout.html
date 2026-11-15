@@ -1,0 +1,155 @@
+<!--fig
+title: Editor screen layout
+desc: A screen-like view of the sidebar, two preview panes, and source editor, with named callouts.
+-->
+<style>
+  .ux-figure { --ink: var(--doc-fg, #263244); --muted: var(--doc-fg-2, #526174);
+    --line: var(--doc-border-2, #c4ccd8); --paper: var(--doc-bg, #fff);
+    --rail: var(--doc-rail, #f3f6fa); --raised: var(--doc-panel-2, #eef2f7);
+    --accent: var(--doc-accent, #1b4994); color: var(--ink); font: 14px/1.6 system-ui, sans-serif;
+    container-type: inline-size; }
+  .ux-figure * { box-sizing: border-box; }
+  .ux-figure .map-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 24px; }
+  .ux-figure .map-controls p { flex: 1 1 240px; margin: 0; color: var(--muted); }
+  .ux-figure .map-controls label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .ux-figure input { accent-color: var(--accent); }
+  .ux-figure :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .ux-figure .screen-map { max-width: 100%; overflow-x: auto; scrollbar-width: thin;
+    scrollbar-color: var(--line) var(--paper); }
+  .ux-figure svg { display: block; width: 100%; min-width: 800px; height: auto; color: var(--ink); }
+  .ux-figure svg text { fill: currentColor; font: 13px system-ui, sans-serif; }
+  .ux-figure .muted, .ux-figure .muted text { fill: var(--muted); }
+  .ux-figure .accent { fill: var(--accent); }
+  .ux-figure .page-title { font-size: 23px; font-weight: 600; }
+  .ux-figure .section-title { font-size: 16px; font-weight: 600; }
+  .ux-figure .code, .ux-figure .code text { font: 12px ui-monospace, monospace; }
+  .ux-figure .ui-line { fill: none; stroke: var(--line); stroke-width: 1; }
+  .ux-figure .ui-icon { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .ux-figure .callouts path { fill: none; stroke: var(--accent); stroke-width: 1.2; }
+  .ux-figure .callouts circle { fill: var(--paper); stroke: var(--accent); stroke-width: 1.5; }
+  .ux-figure .callouts text { fill: var(--accent); font-size: 16px; font-weight: 600; }
+  .ux-figure:not(:has(.map-names:checked)) .callouts { visibility: hidden; }
+  .ux-figure .map-hint { display: none; margin: 0 0 16px; color: var(--muted); font-size: 12px; }
+  .ux-figure dl { margin: 20px 0 0; }
+  .ux-figure dl > div { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 8px 20px;
+    padding: 12px 0; border-top: 1px solid var(--line); }
+  .ux-figure dt { font-weight: 600; }
+  .ux-figure dd { margin: 0; color: var(--muted); }
+  .ux-figure h3 { margin: 28px 0 8px; font-size: 16px; }
+  .ux-figure p { margin: 0; }
+  @container (max-width: 800px) { .ux-figure .map-hint { display: block; } }
+  @container (max-width: 420px) {
+    .ux-figure dl > div { grid-template-columns: 1fr; gap: 4px; }
+  }
+
+  .ux-figure ::selection { background: var(--accent); color: var(--doc-accent-fg, #fff); }
+  .ux-figure .map-controls { padding: 4px 0; }
+  .ux-figure .map-controls label { min-height: 36px; }
+  .ux-figure .map-controls input { width: 16px; height: 16px; }
+</style>
+<div class="ux-figure">
+  <div class="map-controls">
+    <p>Editor with <b>Split view</b> enabled.</p>
+    <label><input id="layout-names" class="map-names" type="checkbox" checked>Show area names</label>
+  </div>
+  <div class="screen-map" tabindex="0" role="region" aria-label="Editor layout diagram; scroll horizontally on smaller screens">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 700" role="img" aria-labelledby="layout-title layout-description">
+      <title id="layout-title">The dooc editor, with named areas</title>
+      <desc id="layout-description">From left to right: the sidebar, an active preview pane, a second preview pane, and the editor panel. The editor header sits above the source editor. Lines connect names to each area and to both resize handles.</desc>
+      <defs>
+        <clipPath id="layout-screen"><rect x="24" y="144" width="1032" height="436" rx="4"/></clipPath>
+        <g id="layout-theme" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 2v12"/></g>
+        <g id="layout-language" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><ellipse cx="8" cy="8" rx="2.5" ry="6"/><path d="M2 8h12"/></g>
+        <g id="layout-file" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1h7l4 4v12H3zM10 1v4h4M6 9h5M6 12h5"/></g>
+      </defs>
+      <g clip-path="url(#layout-screen)">
+        <rect x="24" y="144" width="1032" height="436" fill="var(--paper)"/>
+        <rect x="24" y="144" width="184" height="436" fill="var(--rail)"/>
+        <rect x="208" y="144" width="512" height="436" fill="var(--rail)"/>
+        <path d="M208 144h256" stroke="var(--accent)" stroke-width="3"/>
+        <path class="ui-line" d="M24 184h1032M208 144v436M464 144v436M720 144v436"/>
+
+        <g aria-hidden="true">
+          <g class="ui-icon" transform="translate(40 157)"><circle cx="4" cy="12" r="3"/><circle cx="12" cy="4" r="3"/><path d="m6 10 4-4m4 4 3-3"/></g>
+          <text x="66" y="168">dooc documentation</text>
+          <rect x="32" y="198" width="168" height="30" rx="2" fill="var(--raised)"/>
+          <use href="#layout-file" x="42" y="204"/><text x="66" y="218">Getting started</text>
+          <path class="ui-line" d="M49 232v51m0-36h10m-10 30h10"/>
+          <text x="70" y="252" class="muted">Install</text><text x="70" y="282" class="muted">First document</text>
+          <use href="#layout-file" x="42" y="310"/><text x="66" y="324">Writing content</text>
+          <use href="#layout-file" x="42" y="348"/><text x="66" y="362">Using the editor</text>
+          <use href="#layout-file" x="42" y="386"/><text x="66" y="400">Development</text>
+          <rect x="32" y="452" width="168" height="116" rx="5" fill="none" stroke="var(--line)"/>
+          <text x="42" y="446" class="muted" style="font-size:11px">project / Local</text>
+          <g class="ui-icon"><path d="M44 470h5l2 3h10v11H44zM44 503v13h17M49 511v-6m5 6v-10m5 10v-8M45 536h15v15H45zM49 540h7v7h-7z"/></g>
+          <text x="70" y="481">Files</text><text x="70" y="513">Library</text><text x="70" y="547">Subformats</text>
+
+          <use href="#layout-theme" x="382" y="156"/><text x="408" y="169" class="muted">Aa</text><use href="#layout-language" x="436" y="156"/>
+          <text x="232" y="235" class="page-title">Overview</text>
+          <text x="232" y="269">One folder. One document.</text>
+          <text x="232" y="292" class="muted">Write files. Preview changes.</text>
+          <text x="232" y="336" class="section-title">Start in a minute</text>
+          <rect x="232" y="352" width="208" height="72" rx="3" fill="var(--raised)"/>
+          <text x="244" y="379" class="code">dooc init</text><text x="244" y="402" class="code">Editor</text>
+          <text x="232" y="456">Open the printed URL.</text>
+          <text x="232" y="481" class="accent">Read the editor guide</text>
+          <path d="M232 486h137" stroke="var(--accent)"/>
+
+          <use href="#layout-theme" x="638" y="156"/><text x="664" y="169" class="muted">Aa</text><use href="#layout-language" x="692" y="156"/>
+          <text x="488" y="235" class="page-title">Editor</text>
+          <text x="488" y="269">Your changes, as you type.</text>
+          <text x="488" y="315" class="section-title">Work with pages</text>
+          <text x="488" y="348">Choose a page in the sidebar.</text>
+          <text x="488" y="373">Edit its source on the right.</text>
+          <text x="488" y="398">The preview updates live.</text>
+          <text x="488" y="447" class="section-title">Save your work</text>
+          <rect x="488" y="463" width="208" height="50" rx="3" fill="var(--raised)"/>
+          <text x="500" y="493" class="code">Ctrl+S</text>
+
+          <use href="#layout-language" x="732" y="156"/><text x="754" y="169" style="font-size:11px">English</text>
+          <text x="834" y="169" style="font-size:11px">project</text>
+          <g class="ui-icon"><path d="m928 159-4 5 4 5m6-10 4 5-4 5M950 157h12v14h-12zM953 157v5h6v-5M977 157h14v14h-14zM984 157v14M1006 159h13m-13 9h13m-9-11v4m5 5v4M1032 157h5l2 3h10v11h-17z"/></g>
+          <g class="code">
+            <g class="muted" text-anchor="end"><text x="744" y="211">1</text><text x="744" y="237">2</text><text x="744" y="263">3</text><text x="744" y="289">4</text><text x="744" y="315">5</text><text x="744" y="341">6</text><text x="744" y="367">7</text><text x="744" y="393">8</text><text x="744" y="419">9</text><text x="744" y="445">10</text><text x="744" y="471">11</text></g>
+            <text x="758" y="211" class="code accent"># Overview</text>
+            <text x="758" y="263" class="code">One folder. One document.</text>
+            <text x="758" y="289" class="code">Write files. Preview changes.</text>
+            <text x="758" y="341" class="code accent">## Start in a minute</text>
+            <rect x="752" y="350" width="294" height="104" fill="var(--raised)"/>
+            <text x="758" y="367" class="code muted">```sh</text>
+            <text x="758" y="393" class="code">dooc init</text>
+            <text x="758" y="419" class="code">Editor</text>
+            <text x="758" y="445" class="code muted">```</text>
+            <text x="758" y="497" class="code">Open the printed URL.</text>
+          </g>
+        </g>
+      </g>
+      <rect x="24" y="144" width="1032" height="436" rx="4" class="ui-line"/>
+      <g class="callouts" aria-hidden="true">
+        <g><text x="44" y="60">Sidebar</text><path d="M76 72v40l30 88"/><circle cx="106" cy="200" r="3"/></g>
+        <g><text x="274" y="60">Preview pane</text><path d="M326 72v40l-58 105"/><circle cx="268" cy="217" r="3"/></g>
+        <g><text x="458" y="114">Pane actions</text><path d="M450 110h-22v54"/><circle cx="428" cy="164" r="3"/></g>
+        <g><text x="545" y="60">Second pane</text><path d="M595 72v40l-58 105"/><circle cx="537" cy="217" r="3"/></g>
+        <g><text x="852" y="60">Editor header</text><path d="M906 72v92"/><circle cx="906" cy="164" r="3"/></g>
+        <g><text x="44" y="638">Resize sidebar</text><path d="M190 632h18V495"/><circle cx="208" cy="495" r="3"/></g>
+        <g><text x="548" y="638">Resize editor</text><path d="M680 632h40V505"/><circle cx="720" cy="505" r="3"/></g>
+        <g><text x="792" y="638">Source editor</text><path d="M846 620v-25l-26-176"/><circle cx="820" cy="419" r="3"/></g>
+        <g><text x="1016" y="682" text-anchor="end">Editor panel</text><path d="M1025 676h31V550"/><circle cx="1056" cy="550" r="3"/></g>
+      </g>
+    </svg>
+  </div>
+  <p class="map-hint">Scroll the diagram horizontally to inspect each area.</p>
+  <dl>
+    <div><dt>Sidebar</dt><dd>The site title, document tree, and workspace tools. Close it to give the page more room.</dd></div>
+    <div><dt>Resize sidebar</dt><dd>Drag the sidebar's right edge to change its width.</dd></div>
+    <div><dt>Preview pane</dt><dd>The rendered page. Click a pane to make it active; navigation and editing then apply to that pane.</dd></div>
+    <div><dt>Pane actions</dt><dd>Preview theme, viewer font, and page language. These controls are hidden inside the development pane.</dd></div>
+    <div><dt>Second pane</dt><dd>Split view adds another preview with its own page, language, theme, and workspace selection.</dd></div>
+    <div><dt>Resize editor</dt><dd>Drag the separator at the editor panel's left edge, or focus it and use the arrow keys.</dd></div>
+    <div><dt>Editor panel</dt><dd>The right side of the editing screen: an editor header above the source editor.</dd></div>
+    <div><dt>Editor header</dt><dd>Page language, workspace and branch, validate, save, split view, view settings, and open workspace.</dd></div>
+    <div><dt>Source editor</dt><dd>The Markdown, record, or schema for the active page, with diagnostics as you type.</dd></div>
+  </dl>
+  <h3>In <code>Viewer</code></h3>
+  <p>The viewer keeps the sidebar and one rendered page. There is no source editor; page actions offer the preview theme and viewer font.</p>
+</div>

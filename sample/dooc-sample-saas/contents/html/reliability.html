@@ -1,0 +1,66 @@
+<!--fig
+title: The remaining error budget
+desc: Three synthetic service objectives compare observed success, permitted failures and consumed error budget over a rolling 30-day window.
+-->
+<style>
+
+  .saas-reliability { color: var(--doc-fg, #172534); background: var(--doc-bg, #fff); font: 14px/1.6 system-ui, sans-serif; container-type: inline-size; }
+  .saas-reliability * { box-sizing: border-box; }
+  .saas-reliability h2 { margin: 0 0 12px; font-size: clamp(23px, 4cqw, 32px); line-height: 1.2; letter-spacing: -.025em; text-wrap: balance; }
+  .saas-reliability h3 { margin: 0 0 10px; font-size: 17px; line-height: 1.4; }
+  .saas-reliability p { margin: 0 0 16px; max-width: 72ch; }
+  .saas-reliability .muted { color: var(--doc-fg-2, #465569); }
+  .saas-reliability .accent { color: var(--doc-accent, #1b4994); }
+  .saas-reliability .surface { background: var(--doc-panel-2, #f1f5fa); }
+  .saas-reliability .intro { padding: 28px 28px 22px; border-bottom: 1px solid var(--doc-border-2, #c4ccd8); }
+  .saas-reliability .body { padding: 24px 28px; }
+  .saas-reliability .split { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 28px; }
+  .saas-reliability .split > * { min-width: 0; }
+  .saas-reliability .foot { max-width: none; margin: 0; padding: 16px 28px; border-top: 1px solid var(--doc-border-2, #c4ccd8); color: var(--doc-fg-2, #465569); font-size: 12px; }
+  .saas-reliability code, .saas-reliability pre { font: 12px/1.75 ui-monospace, monospace; }
+  .saas-reliability pre { overflow: auto; margin: 0; padding: 16px; background: var(--doc-panel-2, #f1f5fa); }
+  .saas-reliability .scroll { overflow-x: auto; scrollbar-color: var(--doc-border-2, #c4ccd8) var(--doc-bg, #fff); }
+  .saas-reliability :focus-visible { outline: 2px solid var(--doc-accent, #1b4994); outline-offset: 4px; }
+  .saas-reliability ::selection { background: var(--doc-accent, #1b4994); color: var(--doc-accent-fg, #fff); }
+  .saas-reliability table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .saas-reliability caption { text-align: left; font-weight: 650; margin-bottom: 10px; }
+  .saas-reliability th, .saas-reliability td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--doc-border, #dde3eb); vertical-align: top; }
+  .saas-reliability th { font-weight: 650; }
+  .saas-reliability thead { background: var(--doc-panel-2, #f1f5fa); }
+  .saas-reliability details { border-top: 1px solid var(--doc-border-2, #c4ccd8); padding: 16px 28px; }
+  .saas-reliability summary { cursor: pointer; font-weight: 650; }
+  .saas-reliability summary:hover { color: var(--doc-accent, #1b4994); }
+  .saas-reliability details[open] summary { margin-bottom: 16px; }
+  .saas-reliability .rail { margin: 0; padding: 0; list-style: none; }
+  .saas-reliability .rail li { padding: 12px 0; border-bottom: 1px solid var(--doc-border, #dde3eb); }
+  .saas-reliability .rail strong { display: block; }
+  .saas-reliability svg { display: block; max-width: 100%; height: auto; }
+  @container (max-width: 580px) { .saas-reliability .split { grid-template-columns: 1fr; gap: 24px; } .saas-reliability .intro, .saas-reliability .body, .saas-reliability details, .saas-reliability .foot { padding-left: 16px; padding-right: 16px; } }
+
+
+  .saas-reliability .budget + .budget { margin-top: 30px; }
+  .saas-reliability .budget-title, .saas-reliability .budget-detail { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; }
+  .saas-reliability .budget-title strong { font-variant-numeric: tabular-nums; }
+  .saas-reliability .budget-detail { margin-top: 10px; color: var(--doc-fg-2, #465569); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .saas-reliability meter { display: block; width: 100%; height: 18px; appearance: none; border: 0; background: var(--doc-bg-3, #eef2f7); }
+  .saas-reliability meter::-webkit-meter-bar { background: var(--doc-bg-3, #eef2f7); border: 0; border-radius: 0; height: 18px; }
+  .saas-reliability meter::-webkit-meter-optimum-value { background: var(--doc-accent, #1b4994); }
+  .saas-reliability meter::-moz-meter-bar { background: var(--doc-accent, #1b4994); }
+  .saas-reliability meter.review::-webkit-meter-optimum-value { background: var(--doc-warn, #b97600); }
+  .saas-reliability meter.review::-moz-meter-bar { background: var(--doc-warn, #b97600); }
+  .saas-reliability .review-note { margin: 8px 0 0; font-size: 12px; }
+  .saas-reliability .formula { margin-top: 16px; font-size: 13px; }
+
+</style>
+<section class="saas-reliability" aria-label="The remaining error budget">
+
+  <header class="intro"><h2>Three objectives. One review window.</h2><p class="muted">Rolling 30 days ending 16 November 2026, 09:00 UTC. Synthetic request and job counts; bars show budget consumed, not availability.</p></header>
+  <div class="body budgets">
+    <div class="budget"><div class="budget-title"><h3>API availability</h3><strong>40% consumed</strong></div><meter min="0" max="100" value="40" aria-label="API error budget: 40 percent consumed">40%</meter><div class="budget-detail"><span>99.96% observed · 99.9% target</span><span>400 bad / 1,000 allowed</span></div></div>
+    <div class="budget"><div class="budget-title"><h3>Render completion</h3><strong>70% consumed</strong></div><meter class="review" min="0" max="100" value="70" aria-label="Render error budget: 70 percent consumed">70%</meter><div class="budget-detail"><span>99.30% observed · 99.0% target</span><span>1,400 bad / 2,000 allowed</span></div><p class="review-note">Review capacity before accepting optional bulk work.</p></div>
+    <div class="budget"><div class="budget-title"><h3>Search availability</h3><strong>32% consumed</strong></div><meter min="0" max="100" value="32" aria-label="Search error budget: 32 percent consumed">32%</meter><div class="budget-detail"><span>99.84% observed · 99.5% target</span><span>800 bad / 2,500 allowed</span></div></div>
+  </div>
+  <details><summary>Inspect the event counts and calculation</summary><div class="scroll" tabindex="0" role="region" aria-label="Service objective measurements"><table><thead><tr><th>Objective</th><th>Good events</th><th>Eligible events</th><th>Budget left</th></tr></thead><tbody><tr><th>API</th><td>999,600</td><td>1,000,000</td><td>600 bad events</td></tr><tr><th>Render</th><td>198,600</td><td>200,000</td><td>600 bad events</td></tr><tr><th>Search</th><td>499,200</td><td>500,000</td><td>1,700 bad events</td></tr></tbody></table></div><p class="formula">Budget consumed = (eligible − good) ÷ (eligible × (1 − target))</p></details>
+  <p class="foot">An event budget is not an outage-duration budget. Use short-window impact signals for paging and the long window for reliability decisions.</p>
+
+</section>

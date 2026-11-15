@@ -19,6 +19,7 @@ export interface Subformat {
     /** Local SVG file shown wherever the subformat is listed. */
     icon?: string;
     layouts?: {
+        view?: "card" | "list";
         card_title?: string;
         group_by?: string;
         sort_by?: string;
@@ -92,14 +93,16 @@ export const parseSubformats = (input: unknown): Subformat[] => {
                 typeof value.layouts !== "object" ||
                 Array.isArray(value.layouts) ||
                 Object.entries(value.layouts).some(([key, item]) =>
-                    key === "sort_order"
-                        ? item !== "asc" && item !== "desc"
-                        : !["card_title", "group_by", "sort_by"].includes(key) ||
-                          typeof item !== "string",
+                    key === "view"
+                        ? item !== "card" && item !== "list"
+                        : key === "sort_order"
+                          ? item !== "asc" && item !== "desc"
+                          : !["card_title", "group_by", "sort_by"].includes(key) ||
+                            typeof item !== "string",
                 ))
         )
             throw new Error(
-                "Subformat layouts accept card_title, group_by, sort_by field names and sort_order (asc or desc)",
+                "Subformat layouts accept view (card or list), card_title, group_by, sort_by field names and sort_order (asc or desc)",
             );
         if (
             value.icon !== undefined &&

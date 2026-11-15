@@ -55,6 +55,33 @@ describe("classifyChange", () => {
 });
 
 describe("watchProject", () => {
+    it("keeps watching after a staging directory disappears without hiding other errors", async () => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-watch-staging-"));
+        mkdirSync(join(root, "content"));
+        const seen: string[] = [];
+        const project = watchProject(root, root, (_kind, files) => seen.push(...files), 10);
+        const watcher = vi.mocked(fs.watch).mock.results.at(-1)?.value as fs.FSWatcher;
+        try {
+            expect(() =>
+                watcher.emit(
+                    "error",
+                    Object.assign(new Error("Removed directory"), { code: "ENOENT" }),
+                ),
+            ).not.toThrow();
+            writeFileSync(join(root, "content/guide.md"), "Still watching\n");
+            await expect.poll(() => seen, { timeout: 2000 }).toContain("content/guide.md");
+            expect(() =>
+                watcher.emit(
+                    "error",
+                    Object.assign(new Error("Permission denied"), { code: "EACCES" }),
+                ),
+            ).toThrow("Permission denied");
+        } finally {
+            project.close();
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("refreshes the workspace when a branch changes outside the document root", async () => {
         const root = mkdtempSync(join(tmpdir(), "dooc-hmr-branch-"));
         const docs = join(root, "docs");

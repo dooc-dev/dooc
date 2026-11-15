@@ -1,0 +1,67 @@
+<!--fig
+title: API connection incident timeline
+desc: A synthetic incident moves from detection through mitigation to monitoring; the 09:15 checkpoint remains in the future.
+-->
+<style>
+
+  .saas-incident { color: var(--doc-fg, #172534); background: var(--doc-bg, #fff); font: 14px/1.6 system-ui, sans-serif; container-type: inline-size; }
+  .saas-incident * { box-sizing: border-box; }
+  .saas-incident h2 { margin: 0 0 12px; font-size: clamp(23px, 4cqw, 32px); line-height: 1.2; letter-spacing: -.025em; text-wrap: balance; }
+  .saas-incident h3 { margin: 0 0 10px; font-size: 17px; line-height: 1.4; }
+  .saas-incident p { margin: 0 0 16px; max-width: 72ch; }
+  .saas-incident .muted { color: var(--doc-fg-2, #465569); }
+  .saas-incident .accent { color: var(--doc-accent, #1b4994); }
+  .saas-incident .surface { background: var(--doc-panel-2, #f1f5fa); }
+  .saas-incident .intro { padding: 28px 28px 22px; border-bottom: 1px solid var(--doc-border-2, #c4ccd8); }
+  .saas-incident .body { padding: 24px 28px; }
+  .saas-incident .split { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 28px; }
+  .saas-incident .split > * { min-width: 0; }
+  .saas-incident .foot { max-width: none; margin: 0; padding: 16px 28px; border-top: 1px solid var(--doc-border-2, #c4ccd8); color: var(--doc-fg-2, #465569); font-size: 12px; }
+  .saas-incident code, .saas-incident pre { font: 12px/1.75 ui-monospace, monospace; }
+  .saas-incident pre { overflow: auto; margin: 0; padding: 16px; background: var(--doc-panel-2, #f1f5fa); }
+  .saas-incident .scroll { overflow-x: auto; scrollbar-color: var(--doc-border-2, #c4ccd8) var(--doc-bg, #fff); }
+  .saas-incident :focus-visible { outline: 2px solid var(--doc-accent, #1b4994); outline-offset: 4px; }
+  .saas-incident ::selection { background: var(--doc-accent, #1b4994); color: var(--doc-accent-fg, #fff); }
+  .saas-incident table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .saas-incident caption { text-align: left; font-weight: 650; margin-bottom: 10px; }
+  .saas-incident th, .saas-incident td { text-align: left; padding: 12px 10px; border-bottom: 1px solid var(--doc-border, #dde3eb); vertical-align: top; }
+  .saas-incident th { font-weight: 650; }
+  .saas-incident thead { background: var(--doc-panel-2, #f1f5fa); }
+  .saas-incident details { border-top: 1px solid var(--doc-border-2, #c4ccd8); padding: 16px 28px; }
+  .saas-incident summary { cursor: pointer; font-weight: 650; }
+  .saas-incident summary:hover { color: var(--doc-accent, #1b4994); }
+  .saas-incident details[open] summary { margin-bottom: 16px; }
+  .saas-incident .rail { margin: 0; padding: 0; list-style: none; }
+  .saas-incident .rail li { padding: 12px 0; border-bottom: 1px solid var(--doc-border, #dde3eb); }
+  .saas-incident .rail strong { display: block; }
+  .saas-incident svg { display: block; max-width: 100%; height: auto; }
+  @container (max-width: 580px) { .saas-incident .split { grid-template-columns: 1fr; gap: 24px; } .saas-incident .intro, .saas-incident .body, .saas-incident details, .saas-incident .foot { padding-left: 16px; padding-right: 16px; } }
+
+
+  .saas-incident .timeline { margin: 0; padding: 0; list-style: none; }
+  .saas-incident .timeline li { display: grid; grid-template-columns: 55px minmax(0, 1fr); gap: 16px; padding: 0 0 22px; position: relative; }
+  .saas-incident .timeline time { font: 13px/1.7 ui-monospace, monospace; color: var(--doc-fg-2, #465569); }
+  .saas-incident .timeline li > div { border-left: 1px solid var(--doc-border-2, #c4ccd8); padding-left: 18px; }
+  .saas-incident .timeline p { margin: 5px 0 0; font-size: 13px; color: var(--doc-fg-2, #465569); }
+  .saas-incident .timeline .current strong { color: var(--doc-accent, #1b4994); }
+  .saas-incident .timeline .future > div { border-left-style: dashed; }
+  .saas-incident .open-question { margin-top: 24px; padding: 16px; background: var(--doc-panel-2, #f1f5fa); font-size: 13px; }
+
+</style>
+<section class="saas-incident" aria-label="API connection incident timeline">
+
+  <header class="intro"><h2>Recovery is a checkpoint, not a guess.</h2><p class="muted">API connection saturation · SEV2 · 16 November 2026<br>Synthetic incident timeline as of 09:00 UTC.</p></header>
+  <div class="body split">
+    <ol class="timeline" aria-label="Incident timeline in UTC">
+      <li><time>08:10</time><div><strong>Impact detected</strong><p>Valid API requests time out; database connections are saturated.</p></div></li>
+      <li><time>08:16</time><div><strong>Response established</strong><p>Platform takes the lead. Discretionary changes are paused.</p></div></li>
+      <li><time>08:24</time><div><strong>Admission reduced</strong><p>Optional batch work is limited while accepted work is preserved.</p></div></li>
+      <li><time>08:42</time><div><strong>Errors recover</strong><p>Representative requests succeed. Dependency headroom is checked.</p></div></li>
+      <li class="current"><time>09:00</time><div><strong>Monitoring</strong><p>Release hold remains. Pool limits are still under investigation.</p></div></li>
+      <li class="future"><time>09:15</time><div><strong>Next checkpoint</strong><p>Incident lead reviews recovery evidence and the next update.</p></div></li>
+    </ol>
+    <aside class="response"><h3>Evidence before closure</h3><ul class="rail"><li><strong>User path</strong><span class="muted">Representative reads and writes succeed for the affected scope.</span></li><li><strong>Dependencies</strong><span class="muted">Connection pressure and queue age remain stable through observation.</span></li><li><strong>Ownership</strong><span class="muted">A named owner accepts follow-ups and the release decision.</span></li></ul><p class="open-question"><strong>Still unknown</strong><br>The cause is not confirmed. Reduced errors alone do not explain why connections saturated.</p></aside>
+  </div>
+  <details><summary>Example customer update</summary><p>API requests have recovered and we are monitoring stability. We have paused discretionary changes while we verify database connection headroom. Our next update is at 09:15 UTC.</p><p class="muted">Illustrative message only. Replace scope and observations with verified incident evidence before use.</p></details>
+
+</section>

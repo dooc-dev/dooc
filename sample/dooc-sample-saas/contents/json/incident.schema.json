@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "title": "Incident",
+  "required": [
+    "title",
+    "severity",
+    "status",
+    "started",
+    "service",
+    "owner",
+    "runbook",
+    "summary"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Title"
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "SEV1",
+        "SEV2",
+        "SEV3"
+      ],
+      "title": "Severity"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "Investigating",
+        "Mitigating",
+        "Monitoring",
+        "Resolved"
+      ],
+      "title": "Status"
+    },
+    "started": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Started at"
+    },
+    "resolved": {
+      "type": "string",
+      "format": "date-time",
+      "title": "Resolved at"
+    },
+    "service": {
+      "title": "Workload",
+      "anyOf": [
+        {
+          "$ref": "container.schema.json#/$defs/ref"
+        },
+        {
+          "$ref": "worker.schema.json#/$defs/ref"
+        }
+      ]
+    },
+    "owner": {
+      "$ref": "team.schema.json#/$defs/ref",
+      "title": "Owner"
+    },
+    "runbook": {
+      "type": "string",
+      "pattern": "^contents/md/[a-z0-9-]+\\.md$",
+      "title": "Runbook"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "title": "Response summary"
+    }
+  },
+  "examples": [
+    {
+      "title": "API connection saturation",
+      "severity": "SEV2",
+      "status": "Monitoring",
+      "started": "2026-11-16T08:10:00Z",
+      "service": "contents/container/api.container",
+      "owner": "contents/team/platform.team",
+      "runbook": "contents/md/runbooks.md",
+      "summary": "Valid requests timed out while database connections were saturated. Errors recovered at 08:42 after optional batch admission was reduced. Pool limits are a suspected contributor; the cause remains under investigation. Next checkpoint: 09:15 UTC. The release hold remains active."
+    }
+  ],
+  "additionalProperties": false
+}

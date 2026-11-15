@@ -66,12 +66,14 @@ export const createWorkspaceClient = (port: WorkspacePort): WorkspaceClient => {
 export const webSocketPort = (url: string): WorkspacePort => {
     let receive: (message: unknown) => void = () => {};
     let closed: () => void = () => {};
-    let opened: () => void = () => {};
+    const opened = new Set<() => void>();
     let socket: WebSocket;
     const connect = (): void => {
         const current = new WebSocket(url);
         socket = current;
-        current.addEventListener("open", () => opened());
+        current.addEventListener("open", () => {
+            for (const handler of opened) handler();
+        });
         current.addEventListener("message", (event) => {
             if (typeof event.data === "string") receive(JSON.parse(event.data));
         });
@@ -99,7 +101,7 @@ export const webSocketPort = (url: string): WorkspacePort => {
             closed = handler;
         },
         opened(handler) {
-            opened = handler;
+            opened.add(handler);
             if (socket.readyState === WebSocket.OPEN) handler();
         },
     };

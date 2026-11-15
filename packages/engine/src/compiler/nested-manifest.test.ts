@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -53,10 +53,10 @@ it("uses complete paths for identity, preserves ordered children and localizes t
     expect(compiled.title).toBe("ガイド");
     expect(Object.keys(compiled.iconVariants ?? {})).toEqual(["light", "dark"]);
     const site = siteFrom(compiled);
-    expect(docPath(site.entries, fileDocumentId("two/guide.md"))).toBe("/_docs/two/guide.md");
-    expect(resolveDocPath(site.entries, "/_docs/two/guide.md")).toBe(
-        fileDocumentId("two/guide.md"),
-    );
+    expect(docPath(site.entries, fileDocumentId("two/guide.md"))).toBe("/guide/guide");
+    expect(resolveDocPath(site.entries, "/guide/guide")).toBe(fileDocumentId("two/guide.md"));
+    expect(pageDataResponse(site, "/guide/guide").status).toBe(200);
+    expect(pageDataResponse(site, "/_docs/two/guide.md").status).toBe(404);
 });
 
 it("preserves nested configuration through document edits and file renames", () => {
@@ -64,7 +64,6 @@ it("preserves nested configuration through document edits and file renames", () 
     const ops = createDocOps(root);
     const added = ops.add("third", "Third", fileDocumentId("one/guide.md"));
     expect(added).toEqual({ id: fileDocumentId("files/md/third.md") });
-    expect(ops.move(fileDocumentId("two/guide.md"))).not.toHaveProperty("error");
     expect(ops.remove(fileDocumentId("files/md/third.md"))).not.toHaveProperty("error");
     updateFiles(root, {
         action: "rename",
@@ -72,6 +71,7 @@ it("preserves nested configuration through document edits and file renames", () 
         name: "renamed.md",
         revision: filesSnapshot(root).revision,
     });
+    expect(ops.move(fileDocumentId("two/renamed.md"))).not.toHaveProperty("error");
     expect(readFileSync(join(root, "one/guide.md"), "utf8")).toContain("two/renamed.md");
     expect(readManifest(root).titles).toEqual({ eng: "Guide", jpn: "ガイド" });
     expect(readManifest(root).tree.map((node) => node.file)).toEqual([
@@ -97,10 +97,47 @@ it("routes Unicode and reserved folder names without collisions or double decodi
     const site = siteFrom(compiled);
     for (const file of files) {
         const path = docPath(site.entries, fileDocumentId(file));
-        expect(path).toBe(`/_docs/${file.split("/").map(encodeURIComponent).join("/")}`);
+        expect(path).toBe(`/${encodeURIComponent(file.slice(file.lastIndexOf("/") + 1, -3))}`);
         expect(pageDataResponse(site, path).status).toBe(200);
         expect(resolveDocPath(site.entries, path)).toBe(fileDocumentId(file));
     }
+});
+
+it("rejects duplicate routes before adding, moving or renaming files", () => {
+    const { root } = fixture();
+    const ops = createDocOps(root);
+    const parent = fileDocumentId("one/guide.md");
+    const before = readFileSync(join(root, "dooc.yaml"), "utf8");
+    expect(ops.move(fileDocumentId("two/guide.md"))).toMatchObject({
+        status: 409,
+        error: "Duplicate page path: /guide",
+    });
+    expect(ops.addFile("guide.md", "Another guide")).toMatchObject({
+        status: 409,
+        error: "Duplicate page path: /guide",
+    });
+    expect(ops.addLibrary("guide", "Guide library")).toMatchObject({ status: 409 });
+    expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toBe(before);
+    expect(existsSync(join(root, "files/md/guide.md"))).toBe(false);
+
+    const added = ops.addFile("third.md", "Third", parent);
+    if (!("id" in added)) throw new Error("Document was not created");
+    const addedManifest = readFileSync(join(root, "dooc.yaml"), "utf8");
+    expect(ops.rename(added.id, "guide")).toMatchObject({ status: 409 });
+    expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toBe(addedManifest);
+    expect(existsSync(join(root, "files/md/third.md"))).toBe(true);
+    expect(existsSync(join(root, "files/md/guide.md"))).toBe(false);
+});
+
+it("reports duplicate and reserved routes in hand-written manifests", () => {
+    const { root, write } = fixture();
+    write(
+        "dooc.yaml",
+        stringify({ center_contents: [{ file: "one/guide.md" }, { file: "two/guide.md" }] }),
+    );
+    expect(readManifest(root).errors.join("\n")).toContain("Duplicate page path: /guide");
+    write("dooc.yaml", stringify({ center_contents: [{ file: "content/_git.md" }] }));
+    expect(readManifest(root).errors.join("\n")).toContain("Reserved page path: /_git");
 });
 
 it("updates only the selected title language and icon theme", () => {

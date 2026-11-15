@@ -9,6 +9,7 @@ import { compileSite } from "../../engine/src/compiler/compile.js";
 import { exportEntries } from "../../engine/src/compiler/export.js";
 import { projectRoot } from "../../engine/src/compiler/manifest.js";
 import { fetchPublicFile } from "../../engine/src/compiler/public-file.js";
+import { storedDocumentVersions } from "../../engine/src/compiler/stored-versions.js";
 import { buildBundle } from "./build.js";
 import { bundleClient } from "./serve.js";
 
@@ -29,6 +30,46 @@ beforeEach(() => {
     vi.mocked(bundleClient).mockClear();
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+it("records hash versions after artifact delivery and leaves failed builds unnumbered", async () => {
+    write("dooc.yaml", "version: {major: 1, minor: hash, patch: hash}\ndocs: [guide]\n");
+    write("content/guide.md", "Original\n");
+    const first = await buildBundle(root, { format: "html", urlPreview: "network" });
+    expect(first.version).toBe("1.0.0");
+    expect(first.data).toContain('<meta name="dooc-version" content="1.0.0">');
+    expect(storedDocumentVersions(root)).toEqual([]);
+    first.commitVersion?.();
+    write("content/guide.md", "Changed\n");
+    const next = await buildBundle(root, { format: "zip", urlPreview: "network" });
+    expect(next.version).toBe("1.0.1");
+    next.commitVersion?.();
+    write("content/guide.md", "![](missing.svg)\n");
+    await expect(buildBundle(root, { format: "zip" })).rejects.toThrow();
+    expect(storedDocumentVersions(root).map((row) => row.version)).toEqual(["1.0.0", "1.0.1"]);
+});
+
+it("reports committed Git versions and marks relevant working changes dirty", async () => {
+    write("content/guide.md", "Committed\n");
+    for (const args of [
+        ["init", "-b", "main"],
+        ["config", "user.name", "Test"],
+        ["config", "user.email", "test@example.com"],
+        ["add", "."],
+        ["commit", "-m", "Initial"],
+    ])
+        execFileSync("git", args, { cwd: root, stdio: "pipe" });
+    const clean = await buildBundle(root, { format: "zip", urlPreview: "network" });
+    expect(clean.version).toBe("0.0.0");
+    expect(clean.revision).toMatch(/^[a-f\d]{40}$/);
+    write("unrelated.txt", "Not referenced\n");
+    expect((await buildBundle(root, { format: "zip", urlPreview: "network" })).version).toBe(
+        "0.0.0",
+    );
+    write("content/guide.md", "Uncommitted\n");
+    const dirty = await buildBundle(root, { format: "zip", urlPreview: "network" });
+    expect(dirty.version).toBe("0.0.0+dirty");
+    expect(dirty.revision).toBe(clean.revision);
+});
 
 it.each([
     "static",

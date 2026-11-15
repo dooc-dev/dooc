@@ -1,0 +1,16 @@
+{
+  "id": "TASK-002",
+  "title": "Compare diagrams and media",
+  "status": "Done",
+  "priority": "Normal",
+  "due": "2026-11-20",
+  "progress": 100,
+  "estimate": 1,
+  "approved": true,
+  "owner": "bob",
+  "project": "contents/project/customer-portal.project",
+  "notes": "Open the media gallery and compare light and dark assets.",
+  "tags": ["previews"],
+  "review": { "reviewer": "Alice", "approved": true },
+  "updated": "2026-11-16T10:00:00Z"
+}
