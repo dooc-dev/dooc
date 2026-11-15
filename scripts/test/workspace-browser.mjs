@@ -94,7 +94,7 @@ export async function testWorkspaceChooserTheme(page) {
                 { editor, preview },
             );
             await page.locator("#phead #editor-open-workspace").click();
-            const chooser = page.locator(".workspace-dialog[open]");
+            const chooser = page.locator(".workspace-dialog");
             await chooser.waitFor();
             assert.equal(await chooser.count(), 1);
             await chooser.locator('select[name="mode"]').selectOption("new");
