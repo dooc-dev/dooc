@@ -32,8 +32,8 @@ If the command times out or is interrupted, the workflow keeps running. Inspect 
 
 ## What the dooc workflow does
 
-1. Builds and tests the standalone executable on Linux and macOS, x64 and arm64, with the new version already applied so each executable embeds the version it is released as.
-2. Bumps `package.json` and runs `pnpm check`.
+1. Builds and tests the standalone executable on Linux and macOS, x64 and arm64, with the new version already applied so each executable embeds the version it is released as. In parallel, a separate job bumps `package.json`, runs `pnpm check`, and packs the tested npm package.
+2. Waits for both validation jobs to succeed, then downloads the tested npm package, its versioned `package.json`, and the four executables. The publishing job uses that exact package without rebuilding it.
 3. Writes `SHA256SUMS` for the four archives.
 4. Commits `Release dooc-v<version>`, tags it, and pushes both atomically. Nothing is public before this step.
 5. Publishes `@dooc-dev/dooc` to npm.
@@ -41,6 +41,8 @@ If the command times out or is interrupted, the workflow keeps running. Inspect 
 7. Updates `Formula/dooc.rb` and the pinned version in the [Install](contents/md/install.md) example from the published `SHA256SUMS`, and pushes that as a second commit. The source repository is also the Homebrew tap, so this push is what makes Homebrew serve the new version.
 
 The plugin workflow tests the plugin runtime, verifies the packed SDK in a separate consumer, commits and tags the bumped `plugins/package.json`, and publishes to npm. It has no executables, GitHub release, or formula.
+
+Check runs cancel older runs for the same branch or pull request. Release runs remain serialized and never cancel an active release. Build and validation jobs have a 15-minute execution limit; publishing has a 10-minute execution limit. These limits start after a runner is assigned and do not shorten GitHub's runner queue.
 
 ## After the release
 
