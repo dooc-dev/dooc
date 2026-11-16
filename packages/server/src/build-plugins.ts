@@ -2,15 +2,15 @@ import type { PluginTransport } from "../../../plugins/src/transport.js";
 import { PLUGIN_BLOCK_CSS } from "../../frontend/src/plugin-style.js";
 import { pluginViewHtml } from "../../frontend/src/plugin-view.js";
 import { createExtensionManager } from "./extensions.js";
-import { loadViewerPlugins } from "./plugin-config.js";
+import { loadReaderPlugins } from "./plugin-config.js";
 import { createLocalPluginStorage } from "./plugins/local-storage.js";
 import { createPluginRuntime } from "./plugins/runtime.js";
 
 /** Only previously enabled packages execute; personal credentials never enter the artifact. */
 export const loadBuildPlugins = async (root: string, module?: string) => {
-    const initial = await loadViewerPlugins(module);
+    const initial = await loadReaderPlugins(module);
     if (initial.setup)
-        throw new Error("Build plugins must be declared without a viewer setup callback");
+        throw new Error("Build plugins must be declared without a reader setup callback");
     const personal = createLocalPluginStorage();
     let config = initial;
     const manager = createExtensionManager(

@@ -5,7 +5,7 @@
 [parse]: Parse and validate @engine
 [resolve]: Resolve references and variants @engine
 [compile]: Compiled document @engine
-[viewer]: Viewer and editor @output
+[reader]: Reader and editor @output
 [html]: Standalone HTML @output
 [zip]: Source ZIP @output
 [manifest] -> [parse]
@@ -14,7 +14,7 @@
 [parse] -> [resolve]
 [assets] -> [resolve]
 [resolve] -> [compile]
-[compile] -> [viewer]
+[compile] -> [reader]
 [compile] -> [html]
 [manifest] --> [zip]: source files
 [pages] --> [zip]

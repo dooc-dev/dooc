@@ -1038,10 +1038,10 @@ describe("schemaGraphClientData / schemaFlowEdges", () => {
     const data = schemaGraphClientData("sg-x", model, layout);
 
     it("source holds the given DSL text verbatim, and the field is omitted when unset / empty", () => {
-        // The interactive UI's source viewer shows the source text (rebuilding it from the model
+        // The interactive UI's source reader shows the source text (rebuilding it from the model
         // would lose notes / blank lines / ordering).
         expect(schemaGraphClientData("sg-s", model, layout, SRC).source).toBe(SRC);
-        // Without source, the viewer button isn't shown = the field itself is omitted.
+        // Without source, the reader button isn't shown = the field itself is omitted.
         expect(data.source).toBeUndefined();
         expect("source" in schemaGraphClientData("sg-s", model, layout, "")).toBe(false);
     });

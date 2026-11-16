@@ -6,7 +6,7 @@ import { blocksHtml } from "../../engine/src/core/html.js";
 import { pluginViewHtml } from "./plugin-view.js";
 
 describe("plugin references and presentation", () => {
-    it("keeps service embeds and their fragments as links outside the viewer", () => {
+    it("keeps service embeds and their fragments as links outside the reader", () => {
         const source = `
 ![Ticket](https://service.example/tickets/42?view=full#comment-7)
 

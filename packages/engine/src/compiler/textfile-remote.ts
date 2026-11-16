@@ -55,7 +55,7 @@ export const remoteTextfileSource = (
 const cache = new Map<string, { expires: number; result: Buffer | TextfileUnavailable }>();
 const pending = new Map<string, Promise<Buffer>>();
 
-/** The viewer fetches in the background; the compiler reuses the completed cache entry. */
+/** The reader fetches in the background; the compiler reuses the completed cache entry. */
 export const readRemoteTextfileAsync = async (
     file: string,
     domains: readonly string[],

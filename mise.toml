@@ -10,16 +10,16 @@ env = { DOOC_USER_DIR = "{{config_root}}/build/dev/editor/.dooc/user" }
 usage = 'flag "--port <port>" default="3000"'
 run = [
   "node --import tsx scripts/dev-workspace.ts editor",
-  "pnpm exec tsx watch --clear-screen=false --include './packages/frontend/src/**' --include './packages/workspace/src/**' packages/server/src/cli.ts editor run node --client --server --mcp --viewer-plugins ./sample/examples/viewer-plugins/index.mjs --project build/dev/editor --port \"$usage_port\"",
+  "pnpm exec tsx watch --clear-screen=false --include './packages/frontend/src/**' --include './packages/workspace/src/**' packages/server/src/cli.ts editor run node --client --server --mcp --reader-plugins ./sample/examples/reader-plugins/index.mjs --project build/dev/editor --port \"$usage_port\"",
 ]
 
-[tasks.viewer]
-description = "Run the viewer with hot reload and a fresh disposable workspace"
+[tasks.reader]
+description = "Run the reader with hot reload and a fresh disposable workspace"
 dir = "{{config_root}}"
 usage = 'flag "--port <port>" default="3001"'
 run = [
-  "node --import tsx scripts/dev-workspace.ts viewer",
-  "pnpm exec tsx watch --clear-screen=false --include './packages/frontend/src/**' --include './packages/workspace/src/**' packages/server/src/cli.ts viewer run node --client --server --project build/dev/viewer --port \"$usage_port\"",
+  "node --import tsx scripts/dev-workspace.ts reader",
+  "pnpm exec tsx watch --clear-screen=false --include './packages/frontend/src/**' --include './packages/workspace/src/**' packages/server/src/cli.ts reader run node --client --server --project build/dev/reader --port \"$usage_port\"",
 ]
 
 [tasks.dooc]
@@ -30,7 +30,7 @@ dir = "{{cwd}}"
 run = 'pnpm --silent --dir "{{config_root}}" run dooc'
 
 [tasks.packed]
-description = "Build and run the packaged CLI. e.g. mise run packed viewer run node --all --project dooc-docs"
+description = "Build and run the packaged CLI. e.g. mise run packed reader run node --all --project dooc-docs"
 raw_args = true
 dir = "{{cwd}}"
 # The cache is disabled so every run installs the files that were just built.

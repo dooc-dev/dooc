@@ -36,7 +36,7 @@ it("keeps a request bound to its workspace when the active pane changes", async 
     expect(() => pageWorkspace("missing")).toThrow("not open");
 });
 
-it("preserves same-origin requests for the combined local viewer", async () => {
+it("preserves same-origin requests for the combined local reader", async () => {
     const fetch = vi.fn().mockResolvedValue(new Response("local"));
     vi.stubGlobal("fetch", fetch);
     await workspaceFetch("/api/page");

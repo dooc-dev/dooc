@@ -1,7 +1,7 @@
 import type { ProjectFont } from "../../engine/src/compiler/fonts.js";
 import type { createFontSettings } from "./font-settings.js";
 
-/** Self-contained because published viewers embed this function directly. */
+/** Self-contained because published readers embed this function directly. */
 export const mountFontPickers = async (
     createSettings: typeof createFontSettings,
     registered: readonly ProjectFont[],
@@ -20,8 +20,8 @@ export const mountFontPickers = async (
     let trigger: HTMLButtonElement | undefined;
     let busy = true;
     let message = "Loading fonts";
-    const target = (button: HTMLButtonElement): "editor" | "viewer" =>
-        button.dataset.fontPicker === "editor" ? "editor" : "viewer";
+    const target = (button: HTMLButtonElement): "editor" | "reader" =>
+        button.dataset.fontPicker === "editor" ? "editor" : "reader";
     const choices = (): Map<string, string> =>
         new Map([
             ["", t("Default font")],
@@ -34,7 +34,7 @@ export const mountFontPickers = async (
         popup.replaceChildren();
         popup.setAttribute(
             "aria-label",
-            t(target(trigger) === "editor" ? "Editor font" : "Viewer font"),
+            t(target(trigger) === "editor" ? "Editor font" : "Reader font"),
         );
         for (const [family, name] of choices()) {
             const option = document.createElement("button");
@@ -64,7 +64,7 @@ export const mountFontPickers = async (
             const valueLabel = button.querySelector<HTMLElement>("[data-picker-value]");
             if (valueLabel && valueLabel.textContent !== name) valueLabel.textContent = name;
             button.disabled = busy;
-            button.title = `${t(kind === "editor" ? "Editor font" : "Viewer font")}: ${name}`;
+            button.title = `${t(kind === "editor" ? "Editor font" : "Reader font")}: ${name}`;
             button.setAttribute("aria-label", button.title);
             button.setAttribute("aria-controls", popup.id);
             button.setAttribute("popovertarget", popup.id);

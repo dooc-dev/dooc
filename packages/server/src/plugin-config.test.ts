@@ -2,36 +2,36 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { loadViewerPlugins } from "./plugin-config.js";
+import { loadReaderPlugins } from "./plugin-config.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
 const load = async (source: string) => {
-    const root = mkdtempSync(join(tmpdir(), "dooc-viewer-plugins-"));
+    const root = mkdtempSync(join(tmpdir(), "dooc-reader-plugins-"));
     try {
-        const path = join(root, "viewer.mjs");
+        const path = join(root, "reader.mjs");
         writeFileSync(path, source);
-        return await loadViewerPlugins(path);
+        return await loadReaderPlugins(path);
     } finally {
         rmSync(root, { recursive: true, force: true });
     }
 };
 
-describe("external viewer registration", () => {
+describe("external reader registration", () => {
     it("still loads an explicitly selected local module in a remote session", async () => {
         vi.stubEnv("DOOC_REMOTE_WORKSPACE", "1");
         const config = await load(
-            'export default { plugins: [], setup(viewer) { viewer.unregister("explicit"); } };',
+            'export default { plugins: [], setup(reader) { reader.unregister("explicit"); } };',
         );
-        const viewer = {
+        const reader = {
             register: vi.fn(),
             unregister: vi.fn(),
             setAllowedDomains: vi.fn(),
             setGitOrigin: vi.fn(),
             setWorkspace: vi.fn(),
         };
-        await config.setup?.(viewer);
-        expect(viewer.unregister).toHaveBeenCalledWith("explicit");
+        await config.setup?.(reader);
+        expect(reader.unregister).toHaveBeenCalledWith("explicit");
     });
     it("accepts only explicit executable origin adapters", async () => {
         const config = await load(
@@ -46,7 +46,7 @@ describe("external viewer registration", () => {
     });
     it("accepts an application setup hook for later registrations", async () => {
         const config = await load(
-            'export default { plugins: [], setup(viewer) { viewer.unregister("sample"); } };',
+            'export default { plugins: [], setup(reader) { reader.unregister("sample"); } };',
         );
         const registry = {
             register: vi.fn(),
@@ -96,12 +96,12 @@ describe("external viewer registration", () => {
     });
 
     it("loads only an explicitly injected module", async () => {
-        expect(await loadViewerPlugins()).toEqual({ plugins: [], mocks: {} });
+        expect(await loadReaderPlugins()).toEqual({ plugins: [], mocks: {} });
         expect(await load("export default { plugins: [] };")).toEqual({
             plugins: [],
             mocks: {},
         });
-        await expect(loadViewerPlugins("./missing-viewer-plugins.mjs")).rejects.toThrow();
+        await expect(loadReaderPlugins("./missing-reader-plugins.mjs")).rejects.toThrow();
     });
 
     it("rejects invalid mounts and mock origins at registration", async () => {

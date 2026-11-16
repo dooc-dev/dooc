@@ -1,4 +1,4 @@
-// Browser-safe Japanese language adapter. Prose lint is attached by the viewer.
+// Browser-safe Japanese language adapter. Prose lint is attached by the reader.
 import type { LanguageAdapter } from "../language.js";
 
 export const ja: LanguageAdapter = {

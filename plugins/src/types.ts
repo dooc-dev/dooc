@@ -44,7 +44,7 @@ import type {
 import type { PluginIcon } from "./blocks.js";
 import type { PluginView } from "./view.js";
 
-/** Trusted server code injected into the viewer, independently of document configuration. */
+/** Trusted server code injected into the reader, independently of document configuration. */
 export interface DataPlugin {
     id: string;
     name?: string;

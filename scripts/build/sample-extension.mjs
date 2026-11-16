@@ -8,7 +8,7 @@ import { readExtensionZip } from "../../packages/engine/src/core/extension-packa
 
 const output = resolve(process.argv[2] ?? "build/sample-extension.zip");
 const bundle = await build({
-    entryPoints: ["sample/examples/viewer-plugins/extension.mjs"],
+    entryPoints: ["sample/examples/reader-plugins/extension.mjs"],
     bundle: true,
     platform: "node",
     format: "esm",
@@ -35,7 +35,7 @@ const data = zip([
     { name: "index.mjs", data: Buffer.from(bundle.outputFiles[0].contents) },
     ...["taskapp", "gitapp", "chatapp"].map((name) => ({
         name: `assets/${name}.svg`,
-        data: readFileSync(`sample/examples/viewer-plugins/assets/${name}.svg`),
+        data: readFileSync(`sample/examples/reader-plugins/assets/${name}.svg`),
     })),
 ]);
 const checked = await readExtensionZip(data, async (bytes, size) =>

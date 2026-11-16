@@ -1,5 +1,5 @@
 // Vocabulary for semantic code fences, front-matter fields, and code languages.
-// Both compiler validation and viewer insert-completion read this.
+// Both compiler validation and reader insert-completion read this.
 
 export const CODE_TEMPLATES: Readonly<Record<string, string>> = {
     csv: "```csv\n<value>,<value>\n```",

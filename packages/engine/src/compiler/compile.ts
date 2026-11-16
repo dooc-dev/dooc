@@ -1,4 +1,4 @@
-// Reads dooc.yaml and source files into validated, in-memory content for the viewer and HTML
+// Reads dooc.yaml and source files into validated, in-memory content for the reader and HTML
 // bundles. createCompiler caches unchanged files; compileSite performs a one-shot compilation.
 
 import { type Block, type ListItem, type TocEntry, walkBlocks } from "../core/blocks.js";
@@ -29,7 +29,7 @@ import { loadIcons, squareSvg } from "./icons.js";
 import { assertNotIgnored, ignoredFiles } from "./ignored-files.js";
 import { contentLanguageCode, isContentLanguage } from "./language-codes.js";
 import { siteContentLanguages, translationFile } from "./locales.js";
-import { manifestFile, parseManifestText } from "./manifest.js";
+import { manifestFile, parseManifestText, readManifest } from "./manifest.js";
 import {
     loadSubformat,
     parseSubformatRecord,
@@ -61,7 +61,7 @@ export const collectDocLinks = (body: string): string[] =>
 /** Source text and diagnostics for editing. key = CompiledDoc.file. */
 export interface DocSource {
     terms: TermEntry[];
-    /** Files already discovered during parsing, used by the viewer's change watcher. */
+    /** Files already discovered during parsing, used by the reader's change watcher. */
     referencedFiles: string[];
     /**
      * Raw text on disk. The editor's initial value and the base for
@@ -194,6 +194,8 @@ const resolveFiles = (
     const termFiles = new Set(f.refs.terms);
     const figureFiles = new Set(f.figureFiles);
     const docLinks = [...f.docLinks];
+    const subformats = root ? readManifest(root).subformats : undefined;
+    const referencedFiles = new Set(f.referencedFiles);
     const resolveItem = (item: ListItem): ListItem =>
         typeof item === "string"
             ? item
@@ -233,13 +235,75 @@ const resolveFiles = (
         if (b.type === "quote") return { ...b, blocks: b.blocks.map(resolveBlock) };
         if (b.type === "list") return { ...b, items: b.items.map(resolveItem) };
         if (b.type !== "code" || !b.filename) return b;
+        let source: string | undefined;
         try {
             if (!root) throw new Error("docs root is required to read text files");
-            const source = selectTextfileRange(
+            source = selectTextfileRange(
                 textfiles?.get(b.filename.replace(/^(\.\/)+/, "")) ??
                     readTextfile(root, b.filename, false, previews?.domains),
                 b.range,
             );
+            const file = b.filename.replace(/^(\.\/)+/, "");
+            const schema = subformats?.find((format) => format.schema === file);
+            const config =
+                b.range === undefined && !isRemoteTextfile(file)
+                    ? (schema ?? subformats?.find((format) => format.ext === b.lang))
+                    : undefined;
+            if (config) {
+                const loaded = loadSubformat(root, config, previews?.domains);
+                referencedFiles.add(config.schema);
+                for (const [field] of b.embed?.filters ?? [])
+                    if (!loaded.fields.some((item) => item.name === field))
+                        throw new Error(`Unknown subformat filter field: ${field}`);
+                const files = schema
+                    ? projectFiles(root)
+                          .filter(
+                              (item) =>
+                                  item.extension === config.ext && item.path !== config.schema,
+                          )
+                          .map((item) => item.path)
+                    : [file];
+                const records: SubformatRecord[] = [];
+                for (const path of files) {
+                    referencedFiles.add(path);
+                    try {
+                        const content =
+                            path === file
+                                ? source
+                                : (textfiles?.get(path) ?? readTextfile(root, path));
+                        const data = parseSubformatRecord(content, config.format);
+                        validateSubformatRecord(loaded, data);
+                        if (
+                            (b.embed?.filters ?? []).every(
+                                ([field, value]) =>
+                                    Object.hasOwn(data, field) &&
+                                    (data[field] === null || typeof data[field] !== "object") &&
+                                    String(data[field]) === value,
+                            )
+                        )
+                            records.push({ file: path, content, data });
+                    } catch (error) {
+                        if (!schema) throw error;
+                        errors.push(`${path}: ${error instanceof Error ? error.message : error}`);
+                    }
+                }
+                return {
+                    ...b,
+                    lines: source.split("\n"),
+                    embed: {
+                        view: schema ? "table" : "card",
+                        ...(schema ? { title: b.alt || config.ext } : {}),
+                        ...b.embed,
+                    },
+                    subformat: {
+                        ...config,
+                        fields: loaded.fields,
+                        records,
+                    },
+                };
+            }
+            if (b.embed)
+                throw new Error("Embed parameters require a registered subformat record or schema");
             const parsed =
                 b.range === undefined && !isRemoteTextfile(b.filename)
                     ? parseContentSource(b.lang ?? "", source, b.filename.replace(/^(\.\/)+/, ""))
@@ -269,10 +333,7 @@ const resolveFiles = (
                         : block;
                 }
             }
-            return {
-                ...b,
-                lines: source.split("\n"),
-            };
+            return { ...b, lines: source.split("\n") };
         } catch (error) {
             if (
                 error instanceof TextfileUnavailable ||
@@ -285,7 +346,7 @@ const resolveFiles = (
             errors.push(
                 `${b.filename}${b.range ?? ""}: ${error instanceof Error ? error.message : error}`,
             );
-            return b;
+            return { ...b, lines: source?.split("\n") ?? b.lines };
         }
     };
     const blocks = f.blocks.map(resolveBlock);
@@ -304,6 +365,10 @@ const resolveFiles = (
     return {
         ...f,
         blocks,
+        referencedFiles:
+            referencedFiles.size === f.referencedFiles.length
+                ? f.referencedFiles
+                : [...referencedFiles],
         docLinks,
         figureFiles: [...figureFiles],
         refs: {

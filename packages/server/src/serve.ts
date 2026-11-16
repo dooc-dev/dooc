@@ -5,7 +5,7 @@ import {
     uploadFile,
 } from "../../engine/src/compiler/files.js";
 import { MAX_FILE_UPLOAD_BYTES } from "../../engine/src/core/files.js";
-// Combined Node viewer: serves frontend assets and the shared document application.
+// Combined Node reader: serves frontend assets and the shared document application.
 // Workspace requests and change notifications travel over a same-origin WebSocket.
 
 import { spawn } from "node:child_process";
@@ -28,7 +28,7 @@ import {
 import { createHistoryOp, type Person, parsePerson } from "../../workspace/src/history.js";
 import { WORKSPACE_PATH } from "../../workspace/src/protocol.js";
 import { createWorkspaceServer, type WorkspaceOps } from "../../workspace/src/server.js";
-import { readViewerAsset, prebuilt as usePrebuiltAssets } from "./assets.js";
+import { readReaderAsset, prebuilt as usePrebuiltAssets } from "./assets.js";
 import {
     isLocalHost,
     isLocalToolRequest,
@@ -44,7 +44,7 @@ import { workspaceHistory } from "./history.js";
 import { watchProject } from "./hmr.js";
 import { loadSiteLanguages } from "./languages.js";
 import { loggedWorkspaceOps, logHttpOperation } from "./operation-log.js";
-import { loadViewerPlugins, type ViewerRuntime } from "./plugin-config.js";
+import { loadReaderPlugins, type ReaderRuntime } from "./plugin-config.js";
 import { createLocalPluginStorage } from "./plugins/local-storage.js";
 import { createPluginHandler } from "./plugins.js";
 import { terminal } from "./terminal.js";
@@ -146,7 +146,7 @@ const PREBUILT: Record<string, string> = {
 export const bundleClient = async (entry: string): Promise<string> => {
     const prebuilt = PREBUILT[entry];
     if (usePrebuiltAssets && prebuilt) {
-        return readViewerAsset(prebuilt).toString("utf8");
+        return readReaderAsset(prebuilt).toString("utf8");
     }
     if (entry === "workspace-worker.ts") {
         const script = new URL("../../../scripts/build/client.mjs", import.meta.url).href;
@@ -175,17 +175,17 @@ export const startServer = async (
         file?: string;
         data?: string;
         login?: string;
-        /** PEM file paths; with them the viewer is served over HTTPS (and the socket over WSS). */
+        /** PEM file paths; with them the reader is served over HTTPS (and the socket over WSS). */
         tls?: { cert: string; key: string };
         /** Branch that a shared workspace records its snapshots on. */
         shared?: string;
     },
-): Promise<ViewerRuntime> => {
+): Promise<ReaderRuntime> => {
     // Language adapters are read once; the manifest is re-read by the compiler.
     const siteLanguages = await loadSiteLanguages(root);
-    const viewerPlugins = await loadViewerPlugins(pluginModule);
-    workspaceSource = viewerPlugins.workspace;
-    let gitOrigin = viewerPlugins.gitOrigin;
+    const readerPlugins = await loadReaderPlugins(pluginModule);
+    workspaceSource = readerPlugins.workspace;
+    let gitOrigin = readerPlugins.gitOrigin;
     const handleGit = createGitHandler(root, () => gitOrigin);
     // File and Git control travel over the workspace socket. `local` marks a connection whose
     // Host is this exact listener, so Git and its credentials stay off forwarded ports.
@@ -261,11 +261,11 @@ export const startServer = async (
     );
     const personal = createLocalPluginStorage();
     const handlePlugins = createPluginHandler(
-        viewerPlugins.plugins,
-        viewerPlugins,
+        readerPlugins.plugins,
+        readerPlugins,
         personal.credentials,
     );
-    const handleExtensions = createExtensionManager(root, handlePlugins, viewerPlugins, personal);
+    const handleExtensions = createExtensionManager(root, handlePlugins, readerPlugins, personal);
     let loginPlugins = startup?.login ? [startup.login] : [];
     process.once("exit", handleExtensions.dispose);
     // Client bundles (bundleClient) = edit's editing UI and the schema graph interaction layer
@@ -279,7 +279,7 @@ export const startServer = async (
     const bundleCache = createBundleCache();
     let graphChunks: Promise<Map<string, string>> | undefined;
     const graphAsset = async (name: string): Promise<string> => {
-        if (usePrebuiltAssets) return readViewerAsset(`graph/${name}`).toString("utf8");
+        if (usePrebuiltAssets) return readReaderAsset(`graph/${name}`).toString("utf8");
         graphChunks ??= import("esbuild")
             .then(async (esbuild) => {
                 const output = await esbuild.build({
@@ -303,7 +303,7 @@ export const startServer = async (
         return js;
     };
 
-    const viewer: ViewerRuntime = {
+    const reader: ReaderRuntime = {
         register: handlePlugins.register,
         unregister: handlePlugins.unregister,
         setWorkspace(workspace) {
@@ -332,8 +332,8 @@ export const startServer = async (
             workspaceServer.broadcast("change", { kind: "content", files: [] });
         },
     };
-    viewer.setAllowedDomains(viewerPlugins.allowedDomains ?? []);
-    await viewerPlugins.setup?.(viewer);
+    reader.setAllowedDomains(readerPlugins.allowedDomains ?? []);
+    await readerPlugins.setup?.(reader);
     const extensionErrors = await handleExtensions
         .restore()
         .catch((error: unknown) => [error instanceof Error ? error.message : String(error)]);
@@ -612,5 +612,5 @@ export const startServer = async (
         server.listen(p, "127.0.0.1");
     };
     listen(port, 10);
-    return viewer;
+    return reader;
 };

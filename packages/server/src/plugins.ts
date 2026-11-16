@@ -14,9 +14,9 @@ export type {
 } from "../../engine/src/core/workspace.js";
 
 import {
-    type ViewerPluginRegistry,
-    type ViewerPlugins,
-    validateViewerPlugins,
+    type ReaderPluginRegistry,
+    type ReaderPlugins,
+    validateReaderPlugins,
 } from "./plugin-config.js";
 
 export type {
@@ -28,9 +28,9 @@ export type {
 } from "../../workspace/src/git-types.js";
 export type {
     PluginMock,
-    ViewerPluginRegistry,
-    ViewerPlugins,
-    ViewerRuntime,
+    ReaderPluginRegistry,
+    ReaderPlugins,
+    ReaderRuntime,
 } from "./plugin-config.js";
 
 const readBody = (req: IncomingMessage): Promise<string> =>
@@ -60,14 +60,14 @@ const readInput = async (req: IncomingMessage): Promise<Record<string, unknown>>
     }
 };
 
-/** Local viewer only: the cookie identifies a browser session, never a document-supplied user. */
+/** Local reader only: the cookie identifies a browser session, never a document-supplied user. */
 export const createPluginHandler = (
     plugins: readonly DataPlugin[],
-    presentation: Pick<ViewerPlugins, "mocks"> = { mocks: {} },
+    presentation: Pick<ReaderPlugins, "mocks"> = { mocks: {} },
     credentials?: PluginCredentialStore,
     changed: (revision: string) => void = () => {},
 ) => {
-    let config = validateViewerPlugins({ plugins, ...presentation });
+    let config = validateReaderPlugins({ plugins, ...presentation });
     let mocks = new Map(Object.entries(config.mocks));
     let origins = new Map([...mocks].map(([id, mock]) => [mock.origin, { id, ...mock }]));
     const transport: typeof fetch = async (input, init) => {
@@ -83,7 +83,7 @@ export const createPluginHandler = (
     const notify = (res: ServerResponse): void => {
         res.write(`data: ${cookie}:${revision}\n\n`);
     };
-    const update = (next: ViewerPlugins): void => {
+    const update = (next: ReaderPlugins): void => {
         config = next;
         mocks = new Map(Object.entries(config.mocks));
         origins = new Map([...mocks].map(([id, mock]) => [mock.origin, { id, ...mock }]));
@@ -91,13 +91,13 @@ export const createPluginHandler = (
         for (const stream of streams) notify(stream);
         changed(`${cookie}:${revision}`);
     };
-    const registry: ViewerPluginRegistry = {
+    const registry: ReaderPluginRegistry = {
         register(plugin, options = {}) {
-            const addition = validateViewerPlugins({
+            const addition = validateReaderPlugins({
                 plugins: [plugin],
                 mocks: options.mock ? { [plugin.id]: options.mock } : {},
             });
-            const next = validateViewerPlugins({
+            const next = validateReaderPlugins({
                 plugins: [...config.plugins.filter((item) => item.id !== plugin.id), plugin],
                 mocks: {
                     ...Object.fromEntries(
@@ -199,7 +199,7 @@ export const createPluginHandler = (
                     (name) => host === `${name}:${req.socket.localPort}`,
                 )
             )
-                throw new PluginError(403, "Plugins require the local viewer");
+                throw new PluginError(403, "Plugins require the local reader");
             if (req.method === "GET" && url.pathname === "/api/plugins/events") {
                 res.writeHead(200, {
                     "content-type": "text/event-stream",

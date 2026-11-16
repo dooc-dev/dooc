@@ -3,7 +3,7 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DataPlugin } from "../../../plugins/src/types.js";
-import { loadViewerPlugins } from "./plugin-config.js";
+import { loadReaderPlugins } from "./plugin-config.js";
 import { createPluginHandler } from "./plugins.js";
 
 const definition: DataPlugin = {
@@ -149,7 +149,7 @@ it("serves an escaped, session-bound device sign-in page without exposing device
 });
 
 describe("local plugin HTTP boundary", () => {
-    it("publishes runtime registrations to open viewers and rejects browser registration requests", async () => {
+    it("publishes runtime registrations to open readers and rejects browser registration requests", async () => {
         const handler = createPluginHandler([]);
         const stream = await call(handler, undefined, {
             method: "GET",
@@ -183,13 +183,13 @@ describe("local plugin HTTP boundary", () => {
             throw new Error("The sample must not use the network");
         });
         vi.stubGlobal("fetch", network);
-        const config = await loadViewerPlugins(
+        const config = await loadReaderPlugins(
             fileURLToPath(
-                new URL("../../../sample/examples/viewer-plugins/index.mjs", import.meta.url),
+                new URL("../../../sample/examples/reader-plugins/index.mjs", import.meta.url),
             ),
         );
         const module = await import(
-            new URL("../../../sample/examples/viewer-plugins/mock.mjs", import.meta.url).href
+            new URL("../../../sample/examples/reader-plugins/mock.mjs", import.meta.url).href
         );
         const handler = createPluginHandler(config.plugins, {
             mocks: { sample: module.createSampleMock() },
@@ -304,9 +304,9 @@ describe("local plugin HTTP boundary", () => {
             throw new Error("The demo must not use the network");
         });
         vi.stubGlobal("fetch", network);
-        const config = await loadViewerPlugins(
+        const config = await loadReaderPlugins(
             fileURLToPath(
-                new URL("../../../sample/examples/viewer-plugins/index.mjs", import.meta.url),
+                new URL("../../../sample/examples/reader-plugins/index.mjs", import.meta.url),
             ),
         );
         const handler = createPluginHandler(config.plugins, config);
@@ -542,9 +542,9 @@ it("keeps the automatic demo usable while the separate mock login is approved or
         throw new Error("The demo must not use the network");
     });
     vi.stubGlobal("fetch", network);
-    const config = await loadViewerPlugins(
+    const config = await loadReaderPlugins(
         fileURLToPath(
-            new URL("../../../sample/examples/viewer-plugins/index.mjs", import.meta.url),
+            new URL("../../../sample/examples/reader-plugins/index.mjs", import.meta.url),
         ),
     );
     const handler = createPluginHandler(config.plugins, config);

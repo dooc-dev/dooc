@@ -247,7 +247,7 @@ const mountWorkspaceExtensions = (workspace: string): void => {
                     "small",
                     "",
                     item.readonly
-                        ? t("Provided by viewer")
+                        ? t("Provided by reader")
                         : `${item.file} · ${Math.ceil(item.size / 1024)} KB · ${t(item.error ? "Invalid package" : !local ? "Browser storage" : item.enabled ? "Enabled" : "Disabled")}`,
                 ),
             );

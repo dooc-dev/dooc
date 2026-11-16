@@ -8,7 +8,7 @@ import { createCompiler } from "../../../engine/src/compiler/compile.js";
 import { loadDocsConfig } from "../../../engine/src/compiler/config.js";
 import { exportEntries } from "../../../engine/src/compiler/export.js";
 import { pluginViewHtml } from "../../../frontend/src/plugin-view.js";
-import { loadViewerPlugins } from "../plugin-config.js";
+import { loadReaderPlugins } from "../plugin-config.js";
 import { publishHtml, siteFrom } from "../serve.js";
 import { createPluginRuntime } from "./runtime.js";
 
@@ -17,7 +17,7 @@ const sample = new URL("../../../../dooc-docs/", import.meta.url);
 describe("sample plugin", () => {
     it("makes the mock reject incorrect PKCE proofs, code replay, and missing Bearer authentication", async () => {
         const module = await import(
-            new URL("../sample/examples/viewer-plugins/mock.mjs", sample).href
+            new URL("../sample/examples/reader-plugins/mock.mjs", sample).href
         );
         const mock = module.createSampleMock();
         const verifier = "a".repeat(43);
@@ -84,7 +84,7 @@ describe("sample plugin", () => {
 
     it("fetches matched service URLs and renders their returned data", async () => {
         const module = await import(
-            new URL("../sample/examples/viewer-plugins/sample.mjs", sample).href
+            new URL("../sample/examples/reader-plugins/sample.mjs", sample).href
         );
         const plugin: DataPlugin = module.createSamplePlugin({
             authorizationUrl: "https://example.com/authorize",
@@ -179,10 +179,10 @@ describe("sample plugin", () => {
     });
 
     it("renders compact pull request details and escapes service values", async () => {
-        const viewer = await loadViewerPlugins(
-            fileURLToPath(new URL("../sample/examples/viewer-plugins/index.mjs", sample)),
+        const reader = await loadReaderPlugins(
+            fileURLToPath(new URL("../sample/examples/reader-plugins/index.mjs", sample)),
         );
-        const plugin = viewer.plugins[0];
+        const plugin = reader.plugins[0];
         if (!plugin) throw new Error("Missing sample plugin");
         const user = { id: "alice", name: "Alice" };
         const request = vi.fn().mockResolvedValue({
@@ -212,15 +212,15 @@ describe("sample plugin", () => {
         expect(pluginViewHtml(view.collapsed)).not.toContain("{{");
     });
 
-    it("keeps viewer configuration, implementation, and data out of document exports", async () => {
+    it("keeps reader configuration, implementation, and data out of document exports", async () => {
         const root = fileURLToPath(sample);
         const config = await loadDocsConfig(root);
         expect(config).not.toHaveProperty("plugins");
-        const viewer = await loadViewerPlugins(
-            fileURLToPath(new URL("../sample/examples/viewer-plugins/index.mjs", sample)),
+        const reader = await loadReaderPlugins(
+            fileURLToPath(new URL("../sample/examples/reader-plugins/index.mjs", sample)),
         );
-        expect(viewer).not.toHaveProperty("mounts");
-        expect(viewer.plugins.map((plugin) => plugin.id)).toEqual(["sample", "sample-auth"]);
+        expect(reader).not.toHaveProperty("mounts");
+        expect(reader.plugins.map((plugin) => plugin.id)).toEqual(["sample", "sample-auth"]);
         const compiled = createCompiler(root).compile();
         expect(compiled.errors).toEqual([]);
         const source = compiled.sources.get("contents/md/plugins.md");
@@ -242,10 +242,10 @@ describe("sample plugin", () => {
 
 it("runs editable sample cards, comments, reactions, conflict checks, and ownership without external services", async () => {
     const { createSampleMock } = await import(
-        new URL("../../../../sample/examples/viewer-plugins/mock.mjs", import.meta.url).href
+        new URL("../../../../sample/examples/reader-plugins/mock.mjs", import.meta.url).href
     );
     const { createSamplePlugin } = await import(
-        new URL("../../../../sample/examples/viewer-plugins/sample.mjs", import.meta.url).href
+        new URL("../../../../sample/examples/reader-plugins/sample.mjs", import.meta.url).href
     );
     const mock = createSampleMock({ autoConnect: true });
     const plugin = createSamplePlugin({
@@ -318,9 +318,9 @@ it("runs editable sample cards, comments, reactions, conflict checks, and owners
 });
 
 it("loads the ZIP demo entry with valid SVG asset icons for every service", async () => {
-    const config = await loadViewerPlugins(
+    const config = await loadReaderPlugins(
         fileURLToPath(
-            new URL("../../../../sample/examples/viewer-plugins/extension.mjs", import.meta.url),
+            new URL("../../../../sample/examples/reader-plugins/extension.mjs", import.meta.url),
         ),
     );
     const plugin = config.plugins[0];

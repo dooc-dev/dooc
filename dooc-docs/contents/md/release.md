@@ -11,7 +11,7 @@ Releases are published only by GitHub Actions, dispatched from a source checkout
 
 1. Commit and push everything to `main`. The workflow releases the remote `main` branch, not your working tree.
 2. Confirm the **Check** workflow passed for that commit with the command below.
-3. Update `dooc-docs` for the changes being released. `dooc viewer run node --client --server --project dooc-docs --repo …` serves the documentation from `main`, so it goes live with the push, not with the release.
+3. Update `dooc-docs` for the changes being released. `dooc reader run node --client --server --project dooc-docs --repo …` serves the documentation from `main`, so it goes live with the push, not with the release.
 4. Confirm GitHub CLI is signed in to an account that may run the repository's workflows: `gh auth status`.
 5. Release `dooc-plugin` only when `plugins/` changed. Both workflows share one concurrency group, so two releases started together run one after the other.
 

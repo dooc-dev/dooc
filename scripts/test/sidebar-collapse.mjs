@@ -1,4 +1,4 @@
-// Run in a viewer page to compare its current tree before and after collapsing the sidebar.
+// Run in a reader page to compare its current tree before and after collapsing the sidebar.
 window.testSidebarCollapse = async () => {
     const assert = (condition, message) => {
         if (!condition) throw new Error(message);

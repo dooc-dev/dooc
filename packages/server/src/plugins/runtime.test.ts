@@ -428,7 +428,7 @@ describe("user OAuth plugin runtime", () => {
             target.replace("localhost", "user:pass@localhost"),
         ])
             expect(() => runtime.connect(session, "example", invalid)).toThrow(
-                "OAuth callback must use the local viewer",
+                "OAuth callback must use the local reader",
             );
     });
 

@@ -50,7 +50,7 @@ import { workspaceHistory } from "./history.js";
 import { watchProject } from "./hmr.js";
 import { DEFAULT_SITE_LANGUAGES, loadSiteLanguages } from "./languages.js";
 import { loggedWorkspaceOps } from "./operation-log.js";
-import { loadViewerPlugins, type ViewerRuntime } from "./plugin-config.js";
+import { loadReaderPlugins, type ReaderRuntime } from "./plugin-config.js";
 import { createLocalPluginStorage } from "./plugins/local-storage.js";
 import { createPluginHandler } from "./plugins.js";
 import { terminal } from "./terminal.js";
@@ -102,7 +102,7 @@ export const nodeWorkspaceOperations = async (
     >();
     const closes: (() => void)[] = [];
     type Session = { local: boolean; user?: Person; origin?: string; pluginSession?: string };
-    const plugins = await loadViewerPlugins(pluginModule);
+    const plugins = await loadReaderPlugins(pluginModule);
     let workspace = plugins.workspace;
     let gitOrigin = plugins.gitOrigin;
     let previews = parsePreviewSettings({ domains: plugins.allowedDomains ?? [] });
@@ -125,7 +125,7 @@ export const nodeWorkspaceOperations = async (
             });
         notify("change", { kind: "content", files: [] });
     };
-    const viewer: ViewerRuntime = {
+    const reader: ReaderRuntime = {
         register: handlePlugins.register,
         unregister: handlePlugins.unregister,
         setWorkspace(source) {
@@ -447,7 +447,7 @@ export const nodeWorkspaceOperations = async (
         ]),
     );
     try {
-        await plugins.setup?.(viewer);
+        await plugins.setup?.(reader);
         const errors = await extensions.restore();
         for (const error of errors) terminal.error(`Plugin: ${error}`);
         await add(primary, "main");

@@ -77,7 +77,7 @@ export const toBlocks = (
                     if (!images.length) add({ type: "p", text: inlineToText(n.children) });
                     for (const image of images) {
                         try {
-                            const { file, range, tableMode, kind } = parseFileEmbed(
+                            const { file, range, tableMode, kind, embed } = parseFileEmbed(
                                 image.url,
                                 settings,
                             );
@@ -106,6 +106,7 @@ export const toBlocks = (
                                 filename: file,
                                 ...(range !== undefined ? { range } : {}),
                                 ...(tableMode ? { tableMode } : {}),
+                                ...(embed ? { embed } : {}),
                                 ...(image.alt ? { alt: image.alt } : {}),
                                 lang: (
                                     extname(textfileName(file)).slice(1) ||

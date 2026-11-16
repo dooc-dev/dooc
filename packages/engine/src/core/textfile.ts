@@ -11,15 +11,21 @@ export const parseTextfileRange = (range: string): [number, number] => {
 };
 
 /** Split before decoding so an encoded # or ? remains part of a local filename. */
-export const parseFileReference = (source: string): { file: string; range?: string } => {
+export const parseFileReference = (
+    source: string,
+    allowQuery = false,
+): { file: string; range?: string; query?: string } => {
     const hash = source.indexOf("#");
     const path = hash < 0 ? source : source.slice(0, hash);
     if (!path.trim()) throw new Error("File path is required");
     const remote = isRemoteTextfile(path);
-    if (!remote && path.includes("?"))
+    const query = remote ? -1 : path.indexOf("?");
+    if (query >= 0 && !path.slice(0, query).trim()) throw new Error("File path is required");
+    if (query >= 0 && !allowQuery)
         throw new Error("Local file references do not support query parameters");
     return {
-        file: remote ? path : decodeURIComponent(path),
+        file: remote ? path : decodeURIComponent(query < 0 ? path : path.slice(0, query)),
+        ...(query < 0 ? {} : { query: path.slice(query + 1) }),
         ...(hash < 0 ? {} : { range: decodeURIComponent(source.slice(hash)) }),
     };
 };

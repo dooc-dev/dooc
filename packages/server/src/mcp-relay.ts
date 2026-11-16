@@ -299,8 +299,8 @@ export const relayCommand = async (args: string[]) => {
         },
     });
     if (values.help) {
-        console.log(`usage: dooc mcp relay --stdio
-       dooc mcp relay --public-url <https-origin> --client-origin <https-origin> [options]
+        console.log(`usage: dooc relay --stdio
+       dooc relay --public-url <https-origin> --client-origin <https-origin> [options]
 
 --stdio lets a Desktop MCP host start a loopback relay on demand through connect_browser.
 
@@ -322,9 +322,7 @@ Loopback HTTP origins are supported for development.`);
         return;
     }
     if (positionals.length || !values["public-url"] || !values["client-origin"])
-        throw new Error(
-            "Relay requires --public-url and --client-origin; see dooc mcp relay --help",
-        );
+        throw new Error("Relay requires --public-url and --client-origin; see dooc relay --help");
     const port = Number(values.port ?? 3000);
     if (!/^\d+$/.test(values.port ?? "3000") || port < 1 || port > 65535)
         throw new Error("Choose a port between 1 and 65535");

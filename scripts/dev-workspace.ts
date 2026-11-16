@@ -121,8 +121,8 @@ export const createDevWorkspace = (root: string): void => {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
     const product = process.argv[2];
-    if (process.argv.length !== 3 || (product !== "editor" && product !== "viewer"))
-        throw new Error("Expected editor or viewer");
+    if (process.argv.length !== 3 || (product !== "editor" && product !== "reader"))
+        throw new Error("Expected editor or reader");
     const root = fileURLToPath(new URL(`../build/dev/${product}/`, import.meta.url));
     createDevWorkspace(root);
     console.log(`Created disposable workspace: ${root}`);

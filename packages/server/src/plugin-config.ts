@@ -15,52 +15,52 @@ export interface PluginMock {
     handle: (request: Request) => Response | Promise<Response>;
 }
 
-export interface ViewerPlugins {
+export interface ReaderPlugins {
     workspace?: WorkspaceSource;
     gitOrigin?: GitOrigin;
     allowedDomains?: string[];
-    setup?: (viewer: ViewerRuntime) => void | Promise<void>;
+    setup?: (reader: ReaderRuntime) => void | Promise<void>;
     plugins: readonly DataPlugin[];
     mocks: Readonly<Record<string, PluginMock>>;
 }
 
-export interface ViewerPluginRegistry {
+export interface ReaderPluginRegistry {
     /** Replacing an ID clears that plugin's connections and pending authorization attempts. */
     register(plugin: DataPlugin, options?: { mock?: PluginMock }): void;
     unregister(id: string): void;
 }
 
-export interface ViewerRuntime extends ViewerPluginRegistry {
+export interface ReaderRuntime extends ReaderPluginRegistry {
     /** Replaces the host-owned workspace location; undefined restores local discovery. */
     setWorkspace(workspace: WorkspaceSource | undefined): void;
     /** The host owns origin operations and authentication; undefined disconnects it. */
     setGitOrigin(origin: GitOrigin | undefined): void;
-    /** Replaces the network policy and refreshes open viewers; an empty list revokes all hosts. */
+    /** Replaces the network policy and refreshes open readers; an empty list revokes all hosts. */
     setAllowedDomains(domains: readonly string[]): void;
 }
 
-/** Viewer modules are explicitly injected; document roots never select executable plugins. */
-export const loadViewerPlugins = async (specifier?: string): Promise<ViewerPlugins> => {
+/** Reader modules are explicitly injected; document roots never select executable plugins. */
+export const loadReaderPlugins = async (specifier?: string): Promise<ReaderPlugins> => {
     if (!specifier) return { plugins: [], mocks: {} };
     const path =
         isAbsolute(specifier) || specifier.startsWith(".")
             ? resolve(specifier)
-            : createRequire(resolve("dooc-viewer.cjs")).resolve(specifier);
+            : createRequire(resolve("dooc-reader.cjs")).resolve(specifier);
     const { default: config } = await import(pathToFileURL(path).href);
-    return validateViewerPlugins(config);
+    return validateReaderPlugins(config);
 };
 
-export const validateViewerPlugins = (input: unknown): ViewerPlugins => {
-    const config = input as ViewerPlugins;
+export const validateReaderPlugins = (input: unknown): ReaderPlugins => {
+    const config = input as ReaderPlugins;
     if (!config || typeof config !== "object" || Array.isArray(config))
-        throw new Error("Viewer plugin module must export a configuration object");
+        throw new Error("Reader plugin module must export a configuration object");
     if (config.setup !== undefined && typeof config.setup !== "function")
-        throw new Error("Viewer setup must be a function");
+        throw new Error("Reader setup must be a function");
     const plugins = validatePlugins(config.plugins);
-    if ("mounts" in config) throw new Error("Use ![](service-url) instead of viewer mounts");
+    if ("mounts" in config) throw new Error("Use ![](service-url) instead of reader mounts");
     const mocks = config.mocks ?? {};
     if (typeof mocks !== "object" || Array.isArray(mocks))
-        throw new Error("Viewer mocks must be an object");
+        throw new Error("Reader mocks must be an object");
     const origins = new Set<string>();
     for (const [id, mock] of Object.entries(mocks) as [string, PluginMock][]) {
         if (
@@ -73,7 +73,7 @@ export const validateViewerPlugins = (input: unknown): ViewerPlugins => {
             !new URL(mock.origin).hostname.endsWith(".invalid") ||
             origins.has(mock.origin)
         )
-            throw new Error("Viewer mocks require distinct HTTPS .invalid origins and handlers");
+            throw new Error("Reader mocks require distinct HTTPS .invalid origins and handlers");
         origins.add(mock.origin);
     }
     return {

@@ -134,7 +134,7 @@ export const exportEntries = (root: string): ZipEntry[] => {
                 }
             const reference = (url: string) => {
                 if (/^(?:[a-z][\w+.-]*:|[/#])/i.test(url)) return;
-                add(parseFileReference(url).file.replace(/^(\.\/)+/, ""));
+                add(parseFileReference(url, true).file.replace(/^(\.\/)+/, ""));
             };
             visit(tree, "image", (node) => reference(node.url));
             for (const link of contentLinks(tree)) reference(link.url);

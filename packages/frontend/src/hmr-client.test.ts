@@ -54,7 +54,7 @@ it.each([
     // Reconnecting to the same process is not a restart.
     await connect("boot-1");
     expect(reload).not.toHaveBeenCalled();
-    workspace.change({ kind: "client", files: ["src/viewer/ui-client.ts"] });
+    workspace.change({ kind: "client", files: ["src/reader/ui-client.ts"] });
     expect(reload).toHaveBeenCalledTimes(1);
     await connect("boot-2");
     expect(reload).toHaveBeenCalledTimes(2);

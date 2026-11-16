@@ -67,7 +67,7 @@ afterEach(async () => {
     });
 });
 
-it("discovers tools while offline and keeps viewer credentials read-only", async () => {
+it("discovers tools while offline and keeps reader credentials read-only", async () => {
     const credentials = await pair(true);
     expect(
         await (await rpc(credentials.mcp, "initialize", { protocolVersion: "2025-11-25" })).json(),

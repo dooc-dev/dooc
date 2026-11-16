@@ -1,7 +1,7 @@
 // Mount layer that replaces the static SVG (output of `docHtml`) with an interactive React Flow
 // graph. The diagram is readable without JS, so this is progressive enhancement (only graphs
 // that mount successfully become interactive).
-// Two kinds of consumer: script tag (viewer etc. = the global bundle calls watch) and
+// Two kinds of consumer: script tag (reader etc. = the global bundle calls watch) and
 // React embed (the consumer's component calls mount). On either path, this layer injects the
 // React Flow stylesheet (`flow-css.ts`) — consumers aren't required to ship the CSS.
 import { createRoot, type Root } from "react-dom/client";

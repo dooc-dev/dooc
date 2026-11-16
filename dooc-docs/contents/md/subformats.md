@@ -50,7 +50,7 @@ Schemas use JSON Schema 2020-12 and are validated strictly: unknown keywords and
 | First entry of `examples`           | Pre-fills **Create**                                              |
 | `$ref` to another schema file       | Reuses a definition; see [Linked records](contents/md/records.md) |
 
-![Feature schema](contents/json/feature.schema.json)
+![Feature records](contents/json/feature.schema.json)
 
 ## Board actions
 
@@ -62,6 +62,7 @@ Schemas use JSON Schema 2020-12 and are validated strictly: unknown keywords and
 | Change column field           | **group by** menu                                                              |
 | Order cards                   | **sort by** and **sort order** menus                                           |
 | Change the heading field      | **card title** menu                                                            |
+| Reorder parameters in each list row | **Parameter order**; move fields up or down                              |
 | Save a menu choice as default | Its **✓**, in edit mode; writes `layouts` in `dooc.yaml`                       |
 | Move a card                   | Drag it to another column; the file is rewritten                               |
 | Edit a record                 | Click the card; view mode opens a detail dialog                                |
@@ -70,7 +71,9 @@ Schemas use JSON Schema 2020-12 and are validated strictly: unknown keywords and
 | Copy a source link            | Copy icon on the card                                                          |
 | Search                        | **Ctrl+F**                                                                     |
 
-Cards are the default when `layouts.view` is omitted. List view keeps grouping, sorting, search, record editing, details, and drag-to-group actions.
+Cards are the default when `layouts.view` is omitted. List view is a flat, sorted list: every field other than the heading appears as a parameter, including status and nested values. Grouping and dragging between columns apply only to Cards. List view keeps search, record editing, and expandable details.
+
+List parameters stay on one horizontal row. Scroll the parameter area to reach more fields; expand the record for complete long values. **Parameter order** changes their left-to-right order for that list, independently of row sorting. This choice is kept while switching views, but is not saved to the schema or board defaults.
 
 Card borders and list dividers follow Git status: green for new files, orange for modified ones. Moves keep YAML and TOML comments.
 
@@ -84,9 +87,32 @@ A link, an embed, and an inline fence all work with a registered extension.
 | ----- | ------------------------------------------------ |
 | Link  | `[text](contents/feature/mcp-subformat-tools.feature)` |
 | Embed | `![](contents/feature/mcp-subformat-tools.feature)`    |
+| Collection | `![](contents/json/feature.schema.json)` |
 | Fence | ` ```.feature ` with the record as its body        |
 
 ![MCP subformat tools](contents/feature/mcp-subformat-tools.feature)
+
+Embedding a record shows a card. Embedding its registered schema shows all records of that type as a table. Both use the current files, including unsaved record edits in the editor preview. Open a record to edit it in edit mode or inspect its details in the reader.
+
+Card and List embeds have menus for the view, heading field, sort field, and sort order. Cards also allow grouping. These choices affect only that embed for the current preview; they do not save board defaults or change the source URL.
+
+Use URL query parameters to customize an embed:
+
+```md
+![](contents/json/feature.schema.json?view=table&title=Planned%20features&filter.status=Planned)
+![](contents/json/feature.schema.json?view=card&filter.area=Runtime)
+![](contents/feature/mcp-subformat-tools.feature?view=list)
+```
+
+| Parameter | Meaning |
+| --------- | ------- |
+| `view` | `table`, `card`, or `list`; defaults to `table` for a schema and `card` for a record |
+| `title` | Heading for this embed; URL-encode spaces and special characters |
+| `filter.<field>` | Exact, case-sensitive match on a top-level scalar field; multiple fields must all match |
+
+Boolean and numeric filter values use their text form, such as `filter.ready=false` or `filter.points=0`. Each parameter may appear once. Unknown parameters or fields are reported as errors; no matching records shows an empty view. Parameters affect this embed only and do not change board defaults.
+
+A line range such as `![](file.feature#L1-L3)` still shows source code. Line ranges cannot be combined with embed parameters.
 
 A fenced record is validated and highlighted in its storage format, and stays in the page; it is not added to the board.
 

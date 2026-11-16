@@ -3,6 +3,7 @@ import type { TermEntry } from "./content-types.js";
 // Inline strings retain standard Markdown; inline.ts parses them for rendering.
 import type { GraphModel } from "./graph.js";
 import type { SchemaModel } from "./schema-graph.js";
+import type { SubformatCollection, SubformatEmbedOptions } from "./subformats.js";
 import type { CodeLang } from "./taxonomy.js";
 
 /** Nestable list item. string = leaf, object = has children. ordered = whether the children are
@@ -37,6 +38,8 @@ export type Block = { sourceFile?: string } & (
           tableMode?: "header";
           alt?: string;
           unavailable?: "missing" | "unreachable";
+          subformat?: SubformatCollection;
+          embed?: SubformatEmbedOptions;
       }
     | {
           type: "table";
@@ -54,7 +57,7 @@ export type Block = { sourceFile?: string } & (
     | { type: "term"; entry: TermEntry }
     // Listing of all figures in the render context.
     | { type: "figures" }
-    // Parsed schemath model. Keep the original source for the interactive source viewer.
+    // Parsed schemath model. Keep the original source for the interactive source reader.
     | { type: "schemaGraph"; alt?: string; caption?: string; graph: SchemaModel; source?: string }
     // Parsed graphth model, with the original source preserving notes and ordering.
     | { type: "graph"; alt?: string; caption?: string; graph: GraphModel; source?: string }

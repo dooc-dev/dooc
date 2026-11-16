@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // CLI entry shared by npx and mise. The manifest defaults to ./dooc.yaml; project paths use its parent directory.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { setDownloadProgressListener } from "../../engine/src/compiler/download-progress.js";
 import { projectRoot } from "../../engine/src/compiler/manifest.js";
@@ -11,6 +11,7 @@ import {
     serializeManifest,
 } from "../../engine/src/core/content-metadata.js";
 import { prebuilt } from "./assets.js";
+import { writeBuildOutput } from "./build-output.js";
 import { terminal } from "./terminal.js";
 
 process.env.NODE_ENV = prebuilt ? "production" : "development";
@@ -19,11 +20,12 @@ const USAGE = `usage: dooc <command>
 
 commands:
   editor [options]                    alias for editor run node --all (default: ./dooc.yaml)
-  viewer [options]                    alias for viewer run node --all (default: ./dooc.yaml)
+  reader [options]                    alias for reader run node --all (default: ./dooc.yaml)
   editor <build|run> <node|web>         build or run selected editor components
-  viewer <build|run> <node|web>         build or run selected read-only viewer components
+  reader <build|run> <node|web>         build or run selected read-only reader components
      --client --server --mcp           select components (explicit build/run: all off by default)
      --all --no-client --no-server --no-mcp  select all, with explicit exclusions
+     --mcp-transport stdio|http        Node MCP transport (default: http)
      --port <port>                     shared run port (default: 3000); node: /client/, /server, /mcp
      --project <path> --out <dir>       workspace path / empty build output directory
      --relay-url <https-origin>        optional hosted relay for web --mcp; omit for Desktop
@@ -36,10 +38,13 @@ commands:
         --mode static|live             HTML snapshot or runtime plugin API
         --auth external                host supplies live HTML authentication and transport
         --source-url <url>             source directory URL for card copy links
-        --easy-download                enable resource downloads in HTML
+        --download easy|normal|block    HTML download behavior (default: normal)
      zip [dooc.yaml] [out-dir]         build bundle.zip
-     --url_preview embed|network       URL handling for either format (default: embed)
-     --viewer-plugins <module>         inject an external build plugin module
+     github [dooc.yaml] [out-dir]      build bundle.github.zip (Markdown and SVG/assets)
+     --target github                  select GitHub output for html or zip
+     --resources copy|reference        copy assets or link existing files (GitHub HTML only)
+     --url_preview embed|network       URL handling (default: embed; ZIP requires embed)
+     --reader-plugins <module>         inject an external build plugin module
   export [dooc.yaml] [out-dir]         collect source dependencies into bundle.zip
   check [dooc.yaml] [options]          JSON consistency report (check --help for options)
   plugin                               manage local plugins
@@ -52,16 +57,15 @@ commands:
      remove <name> [dooc.yaml]         remove a registered project font
   self                                 manage this dooc installation
      update                           update dooc to the latest release
-     docs                             download GitHub docs and open the local viewer
-  mcp [dooc.yaml]                      stdio MCP server (all read / write operations)
-     --git-origin <module>             inject gitOrigin from an external viewer plugin module
-  mcp relay                            host the HTTPS browser MCP relay (relay --help for options)
+     docs                             download GitHub docs and open the local reader
+  relay                                browser MCP relay (relay --help for options)
+     --stdio                          connect a Desktop MCP host to a browser workspace
   help, --help, -h                     show this help
 
-Details: dooc <command> --help (editor, viewer, init, build, export, check, plugin, font, self, mcp).
+Details: dooc <command> --help (editor, reader, init, build, export, check, plugin, font, self, relay).
 Default manifest: ./dooc.yaml. Named manifests (<name>.dooc.yaml) are also accepted.
 Paths use the current directory, or the repository root when --repo is given.
-Example: dooc viewer run node --client --server --project dooc-docs --repo https://github.com/dooc-dev/dooc.git
+Example: dooc reader run node --client --server --project dooc-docs --repo https://github.com/dooc-dev/dooc.git
 Paths and .dooc/ are relative to the selected manifest's directory.`;
 
 const fail = (message: string): never => {
@@ -76,11 +80,11 @@ const writeOut = (out: string, data: string | Buffer): void => {
 };
 
 const [command, ...args] = process.argv.slice(2);
-if (["editor", "viewer", "self", "build"].includes(command ?? ""))
+if (["editor", "reader", "self", "build"].includes(command ?? ""))
     setDownloadProgressListener(terminal.download);
 switch (command) {
     case "editor":
-    case "viewer": {
+    case "reader": {
         try {
             const { applicationCommand } = await import("./application.js");
             await applicationCommand(command, args);
@@ -101,10 +105,10 @@ switch (command) {
 
 commands:
   update  update a standalone executable or global npm installation to the latest release
-  docs    download documentation from GitHub and open the local read-only viewer
+  docs    download documentation from GitHub and open the local read-only reader
 
 Homebrew and mise installations must be updated through their package manager.
-Documentation requires a network connection. Keep this command running while using the viewer.
+Documentation requires a network connection. Keep this command running while using the reader.
 
 options:
   --help, -h  show this help`);
@@ -270,7 +274,7 @@ options:
 Fonts:
   Fonts are copied to <project>/.dooc/fonts/ and included in ZIP and HTML bundles.
   Supported formats: TTF, OTF, WOFF, WOFF2. Existing names are never overwritten.
-  Reload the viewer after changing registered fonts. Default manifest: ./dooc.yaml.`);
+  Reload the reader after changing registered fonts. Default manifest: ./dooc.yaml.`);
                 break;
             }
             const [action, value, rootArg] = positionals;
@@ -301,6 +305,7 @@ Fonts:
                     only: { type: "string", multiple: true },
                     "allow-shared-svg": { type: "boolean" },
                     "warnings-as-errors": { type: "boolean" },
+                    "github-output": { type: "string" },
                     help: { type: "boolean", short: "h" },
                 },
             });
@@ -308,10 +313,11 @@ Fonts:
                 console.log(`usage: dooc check [dooc.yaml] [options]
 
 options:
-  --only render,languages,themes  select checks (default: all three)
+  --only render,languages,themes,github  select checks (github requires --github-output)
                                  manifest validity is always checked
   --allow-shared-svg              allow identical SVG bytes across themes (missing variants still fail)
   --warnings-as-errors            fail on warnings as well as errors
+  --github-output <zip|html>       also verify a GitHub build against its sources (path relative to manifest)
   --help, -h                      show this help
 
 dooc.yaml example:
@@ -322,9 +328,10 @@ dooc.yaml example:
   center_contents: []
 
 Checks:
-  render     uses the viewer compiler
+  render     uses the reader compiler
   languages  checks availability and prose; translations: locales/<ISO 639-3>/<source path>
   themes     checks variants: themes/<theme>/<asset path>
+  github     checks the build manifest, generated files and source fingerprints offline
   Site declarations determine the expected languages and themes, never CLI overrides.
 
 Report:
@@ -347,6 +354,7 @@ Report:
                     : {}),
                 allowSharedSvg: values["allow-shared-svg"],
                 warningsAsErrors: values["warnings-as-errors"],
+                githubOutput: values["github-output"],
             });
         } catch (error) {
             report = {
@@ -410,16 +418,19 @@ options:
                 allowPositionals: true,
                 options: {
                     url_preview: { type: "string" },
+                    target: { type: "string" },
+                    resources: { type: "string" },
+                    "reference-base": { type: "string" },
                     mode: { type: "string" },
                     auth: { type: "string" },
-                    "viewer-plugins": { type: "string" },
+                    "reader-plugins": { type: "string" },
                     "source-url": { type: "string" },
-                    "easy-download": { type: "boolean" },
+                    download: { type: "string" },
                     help: { type: "boolean", short: "h" },
                 },
             });
             if (values.help) {
-                console.log(`usage: dooc build <html|zip> [dooc.yaml] [out-dir] [options]
+                console.log(`usage: dooc build <html|zip|github> [dooc.yaml] [out-dir] [options]
 
 commands:
   html [dooc.yaml] [out-dir]   build bundle.html
@@ -427,14 +438,22 @@ commands:
      --auth external           host supplies live HTML authentication and transport
      --source-url <url>        HTTP(S) directory URL for card copy links
                                paths are relative to dooc.yaml; overrides GitHub origin/HEAD
-     --easy-download           enable resource downloads (default: off)
+     --download easy|normal|block
+                               easy: add resource download buttons; normal: browser defaults
+                               block: suppress in-page downloads (not browser policy)
+                               default: normal
   zip [dooc.yaml] [out-dir]    build bundle.zip
+  github [dooc.yaml] [out-dir] alias for zip --target github
 
-options (html and zip):
-  --url_preview embed|network  URL handling (default: embed; live HTML: network)
+options:
+  --target github              GitHub-compatible HTML body or Markdown ZIP
+  --resources copy|reference   GitHub HTML: copy files (default) or reference existing sources
+  --reference-base <path>      path from the HTML output directory to the manifest directory
+                              reference mode only; default: relative path from out-dir
+  --url_preview embed|network  URL handling (default: embed; ZIP: embed; live HTML: network)
     embed                     snapshot URL content and assets into the selected artifact
     network                   preserve URL references without downloading them at build time
-  --viewer-plugins <module>    inject trusted build plugins
+  --reader-plugins <module>    inject trusted build plugins
   --help, -h                  show this help
 
 Output:
@@ -452,37 +471,51 @@ HTML modes:
 
 URL handling:
   HTML embed: no network when opened. HTML network: fetch URLs when opened (text requires CORS).
-  ZIP embed: save URL content and rewrite references. ZIP network: keep the original URLs.
+  ZIP always includes local files and captured URL content, with rewritten references.
+  GitHub: export static pages and SVG images; network previews become links, without reader JS.
   Only embedded references such as ![](url) are downloaded; ordinary hyperlinks remain links.
   Snapshots use public HTTPS without credentials or redirects. Static HTML captures the server's
   HTML and declarative assets; it does not execute the source site's JavaScript or perform login.
   Remote files are limited to 2 MiB each and 64 MiB / 256 assets total.
   A failed download or invalid source stops the build before replacing the selected artifact.
-  Use --url_preview network with either format to build without downloading URL content.`);
+  Use HTML --url_preview network or dooc export to preserve remote references without downloads.`);
                 break;
             }
             const [format, rootArg, outArg] = positionals;
-            if (format !== "html" && format !== "zip")
-                throw new Error("build format must be html | zip");
+            if (format !== "html" && format !== "zip" && format !== "github")
+                throw new Error("build format must be html | zip | github");
             if (positionals.length > 3)
                 throw new Error(`build ${format} accepts a dooc.yaml path and an output directory`);
             const urlPreview = values.url_preview ?? (values.mode === "live" ? "network" : "embed");
             if (urlPreview !== "embed" && urlPreview !== "network")
                 throw new Error("--url_preview must be embed | network");
             const root = projectRoot(rootArg);
-            const out = join(resolve(outArg ?? join(root, "dist")), `bundle.${format}`);
+            const github = format === "github" || values.target === "github";
+            const directory = resolve(outArg ?? join(root, "dist"));
+            const out = join(
+                directory,
+                `bundle.${github ? "github." : ""}${format === "github" ? "zip" : format}`,
+            );
             const { buildBundle } = await import("./build.js");
             const bundle = await buildBundle(root, {
                 format,
+                target: values.target as "github" | undefined,
+                resources: values.resources as "copy" | "reference" | undefined,
+                referenceBase:
+                    values["reference-base"] ??
+                    (values.resources === "reference"
+                        ? relative(directory, root).replaceAll("\\", "/") || "."
+                        : undefined),
                 urlPreview,
                 mode: values.mode as "static" | "live" | undefined,
                 auth: values.auth as "external" | undefined,
-                pluginModule: values["viewer-plugins"],
+                pluginModule: values["reader-plugins"],
                 sourceUrl: values["source-url"],
-                easyDownload: values["easy-download"],
+                download: values.download as "easy" | "normal" | "block" | undefined,
             });
-            writeOut(out, bundle.data);
+            writeBuildOutput(out, bundle);
             bundle.commitVersion?.();
+            for (const warning of bundle.warnings ?? []) console.warn(`Warning: ${warning}`);
             console.log(
                 `${out} — ${bundle.docs} docs${bundle.version ? `, version ${bundle.version}` : ""} (url_preview=${urlPreview})`,
             );
@@ -491,51 +524,20 @@ URL handling:
         }
         break;
     }
-    case "mcp": {
+    case "relay": {
         try {
-            if (args[0] === "relay") {
-                const { relayCommand } = await import("./mcp-relay.js");
-                await relayCommand(args.slice(1));
-                break;
-            }
-            const { positionals, values } = parseArgs({
-                args,
-                allowPositionals: true,
-                options: {
-                    "git-origin": { type: "string" },
-                    help: { type: "boolean", short: "h" },
-                },
-            });
-            if (values.help) {
-                console.log(`usage: dooc mcp [dooc.yaml] [options]
-
-options:
-  --git-origin <module>  inject gitOrigin from an external viewer plugin module
-  --help, -h            show this help
-
-Server:
-  Exposes docs, files, Library, fonts, check, build and Git over stdio.
-  Build accepts format=html|zip and url_preview=embed|network (default embed).
-  Use dooc mcp relay --help to host the browser MCP relay.
-
-Git origin:
-  The external module's default export must contain gitOrigin (the same provider used by edit/view).
-  Only gitOrigin is used; viewer setup and data plugins are not started.
-  Authentication stays in the provider.`);
-                break;
-            }
-            if (positionals.length > 1) throw new Error("mcp accepts at most one dooc.yaml path");
-            const { startMcp } = await import("./mcp.js");
-            const { loadViewerPlugins } = await import("./plugin-config.js");
-            const { gitOrigin } = await loadViewerPlugins(values["git-origin"]);
-            if (values["git-origin"] && !gitOrigin)
-                throw new Error("Module must provide gitOrigin");
-            await startMcp(projectRoot(positionals[0]), { gitOrigin });
+            const { relayCommand } = await import("./mcp-relay.js");
+            await relayCommand(args);
         } catch (error) {
             fail(error instanceof Error ? error.message : String(error));
         }
         break;
     }
+    case "mcp":
+        fail(
+            "dooc mcp has moved: use dooc editor run node --mcp --mcp-transport stdio (or reader for read-only access). Browser relays use dooc relay.",
+        );
+        break;
     case undefined:
     case "help":
     case "--help":

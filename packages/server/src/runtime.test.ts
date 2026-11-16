@@ -39,19 +39,19 @@ afterEach(() => {
 });
 
 it("injects and replaces network policy at runtime without editor controls or persistent settings", async () => {
-    root = mkdtempSync(join(tmpdir(), "dooc-viewer-runtime-"));
+    root = mkdtempSync(join(tmpdir(), "dooc-reader-runtime-"));
     mkdirSync(join(root, "content"));
     writeFileSync(join(root, "dooc.yaml"), "docs: [guide]\n");
     const file = "https://example.com/runtime-policy.txt";
     writeFileSync(join(root, "content/guide.md"), "Runtime policy fixture.\n");
     const oldSettings = join(root, "allowed-domains.json");
     writeFileSync(oldSettings, JSON.stringify({ domains: ["old.example.com"] }));
-    const module = join(root, "viewer.mjs");
+    const module = join(root, "reader.mjs");
     writeFileSync(
         module,
         `export default {
         plugins: [], allowedDomains: ["initial.example.com"],
-        setup(viewer) { viewer.setAllowedDomains(["setup.example.com"]); },
+        setup(reader) { reader.setAllowedDomains(["setup.example.com"]); },
     };`,
     );
     vi.stubEnv("DOCS_ROOT", root);
@@ -66,7 +66,7 @@ it("injects and replaces network policy at runtime without editor controls or pe
         return server as unknown as Server;
     });
     const { startServer } = await import("./serve.js");
-    const viewer = await startServer("edit", 5179, module);
+    const reader = await startServer("edit", 5179, module);
     const call = (
         path: string,
         input?: unknown,
@@ -152,9 +152,9 @@ it("injects and replaces network policy at runtime without editor controls or pe
     await expect(workspace.request("git", { action: "read" })).rejects.toThrow(
         "Git workspace is not available",
     );
-    viewer.setGitOrigin({ name: "External", capabilities: [], read: vi.fn(), execute: vi.fn() });
-    expect(() => viewer.setGitOrigin({} as never)).toThrow("Git origin");
-    viewer.setGitOrigin(undefined);
+    reader.setGitOrigin({ name: "External", capabilities: [], read: vi.fn(), execute: vi.fn() });
+    expect(() => reader.setGitOrigin({} as never)).toThrow("Git origin");
+    reader.setGitOrigin(undefined);
     const read = () => call("/api/textfile", { action: "read", file });
     expect((await page()).boot.previews.domains).toEqual(["setup.example.com"]);
     expect((await read()).status).toBe(400);
@@ -173,7 +173,7 @@ it("injects and replaces network policy at runtime without editor controls or pe
     ).toBe(404);
 
     const domains = [" EXAMPLE.COM "];
-    viewer.setAllowedDomains(domains);
+    reader.setAllowedDomains(domains);
     domains.push("unvalidated.example.com");
     const allowed = await page();
     expect(allowed.boot.previews.domains).toEqual(["example.com"]);
@@ -182,19 +182,19 @@ it("injects and replaces network policy at runtime without editor controls or pe
     expect(result.status).toBe(200);
     expect(JSON.parse(result.body).content).toBe("Runtime sample content");
     for (const invalid of [["*"], ["localhost"], ["example.com", "EXAMPLE.COM"], undefined]) {
-        expect(() => viewer.setAllowedDomains(invalid as string[])).toThrow();
+        expect(() => reader.setAllowedDomains(invalid as string[])).toThrow();
     }
     expect((await page()).boot.previews.domains).toEqual(["example.com"]);
     expect(changed).toHaveBeenLastCalledWith({ kind: "content", files: [] });
 
-    viewer.setAllowedDomains([]);
+    reader.setAllowedDomains([]);
     const revoked = await page();
     expect(revoked.boot.previews.domains).toEqual([]);
     const denied = await read();
     expect(denied.status).toBe(400);
     expect(denied.body).toContain("Domain is not allowed");
     expect(fetchPublicFile).toHaveBeenCalledTimes(1);
-    viewer.setWorkspace({
+    reader.setWorkspace({
         protocol: "storage",
         folder: "host/documents",
         service: "Injected storage",
@@ -210,10 +210,10 @@ it("injects and replaces network policy at runtime without editor controls or pe
         subformats.body.match(/class="nav-link cur" href="\/_subformats(?:\?|")/),
     ).not.toBeNull();
     expect(subformats.body).toContain("No subformats configured. Add subformats to dooc.yaml.");
-    expect(() => viewer.setWorkspace({ protocol: "storage" } as never)).toThrow("Workspace");
-    viewer.setWorkspace({ protocol: "git", repo: "Injected repository", branch: "host/topic" });
+    expect(() => reader.setWorkspace({ protocol: "storage" } as never)).toThrow("Workspace");
+    reader.setWorkspace({ protocol: "git", repo: "Injected repository", branch: "host/topic" });
     expect((await call("/guide")).body).toContain("Injected repository");
-    viewer.setWorkspace(undefined);
+    reader.setWorkspace(undefined);
     expect((await call("/guide")).body).not.toContain("Injected repository");
 
     mkdirSync(join(root, "figures"));

@@ -1,5 +1,6 @@
 import { localFile } from "./files.js";
 import { type PreviewSettings, resolvePreviewer } from "./previewers.js";
+import { parseSubformatQuery, type SubformatEmbedOptions } from "./subformats.js";
 import { parseFileReference } from "./textfile.js";
 
 /** Local visual links share the same asset catalog as image embeds. */
@@ -21,6 +22,7 @@ export const parseFileEmbed = (
     file: string;
     range?: string;
     tableMode?: "header";
+    embed?: SubformatEmbedOptions;
     kind: "textfile" | "figure" | "html" | "external";
 } => {
     if (/^https?:\/\//i.test(source)) {
@@ -29,7 +31,11 @@ export const parseFileEmbed = (
             throw new Error("Embed URLs must not contain credentials");
         return { file: source, kind: "external" };
     }
-    const ref = parseFileReference(source);
+    const { query, ...ref } = parseFileReference(source, true);
+    if (query !== undefined) {
+        if (ref.range) throw new Error("Subformat parameters cannot be combined with line ranges");
+        return { ...ref, kind: "textfile", embed: parseSubformatQuery(query) };
+    }
     const previewer = resolvePreviewer(source, settings);
     if (ref.range === "#H") {
         if (previewer !== "table") throw new Error("#H requires a CSV or TSV file");

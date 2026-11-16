@@ -34,7 +34,7 @@ export const initializeThemes = (themes = ["light", "dark"]): void => {
     root.dataset.editorTheme = read("docs-editor:theme");
 };
 
-/** Self-contained because published viewers embed this function directly. */
+/** Self-contained because published readers embed this function directly. */
 export const mountThemePickers = (
     icons: Record<string, string>,
     themes = ["light", "dark"],

@@ -1,6 +1,6 @@
 Document versions identify the document set defined by one [manifest](contents/md/manifest.md), including its referenced files. Each `dooc.yaml` or `<name>.dooc.yaml` has its own version, separate from the dooc application version.
 
-Document versions apply to one manifest and its referenced files. The Node and browser viewers use the same numbering and publication selectors.
+Document versions apply to one manifest and its referenced files. The Node and browser readers use the same numbering and publication selectors.
 
 ## Configuration
 
@@ -116,12 +116,12 @@ Expose the resolved version in generated document metadata. Automatic calculatio
 
 ## Published versions
 
-Viewer run and build commands select the versions available to readers through `--versions`. The default is `latest`, a shorthand for `latest.latest.latest`; it selects exactly one complete version. Version ordering is numeric, not a comparison of publication dates or strings.
+Reader run and build commands select the versions available to readers through `--versions`. The default is `latest`, a shorthand for `latest.latest.latest`; it selects exactly one complete version. Version ordering is numeric, not a comparison of publication dates or strings.
 
 ```sh
-dooc viewer run node --all --versions "latest"
-dooc viewer build node --all --versions "*.*.latest"
-dooc viewer run node --all --versions ">=1.2.0 <2.0.0"
+dooc reader run node --all --versions "latest"
+dooc reader build node --all --versions "*.*.latest"
+dooc reader run node --all --versions ">=1.2.0 <2.0.0"
 ```
 
 A three-component selector uses `.` as its separator. Each component is a fixed integer, `*` for all values, or `latest` for the greatest available value within its selected parent group. Resolve components from major to minor to patch, using only versions that actually exist.
@@ -141,11 +141,11 @@ A three-component selector uses `.` as its separator. Each component is a fixed 
 
 For `1.2.9`, `1.3.2`, and `2.0.0`, `latest.latest.latest` selects `2.0.0`, while `*.*.latest` selects all three. Never combine independent maxima into a nonexistent version such as `2.3.9`. A fixed component with no match produces no candidate; do not silently choose an older parent group instead.
 
-Versions outside the selected range are excluded from delivery as well as from the visible list. Reject invalid selectors or an explicit selection with no available version. A document without versioning keeps its existing viewer behavior.
+Versions outside the selected range are excluded from delivery as well as from the visible list. Reject invalid selectors or an explicit selection with no available version. A document without versioning keeps its existing reader behavior.
 
-`viewer build` generates an application rather than copying document history. Store the selection in the generated viewer configuration and resolve it against that viewer's document source. A static document artifact can offer only the historical content included when it was built; it cannot retrieve later versions on its own.
+`reader build` generates an application rather than copying document history. Store the selection in the generated reader configuration and resolve it against that reader's document source. A static document artifact can offer only the historical content included when it was built; it cannot retrieve later versions on its own.
 
-## Viewer selection
+## Reader selection
 
 When multiple versions are published, place the version pulldown at the bottom of the left sidebar, outside the scrolling document tree. Initially open the latest published version, unless the URL selects a specific published version. Show available versions in descending order and include the concrete version number in the current label.
 
@@ -159,7 +159,7 @@ Only the current Git workspace version is editable. This means the selected bran
 
 Keep drafts attached to their original workspace, version context, and file. Switching versions must retain unsaved text, file and form drafts, and undo history; returning to the editable workspace restores them. Neither switching nor copying historical text implicitly saves, discards, or moves a draft.
 
-Preserve the ability to locate pending work. The editor must identify which workspace or version context and files contain unsaved drafts, including drafts outside the currently displayed version, and allow returning to their owner. Historical views must retain access to this draft navigation even though the historical content itself is read-only. Viewer publication filters must not hide the editable workspace or its pending drafts from the editor.
+Preserve the ability to locate pending work. The editor must identify which workspace or version context and files contain unsaved drafts, including drafts outside the currently displayed version, and allow returning to their owner. Historical views must retain access to this draft navigation even though the historical content itself is read-only. Reader publication filters must not hide the editable workspace or its pending drafts from the editor.
 
 Git history supplies historical source files without adding version tracking files to the repository. Hash mode retains source snapshots after successful `dooc build html` or `dooc build zip` artifact delivery. The programmatic `buildBundle` API returns `version`, `revision` when available, and an optional `commitVersion()` callback; call that callback only after successfully writing the artifact. HTML artifacts include `dooc-version` metadata. Git builds with relevant working changes report `+dirty` without advancing the committed number.
 

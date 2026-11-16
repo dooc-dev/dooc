@@ -1,4 +1,4 @@
-// Built-in language adapters for the Node tools (viewer / CLI / MCP): the browser-safe core
+// Built-in language adapters for the Node tools (reader / CLI / MCP): the browser-safe core
 // adapters plus their Node-only prose lint. docs.config.mjs adapters take precedence.
 
 import type { LanguageRegistration } from "shiki/core";

@@ -19,7 +19,7 @@
             "types": "./dist/engine/compiler/check.d.ts",
             "default": "./dist/engine/compiler/check.js"
         },
-        "./viewer-plugins": {
+        "./reader-plugins": {
             "types": "./dist/server/plugins.d.ts",
             "default": "./dist/server/plugins.js"
         },

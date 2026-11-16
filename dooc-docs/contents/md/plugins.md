@@ -12,7 +12,7 @@ A plugin turns a service URL into a live card. Write the URL as an embed; a plug
 
 ## Demo plugins
 
-Three fictional services show what a card can do. They run on a local mock: no account, no network, and changes last until the viewer restarts.
+Three fictional services show what a card can do. They run on a local mock: no account, no network, and changes last until the reader restarts.
 
 | Service                           | Card for       | Try                                          |
 | --------------------------------- | -------------- | -------------------------------------------- |
@@ -20,14 +20,14 @@ Three fictional services show what a card can do. They run on a local mock: no a
 | [GitApp](contents/md/gitapp.md)   | A pull request | Read the diff, change review status, comment |
 | [ChatApp](contents/md/chatapp.md) | A message      | Reply to the thread, toggle reactions        |
 
-The demo modules are development files in a source checkout; they are not bundled with dooc. After [development setup](contents/md/development.md#set-up-and-run), load a module explicitly with `--viewer-plugins`. To use them with a cloned documentation workspace, run from that trusted source checkout:
+The demo modules are development files in a source checkout; they are not bundled with dooc. After [development setup](contents/md/development.md#set-up-and-run), load a module explicitly with `--reader-plugins`. To use them with a cloned documentation workspace, run from that trusted source checkout:
 
 ```sh
 dooc editor run node --client --server --project dooc-docs --repo https://github.com/dooc-dev/dooc.git \
-  --viewer-plugins ./sample/examples/viewer-plugins/index.mjs
+  --reader-plugins ./sample/examples/reader-plugins/index.mjs
 ```
 
-The **Plugins** tool then lists **Sample plugin** (`sample`) and **Sample plugin (sign-in demo)** (`sample-auth`). Opening the documentation with `dooc viewer run node --client --server --project dooc-docs --repo https://github.com/dooc-dev/dooc.git` or `dooc self docs` does not load these modules; the demo cards stay links.
+The **Plugins** tool then lists **Sample plugin** (`sample`) and **Sample plugin (sign-in demo)** (`sample-auth`). Opening the documentation with `dooc reader run node --client --server --project dooc-docs --repo https://github.com/dooc-dev/dooc.git` or `dooc self docs` does not load these modules; the demo cards stay links.
 
 ## Card controls
 
@@ -45,11 +45,11 @@ Values save as you leave a field. Cards refresh every five seconds and when you 
 | Source        | How                                                                 | Kept in               |
 | ------------- | ------------------------------------------------------------------- | --------------------- |
 | Plugin ZIP    | `dooc plugin add <zip>`, or **Add plugins** in the **Plugins** tool | `.dooc/plugins/`      |
-| Viewer module | `dooc editor run node --client --server --viewer-plugins <module>`, or `DOOC_VIEWER_PLUGINS`     | Outside the workspace |
+| Reader module | `dooc editor run node --client --server --reader-plugins <module>`, or `DOOC_READER_PLUGINS`     | Outside the workspace |
 
-A ZIP is installed per project and can be enabled, disabled, replaced, or deleted in the **Plugins** tool. A viewer module is trusted code chosen by whoever starts dooc; its plugins show as **Provided by viewer**.
+A ZIP is installed per project and can be enabled, disabled, replaced, or deleted in the **Plugins** tool. A reader module is trusted code chosen by whoever starts dooc; its plugins show as **Provided by reader**.
 
-In an `edit` or `view` session opened with `--repo`, workspace ZIPs remain files but are not activated, even if previously approved. Installing, enabling, replacing, or editing a workspace plugin is disabled in that session. An explicitly selected local `--viewer-plugins` module remains supported; `edit` and `view` also accept `DOOC_VIEWER_PLUGINS`. To use workspace ZIPs, inspect and trust a local checkout, then open its manifest without `--repo`.
+In an `edit` or `view` session opened with `--repo`, workspace ZIPs remain files but are not activated, even if previously approved. Installing, enabling, replacing, or editing a workspace plugin is disabled in that session. An explicitly selected local `--reader-plugins` module remains supported; `edit` and `view` also accept `DOOC_READER_PLUGINS`. To use workspace ZIPs, inspect and trust a local checkout, then open its manifest without `--repo`.
 
 ## Sign in
 

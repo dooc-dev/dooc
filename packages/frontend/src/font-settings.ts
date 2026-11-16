@@ -1,12 +1,12 @@
 import type { ProjectFont } from "../../engine/src/compiler/fonts.js";
 
-/** Self-contained because published viewers embed this function directly. */
+/** Self-contained because published readers embed this function directly. */
 export const createFontSettings = (registered: readonly ProjectFont[]) => {
-    type Target = "editor" | "viewer";
+    type Target = "editor" | "reader";
     const fonts = new Map<string, FontFace>();
-    const selected = { editor: "", viewer: "" };
-    const key = (target: Target): string => `docs-${target === "viewer" ? "preview" : target}:font`;
-    for (const target of ["editor", "viewer"] as const) {
+    const selected = { editor: "", reader: "" };
+    const key = (target: Target): string => `docs-${target === "reader" ? "preview" : target}:font`;
+    for (const target of ["editor", "reader"] as const) {
         try {
             selected[target] = localStorage.getItem(key(target)) ?? "";
         } catch {
@@ -14,7 +14,7 @@ export const createFontSettings = (registered: readonly ProjectFont[]) => {
         }
     }
     const apply = (): void => {
-        for (const target of ["editor", "viewer"] as const) {
+        for (const target of ["editor", "reader"] as const) {
             const face = fonts.get(selected[target]);
             if (face)
                 document.documentElement.style.setProperty(
@@ -43,7 +43,7 @@ export const createFontSettings = (registered: readonly ProjectFont[]) => {
                 fonts.set(family, face);
             }),
         );
-        for (const target of ["editor", "viewer"] as const)
+        for (const target of ["editor", "reader"] as const)
             if (!fonts.has(selected[target])) selected[target] = "";
         apply();
         if (results.some((result) => result.status === "rejected"))

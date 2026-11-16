@@ -71,6 +71,23 @@ export const mountResourceLibrary = (openSource?: (file: string, line: number) =
     };
     mountPages();
     document.addEventListener("docs:page-shown", mountPages);
+    const mountedEmbeds = new WeakSet<HTMLElement>();
+    const mountEmbeds = (parent: ParentNode): void => {
+        const roots = [...parent.querySelectorAll<HTMLElement>("[data-subformat-embed]")];
+        if (parent instanceof HTMLElement && parent.matches("[data-subformat-embed]"))
+            roots.unshift(parent);
+        for (const root of roots) {
+            if (mountedEmbeds.has(root)) continue;
+            mountedEmbeds.add(root);
+            filterSubformats(root, [], openSource);
+        }
+    };
+    mountEmbeds(document);
+    new MutationObserver((changes) => {
+        for (const change of changes)
+            for (const node of change.addedNodes)
+                if (node instanceof HTMLElement) mountEmbeds(node);
+    }).observe(document.body, { childList: true, subtree: true });
     // Jumping from a record's "used in" list highlights where the document uses that record.
     let flashing: number | undefined;
     document.addEventListener("click", (event) => {
@@ -84,7 +101,7 @@ export const mountResourceLibrary = (openSource?: (file: string, line: number) =
         flashing = window.setInterval(() => {
             const targets = [
                 ...document.querySelectorAll<HTMLElement>(
-                    `main .codeblk[title="${path}"], main a[href$="${path}"], main a[href$="${encoded}"]`,
+                    `main .codeblk[title="${path}"], main .subformat-embed [data-record-file="${path}"], main a[href$="${path}"], main a[href$="${encoded}"]`,
                 ),
             ].filter((element) => !element.closest("[data-resource-results]"));
             if (!targets.length && ++tries < 50) return;

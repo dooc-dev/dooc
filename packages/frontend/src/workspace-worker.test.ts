@@ -67,13 +67,13 @@ beforeEach(async () => {
     vi.clearAllMocks();
 });
 
-describe("viewer Worker", () => {
+describe("reader Worker", () => {
     it("rejects workspace creation and mutations, renders previews, and never persists files", async () => {
         vi.stubGlobal("DOOC_READ_ONLY", true);
         vi.resetModules();
         await import("./workspace-worker.js");
         vi.clearAllMocks();
-        const directory = { kind: "directory", name: "viewer" };
+        const directory = { kind: "directory", name: "reader" };
         for (const options of [{ create: true }, { clone: true }, { files: new Map() }])
             expect(await reply("initialize", { directory, ...options })).toMatchObject({
                 error: expect.stringContaining("read-only"),
@@ -108,7 +108,7 @@ it("omits MCP unless selected and validates read-only tools inside the Worker", 
     vi.stubGlobal("DOOC_READ_ONLY", true);
     vi.resetModules();
     await import("./workspace-worker.js");
-    await request("initialize", { directory: { kind: "directory", name: "viewer-mcp" } });
+    await request("initialize", { directory: { kind: "directory", name: "reader-mcp" } });
     vi.clearAllMocks();
     expect(await request("mcp", { name: "read_doc", args: { id: "guide" } })).toEqual({
         raw: "Original",

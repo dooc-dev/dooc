@@ -31,7 +31,7 @@ it("publishes only selected versions and keeps historical editor workspaces read
     await commit();
     writeFileSync(join(root, "content/guide.md"), "Private working changes\n");
     const session = { local: true };
-    const viewer = await nodeWorkspaceOperations(
+    const reader = await nodeWorkspaceOperations(
         join(root, "dooc.yaml"),
         undefined,
         undefined,
@@ -40,17 +40,17 @@ it("publishes only selected versions and keeps historical editor workspaces read
     const editor = await nodeWorkspaceOperations(join(root, "dooc.yaml"));
     const request = { method: "GET", url: "/guide", headers: {}, body: "" };
     try {
-        const list = (await viewer.ops.versions?.(
+        const list = (await reader.ops.versions?.(
             { action: "list" },
             session,
         )) as DocumentVersionList;
         expect(list.versions.map((row) => row.version)).toEqual(["0.0.1"]);
         expect(list.showSelector).toBe(false);
-        const page = (await viewer.ops.http?.(request, session)) as { body: string };
+        const page = (await reader.ops.http?.(request, session)) as { body: string };
         expect(page.body).toContain("Latest published text");
         expect(page.body).not.toContain("Private working changes");
         await expect(
-            viewer.ops.versions?.({ action: "open", version: "0.0.0" }, session),
+            reader.ops.versions?.({ action: "open", version: "0.0.0" }, session),
         ).rejects.toThrow("not published");
         const old = (await editor.ops.versions?.(
             { action: "open", version: "0.0.0" },
@@ -92,21 +92,21 @@ it("publishes only selected versions and keeps historical editor workspaces read
         expect(readFileSync(join(root, "content/guide.md"), "utf8")).toBe(
             "Private working changes\n",
         );
-        const published = (await viewer.ops.versions?.(
+        const published = (await reader.ops.versions?.(
             { action: "open", version: "latest" },
             session,
         )) as { id: string };
         writeFileSync(join(root, "dooc.yaml"), "docs: [unfinished\n");
-        expect(((await viewer.ops.http?.(request, session)) as { body: string }).body).toContain(
+        expect(((await reader.ops.http?.(request, session)) as { body: string }).body).toContain(
             "Latest published text",
         );
         writeFileSync(join(root, "dooc.yaml"), "docs: [guide]\n");
         await commit();
         await expect(
-            viewer.ops.http?.({ ...request, workspace: published.id }, session),
+            reader.ops.http?.({ ...request, workspace: published.id }, session),
         ).rejects.toThrow("not published");
     } finally {
-        viewer.close();
+        reader.close();
         editor.close();
     }
 });
@@ -168,7 +168,7 @@ it("does not expose an uncommitted Git workspace as the default latest publicati
     roots.push(root);
     writeFileSync(join(root, "dooc.yaml"), "docs: []\n");
     await git(root, ["init", "-b", "main"]);
-    const viewer = await nodeWorkspaceOperations(
+    const reader = await nodeWorkspaceOperations(
         join(root, "dooc.yaml"),
         undefined,
         undefined,
@@ -176,9 +176,9 @@ it("does not expose an uncommitted Git workspace as the default latest publicati
     );
     try {
         await expect(
-            viewer.ops.http?.({ method: "GET", url: "/", body: "", headers: {} }, { local: true }),
+            reader.ops.http?.({ method: "GET", url: "/", body: "", headers: {} }, { local: true }),
         ).rejects.toThrow("No published document versions");
     } finally {
-        viewer.close();
+        reader.close();
     }
 });

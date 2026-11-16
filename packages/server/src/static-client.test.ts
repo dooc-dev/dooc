@@ -4,7 +4,7 @@ import { clientAssets, staticClientHandler } from "./static-client.js";
 
 vi.mock("./assets.js", () => ({
     prebuilt: true,
-    readViewerAsset: (name: string) => Buffer.from(name),
+    readReaderAsset: (name: string) => Buffer.from(name),
 }));
 vi.mock("./serve.js", () => ({ bundleClient: vi.fn(async (name: string) => name) }));
 vi.mock("./terminal.js", () => ({ terminal: { ready: vi.fn() } }));
@@ -15,17 +15,17 @@ it("emits only selected assets and chooses a separate read-only Worker", async (
     const worker = await clientAssets(undefined, { client: false, worker: true, readOnly: true });
     expect([...worker.keys()]).toEqual(["assets/workspace-worker.js"]);
     expect(worker.get("assets/workspace-worker.js")?.toString()).toBe(
-        "workspace-viewer-worker.global.js",
+        "workspace-reader-worker.global.js",
     );
-    const viewer = await clientAssets("ws://localhost:4001", {
+    const reader = await clientAssets("ws://localhost:4001", {
         runtime: "node",
         readOnly: true,
         worker: false,
     });
-    expect(viewer.has("assets/edit.js")).toBe(false);
-    expect(viewer.has("assets/workspace-worker.js")).toBe(false);
-    expect(viewer.has("assets/client.js")).toBe(true);
-    expect(JSON.parse(viewer.get("dooc-client.json")?.toString() ?? "{}")).toEqual({
+    expect(reader.has("assets/edit.js")).toBe(false);
+    expect(reader.has("assets/workspace-worker.js")).toBe(false);
+    expect(reader.has("assets/client.js")).toBe(true);
+    expect(JSON.parse(reader.get("dooc-client.json")?.toString() ?? "{}")).toEqual({
         server: "ws://localhost:4001/server",
         runtime: "node",
         readOnly: true,
@@ -41,7 +41,7 @@ it("emits only selected assets and chooses a separate read-only Worker", async (
         relayUrl: "https://relay.example",
     });
     expect(mcp.get("assets/workspace-worker.js")?.toString()).toBe(
-        "workspace-viewer-mcp-worker.global.js",
+        "workspace-reader-mcp-worker.global.js",
     );
     expect(mcp.has("assets/mcp.js")).toBe(true);
     expect(JSON.parse(mcp.get("dooc-client.json")?.toString() ?? "{}")).toMatchObject({

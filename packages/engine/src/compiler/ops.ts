@@ -1,5 +1,5 @@
 // Write operations on the docs root (create / move / rename / delete docs and save body text;
-// add / remove figures). Shared by the viewer's edit API, the CLI (doc / figure) and MCP.
+// add / remove figures). Shared by the reader's edit API, the CLI (doc / figure) and MCP.
 // Failures are returned as { error, status } (status is HTTP-like) with no partial updates.
 
 import {

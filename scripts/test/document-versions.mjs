@@ -124,8 +124,8 @@ export async function testDocumentVersionDrafts(page) {
     }, autosave);
 }
 
-/** Run against a viewer fixture; its publication setting determines whether the control exists. */
-export async function testDocumentVersionViewer(page, latestOnly) {
+/** Run against a reader fixture; its publication setting determines whether the control exists. */
+export async function testDocumentVersionReader(page, latestOnly) {
     const versions = page.locator("#document-version-select");
     await versions.locator("option").first().waitFor({ state: "attached" });
     if (latestOnly) {

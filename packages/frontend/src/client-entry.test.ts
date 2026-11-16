@@ -63,5 +63,5 @@ it.each([
     expect(connectServer).toHaveBeenCalledWith(server, false, readOnly);
     expect(connection.fetch).toHaveBeenCalledWith("http://localhost:3000/client/");
     expect(write.mock.calls[0]?.[0]).toContain("Opened document");
-    expect(write.mock.calls[0]?.[0].includes('data-dooc-viewer="true"')).toBe(readOnly);
+    expect(write.mock.calls[0]?.[0].includes('data-dooc-reader="true"')).toBe(readOnly);
 });

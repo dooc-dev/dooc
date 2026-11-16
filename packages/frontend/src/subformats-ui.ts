@@ -1,6 +1,6 @@
 import { escapeHtml } from "../../engine/src/core/escape-html.js";
 import { defaultFilePath, localFile } from "../../engine/src/core/files.js";
-import { resourceDownloadHtml } from "../../engine/src/core/html.js";
+import { resourceDownloadHtml, subformatTableHtml } from "../../engine/src/core/html.js";
 import { CHECK_ICON } from "../../engine/src/core/icons.js";
 import {
     SUBFORMAT_SCHEMA_TEMPLATE,
@@ -21,6 +21,7 @@ import { confirmDialog, showDialog } from "./edit-dialog.js";
 import { t } from "./i18n.js";
 
 interface State {
+    id: number;
     workspace: string;
     fetch: (url: string, init?: RequestInit) => Promise<Response>;
     registrationForm?: HTMLFormElement;
@@ -28,6 +29,7 @@ interface State {
     iconForm?: HTMLFormElement;
     collections: SubformatCollection[];
     views: Map<string, Required<NonNullable<Subformat["layouts"]>>>;
+    parameterOrders: Map<string, string[]>;
     expanded: Set<string>;
     openSource?: (file: string, line: number) => void;
     dialogOpen: boolean;
@@ -38,6 +40,7 @@ interface State {
     openSetting?: string;
 }
 const states = new WeakMap<HTMLElement, State>();
+let nextId = 0;
 const cardPositions = (board: HTMLElement): Map<HTMLElement, DOMRect> =>
     new Map(
         [...board.querySelectorAll<HTMLElement>("[data-record-file]")].map((card) => [
@@ -175,10 +178,12 @@ export const filterSubformats = (
         const workspace =
             root.closest<HTMLElement>("[data-workspace]")?.dataset.workspace ?? workspaceId();
         state = {
+            id: ++nextId,
             workspace,
             fetch: (url, init) => workspaceFetch(url, init, workspace),
             collections: JSON.parse(template.content.textContent ?? "[]"),
             views: new Map(),
+            parameterOrders: new Map(),
             expanded: new Set(),
             openSource:
                 openSource &&
@@ -206,7 +211,9 @@ export const filterSubformats = (
         }
     }
     const collection = state.collections.find(
-        (item) => item.ext === (root.dataset.subformatPage ?? select?.value),
+        (item) =>
+            item.ext ===
+            (root.dataset.subformatPage ?? root.dataset.subformatEmbed ?? select?.value),
     );
     if (select) {
         for (const option of select.options) {
@@ -361,6 +368,7 @@ const deleteSubformat = async (
         if (!response.ok) throw new Error(t(result.error ?? "Save failed"));
         state.collections = state.collections.filter((item) => item !== collection);
         state.views.delete(ext);
+        state.parameterOrders.delete(ext);
         for (const option of [...select.options]) {
             if (option.value === ext) option.remove();
         }
@@ -406,7 +414,7 @@ const mountSubformatMenu = (
         trigger.setAttribute("aria-expanded", "true");
         (
             popup.querySelector<HTMLElement>('[aria-checked="true"]') ??
-            popup.querySelector("button")
+            popup.querySelector("button:not(:disabled)")
         )?.focus();
     });
     popup.addEventListener("beforetoggle", (event) => {
@@ -535,6 +543,7 @@ export const restoreSubformatViews = (previous: Element, next: Element): void =>
     const to = after && states.get(after);
     if (from && to && from.workspace === to.workspace) {
         to.views = from.views;
+        to.parameterOrders = from.parameterOrders;
         to.expanded = from.expanded;
         to.openSetting = from.openSetting;
         if (after?.hasAttribute("data-subformat-page"))
@@ -548,6 +557,31 @@ export const restoreSubformatViews = (previous: Element, next: Element): void =>
 const fieldHtml = (title: string, value: unknown): string =>
     `<div><dt>${escapeHtml(title)}</dt><dd>${escapeHtml(typeof value === "object" ? JSON.stringify(value, null, 2) : String(value))}</dd></div>`;
 
+const openRecord = async (
+    state: State,
+    collection: SubformatCollection,
+    record: SubformatRecord,
+    title: string,
+): Promise<void> => {
+    if (state.openSource) return state.openSource(record.file, 1);
+    if (state.dialogOpen) return;
+    state.dialogOpen = true;
+    const content = document.createElement("div");
+    content.className = "subformat-detail";
+    content.innerHTML = `<p class="subformat-detail-path">${escapeHtml(record.file)}</p><dl>${Object.entries(
+        record.data,
+    )
+        .map(([name, value]) =>
+            fieldHtml(collection.fields.find((field) => field.name === name)?.title ?? name, value),
+        )
+        .join("")}</dl>`;
+    try {
+        await showDialog(title, content, [{ value: "", label: t("Close") }]);
+    } finally {
+        state.dialogOpen = false;
+    }
+};
+
 const render = (
     root: HTMLElement,
     board: HTMLElement,
@@ -556,23 +590,41 @@ const render = (
     words: string[],
 ): void => {
     state.stopDrag?.();
+    const embedded = root.hasAttribute("data-subformat-embed");
     const scrollLeft = board.querySelector(".subformat-columns")?.scrollLeft ?? 0;
     const published = !!document.querySelector("template[data-route]");
     const enums = collection.fields.filter((field) => field.enum?.length);
     const view = state.views.get(collection.ext) ?? {
-        view: collection.layouts?.view ?? "card",
+        view: embedded
+            ? root.dataset.subformatEmbedView === "list"
+                ? "list"
+                : "card"
+            : (collection.layouts?.view ?? "card"),
         card_title: collection.layouts?.card_title ?? "",
-        group_by: collection.layouts?.group_by ?? enums[0]?.name ?? "",
+        group_by: embedded ? "" : (collection.layouts?.group_by ?? enums[0]?.name ?? ""),
         sort_by: collection.layouts?.sort_by ?? "",
         sort_order: collection.layouts?.sort_order ?? "asc",
     };
     state.views.set(collection.ext, view);
     if (!enums.some((field) => field.name === view.group_by)) view.group_by = "";
-    const grouping = enums.find((field) => field.name === view.group_by);
+    const grouping =
+        view.view === "list" ? undefined : enums.find((field) => field.name === view.group_by);
     const sortable = collection.fields.filter((field) => field.enum || field.format || field.type);
     if (!sortable.some((field) => field.name === view.sort_by)) view.sort_by = "";
     const sorting = sortable.find((field) => field.name === view.sort_by);
     const titleField = view.card_title;
+    const parameterOrder = state.parameterOrders.get(collection.ext) ?? [];
+    const displayFields =
+        view.view === "list"
+            ? [...collection.fields].sort((a, b) => {
+                  const left = parameterOrder.indexOf(a.name);
+                  const right = parameterOrder.indexOf(b.name);
+                  return (
+                      (left < 0 ? parameterOrder.length : left) -
+                      (right < 0 ? parameterOrder.length : right)
+                  );
+              })
+            : collection.fields;
     const descending = view.sort_order === "desc";
     const records = sortSubformatRecords(
         collection.records.filter((record) => {
@@ -584,10 +636,26 @@ const render = (
     );
     const empty = root.querySelector<HTMLElement>("[data-resource-empty]");
     if (empty) empty.hidden = records.length > 0;
+    if (embedded && root.dataset.subformatEmbedView === "table") {
+        board.innerHTML = subformatTableHtml(
+            { ...collection, records },
+            root.getAttribute("aria-label") ?? collection.ext,
+        );
+        for (const button of board.querySelectorAll<HTMLButtonElement>("[data-subformat-record]")) {
+            if (state.openSource) button.removeAttribute("aria-haspopup");
+            button.addEventListener("click", (event) => {
+                if (event.detail === 0) button.focus({ preventScroll: true });
+                const record = records[Number(button.dataset.subformatRecord)];
+                if (record) void openRecord(state, collection, record, record.file);
+            });
+        }
+        return;
+    }
     const controls =
         root.querySelector<HTMLElement>(".subformat-controls") ?? document.createElement("div");
     controls.className = "subformat-controls";
-    root.querySelector(".resource-toolbar")?.append(controls);
+    if (embedded) root.insertBefore(controls, board);
+    else root.querySelector(".resource-toolbar")?.append(controls);
     const openSetting = state.openSetting;
     controls.replaceChildren();
     const settings: {
@@ -602,7 +670,7 @@ const render = (
             ],
         },
         { key: "card_title", fields: [{ name: "", title: t("File name") }, ...collection.fields] },
-        ...(enums.length
+        ...(enums.length && view.view !== "list"
             ? [
                   {
                       key: "group_by" as const,
@@ -623,7 +691,7 @@ const render = (
         const control = document.createElement("div");
         control.className = "subformat-control";
         const label = key === "view" ? t("View") : key.replaceAll("_", " ");
-        const id = `subformat-${collection.ext}-${key}`;
+        const id = `subformat-${state.id}-${collection.ext}-${key}`;
         const current = fields.find((field) => field.name === view[key])?.title ?? t("File name");
         control.innerHTML = `<span class="subformat-control-label" id="${id}-label">${label}</span><button type="button" data-subformat-setting="${key}" aria-labelledby="${id}-label ${id}-value" aria-haspopup="menu" aria-expanded="false" aria-controls="${id}-menu"${state.busy ? " disabled" : ""}><span id="${id}-value">${escapeHtml(current)}</span><svg width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m5 7 5 5 5-5"/></svg></button><div class="subformat-picker-menu subformat-setting-menu" id="${id}-menu" popover="auto" role="menu" aria-label="${label}"></div>`;
         controls.append(control);
@@ -659,6 +727,10 @@ const render = (
                 controls.querySelector<HTMLElement>(`[data-subformat-setting="${key}"]`)?.focus();
             });
             row.append(choose);
+            if (embedded) {
+                popup.append(row);
+                continue;
+            }
             const editable =
                 document.body.classList.contains("edit") &&
                 !workspaceConnection(state.workspace)?.readOnly;
@@ -721,7 +793,76 @@ const render = (
         });
         if (openSetting === key && trigger.isConnected) trigger.click();
     }
+    if (view.view === "list") {
+        const parameters = displayFields.filter((field) => field.name !== titleField);
+        const trigger = document.createElement("button");
+        trigger.type = "button";
+        trigger.textContent = t("Parameter order");
+        trigger.dataset.subformatParameters = "";
+        trigger.disabled = state.busy || parameters.length < 2;
+        trigger.setAttribute("aria-haspopup", "menu");
+        trigger.setAttribute("aria-expanded", "false");
+        const popup = document.createElement("div");
+        popup.id = `subformat-${state.id}-parameters`;
+        popup.className = "subformat-picker-menu subformat-setting-menu";
+        popup.setAttribute("popover", "auto");
+        popup.setAttribute("role", "menu");
+        popup.setAttribute("aria-label", t("Parameter order"));
+        trigger.setAttribute("aria-controls", popup.id);
+        controls.append(trigger, popup);
+        for (const [index, field] of parameters.entries()) {
+            const row = document.createElement("div");
+            row.className = "subformat-parameter-option";
+            row.setAttribute("role", "none");
+            const label = document.createElement("span");
+            label.textContent = field.title;
+            row.append(label);
+            for (const direction of [-1, 1]) {
+                const button = document.createElement("button");
+                button.type = "button";
+                button.tabIndex = -1;
+                button.dataset.parameter = field.name;
+                button.dataset.move = direction < 0 ? "up" : "down";
+                button.setAttribute("role", "menuitem");
+                button.title = `${t(direction < 0 ? "Move up" : "Move down")}: ${field.title}`;
+                button.setAttribute("aria-label", button.title);
+                button.disabled = state.busy || !parameters[index + direction];
+                button.innerHTML = `<svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="${direction < 0 ? "m5 12 5-5 5 5" : "m5 8 5 5 5-5"}"/></svg>`;
+                button.addEventListener("click", () => {
+                    const neighbor = parameters[index + direction];
+                    if (state.busy || !neighbor) return;
+                    const names = displayFields.map((item) => item.name);
+                    const from = names.indexOf(field.name);
+                    const to = names.indexOf(neighbor.name);
+                    names[from] = neighbor.name;
+                    names[to] = field.name;
+                    state.parameterOrders.set(collection.ext, names);
+                    const scrollTop = popup.scrollTop;
+                    render(root, board, state, collection, words);
+                    const next = controls.querySelector<HTMLElement>(`#${popup.id}`);
+                    if (next) {
+                        next.scrollTop = scrollTop;
+                        const selector = `[data-parameter="${CSS.escape(field.name)}"]`;
+                        (
+                            next.querySelector<HTMLButtonElement>(
+                                `${selector}[data-move="${button.dataset.move}"]:not(:disabled)`,
+                            ) ?? next.querySelector<HTMLButtonElement>(`${selector}:not(:disabled)`)
+                        )?.focus({ preventScroll: true });
+                    }
+                });
+                row.append(button);
+            }
+            popup.append(row);
+        }
+        mountSubformatMenu(trigger, popup, (open) => {
+            if (open) state.openSetting = "parameters";
+            else if (state.openSetting === "parameters") state.openSetting = undefined;
+        });
+        if (openSetting === "parameters" && trigger.isConnected && !trigger.disabled)
+            trigger.click();
+    }
     if (
+        !embedded &&
         state.openSource &&
         document.body.classList.contains("edit") &&
         !workspaceConnection(state.workspace)?.readOnly
@@ -928,11 +1069,13 @@ const render = (
     board.innerHTML = '<div class="subformat-columns"></div>';
     const columns = board.querySelector(".subformat-columns") as HTMLElement;
     const writable =
+        !embedded &&
         !!state.openSource &&
         document.body.classList.contains("edit") &&
         !workspaceConnection(state.workspace)?.readOnly &&
         !grouping?.readOnly;
     const editable =
+        !embedded &&
         !!state.openSource &&
         document.body.classList.contains("edit") &&
         !workspaceConnection(state.workspace)?.readOnly;
@@ -1070,7 +1213,8 @@ const render = (
                 : String(value)
             : t("Records");
         column.setAttribute("aria-label", label);
-        column.innerHTML = `<h2>${escapeHtml(label)} <span class="subformat-count">${countHtml(matches)}</span></h2>`;
+        if ((!embedded || grouping) && view.view !== "list")
+            column.innerHTML = `<h2>${escapeHtml(label)} <span class="subformat-count">${countHtml(matches)}</span></h2>`;
         const cards = document.createElement("div");
         cards.className = "subformat-cards";
         if (view.view === "list") cards.setAttribute("role", "list");
@@ -1110,14 +1254,14 @@ const render = (
                     : typeof titleValue === "object"
                       ? JSON.stringify(titleValue)
                       : String(titleValue);
-            const fields = collection.fields.filter(
+            const fields = displayFields.filter(
                 (field) =>
                     field !== grouping &&
                     field.name !== titleField &&
                     Object.hasOwn(record.data, field.name),
             );
             const pulldowns = editable
-                ? collection.fields.filter(
+                ? displayFields.filter(
                       (field) =>
                           field !== grouping &&
                           field.name !== titleField &&
@@ -1125,15 +1269,18 @@ const render = (
                           (field.enum?.length || field.options?.length),
                   )
                 : [];
-            const summary = fields
-                .filter((field) => typeof record.data[field.name] !== "object")
-                .sort((a, b) => Number(!!b.format) - Number(!!a.format))
-                .slice(0, 3);
+            const summary =
+                view.view === "list"
+                    ? fields
+                    : fields
+                          .filter((field) => typeof record.data[field.name] !== "object")
+                          .sort((a, b) => Number(!!b.format) - Number(!!a.format))
+                          .slice(0, 3);
             const summaryHtml = `<dl class="subformat-card-meta">${summary.map((field) => fieldHtml(field.title, record.data[field.name])).join("")}</dl>`;
             const expanded = state.expanded.has(record.file);
-            const detailsId = `subformat-details-${encodeURIComponent(record.file)}`;
+            const detailsId = `subformat-${state.id}-details-${encodeURIComponent(record.file)}`;
             const references = record.references ?? [];
-            const referencesId = `subformat-references-${encodeURIComponent(record.file)}`;
+            const referencesId = `subformat-${state.id}-references-${encodeURIComponent(record.file)}`;
             const links = references
                 .map(
                     ({ file, line, href }) =>
@@ -1148,7 +1295,7 @@ const render = (
             const copy = card.querySelector(".subformat-card-copy") as HTMLButtonElement;
             if (
                 document.body.classList.contains("edit") ||
-                document.body.hasAttribute("data-easy-download")
+                document.body.dataset.download === "easy"
             )
                 copy.insertAdjacentHTML(
                     "afterend",
@@ -1174,6 +1321,7 @@ const render = (
             const referenceButton = card.querySelector<HTMLButtonElement>(
                 ".subformat-card-references",
             ) as HTMLButtonElement;
+            referenceButton.hidden = embedded;
             referenceList.addEventListener("toggle", () => {
                 if (!referenceList.matches(":popover-open")) return;
                 const rect = referenceButton.getBoundingClientRect();
@@ -1193,6 +1341,11 @@ const render = (
                 ".subformat-card-details",
             ) as HTMLElement;
             const meta = card.querySelector<HTMLElement>(".subformat-card-meta") as HTMLElement;
+            if (view.view === "list") {
+                meta.tabIndex = 0;
+                meta.setAttribute("role", "region");
+                meta.setAttribute("aria-label", `${t("Parameters")}: ${title}`);
+            }
             meta.hidden = expanded;
             const toggle = card.querySelector<HTMLButtonElement>(
                 ".subformat-card-toggle",
@@ -1206,31 +1359,12 @@ const render = (
                 toggle.setAttribute("aria-expanded", String(expanded));
                 toggle.setAttribute("aria-label", t(expanded ? "Collapse card" : "Expand card"));
             });
-            const showDetails = async (): Promise<void> => {
-                if (state.dialogOpen) return;
-                state.dialogOpen = true;
-                const content = document.createElement("div");
-                content.className = "subformat-detail";
-                content.innerHTML = `<p class="subformat-detail-path">${escapeHtml(record.file)}</p><dl>${Object.entries(
-                    record.data,
-                )
-                    .map(([name, value]) =>
-                        fieldHtml(
-                            collection.fields.find((field) => field.name === name)?.title ?? name,
-                            value,
-                        ),
-                    )
-                    .join("")}</dl>`;
-                try {
-                    await showDialog(title, content, [{ value: "", label: t("Close") }]);
-                } finally {
-                    state.dialogOpen = false;
-                }
-            };
             let ignoreClickUntil = 0;
             const actionTarget = (target: EventTarget | null): boolean =>
                 target instanceof Element &&
-                (!target.closest("a, button, input, select, textarea") ||
+                (!target.closest(
+                    "a, button, input, select, textarea, .subformat-card-meta[tabindex]",
+                ) ||
                     !!target.closest(".subformat-card-open"));
             card.addEventListener(
                 "click",
@@ -1249,8 +1383,7 @@ const render = (
                         card.querySelector<HTMLButtonElement>(".subformat-card-open")?.focus({
                             preventScroll: true,
                         });
-                    if (state.openSource) state.openSource(record.file, 1);
-                    else void showDetails();
+                    void openRecord(state, collection, record, title);
                 },
                 true,
             );
@@ -1379,5 +1512,6 @@ const render = (
         }
         columns.append(column);
     }
+    if (embedded && !records.length) columns.innerHTML = `<p>${t("No results")}</p>`;
     columns.scrollLeft = scrollLeft;
 };

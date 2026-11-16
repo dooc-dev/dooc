@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 
-// Run with: dooc editor run node --client --server --project <docs-root> --viewer-plugins ./sample/examples/git-origin/github.mjs
+// Run with: dooc editor run node --client --server --project <docs-root> --reader-plugins ./sample/examples/git-origin/github.mjs
 // Authentication belongs to the user's Git credential helper / gh session, not dooc.
 const run = (root, command, args, input = "") => new Promise((resolve, reject) => {
     const env = { ...process.env, GH_PROMPT_DISABLED: "1", GH_PAGER: "cat", GIT_TERMINAL_PROMPT: "0" };

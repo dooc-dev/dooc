@@ -339,7 +339,7 @@ export const createPluginRuntime = (
                 redirect.hash ||
                 redirect.pathname !== `/api/plugins/callback/${pluginId}`
             )
-                throw new PluginError(400, "OAuth callback must use the local viewer");
+                throw new PluginError(400, "OAuth callback must use the local reader");
             const attempt = {
                 state: nonce(),
                 verifier: nonce(),

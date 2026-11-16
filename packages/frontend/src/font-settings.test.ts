@@ -5,7 +5,7 @@ let preferences: Map<string, string>;
 let properties: Map<string, string>;
 let loaded: Set<FontFace>;
 const editor = { name: "Code.woff2", family: "dooc-font-code", source: "url(code)" };
-const viewer = { name: "Body.otf", family: "dooc-font-body", source: "url(body)" };
+const reader = { name: "Body.otf", family: "dooc-font-body", source: "url(body)" };
 
 beforeEach(() => {
     preferences = new Map();
@@ -41,24 +41,24 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-it("loads only project fonts and restores independent editor/viewer choices", async () => {
-    const settings = createFontSettings([editor, viewer]);
+it("loads only project fonts and restores independent editor/reader choices", async () => {
+    const settings = createFontSettings([editor, reader]);
     await settings.ready;
     settings.select("editor", editor.family);
     expect(properties.get("--editor-font")).toContain(editor.family);
-    expect(properties.has("--viewer-font")).toBe(false);
-    settings.select("viewer", viewer.family);
-    expect(properties.get("--viewer-font")).toContain(viewer.family);
-    const restored = createFontSettings([editor, viewer]);
+    expect(properties.has("--reader-font")).toBe(false);
+    settings.select("reader", reader.family);
+    expect(properties.get("--reader-font")).toContain(reader.family);
+    const restored = createFontSettings([editor, reader]);
     await restored.ready;
-    expect(restored.selected).toEqual({ editor: editor.family, viewer: viewer.family });
+    expect(restored.selected).toEqual({ editor: editor.family, reader: reader.family });
     restored.select("editor", "");
     expect(properties.has("--editor-font")).toBe(false);
-    expect(properties.has("--viewer-font")).toBe(true);
+    expect(properties.has("--reader-font")).toBe(true);
     expect(document.dispatchEvent).toHaveBeenCalledWith(
         expect.objectContaining({ type: "docs:font-change" }),
     );
-    expect(() => settings.select("viewer", "unregistered")).toThrow("Invalid font file");
+    expect(() => settings.select("reader", "unregistered")).toThrow("Invalid font file");
     expect(settings).not.toHaveProperty("add");
     expect(settings).not.toHaveProperty("remove");
 });
@@ -66,11 +66,11 @@ it("loads only project fonts and restores independent editor/viewer choices", as
 it("falls back when changing projects or when a registered font fails to load", async () => {
     preferences.set("docs-editor:font", "another-project-font");
     preferences.set("docs-preview:font", editor.family);
-    const settings = createFontSettings([{ ...editor, source: "broken" }, viewer]);
+    const settings = createFontSettings([{ ...editor, source: "broken" }, reader]);
     await expect(settings.ready).rejects.toThrow("Some registered fonts");
-    expect(settings.selected).toEqual({ editor: "", viewer: "" });
+    expect(settings.selected).toEqual({ editor: "", reader: "" });
     expect(properties.size).toBe(0);
-    expect([...settings.fonts.keys()]).toEqual([viewer.family]);
+    expect([...settings.fonts.keys()]).toEqual([reader.family]);
 });
 
 it("applies the selection even when saving browser preferences is blocked", async () => {

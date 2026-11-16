@@ -1,4 +1,4 @@
-/** Self-contained so the same controls work in the viewer and exported HTML. */
+/** Self-contained so the same controls work in the reader and exported HTML. */
 export function mountTables(root: ParentNode): () => void {
     const controller = new AbortController();
     const mounted = new WeakMap<HTMLElement, () => void>();

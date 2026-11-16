@@ -86,7 +86,7 @@ describe("term code blocks", () => {
     });
 });
 
-describe("createCompiler (incremental compile for the viewer)", () => {
+describe("createCompiler (incremental compile for the reader)", () => {
     const fixture = (): { root: string; all: string } => {
         const root = makeRoot("- a\n- b\n", { a: "A", b: "B" });
         return { root, all: join(root, "content") };

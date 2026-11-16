@@ -56,7 +56,6 @@ describe("source-based CLI", () => {
         const relayCommand = vi.fn();
         vi.doMock("./mcp-relay.js", () => ({ relayCommand }));
         await cli(
-            "mcp",
             "relay",
             "--public-url",
             "https://relay.example",
@@ -70,7 +69,7 @@ describe("source-based CLI", () => {
             "https://web.example",
         ]);
     });
-    it.each(["editor", "viewer"])("dispatches %s component commands", async (product) => {
+    it.each(["editor", "reader"])("dispatches %s component commands", async (product) => {
         const applicationCommand = vi.fn();
         vi.doMock("./application.js", () => ({ applicationCommand }));
         await cli(product, "run", "node", "--all", "--port", "4000").run();
@@ -89,7 +88,7 @@ describe("source-based CLI", () => {
         expect(selfUpdate).toHaveBeenCalledOnce();
     });
 
-    it("waits for downloaded docs before opening an isolated read-only viewer", async () => {
+    it("waits for downloaded docs before opening an isolated read-only reader", async () => {
         const root = mkdtempSync(join(tmpdir(), "dooc-cli-self-"));
         roots.push(root);
         const dispose = vi.fn();
@@ -122,7 +121,7 @@ describe("source-based CLI", () => {
         expect(dispose).toHaveBeenCalledOnce();
     });
 
-    it("reports documentation download failures without starting a viewer", async () => {
+    it("reports documentation download failures without starting a reader", async () => {
         const message = "Failed to download documentation from GitHub: network unavailable";
         vi.doMock("./self.js", () => ({
             prepareSelfDocs: vi.fn().mockRejectedValue(new Error(message)),
@@ -163,7 +162,7 @@ describe("source-based CLI", () => {
         expect(result.stdout).toHaveBeenCalledWith(expect.stringContaining("usage: dooc self"));
         const help = result.stdout.mock.calls[0]?.[0] as string;
         expect(help).toContain("download documentation from GitHub");
-        expect(help).toContain("local read-only viewer");
+        expect(help).toContain("local read-only reader");
         expect(help).toContain("requires a network connection");
         expect(help).not.toMatch(/bundled|offline/);
         expect(result.exit).not.toHaveBeenCalled();
@@ -266,7 +265,7 @@ describe("source-based CLI", () => {
         expect(readdirSync(root)).toEqual([]);
     });
 
-    it("injects an external Git origin into MCP without starting viewer plugins", async () => {
+    it("injects an external Git origin into MCP without starting reader plugins", async () => {
         const root = mkdtempSync(join(tmpdir(), "dooc-cli-mcp-"));
         roots.push(root);
         writeFileSync(join(root, "dooc.yaml"), "docs: []\n");
@@ -275,23 +274,47 @@ describe("source-based CLI", () => {
             module,
             `export default {
             plugins: [],
-            setup() { throw new Error("Viewer setup must not run"); },
+            setup() { throw new Error("Reader setup must not run"); },
             gitOrigin: { name: "External", capabilities: [], async read() {}, async execute() {} },
         };`,
         );
         const startMcp = vi.fn().mockResolvedValue(undefined);
         vi.doMock("./mcp.js", () => ({ startMcp }));
-        await cli("mcp", join(root, "dooc.yaml"), "--git-origin", module).run();
-        expect(startMcp).toHaveBeenCalledWith(root, {
-            gitOrigin: expect.objectContaining({
-                name: "External",
-                read: expect.any(Function),
-                execute: expect.any(Function),
-            }),
-        });
-        const invalid = cli("mcp", join(root, "dooc.yaml"), "--unknown");
+        const args = [
+            "editor",
+            "run",
+            "node",
+            "--mcp",
+            "--mcp-transport",
+            "stdio",
+            "--project",
+            join(root, "dooc.yaml"),
+        ];
+        await cli(...args, "--reader-plugins", module).run();
+        expect(startMcp).toHaveBeenCalledWith(
+            root,
+            {
+                readOnly: false,
+                gitOrigin: expect.objectContaining({
+                    name: "External",
+                    read: expect.any(Function),
+                    execute: expect.any(Function),
+                }),
+            },
+            expect.any(AbortSignal),
+        );
+        const invalid = cli(...args, "--unknown");
         await expect(invalid.run()).rejects.toThrow("CLI exit");
         expect(startMcp).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects the removed root MCP command with its replacement", async () => {
+        const result = cli("mcp");
+        await expect(result.run()).rejects.toThrow("CLI exit");
+        expect(result.stderr).toHaveBeenCalledWith(
+            expect.stringContaining("--mcp-transport stdio"),
+        );
+        expect(result.stderr).toHaveBeenCalledWith(expect.stringContaining("dooc relay"));
     });
 
     it("registers, lists and removes project fonts through the CLI", async () => {
@@ -318,19 +341,20 @@ describe("source-based CLI", () => {
         const help = result.stdout.mock.calls[0]?.[0];
         expect(help).toContain("init");
         expect(help).toContain("editor <build|run> <node|web>");
-        expect(help).toContain("viewer <build|run> <node|web>");
+        expect(help).toContain("reader <build|run> <node|web>");
         expect(help).toContain("alias for editor run node --all");
-        expect(help).toContain("alias for viewer run node --all");
-        expect(help).toContain("mcp [dooc.yaml]");
+        expect(help).toContain("alias for reader run node --all");
+        expect(help).toContain("--mcp-transport stdio|http");
+        expect(help).toContain("\n  relay ");
+        expect(help).not.toMatch(/(?:^|\n)\s+mcp\b/);
         expect(help).not.toMatch(/(?:^|\n)\s+(?:preview|code-language|doc ls|figure ls)\b/);
         expect(help).not.toMatch(/[│├└─]/);
         expect(help).toMatch(/\n {2}build[^\n]*\n {5}html \[dooc.yaml\] \[out-dir\]/);
         expect(help).toContain("\n     zip [dooc.yaml] [out-dir]");
         expect(help).toMatch(/\n {2}plugin[^\n]*\n {5}pack <built-dir> \[zip\]/);
         expect(help).toMatch(/\n {2}font[^\n]*\n {5}add <file> \[dooc.yaml\]/);
-        expect(help).toContain("\n     --viewer-plugins <module>");
+        expect(help).toContain("\n     --reader-plugins <module>");
         expect(help).toContain("\n        --source-url <url>");
-        expect(help).toContain("\n     --git-origin <module>");
         expect(help).toContain("--url_preview embed|network");
         expect(help).toContain("--mode static|live");
         expect(help).toContain("export [dooc.yaml] [out-dir]");
@@ -350,6 +374,8 @@ describe("source-based CLI", () => {
         ["preview"],
         ["edit"],
         ["view"],
+        ["viewer"],
+        ["viewer", "run", "node", "--all"],
         ["dev"],
         ["code-language", "add", "python"],
         ["doc", "ls"],
@@ -443,11 +469,17 @@ describe("source-based CLI", () => {
             ["zip", "--zip", "embed"],
             ["html", "--mode", "embed"],
             ["zip", "--mode", "static"],
-            ["zip", "--easy-download"],
+            ["zip", "--download", "easy"],
+            ["html", "--download", "invalid"],
+            ["html", "--download"],
+            ["html", "--easy-download"],
             ["html", "--url_preview", "static"],
             ["html", "--url_preview", "invalid"],
             ["zip", "--url_preview", "reference"],
             ["zip", "--url_preview", "invalid"],
+            ["zip", "--url_preview", "network"],
+            ["github", "--url_preview", "network"],
+            ["zip", "--target", "github", "--resources", "reference"],
         ]) {
             const result = cli("build", ...args);
             await expect(result.run()).rejects.toThrow("CLI exit");
@@ -459,7 +491,9 @@ describe("source-based CLI", () => {
         ["html", undefined, "embed"],
         ["html", "network", "network"],
         ["zip", undefined, "embed"],
-        ["zip", "network", "network"],
+        ["zip", "embed", "embed"],
+        ["github", undefined, "embed"],
+        ["github", "embed", "embed"],
     ] as const)("writes only the selected artifact for build %s --url_preview %s", async (format, preview, expectedPreview) => {
         const root = mkdtempSync(join(tmpdir(), "dooc-cli-build-"));
         roots.push(root);
@@ -485,7 +519,12 @@ describe("source-based CLI", () => {
         );
         await result.run();
         expect(buildBundle).toHaveBeenCalledWith(root, { format, urlPreview: expectedPreview });
-        expect(readFileSync(join(out, `bundle.${format}`), "utf8")).toBe("Built artifact");
+        expect(
+            readFileSync(
+                join(out, `bundle.${format === "github" ? "github.zip" : format}`),
+                "utf8",
+            ),
+        ).toBe("Built artifact");
         expect(readFileSync(other, "utf8")).toBe("Keep existing artifact");
         expect(result.stdout).toHaveBeenCalledTimes(1);
     });
@@ -509,17 +548,57 @@ describe("source-based CLI", () => {
         );
     });
 
-    it("enables easy download for an HTML build", async () => {
+    it("builds GitHub HTML with source references and checks the output through the CLI", async () => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-github-"));
+        roots.push(root);
+        writeFileSync(
+            join(root, "dooc.yaml"),
+            "defaultLang: eng\nlanguages: [eng]\ndocs: [guide]\n",
+        );
+        mkdirSync(join(root, "content"));
+        writeFileSync(join(root, "content/guide.md"), "# Intro\n\n![](example.ts)\n");
+        writeFileSync(join(root, "example.ts"), "const example = 42;\n");
+        await cli(
+            "build",
+            "html",
+            join(root, "dooc.yaml"),
+            "--target",
+            "github",
+            "--resources",
+            "reference",
+            "--url_preview",
+            "network",
+        ).run();
+        expect(readFileSync(join(root, "dist/bundle.github.html"), "utf8")).toContain(
+            'href="../example.ts"',
+        );
+        const check = cli(
+            "check",
+            join(root, "dooc.yaml"),
+            "--only",
+            "github",
+            "--github-output",
+            "dist/bundle.github.html",
+        );
+        await check.run();
+        expect(JSON.parse(check.stdout.mock.calls.at(-1)?.[0] as string)).toMatchObject({
+            checks: ["github"],
+            exitCode: 0,
+        });
+    });
+
+    it.each([
+        "easy",
+        "normal",
+        "block",
+    ])("selects download=%s for an HTML build", async (download) => {
         const root = mkdtempSync(join(tmpdir(), "dooc-cli-download-"));
         roots.push(root);
         writeFileSync(join(root, "dooc.yaml"), "docs: []\n");
         const buildBundle = vi.fn().mockResolvedValue({ data: "Built artifact", docs: 0 });
         vi.doMock("./build.js", () => ({ buildBundle }));
-        await cli("build", "html", join(root, "dooc.yaml"), "--easy-download").run();
-        expect(buildBundle).toHaveBeenCalledWith(
-            root,
-            expect.objectContaining({ easyDownload: true }),
-        );
+        await cli("build", "html", join(root, "dooc.yaml"), "--download", download).run();
+        expect(buildBundle).toHaveBeenCalledWith(root, expect.objectContaining({ download }));
     });
 
     it.each([

@@ -112,7 +112,11 @@ import { focusNavTree } from "./nav-focus.js";
 import { updateNav } from "./nav-update.js";
 import { PLUGIN_BLOCK_CSS } from "./plugin-style.js";
 import { mountPanelResize } from "./resize.js";
-import { mountResourceDownloads, mountResourceExpand } from "./resource-download.js";
+import {
+    mountDownloadBlock,
+    mountResourceDownloads,
+    mountResourceExpand,
+} from "./resource-download.js";
 import {
     libraryPageHtml,
     resourceIndex,
@@ -131,7 +135,7 @@ const DEFAULT_SITE_LANGUAGES: SiteLanguages = { languages: [ja] };
 export type ServeMode = "preview" | "edit";
 
 /**
- * One doc in the viewer = a view model combining the compiler's CompiledDoc (rendering) and
+ * One doc in the reader = a view model combining the compiler's CompiledDoc (rendering) and
  * DocSource (extra info for editing).
  * file is `<id>.md` (= same shape as the save API's file parameter; CompiledDoc.file minus the
  * content/ prefix).
@@ -189,6 +193,7 @@ export interface Site {
     contentLanguage?: string;
     /** Builds read link-only files from their own project root; servers use the docs root. */
     readLinkedFile?: (file: string) => Buffer | undefined;
+    download?: "easy" | "normal" | "block";
     /** Display order (pre-order traversal of the manifest). */
     entries: Entry[];
     ctx: RenderCtx;
@@ -334,7 +339,7 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
     let compiler = createCompiler(root);
     const ops = createDocOps(root);
 
-    /** Compile result → viewer Site (shared by the server's per-request path and one-off publish). */
+    /** Compile result → reader Site (shared by the server's per-request path and one-off publish). */
     const siteFrom = (
         {
             title,
@@ -812,7 +817,7 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
               };
     };
 
-    // Maps the viewer's --c-* palette onto the body's --doc-* tokens. Unmapped tokens use defaults.
+    // Maps the reader's --c-* palette onto the body's --doc-* tokens. Unmapped tokens use defaults.
     const DOC_FROM_C = `
   --doc-bg:var(--c-bg0); --doc-bg-2:var(--c-bg1); --doc-bg-3:var(--c-surface);
   --doc-panel:var(--c-surface); --doc-panel-2:var(--c-raised); --doc-rail:var(--c-bg1);
@@ -825,7 +830,7 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
     const MONO_FONT = `"UDEV Gothic", monospace`;
     const SANS_FONT = `"IBM Plex Sans JP", -apple-system, "Segoe UI", "Noto Sans JP", sans-serif`;
 
-    // Viewer icons (20x20 stroke glyphs).
+    // Reader icons (20x20 stroke glyphs).
     const icon = (paths: string, size = 18): string =>
         `<svg class="nav-icon" viewBox="0 0 20 20" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
     const SIDEBAR_ICON = icon(
@@ -902,8 +907,8 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
     );
     const SELECT_ICON = icon('<path d="m5 7 5 5 5-5"/>', 12);
 
-    const fontButton = (target: "editor" | "viewer"): string => {
-        const label = target === "editor" ? "Editor font" : "Viewer font";
+    const fontButton = (target: "editor" | "reader"): string => {
+        const label = target === "editor" ? "Editor font" : "Reader font";
         return `<button class="pbtn font-control${target === "editor" ? " setting-picker" : ""}" type="button" data-font-picker="${target}" aria-haspopup="menu" aria-expanded="false" aria-label="${label}" title="${label}" disabled>${target === "editor" ? `<span data-picker-value></span>${SELECT_ICON}` : FONT_ICON}</button>`;
     };
 
@@ -933,7 +938,7 @@ body.edit :is(#sidebar, #panel, .resources-pane, .subformat-toast, .app-dialog, 
 .font-picker button { overflow-wrap: anywhere; }
 .font-picker [aria-checked="true"]::after { flex: none; }
 .font-status { padding: 8px; font-size: 11px; color: var(--c-danger); }
-main { --doc-mono: var(--viewer-font, ${MONO_FONT}); }
+main { --doc-mono: var(--reader-font, ${MONO_FONT}); }
 .resources-pane { --doc-mono: var(--editor-font, ${MONO_FONT}); background: var(--c-bg1); color: var(--c-fg); font-family: var(--doc-mono); }
 .page-actions, .pane-actions { position: sticky; display: flex; align-items: center; justify-content: flex-end;
   gap: 2px; height: 36px; padding: 0 24px; pointer-events: none; z-index: 5; }
@@ -1259,7 +1264,7 @@ body.files-over #nav-files { background: color-mix(in srgb, var(--c-accent) 10%,
 /* ── main (document body) ── */
 main { flex: 1; min-width: 0; padding: 20px 24px 50vh; }
 main:not(.editor-workspace) { height: 100vh; overflow: auto; overscroll-behavior: contain; }
-article { max-width: 860px; margin: 0 auto; font-family: var(--viewer-font, system-ui, sans-serif); }
+article { max-width: 860px; margin: 0 auto; font-family: var(--reader-font, system-ui, sans-serif); }
 .external-embed { margin: 18px 0; overflow-wrap: anywhere; }
 .downloadable-resource { position: relative; }
 .resource-download-tools { position: absolute; top: 4px; right: 4px; z-index: 1; display: flex; align-items: center; gap: 8px; border-radius: 4px; background: var(--doc-panel); opacity: .65; }
@@ -1272,6 +1277,7 @@ article { max-width: 860px; margin: 0 auto; font-family: var(--viewer-font, syst
 .resource-download:hover { background: var(--doc-panel); color: var(--doc-accent); }
 .resource-download:focus-visible { outline: 2px solid var(--doc-accent); outline-offset: 2px; }
 .resource-download[aria-busy="true"] { cursor: progress; }
+body[data-download="normal"] a[download], body[data-download="block"] a[download] { display: none; }
 .resource-expand { padding: 0; border: 0; background: none; cursor: pointer; }
 .resource-modal { width: 94vw; height: 92dvh; max-width: none; max-height: none; padding: 0; overflow: hidden; border: 1px solid var(--doc-border); border-radius: 10px; color: var(--doc-fg); background: var(--doc-panel); }
 .resource-modal::backdrop { background: #0008; }
@@ -1695,6 +1701,10 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .subformat-control > button > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .subformat-control > button > svg { flex: none; }
 .subformat-setting-menu { font-size: 13px; }
+.subformat-parameter-option { display: flex; align-items: center; gap: 4px; padding: 2px 4px; }
+.subformat-parameter-option > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.subformat-parameter-option > button { display: grid; place-items: center; flex: none; width: 30px; padding: 4px; }
+.subformat-parameter-option > button:disabled { opacity: .4; cursor: default; }
 .subformat-setting-option { display: flex; align-items: stretch; }
 .subformat-setting-option > button:first-child { flex: 1; min-width: 0; max-width: none; border: 0; border-radius: 0; text-align: left; background: transparent; }
 .subformat-setting-option > button[aria-checked="true"] { background: var(--c-raised); }
@@ -1775,15 +1785,35 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .subformat-card-details dd, .subformat-detail dd { white-space: pre-wrap; overflow-wrap: anywhere; }
 .subformat-card-details label { margin-top: 12px; }
 .subformat-card [hidden] { display: none; }
+.subformat-embed { margin: 24px 0; min-width: 0; }
+.subformat-embed .subformat-embed-title { margin: 0 0 20px; }
+.subformat-embed > .subformat-controls { margin: 0 0 24px; font: 12px/1.6 var(--font-sans); }
+.subformat-embed .subformat-control-label { background: var(--doc-bg); }
+.subformat-embed .subformat-columns { display: block; padding: 0; overflow: visible; }
+.subformat-embed .subformat-column + .subformat-column { margin-top: 24px; }
+.subformat-embed .subformat-cards { min-height: 0; }
+.subformat-embed [data-subformat-view="card"] .subformat-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 248px), 1fr)); gap: 24px 16px; }
+.subformat-embed .subformat-card { margin: 0; }
+.subformat-embed .subformat-card-tools { background: var(--doc-bg); }
+.subformat-table { max-width: 100%; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--c-line) transparent; }
+.subformat-table table { width: 100%; margin: 0; border-collapse: collapse; font: 13px/1.6 var(--font-sans); }
+.subformat-table :is(th, td) { min-width: 100px; padding: 10px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--c-line); white-space: pre-wrap; overflow-wrap: anywhere; }
+.subformat-table th { font-weight: 500; }
+.subformat-table td > span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; max-width: 32ch; overflow: hidden; }
+.subformat-table button { padding: 0; border: 0; background: none; color: var(--doc-fg); font: inherit; text-align: left; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; cursor: pointer; }
+.subformat-table button:is(:hover, :focus-visible) { text-decoration: underline; text-underline-offset: 3px; }
+.subformat-table :focus-visible { outline-color: var(--c-fg-muted); }
 [data-subformat-view="list"] { container-type: inline-size; }
 [data-subformat-view="list"] .subformat-columns { flex-direction: column; gap: 20px; overflow-x: visible; }
 [data-subformat-view="list"] .subformat-column { flex: none; }
-[data-subformat-view="list"] .subformat-column > h2 { margin-bottom: 0; }
 [data-subformat-view="list"] .subformat-cards { min-height: 40px; }
-.subformat-list-record { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(180px, 1.5fr) auto; align-items: center; gap: 10px 20px; margin: 0; padding: 12px 2px; border: 0; border-bottom: 1px solid var(--c-line); border-radius: 0; }
+.subformat-list-record { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(180px, 2fr) auto; align-items: start; gap: 10px 20px; margin: 0; padding: 12px 2px; border: 0; border-bottom: 1px solid var(--c-line); border-radius: 0; }
 .subformat-list-record > h3 { grid-column: 1; grid-row: 1; }
+.subformat-list-record .subformat-card-open { display: block; max-width: 100%; white-space: nowrap; text-overflow: ellipsis; }
 .subformat-list-record > .subformat-card-tools { grid-column: 3; grid-row: 1; margin: 0; padding: 0; background: transparent; }
-.subformat-list-record > .subformat-card-meta { grid-column: 2; grid-row: 1; min-width: 0; margin: 0; padding: 0; border: 0; gap: 6px 16px; }
+.subformat-list-record > .subformat-card-meta { flex-wrap: nowrap; grid-column: 2; grid-row: 1; min-width: 0; margin: 0; padding: 0 0 6px; border: 0; gap: 20px; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--c-line) transparent; }
+.subformat-list-record > .subformat-card-meta > div { flex: none; min-width: 80px; max-width: 32ch; }
+.subformat-list-record > .subformat-card-meta dt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .subformat-list-record > .subformat-card-details { grid-column: 1 / -1; margin: 0; }
 @container (max-width: 700px) {
   .subformat-list-record { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
@@ -1884,7 +1914,7 @@ body:not(.edit) .subformat-page { padding-top: 64px; }
 @media(max-width:600px) { .resource-tabs a { padding-inline: 10px; } .resource-toolbar { gap: 8px; } }
 `;
 
-    // edit mode only (right panel / new doc form). Uses the viewer's shared background / rules and
+    // edit mode only (right panel / new doc form). Uses the reader's shared background / rules and
     // button / input styles. To keep CM as wide as possible the fm is compact, and the toggles
     // (autosave / correspondence display / fm visibility) are gathered in the header gear's
     // menu. Width is drag-resizable.
@@ -2181,13 +2211,14 @@ body.edit #nav-groups { --nav-rail: 22px; --nav-icon-half: 9px; }
 
 main.editor-workspace { padding: 0; height: 100vh; display: flex; flex-direction: column; position: sticky; top: 0; }
 #split-preview[aria-pressed="true"] { color: var(--c-accent); background: var(--c-raised); }
-.resources-pane .pane-actions > :is([data-theme-picker], [data-font-picker], .pane-language) { display: none; }
+.resources-pane .pane-actions { display: none; }
 .pane-actions { flex-wrap: wrap; top: -20px; margin: -20px -24px 16px; padding: 4px 12px; min-height: 38px; height: auto; background: inherit; }
 .pane-resource { min-width: 0; }
 #preview-panes { display: flex; flex: 1; min-height: 0; }
 #preview-panes[hidden] { display: none; }
 .preview-pane.resources-pane { min-height: 0; padding-bottom: 24px; }
 .preview-pane.resources-pane:has(.resource-library) { padding-top: 20px; }
+#preview-panes .resources-pane:has(> .pane-resource [data-subformat-board]:not([hidden])) { padding-top: 0; }
 .resources-pane .resource-tabs { margin-inline: -24px; padding: 0 12px; }
 .preview-pane { flex: 1; min-width: 0; overflow: auto; padding: 20px 24px 50vh; border-top: 2px solid transparent; }
 #preview-panes.split .preview-pane { padding: 16px; }
@@ -2908,10 +2939,10 @@ body.edit .nav-row { cursor: grab; }
 
 
 <div id="preview-language-menu" role="menu" aria-label="Change language" data-i18n-aria-label="Change language" hidden></div>
-<div id="preview-panes"${opts.currentRes !== undefined ? " hidden" : ""}><section class="preview-pane active" tabindex="0" aria-label="Active pane" data-i18n-aria-label="Active pane"><div class="pane-actions"><button class="pbtn" type="button" data-theme-picker="document" aria-label="Preview theme"></button>${fontButton("viewer")}<button class="pbtn pane-language" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="preview-language-menu" aria-label="Change language" data-i18n-aria-label="Change language" title="Change language" data-i18n-title="Change language">${GLOBE_ICON}</button></div><div class="preview-content">${opts.main}</div></section></div></main>`
+<div id="preview-panes"${opts.currentRes !== undefined ? " hidden" : ""}><section class="preview-pane active" tabindex="0" aria-label="Active pane" data-i18n-aria-label="Active pane"><div class="pane-actions"><button class="pbtn" type="button" data-theme-picker="document" aria-label="Preview theme"></button>${fontButton("reader")}<button class="pbtn pane-language" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="preview-language-menu" aria-label="Change language" data-i18n-aria-label="Change language" title="Change language" data-i18n-title="Change language">${GLOBE_ICON}</button></div><div class="preview-content">${opts.main}</div></section></div></main>`
                 : mode === "edit" && opts.currentRes !== undefined
                   ? `<main class="resources-pane">${opts.main}</main>`
-                  : `<main><div class="page-actions"><button class="pbtn" type="button" data-theme-picker="document" aria-label="Preview theme"></button>${fontButton("viewer")}</div>${opts.main}</main>`;
+                  : `<main><div class="page-actions"><button class="pbtn" type="button" data-theme-picker="document" aria-label="Preview theme"></button>${fontButton("reader")}</div>${opts.main}</main>`;
         const graphScript = opts.publish
             ? `<script>${inlineScript(opts.publish.graphJs)}</script>`
             : `<script>(${loadPreviewScript.toString()})("/assets/graph.js", "svg[data-sg-layout], [data-mermaid]", "module");</script>`;
@@ -2923,10 +2954,11 @@ ${opts.publish ? `<meta name="referrer" content="no-referrer"><meta http-equiv="
 (${initializeThemes.toString()})(${JSON.stringify(site.themes)});
 (${mountFigureFrames.toString()})(document);</script>
 <style>${fontCss(Boolean(opts.publish))}${CSS}${mode === "edit" ? EDIT_CSS : ""}</style></head>
-<body${mode === "edit" ? ' class="edit"' : ""}${site.ctx.downloads ? " data-easy-download" : ""}${site.sourceBase ? ` data-source-base="${escapeHtml(site.sourceBase)}"` : ""}><nav id="sidebar"><div id="sidebar-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" data-i18n-aria-label="Resize sidebar" title="Resize sidebar" data-i18n-title="Resize sidebar"></div><div id="sidebar-head">${siteIcon}<div id="site-title" class="site-title" title="${siteTitle}"${mode === "edit" ? ` data-title="${escapeHtml(site.title ?? "")}" tabindex="0" role="button" aria-label="Edit site title" data-i18n-aria-label="Edit site title"` : ""}>${siteTitle}</div><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button></div><div id="sidebar-content"><div id="nav-groups">${nav}</div><div id="nav-status" role="status" aria-live="polite"></div></div></nav>${main}${opts.aside ?? ""}
+<body${mode === "edit" ? ' class="edit"' : ""}${site.download ? ` data-download="${site.download}"` : ""}${site.sourceBase ? ` data-source-base="${escapeHtml(site.sourceBase)}"` : ""}><nav id="sidebar"><div id="sidebar-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" data-i18n-aria-label="Resize sidebar" title="Resize sidebar" data-i18n-title="Resize sidebar"></div><div id="sidebar-head">${siteIcon}<div id="site-title" class="site-title" title="${siteTitle}"${mode === "edit" ? ` data-title="${escapeHtml(site.title ?? "")}" tabindex="0" role="button" aria-label="Edit site title" data-i18n-aria-label="Edit site title"` : ""}>${siteTitle}</div><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button></div><div id="sidebar-content"><div id="nav-groups">${nav}</div><div id="nav-status" role="status" aria-live="polite"></div></div></nav>${main}${opts.aside ?? ""}
 <script>
 (${mountThemePickers.toString()})(${JSON.stringify(THEME_ICONS)}, ${JSON.stringify(site.themes)});
 (${mountThemeVariants.toString()})(document);
+${site.download === "block" ? `(${inlineScript(mountDownloadBlock.toString())})();` : ""}
 ${site.ctx.downloads ? `(${mountResourceDownloads.toString()})(${workspaceFetch.toString()});(${mountResourceExpand.toString()})();` : ""}
 </script>
 ${bootScripts}${graphScript}

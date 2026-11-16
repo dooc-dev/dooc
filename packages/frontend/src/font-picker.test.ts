@@ -52,10 +52,10 @@ const setup = () => {
     const editorValue = new Node();
     editorValue.dataset.pickerValue = "";
     editor.append(editorValue);
-    const viewer = new Node();
-    viewer.dataset.fontPicker = "viewer";
-    viewer.parent = new Node();
-    viewer.parent.dataset.theme = "light";
+    const reader = new Node();
+    reader.dataset.fontPicker = "reader";
+    reader.parent = new Node();
+    reader.parent.dataset.theme = "light";
     const popup = new Node();
     const doc = Object.assign(new EventTarget(), {
         documentElement: { dataset: { theme: "auto", editorTheme: "dark" } },
@@ -64,7 +64,7 @@ const setup = () => {
             .fn()
             .mockReturnValueOnce(popup)
             .mockImplementation(() => new Node()),
-        querySelectorAll: () => [editor, viewer],
+        querySelectorAll: () => [editor, reader],
     });
     vi.stubGlobal("document", doc);
     vi.stubGlobal("window", {});
@@ -79,9 +79,9 @@ const setup = () => {
     );
     const settings = {
         fonts: new Map([["code", {} as FontFace]]),
-        selected: { editor: "", viewer: "" },
+        selected: { editor: "", reader: "" },
         ready: Promise.resolve(),
-        select: vi.fn((target: "editor" | "viewer", family: string) => {
+        select: vi.fn((target: "editor" | "reader", family: string) => {
             settings.selected[target] = family;
         }),
     };
@@ -96,11 +96,11 @@ const setup = () => {
             { family: "code", name: "Code.woff2", source: "" },
             { family: "broken", name: "Broken.woff2", source: "" },
         ]);
-    return { editor, editorValue, viewer, popup, doc, settings, click, mount };
+    return { editor, editorValue, reader, popup, doc, settings, click, mount };
 };
 
 it("uses each trigger's theme and changes only its font target", async () => {
-    const { editor, editorValue, viewer, popup, doc, settings, click, mount } = setup();
+    const { editor, editorValue, reader, popup, doc, settings, click, mount } = setup();
     const ready = mount();
     expect(editor.disabled).toBe(true);
     await ready;
@@ -110,11 +110,11 @@ it("uses each trigger's theme and changes only its font target", async () => {
     expect(popup.dataset.theme).toBe("dark");
     expect(popup.children.map((node) => node.textContent)).toEqual(["Default font", "Code.woff2"]);
     click(popup, popup.children[1] as Node);
-    expect(settings.selected).toEqual({ editor: "code", viewer: "" });
+    expect(settings.selected).toEqual({ editor: "code", reader: "" });
     expect(popup.open).toBe(false);
     expect(editor.title).toBe("Editor font: Code.woff2");
     expect(editorValue.textContent).toBe("Code.woff2");
-    click(doc, viewer);
+    click(doc, reader);
     expect(popup.dataset.theme).toBe("light");
     expect(popup.children[0]?.attributes.get("aria-checked")).toBe("true");
 });

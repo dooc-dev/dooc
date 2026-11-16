@@ -102,8 +102,13 @@ describe("mcp", () => {
             ["delete_doc", { id: "guide", force: "false" }],
             ["build", { format: "html", url_preview: "static" }],
             ["build", { format: "zip", mode: "embed" }],
-            ["build", { format: "html", easy_download: "true" }],
-            ["build", { format: "zip", easy_download: true }],
+            ["build", { format: "html", download: true }],
+            ["build", { format: "html", download: "invalid" }],
+            ["build", { format: "zip", download: "easy" }],
+            ["build", { format: "html", target: "github", download: "block" }],
+            ["build", { format: "zip", url_preview: "network" }],
+            ["build", { format: "github", url_preview: "network" }],
+            ["build", { format: "zip", target: "github", resources: "reference" }],
             ["check", { only: ["invalid"] }],
             ["update_files", { action: "move", revision: "x", paths: [42] }],
         ] as const)
@@ -289,11 +294,17 @@ describe("mcp", () => {
     });
 
     it.each([
-        { format: "zip", url_preview: "network" },
+        { format: "zip", url_preview: "embed" },
         { format: "zip" },
+        { format: "github" },
+        { format: "github", url_preview: "embed" },
+        { format: "html", target: "github", resources: "reference", url_preview: "network" },
+        { format: "zip", target: "github" },
         { format: "html", url_preview: "network" },
         { format: "html", url_preview: "embed" },
-        { format: "html", url_preview: "embed", easy_download: true },
+        { format: "html", url_preview: "embed", download: "easy" },
+        { format: "html", url_preview: "network", download: "normal" },
+        { format: "html", url_preview: "embed", download: "block" },
     ])("builds $format with $url_preview through the async tool", async (args) => {
         const root = fixture(false);
         const source = "![Sample](https://example.com/sample.txt)\n";
@@ -301,21 +312,33 @@ describe("mcp", () => {
         vi.mocked(fetchPublicFile).mockResolvedValue(Buffer.from("Captured text"));
         const tools = createTools(root);
         const result = await call(tools, "build", args);
+        const github = args.format === "github" || ("target" in args && args.target === "github");
         expect(result).toMatchObject({
             isError: false,
             docs: 1,
-            file: `dist/bundle.${args.format}`,
+            file: `dist/bundle.${github ? "github." : ""}${args.format === "github" ? "zip" : args.format}`,
             url_preview: args.url_preview ?? "embed",
         });
         const data = readFileSync(result.path);
         expect(result.bytes).toBe(data.length);
         expect(data.length).toBeGreaterThan(0);
-        if ("easy_download" in args) expect(data.toString()).toContain('class="resource-download"');
+        if ("download" in args) {
+            expect(data.toString()).toContain(`data-download="${args.download}"`);
+            expect(data.toString().includes('class="resource-download"')).toBe(
+                args.download === "easy",
+            );
+        }
         expect(fetchPublicFile).toHaveBeenCalledTimes(args.url_preview === "network" ? 0 : 1);
         expect(
             existsSync(join(root, `dist/bundle.${args.format === "zip" ? "html" : "zip"}`)),
         ).toBe(false);
         expect(readFileSync(join(root, "content/guide.md"), "utf8")).toBe(source);
+        if (github) {
+            expect(
+                await call(tools, "check", { only: ["github"], github_output: result.file }),
+            ).toMatchObject({ exitCode: 0 });
+            for (const file of result.files ?? []) expect(existsSync(join(root, file))).toBe(true);
+        }
         writeFileSync(join(root, "dooc.yaml"), "docs: [missing]\n");
         expect((await call(tools, "build", args)).isError).toBe(true);
         expect(readFileSync(result.path)).toEqual(data);

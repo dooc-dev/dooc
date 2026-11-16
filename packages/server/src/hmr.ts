@@ -5,7 +5,7 @@
 //           update of just the body + nav (no reload; keeps CodeMirror cursor/scroll/undo and
 //           unsaved content) — only on pages where edit-client.ts registered `onContent`
 //           (unregistered, e.g. the new page, reloads).
-//   client bundle side (src/viewer/edit-client.ts, src/core/*.tsx = bundle sources of the schema
+//   client bundle side (packages/frontend/src/* = bundle sources of the schema
 //           graph interaction layer `/assets/graph.js`) = not imported by the server (esbuild
 //           bundles them on demand), so tsx watch doesn't react → the data-side watcher picks
 //           them up as "client" and triggers a reload.

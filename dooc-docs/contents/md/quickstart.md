@@ -9,7 +9,7 @@ dooc init
 dooc editor
 ```
 
-`dooc init` creates an empty `dooc.yaml` and never replaces an existing manifest. `dooc editor` is an alias for `dooc editor run node --all`: it reads that directory's manifest and starts the client, workspace server and MCP. It prints a local URL; open it and keep the command running while you work. Use `dooc viewer` for read-only access. Pass `--port 4000` or `--project docs/dooc.yaml` to override the port or manifest path.
+`dooc init` creates an empty `dooc.yaml` and never replaces an existing manifest. `dooc editor` is an alias for `dooc editor run node --all`: it reads that directory's manifest and starts the client, workspace server and MCP. It prints a local URL; open it and keep the command running while you work. Use `dooc reader` for read-only access. Pass `--port 4000` or `--project docs/dooc.yaml` to override the port or manifest path.
 
 ## Add your first page
 

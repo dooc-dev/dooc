@@ -23,7 +23,7 @@ export const subformatReferences = (tree: Root): { file: string; line: number }[
                   : undefined;
         if (!target || /^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(target)) return;
         try {
-            const file = parseFileReference(target).file.replace(/^(\.\/)+/, "");
+            const file = parseFileReference(target, true).file.replace(/^(\.\/)+/, "");
             if (localFile(file)) references.push({ file, line: node.position?.start.line ?? 1 });
         } catch {
             // Invalid references are reported by the compiler.

@@ -1,4 +1,4 @@
-A plugin is a JavaScript object that matches service URLs and returns a view. Types and OAuth helpers come from `@dooc-dev/dooc-plugin`. The demo source is `sample/examples/viewer-plugins/` in the dooc repository.
+A plugin is a JavaScript object that matches service URLs and returns a view. Types and OAuth helpers come from `@dooc-dev/dooc-plugin`. The demo source is `sample/examples/reader-plugins/` in the dooc repository.
 
 ## Contract
 
@@ -89,4 +89,4 @@ dooc plugin add my-plugin.zip
 | Limits        | 16 MiB and 256 files                                               |
 | Client secret | Never in a ZIP; ship a public client id                            |
 
-A viewer module skips packaging: it default-exports `{ plugins: [...] }` and is passed with `--viewer-plugins`.
+A reader module skips packaging: it default-exports `{ plugins: [...] }` and is passed with `--reader-plugins`.

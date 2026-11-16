@@ -114,7 +114,7 @@ export const searchIndex = (site: Site, files: readonly string[] = []): SearchSe
     ];
 };
 
-// Self-contained: the viewer embeds this function in offline HTML as well.
+// Self-contained: the reader embeds this function in offline HTML as well.
 export const searchSections = (
     index: SearchSection[],
     query: string,

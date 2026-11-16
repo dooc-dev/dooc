@@ -1,4 +1,4 @@
-Use `dooc editor run node --client --server` to work on pages, files and records. It opens a browser editor and keeps a local service running until you stop it with **Ctrl+C**. `dooc viewer run node --client --server` opens the same document without editing controls. Both default to `http://localhost:3000/client/`.
+Use `dooc editor run node --client --server` to work on pages, files and records. It opens a browser editor and keeps a local service running until you stop it with **Ctrl+C**. `dooc reader run node --client --server` opens the same document without editing controls. Both default to `http://localhost:3000/client/`.
 
 ## Find your place
 
@@ -44,7 +44,7 @@ Tree edits rewrite `dooc.yaml`; hand edits to the manifest appear in the tree. R
 
 ## Adjust the view
 
-Use **Preview theme** in a preview pane to choose Auto, Light or Dark for that pane. **Viewer font** changes the reading font; **Editor font** in the editor header's settings changes the source font. Font choices stay with the browser tab.
+Use **Preview theme** in a preview pane to choose Auto, Light or Dark for that pane. **Reader font** changes the reading font; **Editor font** in the editor header's settings changes the source font. Font choices stay with the browser tab.
 
 The [editor header](contents/md/ux-header.md) also controls split view, line wrapping, source mapping and Git change markers. Record pages offer a form or their YAML, JSON or TOML source; schemas offer a field builder or JSON source.
 

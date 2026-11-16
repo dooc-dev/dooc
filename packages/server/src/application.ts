@@ -20,19 +20,21 @@ import { parseVersionSelection, selectVersions } from "../../engine/src/core/doc
 import { validateRelayUrl } from "../../workspace/src/mcp-relay.js";
 import { packageVersion } from "./assets.js";
 import { createDocumentVersions } from "./document-versions.js";
+import { startMcp } from "./mcp.js";
 import { createMcpHandler } from "./mcp-http.js";
-import { loadViewerPlugins } from "./plugin-config.js";
+import { loadReaderPlugins } from "./plugin-config.js";
 import { clientAssets, staticClientHandler, validateServerUrl } from "./static-client.js";
 import { terminal } from "./terminal.js";
 import { attachWorkspaceServer, clientOrigin } from "./workspace-server.js";
 
 export interface ApplicationOptions {
-    product: "editor" | "viewer";
+    product: "editor" | "reader";
     action: "build" | "run";
     runtime: "node" | "web";
     client: boolean;
     server: boolean;
     mcp: boolean;
+    mcpTransport?: "stdio" | "http";
     port: number;
     project: string;
     out: string;
@@ -47,7 +49,7 @@ export interface ApplicationOptions {
 }
 
 export const applicationUsage = (
-    product: "editor" | "viewer",
+    product: "editor" | "reader",
 ) => `usage: dooc ${product} <build|run> <node|web> [options]
 
 Shortcut: dooc ${product} [options] = dooc ${product} run node --all [options].
@@ -56,33 +58,39 @@ Reads ./dooc.yaml from the current directory; --project and --port override the 
 Explicit build/run commands default components to off. Choose one or more:
   --client                     static frontend
   --server                     Node workspace service or browser Worker
-  --mcp                        Node MCP HTTP service or browser HTTPS relay connector
+  --mcp                        Node MCP service or browser HTTPS relay connector
   --all                        select all three components
   --no-client --no-server --no-mcp  disable components, including those selected by --all
 
 Options:
+  --mcp-transport stdio|http    Node MCP transport (default: http; requires --mcp)
   --project <path>              workspace folder or manifest (default: ./dooc.yaml)
   --port <port>                 shared run port (default: 3000)
   --out <directory>             build into an empty directory (default: ./dooc-${product}-<runtime>)
   --server-url <ws-url>         optional Node workspace connection for the client
   --relay-url <https-origin>    hosted relay for web MCP (requires --client --server --mcp)
   --client-origin <origin>      permitted browser origin (default: http://localhost:<port>)
-  --viewer-plugins <module>     Node workspace plugin module
+  --reader-plugins <module>     Node workspace plugin module
   --repo <git-url>              clone a repository and resolve --project inside it (run node)
-  --versions <selection>       published document versions (viewer; default: latest)
+  --versions <selection>       published document versions (reader; default: latest)
   --tls-cert <pem> --tls-key <pem>  serve HTTPS (run node; or DOOC_TLS_CERT / DOOC_TLS_KEY)
   --shared <branch>             record shared editor snapshots (run node --server; no --mcp)
   --help, -h                    show this help
 
-Viewer backends and MCP tools are read-only. Web MCP connects through Desktop or a hosted relay.
+Reader backends and MCP tools are read-only. Web MCP connects through Desktop or a hosted relay.
 Web run --server requires --client to host the Worker. Web build can emit either component.
 Node builds emit start.mjs and package.json when server or MCP is selected. Install their
 dependencies, then run node start.mjs --project <path>. Documents are not copied into builds.
 Node routes: /client/ (frontend), /server (WebSocket), /mcp (HTTP).
-Web serves static assets at /. Existing dooc mcp continues to use stdio.`;
+Web serves static assets at /. Stdio MCP uses stdin/stdout; logs go to stderr.
+Stdio-only runs open no port. Closing stdin stops the selected components.
+Examples:
+  dooc ${product} run node --mcp --mcp-transport stdio --project docs/dooc.yaml
+  dooc ${product} run node --mcp --mcp-transport http --port 4000
+Browser relays are started separately with dooc relay --help.`;
 
 export const parseApplicationOptions = (
-    product: "editor" | "viewer",
+    product: "editor" | "reader",
     args: string[],
 ): ApplicationOptions | undefined => {
     const { positionals, values } = parseArgs({
@@ -92,6 +100,7 @@ export const parseApplicationOptions = (
             client: { type: "boolean" },
             server: { type: "boolean" },
             mcp: { type: "boolean" },
+            "mcp-transport": { type: "string" },
             all: { type: "boolean" },
             "no-client": { type: "boolean" },
             "no-server": { type: "boolean" },
@@ -102,7 +111,7 @@ export const parseApplicationOptions = (
             "server-url": { type: "string" },
             "relay-url": { type: "string" },
             "client-origin": { type: "string" },
-            "viewer-plugins": { type: "string" },
+            "reader-plugins": { type: "string" },
             repo: { type: "string" },
             "tls-cert": { type: "string" },
             "tls-key": { type: "string" },
@@ -112,9 +121,9 @@ export const parseApplicationOptions = (
         },
     });
     if (values.help) return;
-    if (values.versions !== undefined && product !== "viewer")
-        throw new Error("--versions applies to viewer publication; editor history stays available");
-    if (product === "viewer") parseVersionSelection(values.versions ?? "latest");
+    if (values.versions !== undefined && product !== "reader")
+        throw new Error("--versions applies to reader publication; editor history stays available");
+    if (product === "reader") parseVersionSelection(values.versions ?? "latest");
     if (!positionals.length) {
         positionals.push("run", "node");
         values.all = true;
@@ -132,6 +141,20 @@ export const parseApplicationOptions = (
         server = selected("server"),
         mcp = selected("mcp");
     if (!client && !server && !mcp) throw new Error("Select --client, --server, --mcp, or --all");
+    const mcpTransport = values["mcp-transport"];
+    if (mcpTransport !== undefined) {
+        if (mcpTransport !== "stdio" && mcpTransport !== "http")
+            throw new Error("--mcp-transport must be stdio | http");
+        if (runtime !== "node" || !mcp) throw new Error("--mcp-transport requires node --mcp");
+    }
+    const stdioOnly = mcpTransport === "stdio" && !client && !server;
+    if (
+        stdioOnly &&
+        [values.port, values["client-origin"], values["tls-cert"], values["tls-key"]].some(
+            (value) => value !== undefined,
+        )
+    )
+        throw new Error("Stdio-only MCP does not use --port, --client-origin or TLS options");
     if (runtime === "web" && mcp && (!client || !server))
         throw new Error("Web MCP requires --client and --server");
     if (values["relay-url"] && (runtime !== "web" || !mcp))
@@ -145,13 +168,14 @@ export const parseApplicationOptions = (
     if (action === "run" && values.out !== undefined) throw new Error("--out applies to build");
     if (
         runtime === "web" &&
-        (values["server-url"] || values["client-origin"] || values["viewer-plugins"])
+        (values["server-url"] || values["client-origin"] || values["reader-plugins"])
     )
-        throw new Error("--server-url, --client-origin and --viewer-plugins apply to node");
+        throw new Error("--server-url, --client-origin and --reader-plugins apply to node");
     if (values["server-url"] && !client) throw new Error("--server-url requires --client");
     const nodeRun = action === "run" && runtime === "node";
-    const cert = values["tls-cert"] ?? (nodeRun ? process.env.DOOC_TLS_CERT : undefined);
-    const key = values["tls-key"] ?? (nodeRun ? process.env.DOOC_TLS_KEY : undefined);
+    const cert =
+        values["tls-cert"] ?? (nodeRun && !stdioOnly ? process.env.DOOC_TLS_CERT : undefined);
+    const key = values["tls-key"] ?? (nodeRun && !stdioOnly ? process.env.DOOC_TLS_KEY : undefined);
     if ((values.repo !== undefined || cert || key || values.shared !== undefined) && !nodeRun)
         throw new Error("--repo, TLS and --shared apply to run node");
     if (values.repo !== undefined && !server && !mcp)
@@ -171,6 +195,7 @@ export const parseApplicationOptions = (
         client,
         server,
         mcp,
+        ...(mcpTransport === undefined ? {} : { mcpTransport }),
         port,
         project: values.project ?? MANIFEST_FILE,
         out: resolve(values.out ?? `dooc-${product}-${runtime}`),
@@ -180,17 +205,17 @@ export const parseApplicationOptions = (
             values["client-origin"] ?? `${cert ? "https" : "http"}://localhost:${port}`,
         ),
         pluginModule:
-            values["viewer-plugins"] ?? (nodeRun ? process.env.DOOC_VIEWER_PLUGINS : undefined),
+            values["reader-plugins"] ?? (nodeRun ? process.env.DOOC_READER_PLUGINS : undefined),
         ...(values.repo === undefined ? {} : { repo: values.repo }),
         ...(cert && key ? { tls: { cert: resolve(cert), key: resolve(key) } } : {}),
         ...(values.shared === undefined ? {} : { shared: values.shared }),
-        ...(product === "viewer" ? { versions: values.versions ?? "latest" } : {}),
+        ...(product === "reader" ? { versions: values.versions ?? "latest" } : {}),
     };
 };
 
 const clientOptions = (options: ApplicationOptions) => ({
     runtime: options.runtime,
-    readOnly: options.product === "viewer",
+    readOnly: options.product === "reader",
     client: options.client,
     worker: options.runtime === "web" && options.server,
     basePath: options.runtime === "node" ? "/client" : "",
@@ -212,11 +237,14 @@ export const runApplication = async (options: ApplicationOptions) => {
           )
         : undefined;
     let mcp: ReturnType<typeof createMcpHandler> | undefined;
+    let startStdio: (() => Promise<void>) | undefined;
+    let done: Promise<void> | undefined;
+    const stdioAbort = new AbortController();
     let plugins: Awaited<ReturnType<typeof attachWorkspaceServer>>["plugins"] | undefined;
     const listener: RequestListener = (req, res) => {
         const path = (req.url ?? "/").split("?")[0];
         if (options.runtime === "node") {
-            // Plugin actions use workspace operations so viewer permissions apply.
+            // Plugin actions use workspace operations so reader permissions apply.
             if (plugins && path?.startsWith("/api/plugins/")) {
                 void plugins(req, res);
                 return;
@@ -242,16 +270,20 @@ export const runApplication = async (options: ApplicationOptions) => {
     let dispose = () => {};
     let disposeVersions = () => {};
     let disposeWorkspace = () => {};
-    const close = async () => {
-        dispose();
-        disposeVersions();
-        await new Promise<void>((resolve) => {
-            server.close(() => resolve());
-            server.closeAllConnections();
-        });
-        process.removeListener("exit", disposeWorkspace);
-        disposeWorkspace();
-    };
+    let closing: Promise<void> | undefined;
+    const close = () =>
+        (closing ??= (async () => {
+            stdioAbort.abort();
+            await done?.catch(() => {});
+            dispose();
+            disposeVersions();
+            await new Promise<void>((resolve) => {
+                server.close(() => resolve());
+                server.closeAllConnections();
+            });
+            process.removeListener("exit", disposeWorkspace);
+            disposeWorkspace();
+        })());
     try {
         if (options.runtime === "node" && (options.server || options.mcp)) {
             let project = options.project;
@@ -302,7 +334,7 @@ export const runApplication = async (options: ApplicationOptions) => {
                     join(root, manifestFile(root)),
                     options.origin,
                     options.pluginModule,
-                    options.product === "viewer",
+                    options.product === "reader",
                     "/server",
                     options.shared,
                     options.versions,
@@ -311,12 +343,12 @@ export const runApplication = async (options: ApplicationOptions) => {
                 plugins = workspaceServer.plugins;
             }
             if (options.mcp) {
-                const { gitOrigin } = await loadViewerPlugins(options.pluginModule);
+                const { gitOrigin } = await loadReaderPlugins(options.pluginModule);
                 const catalog = createDocumentVersions(root);
                 disposeVersions = catalog.close;
                 const selection = parseVersionSelection(options.versions ?? "latest");
-                mcp = createMcpHandler(
-                    options.product === "viewer"
+                const mcpRoot =
+                    options.product === "reader"
                         ? async () => {
                               const all = await catalog.list();
                               const latest = selectVersions(all, selection)[0];
@@ -331,29 +363,39 @@ export const runApplication = async (options: ApplicationOptions) => {
                                   );
                               return root;
                           }
-                        : root,
-                    { readOnly: options.product === "viewer", gitOrigin },
-                );
+                        : root;
+                const mcpOptions = { readOnly: options.product === "reader", gitOrigin };
+                if (options.mcpTransport === "stdio")
+                    startStdio = () => startMcp(mcpRoot, mcpOptions, stdioAbort.signal);
+                else mcp = createMcpHandler(mcpRoot, mcpOptions);
             }
         }
         if (!options.server || options.runtime === "web")
             server.on("upgrade", (_req, socket) => socket.destroy());
-        await new Promise<void>((resolve, reject) => {
-            server.once("error", reject);
-            server.listen(options.port, "127.0.0.1", resolve);
-        });
-        const address = server.address();
-        const port = typeof address === "object" && address ? address.port : options.port;
-        const origin = `${options.tls ? "https" : "http"}://localhost:${port}`;
-        terminal.ready(
-            options.product,
-            options.runtime,
-            client ? `${origin}${clientOptions(options).basePath}/` : origin,
-        );
-        if (options.server && options.runtime === "node")
-            terminal.info(`Workspace: ${options.tls ? "wss" : "ws"}://localhost:${port}/server`);
-        if (mcp) terminal.info(`MCP: ${origin}/mcp`);
-        return { server, close };
+        if (client || options.server || mcp) {
+            await new Promise<void>((resolve, reject) => {
+                server.once("error", reject);
+                server.listen(options.port, "127.0.0.1", resolve);
+            });
+            const address = server.address();
+            const port = typeof address === "object" && address ? address.port : options.port;
+            const origin = `${options.tls ? "https" : "http"}://localhost:${port}`;
+            terminal.ready(
+                options.product,
+                options.runtime,
+                client ? `${origin}${clientOptions(options).basePath}/` : origin,
+            );
+            if (options.server && options.runtime === "node")
+                terminal.info(
+                    `Workspace: ${options.tls ? "wss" : "ws"}://localhost:${port}/server`,
+                );
+            if (mcp) terminal.info(`MCP: ${origin}/mcp`);
+        }
+        if (startStdio) {
+            terminal.info(`MCP: stdio (${options.product})`);
+            done = startStdio();
+        }
+        return { server, close, done };
     } catch (error) {
         await close();
         throw error;
@@ -376,6 +418,7 @@ export const buildApplication = async (options: ApplicationOptions): Promise<voi
                 .filter((name) => options[name])
                 .map((name) => `--${name}`),
         ];
+        if (options.mcpTransport) args.push("--mcp-transport", options.mcpTransport);
         if (options.project !== MANIFEST_FILE) args.push("--project", resolve(options.project));
         if (options.versions !== undefined) args.push("--versions", options.versions);
         if (options.serverUrl) args.push("--server-url", options.serverUrl);
@@ -383,7 +426,7 @@ export const buildApplication = async (options: ApplicationOptions): Promise<voi
             args.push("--client-origin", options.origin);
         if (options.pluginModule)
             args.push(
-                "--viewer-plugins",
+                "--reader-plugins",
                 isAbsolute(options.pluginModule) || options.pluginModule.startsWith(".")
                     ? resolve(options.pluginModule)
                     : options.pluginModule,
@@ -429,7 +472,7 @@ export const buildApplication = async (options: ApplicationOptions): Promise<voi
 };
 
 export const applicationCommand = async (
-    product: "editor" | "viewer",
+    product: "editor" | "reader",
     args: string[],
 ): Promise<void> => {
     const options = parseApplicationOptions(product, args);
@@ -447,5 +490,14 @@ export const applicationCommand = async (
         };
         process.once("SIGINT", stop);
         process.once("SIGTERM", stop);
+        if (running.done) {
+            try {
+                await running.done;
+            } finally {
+                process.removeListener("SIGINT", stop);
+                process.removeListener("SIGTERM", stop);
+                await running.close();
+            }
+        }
     }
 };

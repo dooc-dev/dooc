@@ -13,7 +13,7 @@ import { createDevWorkspace } from "../dev-workspace.ts";
 import {
     testDocumentVersionDrafts,
     testDocumentVersionLayout,
-    testDocumentVersionViewer,
+    testDocumentVersionReader,
 } from "./document-versions.mjs";
 import {
     testBrowserWorkspace,
@@ -63,13 +63,13 @@ before(
         const project = join(root, "workspace");
         createDevWorkspace(project);
         urls.editor = await start("editor", "node", project);
-        urls.viewer = await start("viewer", "node", project, ["--versions", "*"]);
-        urls.latest = await start("viewer", "node", project);
+        urls.reader = await start("reader", "node", project, ["--versions", "*"]);
+        urls.latest = await start("reader", "node", project);
         urls.web = await start("editor", "web", project);
         browser = await chromium.launch();
         const page = await browser.newPage();
         try {
-            for (const mode of ["editor", "viewer"]) {
+            for (const mode of ["editor", "reader"]) {
                 await open(page, urls[mode], mode === "editor");
                 styles[mode] = await page
                     .locator("style")
@@ -155,9 +155,9 @@ for (const check of [testDocumentVersionLayout, testDocumentVersionDrafts]) {
     });
 }
 for (const latest of [false, true]) {
-    browserTest(`Viewer versions (${latest ? "latest" : "all"})`, async (page) => {
-        await open(page, latest ? urls.latest : urls.viewer, false);
-        await testDocumentVersionViewer(page, latest);
+    browserTest(`Reader versions (${latest ? "latest" : "all"})`, async (page) => {
+        await open(page, latest ? urls.latest : urls.reader, false);
+        await testDocumentVersionReader(page, latest);
     });
 }
 
@@ -165,15 +165,16 @@ for (const [file, names] of [
     ["code-editing", ["testCodeEditing"]],
     ["subformat-form", ["testSubformatForm", "testReferencedEnumForm", "testSubformatDatePicker"]],
     ["subformat-cards", ["testSubformatCards"]],
+    ["subformat-embeds", ["testSubformatEmbeds", "testSubformatEmbedEditor"]],
     ["schema-builder", ["testSchemaBuilder", "testSchemaDraftSaving", "testSchemaParameters"]],
     ["nav-update", ["testNavUpdate"]],
     ["plugin-editing", ["testPluginEditing"]],
-    ["resource-download", ["testResourceDownloads"]],
+    ["resource-download", ["testResourceDownloads", "testDownloadBlock"]],
     ["view-loading", ["testViewLoading"]],
 ]) {
     for (const name of names) {
         browserTest(name, async (page) => {
-            await blank(page, file === "subformat-cards" ? "viewer" : "editor");
+            await blank(page, file === "subformat-cards" ? "reader" : "editor");
             await inject(page, file);
             await page.evaluate((name) => window[name](), name);
         });
@@ -181,7 +182,7 @@ for (const [file, names] of [
 }
 
 browserTest("Sidebar collapse", async (page) => {
-    await open(page, urls.viewer, false);
+    await open(page, urls.reader, false);
     await inject(page, "sidebar-collapse");
     await page.evaluate(() => window.testSidebarCollapse());
 });

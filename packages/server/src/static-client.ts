@@ -1,7 +1,7 @@
 import type { RequestListener } from "node:http";
 import { DARK_C, initializeThemes, LIGHT_C } from "../../frontend/src/theme-picker.js";
 import { validateRelayUrl } from "../../workspace/src/mcp-relay.js";
-import { prebuilt, readViewerAsset } from "./assets.js";
+import { prebuilt, readReaderAsset } from "./assets.js";
 import { bundleClient } from "./serve.js";
 
 export const validateServerUrl = (value: string): string => {
@@ -85,9 +85,9 @@ export const clientAssets = async (
             ],
             [
                 "assets/fonts/udev-gothic-regular.woff2",
-                readViewerAsset("fonts/udev-gothic-regular.woff2"),
+                readReaderAsset("fonts/udev-gothic-regular.woff2"),
             ],
-            ["assets/fonts/LICENSE.txt", readViewerAsset("fonts/LICENSE.txt")],
+            ["assets/fonts/LICENSE.txt", readReaderAsset("fonts/LICENSE.txt")],
         ] as [string, Buffer][])
             files.set(file, data);
         const entries = {
@@ -104,14 +104,14 @@ export const clientAssets = async (
     }
     if (prebuilt) {
         if (options.client !== false && (options.mcp || options.relayUrl))
-            files.set("assets/mcp.js", readViewerAsset("mcp-client.js"));
+            files.set("assets/mcp.js", readReaderAsset("mcp-client.js"));
         if (options.client !== false)
-            files.set("assets/client.js", readViewerAsset("client.global.js"));
+            files.set("assets/client.js", readReaderAsset("client.global.js"));
         if (options.worker !== false)
             files.set(
                 "assets/workspace-worker.js",
-                readViewerAsset(
-                    `workspace-${options.readOnly ? "viewer-" : ""}${options.mcp || options.relayUrl ? "mcp-" : ""}worker.global.js`,
+                readReaderAsset(
+                    `workspace-${options.readOnly ? "reader-" : ""}${options.mcp || options.relayUrl ? "mcp-" : ""}worker.global.js`,
                 ),
             );
     } else {

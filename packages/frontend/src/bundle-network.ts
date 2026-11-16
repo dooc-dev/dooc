@@ -1,4 +1,4 @@
-/** Self-contained: standalone bundles cannot rely on the local viewer API. */
+/** Self-contained: standalone bundles cannot rely on the local reader API. */
 export const mountBundleNetwork = (): void => {
     const load = async (host: HTMLElement) => {
         if (host.dataset.loaded) return;

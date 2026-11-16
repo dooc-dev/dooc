@@ -297,7 +297,7 @@ const srcBtnStyle: CSSProperties = {
 };
 
 /**
- * Viewer that shows the raw table DSL as-is (CodeBlock equivalent). Overlaid on the graph, it is
+ * Reader that shows the raw table DSL as-is (CodeBlock equivalent). Overlaid on the graph, it is
  * only for reading / copying the source text (no editing = the graph never rewrites the DSL).
  */
 const SourceView = ({ source, onClose }: { source: string; onClose: () => void }): JSX.Element => {

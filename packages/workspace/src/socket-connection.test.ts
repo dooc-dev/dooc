@@ -14,7 +14,7 @@ afterEach(() => {
     vi.unstubAllGlobals();
 });
 
-it("requires the viewer backend to enforce read-only access and hides branch actions", async () => {
+it("requires the reader backend to enforce read-only access and hides branch actions", async () => {
     vi.stubGlobal("localStorage", { setItem: vi.fn() });
     client.request.mockImplementation(async (op) =>
         op === "hello" ? { readOnly: false } : [{ id: "main", label: "Docs", branch: "main" }],

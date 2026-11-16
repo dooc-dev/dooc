@@ -27,6 +27,7 @@ import {
     schemaGraphClientData,
     schemaGraphUid,
 } from "./schema-graph.js";
+import type { SubformatCollection } from "./subformats.js";
 import { docDisplayName, type Frontmatter } from "./taxonomy.js";
 import { termAnchor } from "./term-reference.js";
 import { parseFileReference, textfileName } from "./textfile.js";
@@ -39,7 +40,7 @@ export interface RenderCtx {
     docLinks?: ReadonlyMap<string, string>;
     /** Figures including their markup (name → entry). */
     figures: ReadonlyMap<string, FigureEntry>;
-    /** Local viewers may defer large figures; published HTML embeds them directly. */
+    /** Local readers may defer large figures; published HTML embeds them directly. */
     figurePreview?: typeof figureFrameHtml;
     terms: readonly TermEntry[];
     termLinks?: ReadonlyMap<string, string>;
@@ -49,7 +50,7 @@ export interface RenderCtx {
     tocTitle?: string;
     /** Download URL of the page's own source, shown beside its title. */
     pageDownload?: { file: string; href: string };
-    /** Document URL for the viewer's section-copy buttons. */
+    /** Document URL for the reader's section-copy buttons. */
     sectionUrl?: string;
     /**
      * Adapter for the doc's language (term ordering). Default: generic
@@ -463,12 +464,15 @@ export const termsHtml = (
 export const resourceDownloadHtml = (file: string, href: string): string =>
     `<a class="resource-download" href="${escapeHtml(href)}" download="${escapeHtml(textfileName(file))}" data-resource-download title="${escapeHtml(`Download ${textfileName(file)}`)}" aria-label="${escapeHtml(`Download ${textfileName(file)}`)}"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2v10m-4-4 4 4 4-4M3 13v4h14v-4"/></svg></a>`;
 
+export const subformatTableHtml = (collection: SubformatCollection, label: string): string =>
+    `<div class="subformat-table" tabindex="0" role="region" aria-label="${escapeHtml(label)}"><table><thead><tr><th scope="col" data-i18n="File name">File name</th>${collection.fields.map((field) => `<th scope="col">${escapeHtml(field.title)}</th>`).join("")}</tr></thead><tbody>${collection.records.map((record, index) => `<tr data-record-file="${escapeHtml(record.file)}"><th scope="row"><button type="button" data-subformat-record="${index}" aria-haspopup="dialog" title="${escapeHtml(record.file)}">${escapeHtml(textfileName(record.file))}</button></th>${collection.fields.map((field) => `<td><span>${Object.hasOwn(record.data, field.name) ? escapeHtml(typeof record.data[field.name] === "object" ? JSON.stringify(record.data[field.name]) : String(record.data[field.name])) : ""}</span></td>`).join("")}</tr>`).join("")}</tbody></table></div>${collection.records.length ? "" : '<p data-i18n="No results">No results</p>'}`;
+
 const RESOURCE_EXPAND =
     '<button class="resource-download resource-expand" type="button" data-resource-expand title="Expand" aria-label="Expand"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8V3h5M17 8V3h-5M3 12v5h5M17 12v5h-5"/></svg></button>';
 
 const blockHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
     const html = blockContentHtml(b, ctx, seg);
-    if (!ctx.downloads || (b.type === "code" && b.unavailable)) return html;
+    if (!ctx.downloads || (b.type === "code" && (b.unavailable || b.subformat))) return html;
     const file =
         b.sourceFile ??
         (b.type === "code"
@@ -520,6 +524,10 @@ const blockContentHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
         case "list":
             return listHtml(b.items, ctx, seg, b.ordered === true);
         case "code": {
+            if (b.subformat) {
+                const label = b.embed?.title ?? b.alt ?? b.subformat.ext;
+                return `<section class="subformat-embed" data-subformat-embed="${escapeHtml(b.subformat.ext)}" data-subformat-embed-view="${escapeHtml(b.embed?.view ?? "card")}" aria-label="${escapeHtml(label)}">${b.embed?.title ? `<h2 class="subformat-embed-title">${escapeHtml(b.embed.title)}</h2>` : ""}<template data-subformats>${escapeHtml(JSON.stringify([b.subformat]))}</template><div data-subformat-board>${subformatTableHtml(b.subformat, label)}</div></section>`;
+            }
             if (b.lang === "mermaid" && !b.unavailable)
                 return `<pre data-mermaid="pending" aria-label="${escapeHtml(b.alt || "Mermaid diagram")}" style="overflow:auto;background:var(--doc-bg);color:var(--doc-fg);padding:1rem">${escapeHtml(b.lines.join("\n"))}</pre>`;
             const filename = b.filename ? textfileName(b.filename) : "";
@@ -584,7 +592,7 @@ const blockContentHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
         default:
             // Unknown block — degrade to a placeholder
             // instead of emitting "undefined".
-            return `<div class="ph">${escapeHtml(`Unknown block (${(b as { type: string }).type})`)}<span> — docs viewer needs an update</span></div>`;
+            return `<div class="ph">${escapeHtml(`Unknown block (${(b as { type: string }).type})`)}<span> — docs reader needs an update</span></div>`;
     }
 };
 
@@ -598,7 +606,7 @@ export const blocksHtml = (blocks: Block[], ctx: RenderCtx = emptyCtx): string =
         .join("\n");
 };
 
-// Keep the document outline beside its title in every viewer.
+// Keep the document outline beside its title in every reader.
 const inPageTocHtml = (toc: TocEntry[], title = "Contents"): string => {
     if (toc.length === 0) {
         return "";

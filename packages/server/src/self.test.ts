@@ -103,7 +103,7 @@ const archive = (files: Record<string, string> = {}) =>
         ),
     );
 
-it("downloads only documentation into a disposable viewer root without requiring Git", async () => {
+it("downloads only documentation into a disposable reader root without requiring Git", async () => {
     const fetch = vi.fn().mockResolvedValue(
         new Response(
             archive({

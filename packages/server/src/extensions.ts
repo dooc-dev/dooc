@@ -26,9 +26,9 @@ import {
     readExtensionZip,
 } from "../../engine/src/core/extension-package.js";
 import {
-    type ViewerPluginRegistry,
-    type ViewerPlugins,
-    validateViewerPlugins,
+    type ReaderPluginRegistry,
+    type ReaderPlugins,
+    validateReaderPlugins,
 } from "./plugin-config.js";
 import type { LocalPluginStorage } from "./plugins/local-storage.js";
 import { allowsWorkspaceCode } from "./workspace-trust.js";
@@ -43,11 +43,11 @@ const unpack = (data: Uint8Array) =>
 /** ZIPs found on disk stay inactive until the browser approves their exact content hash. */
 export const createExtensionManager = (
     root: string,
-    registry: ViewerPluginRegistry & { configuration?: () => ViewerPlugins },
-    initial: Pick<ViewerPlugins, "plugins" | "mocks">,
+    registry: ReaderPluginRegistry & { configuration?: () => ReaderPlugins },
+    initial: Pick<ReaderPlugins, "plugins" | "mocks">,
     personal?: LocalPluginStorage,
 ) => {
-    const active = new Map<string, { hash: string; config: ViewerPlugins; directory: string }>();
+    const active = new Map<string, { hash: string; config: ReaderPlugins; directory: string }>();
     const scope = createHash("sha256").update(realpathSync(root)).digest("hex");
     const approvalFile = `extensions-${scope}.json`;
     const approval = () => {
@@ -151,7 +151,7 @@ export const createExtensionManager = (
         for (const plugin of (registry.configuration?.() ?? initial).plugins) {
             if (owned.has(plugin)) continue;
             items.push({
-                file: `viewer/${plugin.id}`,
+                file: `reader/${plugin.id}`,
                 name: plugin.name ?? plugin.id,
                 icon: plugin.icon,
                 version: "",
@@ -167,7 +167,7 @@ export const createExtensionManager = (
     const activate = async (name: string, data: Buffer, save: boolean, base: string | null) => {
         if (!allowsWorkspaceCode())
             throw new Error(
-                "Workspace plugins are disabled in remote sessions; use --viewer-plugins for an explicit local module",
+                "Workspace plugins are disabled in remote sessions; use --reader-plugins for an explicit local module",
             );
         const revision = hash(data);
         if (!save && active.get(name)?.hash === revision) return;
@@ -189,7 +189,7 @@ export const createExtensionManager = (
                     );
                 }),
             ]);
-            const config = validateViewerPlugins(module.default);
+            const config = validateReaderPlugins(module.default);
             if (
                 !config.plugins.length ||
                 config.setup ||
@@ -197,7 +197,7 @@ export const createExtensionManager = (
                 config.workspace ||
                 config.allowedDomains
             )
-                throw new Error("Export a viewer configuration with plugins and optional mocks");
+                throw new Error("Export a reader configuration with plugins and optional mocks");
             const live = registry.configuration?.();
             const owned = active.get(name)?.config.plugins ?? [];
             for (const plugin of config.plugins) {
@@ -228,7 +228,7 @@ export const createExtensionManager = (
                           .filter(([key]) => key !== name)
                           .map(([, value]) => value.config),
                   ];
-            validateViewerPlugins({
+            validateReaderPlugins({
                 plugins: [...other.flatMap((config) => config.plugins), ...config.plugins],
                 mocks: Object.assign({}, ...other.map((config) => config.mocks), config.mocks),
             });

@@ -11,7 +11,7 @@ flowchart LR
 
 ## Desktop connections
 
-Relay is a built-in dooc feature, started with `dooc mcp relay --stdio` for local MCP hosts. The Desktop extensions bundle the same implementation generated from the dooc source tree, so users do not install dooc separately. There is no separately published relay package.
+Relay is a built-in dooc feature, started with `dooc relay --stdio` for local MCP hosts. It serves both editor and reader browser workspaces. The Desktop extensions bundle the same implementation generated from the dooc source tree, so users do not install dooc separately. There is no separately published relay package.
 
 ```mermaid
 flowchart LR
@@ -41,7 +41,7 @@ The publisher runs the relay once, independently of the static files. A static h
 ```sh
 # Set a persistent random secret in the hosting environment, not in the web build.
 export DOOC_MCP_RELAY_SECRET="<at-least-32-random-characters>"
-dooc mcp relay --public-url https://relay.example.com --client-origin https://example.com --port 3000
+dooc relay --public-url https://relay.example.com --client-origin https://example.com --port 3000
 
 # Build the files served by example.com.
 dooc editor build web --all --relay-url https://relay.example.com --out ./public-editor
@@ -49,7 +49,7 @@ dooc editor build web --all --relay-url https://relay.example.com --out ./public
 
 The relay listens on loopback by default. Forward HTTPS traffic to its HTTP listener and preserve the public Host header. For direct TLS, pass `--tls-cert <pem>` and `--tls-key <pem>` together; `--host <address>` selects the listening address. The proxy must allow long polls of at least 30 seconds and tool requests of at least 65 seconds. There is no WebSocket upgrade or SSE buffering requirement.
 
-Use `viewer` instead of `editor` for a read-only Worker and tool catalog. Web `--mcp` requires `--client` and `--server`. Add `--relay-url` for a hosted relay; it includes a browser connector rather than opening another listener. The relay URL is public configuration. Credentials are created after deployment and are never embedded in build output. HTTPS is required except for loopback HTTP during development.
+Use `reader` instead of `editor` for a read-only Worker and tool catalog. Web `--mcp` requires `--client` and `--server`. Add `--relay-url` for a hosted relay; it includes a browser connector rather than opening another listener. The relay URL is public configuration. Credentials are created after deployment and are never embedded in build output. HTTPS is required except for loopback HTTP during development.
 
 ## Connecting through a hosted relay
 
@@ -78,7 +78,7 @@ MCP initialization and tool discovery work without an online tab. Tool calls fai
 
 The browser uses a 25-second long poll. Idle ownership expires after 35 seconds without contact; an executing request has a 60-second deadline. Messages are limited to 8 MiB, including JSON/base64 overhead. One relay process holds the active connections; multiple replicas require routing a pairing to the same process and are not supported by this initial deployment. Keep the signing secret stable across restarts to preserve registration; in-flight requests are still lost.
 
-The web tool catalog shares document, figure, file, font-list/removal, validation, and source-export tools with Node. Node-only build, Git/history, external font import, and figure import from an OS path are not advertised. Figure text and file uploads remain available. Viewer MCP rejects mutations in the Worker as well as at the relay.
+The web tool catalog shares document, figure, file, font-list/removal, validation, and source-export tools with Node. Node-only build, Git/history, external font import, and figure import from an OS path are not advertised. Figure text and file uploads remain available. Reader MCP rejects mutations in the Worker as well as at the relay.
 
 An open tab is not an always-running server. Browser suspension, tab discard, closing the page, or device sleep makes the workspace unavailable. Reconnection resumes future requests; it does not resume an interrupted mutation. Service Workers do not remove this lifecycle restriction.
 

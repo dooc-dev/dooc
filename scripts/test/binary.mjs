@@ -49,10 +49,10 @@ try {
     run("build", "html", "--url_preview=embed");
     assert.ok(!existsSync(join(root, "dist/bundle.zip")));
     const html = readFileSync(join(root, "dist/bundle.html"), "utf8");
-    run("viewer", "build", "web", "--client", "--server", "--out", "viewer-web");
-    assert.ok(existsSync(join(root, "viewer-web/assets/workspace-worker.js")));
-    assert.ok(!existsSync(join(root, "viewer-web/assets/edit.js")));
-    for (const product of ["editor", "viewer"]) {
+    run("reader", "build", "web", "--client", "--server", "--out", "reader-web");
+    assert.ok(existsSync(join(root, "reader-web/assets/workspace-worker.js")));
+    assert.ok(!existsSync(join(root, "reader-web/assets/edit.js")));
+    for (const product of ["editor", "reader"]) {
         const output = `${product}-web-mcp`;
         run(
             product,
@@ -71,7 +71,7 @@ try {
             "https://relay.example",
         );
     }
-    assert.match(run("mcp", "relay", "--help"), /DOOC_MCP_RELAY_SECRET/);
+    assert.match(run("relay", "--help"), /DOOC_MCP_RELAY_SECRET/);
     run("editor", "build", "node", "--all", "--out", "editor-node");
     assert.match(
         readFileSync(join(root, "editor-node/start.mjs"), "utf8"),
@@ -85,40 +85,44 @@ try {
     assert.match(html, /data:font\/woff2;base64,/);
     assert.match(html, /Hello/);
     assert.match(html, /data-mermaid="pending"/);
-    run("build", "zip", "--url_preview", "network");
+    run("build", "zip");
     assert.equal(readFileSync(join(root, "dist/bundle.html"), "utf8"), html);
     assert.ok(readFileSync(join(root, "dist/bundle.zip")).subarray(0, 2).equals(Buffer.from("PK")));
-    const rpc = execFileSync(binary, ["mcp"], {
-        ...options,
-        input: [
-            "{",
-            "null",
-            JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
-            JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-            JSON.stringify({
-                jsonrpc: "2.0",
-                id: 2,
-                method: "tools/call",
-                params: { name: "build", arguments: { format: "zip", url_preview: "network" } },
-            }),
-            JSON.stringify({
-                jsonrpc: "2.0",
-                id: 3,
-                method: "tools/call",
-                params: {
-                    name: "write_file",
-                    arguments: { file: "mcp.txt", content: "Created after build", base: null },
-                },
-            }),
-            JSON.stringify({
-                jsonrpc: "2.0",
-                id: 4,
-                method: "tools/call",
-                params: { name: "read_file", arguments: { file: "mcp.txt" } },
-            }),
-            "",
-        ].join("\n"),
-    });
+    const rpc = execFileSync(
+        binary,
+        ["editor", "run", "node", "--mcp", "--mcp-transport", "stdio"],
+        {
+            ...options,
+            input: [
+                "{",
+                "null",
+                JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+                JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+                JSON.stringify({
+                    jsonrpc: "2.0",
+                    id: 2,
+                    method: "tools/call",
+                    params: { name: "build", arguments: { format: "zip" } },
+                }),
+                JSON.stringify({
+                    jsonrpc: "2.0",
+                    id: 3,
+                    method: "tools/call",
+                    params: {
+                        name: "write_file",
+                        arguments: { file: "mcp.txt", content: "Created after build", base: null },
+                    },
+                }),
+                JSON.stringify({
+                    jsonrpc: "2.0",
+                    id: 4,
+                    method: "tools/call",
+                    params: { name: "read_file", arguments: { file: "mcp.txt" } },
+                }),
+                "",
+            ].join("\n"),
+        },
+    );
     const replies = rpc
         .trim()
         .split("\n")
@@ -133,7 +137,7 @@ try {
     assert.equal(JSON.parse(replies[3].result.content[0].text).file, "dist/bundle.zip");
     assert.equal(JSON.parse(replies[4].result.content[0].text).ok, true);
     assert.equal(JSON.parse(replies[5].result.content[0].text).content, "Created after build");
-    assert.match(run("mcp", "--help"), /--git-origin/);
+    assert.match(run("editor", "--help"), /--mcp-transport stdio\|http/);
     const startServer = async (...args) => {
         server = spawn(binary, args, options);
         let output = "";

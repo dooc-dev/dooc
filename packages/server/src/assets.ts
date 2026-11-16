@@ -17,7 +17,7 @@ export const readInstaller = (): Buffer =>
         ),
     );
 
-export const readViewerAsset = (name: string): Buffer =>
+export const readReaderAsset = (name: string): Buffer =>
     readFileSync(
         new URL(
             name.startsWith("fonts/")

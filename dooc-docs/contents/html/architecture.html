@@ -42,7 +42,7 @@ desc: Three architectural boundaries: workspace files, the dooc engine and appli
 </style>
 <section class="dooc-architecture" aria-label="Source, runtime and output">
 
-  <header class="intro"><h2>One source, several ways to read it.</h2><p class="muted">Compilation connects the file model to the viewer. Saving and publishing remain explicit operations.</p></header>
+  <header class="intro"><h2>One source, several ways to read it.</h2><p class="muted">Compilation connects the file model to the reader. Saving and publishing remain explicit operations.</p></header>
   <div class="body scroll" tabindex="0" role="region" aria-label="Architecture diagram; scroll horizontally on narrow screens">
     <svg viewBox="0 0 900 360" role="img" aria-labelledby="architecture-title architecture-desc">
       <title id="architecture-title">Workspace to engine to document</title><desc id="architecture-desc">Manifest, Markdown, schemas and assets enter the engine. The frontend uses the compiled document through the workspace protocol and server. HTML and source ZIP are separate outputs.</desc>

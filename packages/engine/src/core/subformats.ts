@@ -27,6 +27,29 @@ export interface Subformat {
     };
 }
 
+export interface SubformatEmbedOptions {
+    view?: "card" | "list" | "table";
+    title?: string;
+    filters?: [string, string][];
+}
+
+export const parseSubformatQuery = (query: string): SubformatEmbedOptions => {
+    const options: SubformatEmbedOptions = {};
+    const seen = new Set<string>();
+    for (const [key, value] of new URLSearchParams(query)) {
+        if (seen.has(key)) throw new Error(`Duplicate embed parameter: ${key}`);
+        seen.add(key);
+        if (key === "view" && ["card", "list", "table"].includes(value))
+            options.view = value as SubformatEmbedOptions["view"];
+        else if (key === "title") options.title = value;
+        else if (key.startsWith("filter.") && key.length > 7) {
+            options.filters ??= [];
+            options.filters.push([key.slice(7), value]);
+        } else throw new Error(`Unknown embed parameter or value: ${key}=${value}`);
+    }
+    return options;
+};
+
 export interface SubformatField {
     name: string;
     title: string;

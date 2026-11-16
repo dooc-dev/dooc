@@ -45,7 +45,7 @@ Paths are relative to the selected manifest's folder. Two workspaces can have fi
 | Mode | Editable | Needs a running service | Intended use |
 | --- | --- | --- | --- |
 | `dooc editor run node --client --server` | Yes | Yes | Author and save source files |
-| `dooc viewer run node --client --server` | No | Yes | Review a local or cloned workspace |
+| `dooc reader run node --client --server` | No | Yes | Review a local or cloned workspace |
 | Standalone HTML | No | No for embedded local content | Share a document snapshot |
 | Source ZIP | After opening with dooc | Only while viewing or editing | Hand off editable source files |
 

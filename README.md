@@ -1,7 +1,6 @@
 # Orchestrate native resources as a document.
 
-dooc composes text, diagrams, data, and code into one document. Each resource keeps its native format.
-Read and edit the same files your tools use and Git tracks.
+dooc orchestrates text, diagrams, data, code, and any other resoruces into one document.
 
 ![dooc Getting started page in dark mode, with the live preview and Markdown editor side by side](dooc-docs/contents/png/editor.png)
 
@@ -24,11 +23,28 @@ dooc init
 dooc editor
 ```
 
-Open the printed URL to start editing. Use `dooc viewer` for read-only access. Both open `dooc.yaml` in the current directory.
 
 ## Hosting
 
-![Run dooc locally, self-host a Node workspace, or host a static app with a browser workspace. Publish an HTML snapshot to read, share, or host.](dooc-docs/contents/svg/hosting.drawio.svg)
+Run an editor or read-only reader with a Node workspace:
+
+```sh
+dooc editor run node --client --server --project ./dooc.yaml --port 3000
+dooc reader run node --client --server --project ./dooc.yaml --port 3000
+```
+
+Run either command, then open `http://localhost:3000/client/`. For remote hosting, use a reverse proxy and set `--server-url wss://docs.example.com/server` and `--client-origin https://docs.example.com` to match your public host.
+
+Build an editor or reader for static hosting, with the workspace running in the browser:
+
+```sh
+dooc editor build web --client --server --out ./public-editor
+dooc reader build web --client --server --out ./public-reader
+```
+
+Host either output directory at the site root. Route document paths to `index.html`; missing `/assets/*` and `/api/*` requests must return 404. Open a workspace in the browser after deployment.
+
+See [App runtimes](dooc-docs/contents/md/runtimes.md) for component options and reverse proxy setup.
 
 ## Documentation
 

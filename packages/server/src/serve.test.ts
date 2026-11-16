@@ -158,7 +158,7 @@ it("keeps quoted source files, emphasis and references through compilation and p
     }
 });
 
-it("resolves source-file links and heading fragments in the viewer, exported HTML, and completion data", () => {
+it("resolves source-file links and heading fragments in the reader, exported HTML, and completion data", () => {
     const root = mkdtempSync(join(tmpdir(), "dooc-file-links-"));
     try {
         mkdirSync(join(root, "content"));
@@ -188,7 +188,7 @@ it("resolves source-file links and heading fragments in the viewer, exported HTM
     }
 });
 
-it("opens linked SVG files in the viewer and standalone HTML, including extracted callouts", () => {
+it("opens linked SVG files in the reader and standalone HTML, including extracted callouts", () => {
     const root = mkdtempSync(join(tmpdir(), "dooc-figure-links-"));
     try {
         mkdirSync(join(root, "content"));
@@ -792,12 +792,12 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
     const site = siteFrom(compileSite(new URL("../../../dooc-docs", import.meta.url).pathname));
     const html = publishHtml(site, "window.graph = '</script>';");
 
-    it("includes font selection without font registration in standalone viewers", () => {
-        expect(html).toContain('data-font-picker="viewer"');
+    it("includes font selection without font registration in standalone readers", () => {
+        expect(html).toContain('data-font-picker="reader"');
         expect(html).not.toContain('data-font-picker="editor"');
         expect(html).not.toContain("indexedDB.open");
         expect(html).not.toContain("Add font file");
-        expect(html).toContain("--viewer-font");
+        expect(html).toContain("--reader-font");
         expect(html).toContain('<button class="pbtn font-control"');
         expect(html).not.toContain('class="font-select"');
     });

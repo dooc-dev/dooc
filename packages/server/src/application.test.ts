@@ -17,6 +17,7 @@ import { createWorkspaceClient } from "../../workspace/src/client.js";
 import { buildApplication, parseApplicationOptions, runApplication } from "./application.js";
 import { packageVersion } from "./assets.js";
 import { prepareGitWorkspace } from "./git-workspace.js";
+import * as mcp from "./mcp.js";
 import { clientAssets } from "./static-client.js";
 
 vi.mock("./static-client.js", async (original) => ({
@@ -42,23 +43,23 @@ const options = (...args: string[]) => {
     return result;
 };
 
-it("defaults viewer publication to latest and validates run/build selectors", () => {
-    expect(parseApplicationOptions("viewer", ["run", "node", "--all"])?.versions).toBe("latest");
+it("defaults reader publication to latest and validates run/build selectors", () => {
+    expect(parseApplicationOptions("reader", ["run", "node", "--all"])?.versions).toBe("latest");
     for (const action of ["run", "build"])
         for (const selector of ["*.*.latest", "latest.*.*", ">=1.2.0 <2.0.0"])
             expect(
-                parseApplicationOptions("viewer", [action, "node", "--all", "--versions", selector])
+                parseApplicationOptions("reader", [action, "node", "--all", "--versions", selector])
                     ?.versions,
             ).toBe(selector);
-    expect(() => parseApplicationOptions("viewer", ["--versions", "latest*latest*latest"])).toThrow(
+    expect(() => parseApplicationOptions("reader", ["--versions", "latest*latest*latest"])).toThrow(
         "Invalid version",
     );
-    expect(() => options("--versions", "latest")).toThrow("viewer publication");
+    expect(() => options("--versions", "latest")).toThrow("reader publication");
 });
 
 it.each([
     "editor",
-    "viewer",
+    "reader",
 ] as const)("expands the %s shortcut and forwards option overrides to run node --all", (product) => {
     const shortcut = parseApplicationOptions(product, []);
     expect(shortcut).toEqual(parseApplicationOptions(product, ["run", "node", "--all"]));
@@ -108,7 +109,28 @@ it("requires an explicit component and applies exclusions regardless of argument
             server: true,
             mcp: false,
         });
-    expect(parseApplicationOptions("viewer", ["--help"])).toBeUndefined();
+    expect(parseApplicationOptions("reader", ["--help"])).toBeUndefined();
+});
+
+it.each(["stdio", "http"])("selects %s for Node MCP run and build", (transport) => {
+    for (const action of ["run", "build"])
+        expect(options(action, "node", "--mcp", "--mcp-transport", transport)).toMatchObject({
+            client: false,
+            server: false,
+            mcp: true,
+            mcpTransport: transport,
+        });
+    expect(options("run", "node", "--all", "--mcp-transport", transport)).toMatchObject({
+        client: true,
+        server: true,
+        mcpTransport: transport,
+    });
+});
+
+it("ignores HTTP TLS defaults for stdio-only runs", () => {
+    vi.stubEnv("DOOC_TLS_CERT", "/missing/cert.pem");
+    vi.stubEnv("DOOC_TLS_KEY", "/missing/key.pem");
+    expect(options("run", "node", "--mcp", "--mcp-transport", "stdio")).not.toHaveProperty("tls");
 });
 
 it.each([
@@ -126,6 +148,33 @@ it.each([
     ["run", "web", "--server"],
     ["run", "web", "--client", "--server-url", "ws://localhost:3001"],
     ["run", "node", "--mcp", "--server-url", "ws://localhost:3001"],
+    ["run", "node", "--all", "--viewer-plugins", "./plugins.mjs"],
+    ["run", "node", "--mcp", "--mcp-transport", "invalid"],
+    ["run", "node", "--server", "--mcp-transport", "stdio"],
+    ["run", "node", "--all", "--no-mcp", "--mcp-transport", "http"],
+    ["build", "web", "--all", "--mcp-transport", "http"],
+    ["run", "web", "--all", "--mcp-transport", "stdio"],
+    ["run", "node", "--mcp", "--mcp-transport", "stdio", "--port", "4000"],
+    [
+        "run",
+        "node",
+        "--mcp",
+        "--mcp-transport",
+        "stdio",
+        "--client-origin",
+        "http://localhost:3000",
+    ],
+    [
+        "run",
+        "node",
+        "--mcp",
+        "--mcp-transport",
+        "stdio",
+        "--tls-cert",
+        "cert.pem",
+        "--tls-key",
+        "key.pem",
+    ],
     ["build", "node", "--server", "--port", "4000"],
     ["run", "node", "--client", "--out", "output"],
     ["build", "node", "--server", "--repo", "https://example.com/docs.git"],
@@ -148,7 +197,7 @@ it("serves client, read-only workspace and MCP on one port with separate paths",
         new Map([["index.html", Buffer.from("Static client")]]),
     );
     const parsed = options("run", "node", "--all", "--project", project);
-    parsed.product = "viewer";
+    parsed.product = "reader";
     parsed.port = 0;
     const running = await runApplication(parsed);
     const address = running.server.address();
@@ -255,6 +304,55 @@ it("runs a web Worker through static assets without reading a Node project", asy
     }
 });
 
+it.each([false, true])("closes stdio and selected HTTP components (server=%s)", async (server) => {
+    const project = fixture();
+    const stopped = vi.fn();
+    const start = vi.spyOn(mcp, "startMcp").mockImplementation(
+        (_root, _options, signal) =>
+            new Promise<void>((resolve) => {
+                signal?.addEventListener(
+                    "abort",
+                    () => {
+                        stopped();
+                        resolve();
+                    },
+                    { once: true },
+                );
+            }),
+    );
+    const parsed = options(
+        "run",
+        "node",
+        "--mcp",
+        "--mcp-transport",
+        "stdio",
+        "--project",
+        project,
+    );
+    parsed.server = server;
+    parsed.port = 0;
+    const running = await runApplication(parsed);
+    try {
+        expect(start).toHaveBeenCalledWith(
+            project,
+            expect.objectContaining({ readOnly: false }),
+            expect.any(AbortSignal),
+        );
+        expect(running.done).toBeInstanceOf(Promise);
+        expect(running.server.listening).toBe(server);
+        const address = running.server.address();
+        if (server && address && typeof address === "object")
+            expect((await fetch(`http://127.0.0.1:${address.port}/mcp`)).status).toBe(404);
+        else expect(address).toBeNull();
+    } finally {
+        await Promise.all([running.close(), running.close()]);
+        start.mockRestore();
+    }
+    await running.done;
+    expect(stopped).toHaveBeenCalledOnce();
+    expect(running.server.listening).toBe(false);
+});
+
 it("builds a Node launcher with pinned dependencies and preserves existing output", async () => {
     const root = fixture();
     const out = join(root, "output");
@@ -292,6 +390,16 @@ it("builds selected web assets without a Node launcher or project directory", as
     expect(existsSync(join(out, "package.json"))).toBe(false);
 });
 
+it("preserves MCP transport in a standalone Node launcher", async () => {
+    const out = join(fixture(), "stdio");
+    await buildApplication(
+        options("build", "node", "--mcp", "--mcp-transport", "stdio", "--out", out),
+    );
+    expect(readFileSync(join(out, "start.mjs"), "utf8")).toContain(
+        '["run","node","--mcp","--mcp-transport","stdio"]',
+    );
+});
+
 it("builds browser MCP with a Worker, client and optional public relay configuration", async () => {
     const out = join(fixture(), "web-mcp");
     const parsed = options(
@@ -324,7 +432,7 @@ it("supports Desktop connections without a hosted relay", () => {
 it("preserves explicit TLS and plugin settings over their environment defaults", () => {
     vi.stubEnv("DOOC_TLS_CERT", "/default/cert.pem");
     vi.stubEnv("DOOC_TLS_KEY", "/default/key.pem");
-    vi.stubEnv("DOOC_VIEWER_PLUGINS", "./default.mjs");
+    vi.stubEnv("DOOC_READER_PLUGINS", "./default.mjs");
     expect(options("run", "node", "--all")).toMatchObject({
         tls: { cert: "/default/cert.pem", key: "/default/key.pem" },
         origin: "https://localhost:3000",
@@ -339,7 +447,7 @@ it("preserves explicit TLS and plugin settings over their environment defaults",
             "/chosen/cert.pem",
             "--tls-key",
             "/chosen/key.pem",
-            "--viewer-plugins",
+            "--reader-plugins",
             "./chosen.mjs",
             "--shared",
             "main",
@@ -351,7 +459,7 @@ it("preserves explicit TLS and plugin settings over their environment defaults",
     });
     expect(options("build", "web", "--all")).not.toHaveProperty("tls");
     expect(() =>
-        parseApplicationOptions("viewer", ["run", "node", "--all", "--shared", "main"]),
+        parseApplicationOptions("reader", ["run", "node", "--all", "--shared", "main"]),
     ).toThrow("editor server");
 });
 
@@ -374,7 +482,7 @@ it.each(["folder", "manifest", "file URL"])("opens a local %s without cloning", 
 
 it.each([
     "editor",
-    "viewer",
+    "reader",
 ] as const)("opens a protected Git workspace for %s and disposes it on shutdown", async (product) => {
     const root = fixture();
     const dispose = vi.fn();

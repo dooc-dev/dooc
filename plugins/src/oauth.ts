@@ -114,7 +114,7 @@ export const fetchPluginJson = async (
 };
 
 export const validatePlugins = (input: unknown): DataPlugin[] => {
-    if (!Array.isArray(input)) throw new Error("Viewer plugins: plugins must be an array");
+    if (!Array.isArray(input)) throw new Error("Reader plugins: plugins must be an array");
     const ids = new Set<string>();
     return input.map((plugin: DataPlugin) => {
         if (
@@ -123,7 +123,7 @@ export const validatePlugins = (input: unknown): DataPlugin[] => {
             !/^[a-z][a-z0-9-]{0,63}$/.test(plugin.id) ||
             ids.has(plugin.id)
         )
-            throw new Error("Viewer plugins: plugin IDs must be unique lowercase names");
+            throw new Error("Reader plugins: plugin IDs must be unique lowercase names");
         ids.add(plugin.id);
         const oauth = plugin.oauth;
         if (
@@ -150,7 +150,7 @@ export const validatePlugins = (input: unknown): DataPlugin[] => {
             !plugin.apiOrigins.length ||
             (oauth.parseToken !== undefined && typeof oauth.parseToken !== "function")
         )
-            throw new Error(`Viewer plugins: invalid plugin ${plugin.id}`);
+            throw new Error(`Reader plugins: invalid plugin ${plugin.id}`);
         for (const endpoint of [
             oauth.authorizationUrl,
             oauth.tokenUrl,

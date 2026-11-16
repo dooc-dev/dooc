@@ -59,12 +59,12 @@ it("keeps shared editors on one branch and credits their snapshots", async () =>
     }
 });
 
-it("exposes a read-only viewer over the socket and closes active connections on shutdown", async () => {
-    const root = mkdtempSync(join(tmpdir(), "dooc-viewer-socket-"));
+it("exposes a read-only reader over the socket and closes active connections on shutdown", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dooc-reader-socket-"));
     roots.push(root);
     mkdirSync(join(root, "content"));
     writeFileSync(join(root, "dooc.yaml"), "docs: [guide]\n");
-    writeFileSync(join(root, "content/guide.md"), "Viewer content.\n");
+    writeFileSync(join(root, "content/guide.md"), "Reader content.\n");
     const server = createServer();
     await attachWorkspaceServer(
         server,
@@ -99,7 +99,7 @@ it("exposes a read-only viewer over the socket and closes active connections on 
             body: "",
         });
         expect(response.status).toBe(200);
-        expect(response.body).toContain("Viewer content.");
+        expect(response.body).toContain("Reader content.");
         expect(response.body).not.toContain('src="/assets/edit.js"');
         for (const [op, args] of [
             ["http", { method: "POST", url: "/api/save", body: "{}", headers: {} }],
@@ -112,7 +112,7 @@ it("exposes a read-only viewer over the socket and closes active connections on 
             ["plugins", { action: "act", plugin: "sample" }],
         ] as const)
             await expect(client.request(op, args)).rejects.toThrow("read-only");
-        expect(readFileSync(join(root, "content/guide.md"), "utf8")).toBe("Viewer content.\n");
+        expect(readFileSync(join(root, "content/guide.md"), "utf8")).toBe("Reader content.\n");
         expect(existsSync(join(root, "test.txt"))).toBe(false);
     } finally {
         await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -129,12 +129,12 @@ it("keeps injected plugin setup, network policy and package management available
     mkdirSync(join(root, "content"));
     writeFileSync(join(root, "dooc.yaml"), "docs: [guide]\n");
     writeFileSync(join(root, "content/guide.md"), "Plugin setup\n");
-    const module = join(root, "viewer.mjs");
+    const module = join(root, "reader.mjs");
     writeFileSync(
         module,
         `export default {
         plugins: [],
-        setup(viewer) { viewer.setAllowedDomains(["example.com"]); }
+        setup(reader) { reader.setAllowedDomains(["example.com"]); }
     };\n`,
     );
     const manager = await nodeWorkspaceOperations(join(root, "dooc.yaml"), module);

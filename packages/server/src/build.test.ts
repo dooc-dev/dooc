@@ -40,7 +40,7 @@ it("records hash versions after artifact delivery and leaves failed builds unnum
     expect(storedDocumentVersions(root)).toEqual([]);
     first.commitVersion?.();
     write("content/guide.md", "Changed\n");
-    const next = await buildBundle(root, { format: "zip", urlPreview: "network" });
+    const next = await buildBundle(root, { format: "zip" });
     expect(next.version).toBe("1.0.1");
     next.commitVersion?.();
     write("content/guide.md", "![](missing.svg)\n");
@@ -58,15 +58,13 @@ it("reports committed Git versions and marks relevant working changes dirty", as
         ["commit", "-m", "Initial"],
     ])
         execFileSync("git", args, { cwd: root, stdio: "pipe" });
-    const clean = await buildBundle(root, { format: "zip", urlPreview: "network" });
+    const clean = await buildBundle(root, { format: "zip" });
     expect(clean.version).toBe("0.0.0");
     expect(clean.revision).toMatch(/^[a-f\d]{40}$/);
     write("unrelated.txt", "Not referenced\n");
-    expect((await buildBundle(root, { format: "zip", urlPreview: "network" })).version).toBe(
-        "0.0.0",
-    );
+    expect((await buildBundle(root, { format: "zip" })).version).toBe("0.0.0");
     write("content/guide.md", "Uncommitted\n");
-    const dirty = await buildBundle(root, { format: "zip", urlPreview: "network" });
+    const dirty = await buildBundle(root, { format: "zip" });
     expect(dirty.version).toBe("0.0.0+dirty");
     expect(dirty.revision).toBe(clean.revision);
 });
@@ -102,9 +100,9 @@ it.each([
         "content/guide.md",
         `${[...files.keys()].map((file) => `![](${file}${file.endsWith(".ts") ? "#L2" : ""})`).join("\n\n")}\n`,
     );
-    const { data } = await buildBundle(root, { format: "html", mode, easyDownload: true });
+    const { data } = await buildBundle(root, { format: "html", mode, download: "easy" });
     const html = String(data);
-    expect(html).toContain(" data-easy-download");
+    expect(html).toContain(' data-download="easy"');
     const downloads = new Map(
         [
             ...html.matchAll(
@@ -122,17 +120,20 @@ it.each([
         `base64,${Buffer.from("// Dark theme\nconst theme = 'dark';\n").toString("base64")}" download="code.ts"`,
     );
     expect(downloads.has("unrelated.txt")).toBe(false);
-    for (const easyDownload of [undefined, false]) {
-        const disabled = await buildBundle(root, { format: "html", mode, easyDownload });
+    for (const download of [undefined, "normal", "block"] as const) {
+        const disabled = await buildBundle(root, { format: "html", mode, download });
         expect(disabled.data).not.toContain('class="resource-download"');
-        expect(disabled.data).not.toContain(" data-easy-download");
+        expect(disabled.data).toContain(` data-download="${download ?? "normal"}"`);
+        expect(String(disabled.data).includes('document.addEventListener("auxclick"')).toBe(
+            download === "block",
+        );
     }
 });
 
 it("downloads snapshotted URLs offline and preserves remote downloads in network mode", async () => {
     write("content/guide.md", "![](https://example.com/file.txt#L2)\n");
     vi.mocked(fetchPublicFile).mockResolvedValue(Buffer.from("First\nSecond\nThird"));
-    const snapshot = await buildBundle(root, { format: "html", easyDownload: true });
+    const snapshot = await buildBundle(root, { format: "html", download: "easy" });
     expect(snapshot.data).toContain(
         `class="resource-download" href="data:application/octet-stream;base64,${Buffer.from("First\nSecond\nThird").toString("base64")}"`,
     );
@@ -140,7 +141,7 @@ it("downloads snapshotted URLs offline and preserves remote downloads in network
     const network = await buildBundle(root, {
         format: "html",
         urlPreview: "network",
-        easyDownload: true,
+        download: "easy",
     });
     expect(network.data).toContain(
         'class="resource-download" href="https://example.com/file.txt#L2" download="file.txt"',
@@ -148,13 +149,23 @@ it("downloads snapshotted URLs offline and preserves remote downloads in network
     expect(fetchPublicFile).not.toHaveBeenCalled();
 });
 
-it("rejects invalid easy download options before building", async () => {
-    await expect(buildBundle(root, { format: "zip", easyDownload: true })).rejects.toThrow(
+it.each([
+    "easy",
+    "normal",
+    "block",
+] as const)("rejects download=%s outside reader HTML", async (download) => {
+    await expect(buildBundle(root, { format: "zip", download })).rejects.toThrow(
         "HTML builds only",
     );
+    await expect(buildBundle(root, { format: "html", target: "github", download })).rejects.toThrow(
+        "Reader HTML options",
+    );
+});
+
+it("rejects invalid download modes before building", async () => {
     await expect(
-        buildBundle(root, { format: "html", easyDownload: "true" as unknown as boolean }),
-    ).rejects.toThrow("must be a boolean");
+        buildBundle(root, { format: "html", download: "invalid" as "normal" }),
+    ).rejects.toThrow("download must be easy | normal | block");
 });
 
 it.each(["html", "zip"] as const)("builds %s from the selected named manifest", async (format) => {
@@ -223,7 +234,6 @@ it.each([
     { format: "html", urlPreview: "embed" },
     { format: "html", urlPreview: "network" },
     { format: "zip", urlPreview: "embed" },
-    { format: "zip", urlPreview: "network" },
 ] as const)("includes schemas and visible records with $format/$urlPreview", async (options) => {
     write(
         "dooc.yaml",
@@ -318,7 +328,6 @@ it.each([
     { format: "html", urlPreview: "embed" },
     { format: "html", urlPreview: "network" },
     { format: "zip", urlPreview: "embed" },
-    { format: "zip", urlPreview: "network" },
 ] as const)("builds only $format with url_preview=$urlPreview", async (options) => {
     const source =
         "![Example](https://example.com/sample.txt#L2)\n\n[Ordinary link](https://other.example/ignored)\n";
@@ -347,15 +356,24 @@ it.each([
         execFileSync("unzip", ["-q", join(root, "output.zip"), "-d", unpacked]);
         const doc = readFileSync(join(unpacked, "content/guide.md"), "utf8");
         expect(readFileSync(join(unpacked, "dooc.yaml"), "utf8")).toContain("docs: [guide]");
-        if (options.urlPreview === "embed") {
-            expect(doc).toMatch(/!\[Example\]\(files\/bundle\/[a-f0-9]+\.txt#L2\)/);
-            const compiled = compileSite(unpacked);
-            expect(compiled.errors).toEqual([]);
-            expect(compiled.docs[0]?.blocks).toContainEqual(
-                expect.objectContaining({ type: "code", lines: ["Snapshot text"] }),
-            );
-        } else expect(doc).toBe(source);
+        expect(doc).toMatch(/!\[Example\]\(files\/bundle\/[a-f0-9]+\.txt#L2\)/);
+        const compiled = compileSite(unpacked);
+        expect(compiled.errors).toEqual([]);
+        expect(compiled.docs[0]?.blocks).toContainEqual(
+            expect.objectContaining({ type: "code", lines: ["Snapshot text"] }),
+        );
     }
+});
+
+it.each([
+    { format: "zip" },
+    { format: "zip", target: "github" },
+    { format: "github" },
+] as const)("rejects network resources in $format ZIP output before building", async (options) => {
+    await expect(buildBundle(root, { ...options, urlPreview: "network" })).rejects.toThrow(
+        "ZIP builds require embedded URL resources",
+    );
+    expect(fetchPublicFile).not.toHaveBeenCalled();
 });
 
 it("builds a source ZIP without executing HTML rendering configuration", async () => {

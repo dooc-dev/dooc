@@ -697,8 +697,8 @@ export interface SchemaGraphClientData {
     groups: { label: string; x: number; y: number; w: number; h: number; members: string[] }[];
     /**
      * Source text of the table DSL as written (the `schemath` body itself). The interactive UI's
-     * source viewer shows it as-is. Not derived from the model, since rebuilding it from the model
-     * would lose notes / blank lines / ordering. When absent, the viewer button isn't shown.
+     * source reader shows it as-is. Not derived from the model, since rebuilding it from the model
+     * would lose notes / blank lines / ordering. When absent, the reader button isn't shown.
      */
     source?: string;
 }

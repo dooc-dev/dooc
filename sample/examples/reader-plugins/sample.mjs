@@ -18,7 +18,7 @@ export const sampleActions = (data, user) => {
         { name: "author", label: "Assignee", type: "select", value: data.author, options: options(["Alice Chen", "Bob Park", "Mina Ito"]) },
         { name: "due", label: "Due date", type: "date", value: data.due },
         { name: "estimate", label: "Estimate", type: "number", value: data.estimate, min: 0, max: 100 },
-        { name: "labels", label: "Labels", type: "multiselect", value: data.labels, options: options(["Enhancement", "Viewer", "Accessibility"]) },
+        { name: "labels", label: "Labels", type: "multiselect", value: data.labels, options: options(["Enhancement", "Reader", "Accessibility"]) },
         { name: "checklist", label: "Checklist", type: "textarea", value: data.checklist },
     );
     return [

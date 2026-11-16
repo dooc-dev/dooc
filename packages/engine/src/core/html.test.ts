@@ -188,7 +188,7 @@ describe("blocksHtml", () => {
         expect(out).toContain('<h2 id="section-1-1">Section 1</h2>');
     });
 
-    it("adds copyable section URLs only when the viewer supplies the document URL", () => {
+    it("adds copyable section URLs only when the reader supplies the document URL", () => {
         const body = "## First\n\nText.\n\n## First";
         expect(html(body)).not.toContain("section-copy");
         const output = html(body, { ...CTX, sectionUrl: '/guide/api?lang=jpn&value="quoted"' });
@@ -364,7 +364,7 @@ describe("blocksHtml", () => {
         expect(parsed.nodes[1]?.rows.filter((r) => r.fieldIndex != null)).toHaveLength(3);
         expect(parsed.nodes[0]?.rows.filter((r) => r.fieldIndex == null)).toHaveLength(1);
         expect(parsed.groups.map((g) => g.label)).toEqual(["catalog", "records"]);
-        // the DSL text as written is carried verbatim too (the interactive UI's source viewer shows
+        // the DSL text as written is carried verbatim too (the interactive UI's source reader shows
         // the "raw table"). It's the original text, not a reconstruction from the model, so blank
         // lines and note order are preserved character for character.
         expect(parsed.source).toBe(dsl);

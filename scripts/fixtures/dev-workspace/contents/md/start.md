@@ -12,6 +12,7 @@ This disposable workspace contains working examples of every built-in preview, l
 | Images, video, HTML, PDF, and CAD | [Media gallery](contents/md/media.md) | Expand a preview, zoom, pan, download, and play a video |
 | Draw.io SVG | [Editable architecture drawing](contents/svg/hosting.drawio.svg) | Open an SVG that retains its diagram source |
 | Forms and schema builder | [Form controls](contents/md/form-controls.md) | Dates, booleans, numbers, enums, arrays, nested objects, and references |
+| Embedded record cards and tables | [Embedded records](contents/md/form-controls.md#embedded-records) | Embed a record or schema; try `view`, `title`, and `filter.<field>` URL parameters |
 | Linked JSON, YAML, and TOML records | [Atlas project](contents/md/atlas.md) | Drag cards, switch to lists, sort, group, and follow record references |
 | Theme variants | [Themes and languages](contents/md/variants.md) | Split the preview and compare Light and Dark |
 | Content languages | This page's language picker | Switch between English, Japanese, and Chinese |
@@ -21,7 +22,7 @@ This disposable workspace contains working examples of every built-in preview, l
 | Files, search, and Library | [Editor guide](contents/md/editor.md) | Search across pages, inspect references, upload, rename, and move files |
 | Formatting and diagnostics | [Editing playground](contents/md/playground.md#format-and-validate) | Run the included JSON formatter and linter with Shift+Alt+F |
 | Workspaces and collaboration | [Workspaces](contents/md/workspaces.md) | Open another pane, create a branch, or connect another client |
-| MCP and publishing | [Local integrations](contents/md/integrations.md#mcp-and-export) | Connect an assistant, export sources, or build a standalone viewer |
+| MCP and publishing | [Local integrations](contents/md/integrations.md#mcp-and-export) | Connect an assistant, export sources, or build a standalone reader |
 
 ## A short editing loop
 

@@ -39,7 +39,7 @@ const socketUrl = (value: string) => {
     return url.href;
 };
 
-const localViewerUrl =
+const localReaderUrl =
     typeof document !== "undefined" &&
     document.getElementById("boot") &&
     workspaceId() === "local" &&
@@ -53,7 +53,7 @@ export async function connectServer(
     readOnly = false,
 ): Promise<WorkspaceConnection> {
     const url = socketUrl(value);
-    local ||= url === localViewerUrl;
+    local ||= url === localReaderUrl;
     let client = serverConnections.get(url);
     if (!client) {
         client = local ? pageWorkspace("local") : createWorkspaceClient(webSocketPort(url));

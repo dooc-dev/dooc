@@ -116,7 +116,7 @@ export const resolvePreviewer = (
         path =
             /^[a-z][a-z\d+.-]*:/i.test(source) || source.startsWith("//")
                 ? decodeURIComponent(allowedPreviewUrl(source, settings.domains).pathname)
-                : parseFileReference(source).file;
+                : parseFileReference(source, true).file;
     } catch {
         return undefined;
     }

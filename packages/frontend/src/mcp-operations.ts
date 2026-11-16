@@ -161,6 +161,7 @@ export const createMcpOperations = (
                 only: a.only as CheckKind[] | undefined,
                 allowSharedSvg: a.allow_shared_svg === true,
                 warningsAsErrors: a.warnings_as_errors === true,
+                githubOutput: a.github_output as string | undefined,
             });
             return {
                 ...report,

@@ -69,6 +69,6 @@ With this repository's dependencies installed, run from the repository root:
 node sample/dooc-sample-saas/contents/mjs/records.mjs sample/dooc-sample-saas/dooc.yaml
 ```
 
-A copied standalone workspace needs `ajv`, `ajv-formats`, `smol-toml` and `yaml` installed to run this illustrative script. Normal `dooc viewer run node --client --server`, `dooc check` and `dooc build` commands do not need these extra script dependencies installed in the workspace.
+A copied standalone workspace needs `ajv`, `ajv-formats`, `smol-toml` and `yaml` installed to run this illustrative script. Normal `dooc reader run node --client --server`, `dooc check` and `dooc build` commands do not need these extra script dependencies installed in the workspace.
 
 The workflow is stored under `contents/yaml/` as a document asset and does not run automatically. Its deploy job only prints the proposed image and replica count. Real deployment requires explicit environment selection and a rollout implementation; the inventory includes production, staging and on-premise workloads.

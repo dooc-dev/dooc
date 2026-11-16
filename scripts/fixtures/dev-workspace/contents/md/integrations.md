@@ -26,17 +26,17 @@ Reply, react, edit your message, and open the attachment. Open this page in anot
 
 Open **Plugins**, choose **Sign in** for **Sample plugin (sign-in demo)**, and select Alice or Bob on the local consent page. Sign out to see the disconnected state. The generated workspace keeps demo credentials in its ignored `.dooc/user/` directory.
 
-Viewer-provided plugins are listed separately from installed ZIP packages. To try ZIP installation, build the existing sample package with `pnpm run build:sample-extension`, then use **Add plugins** in a separate disposable workspace. See [Plugins](contents/md/plugins.md) for packaging and trust boundaries.
+Reader-provided plugins are listed separately from installed ZIP packages. To try ZIP installation, build the existing sample package with `pnpm run build:sample-extension`, then use **Add plugins** in a separate disposable workspace. See [Plugins](contents/md/plugins.md) for packaging and trust boundaries.
 
 ## MCP and export
 
 The editor task starts its local MCP endpoint along with the client and workspace server. Open **MCP connection** to connect an assistant you choose. Connecting an external assistant is a separate action; the sample contains no assistant credentials.
 
-From the repository checkout, export the generated workspace or build a static viewer:
+From the repository checkout, export the generated workspace or build a static reader:
 
 ```sh
 mise run dooc export build/dev/editor/dooc.yaml build/playground-source
-mise run dooc build html build/dev/editor/dooc.yaml build/playground-viewer
+mise run dooc build html build/dev/editor/dooc.yaml build/playground-reader
 ```
 
 The source export keeps the local files, themes, translations, font, grammar, and editor-tool configuration. External plugin URLs stay references unless an explicitly configured build plugin supplies snapshots. [Publishing](contents/md/publishing.md) covers static, live, Node, and browser outputs.

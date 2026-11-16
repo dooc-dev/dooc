@@ -8,7 +8,7 @@
     },
     // index.ts = React-free logic entry; core/schema-graph-mount.tsx = interactive React Flow UI
     // (subpath export `./flow`; react / react-dom / @xyflow/react are peers);
-    // cli.ts = bin (includes compiler / viewer).
+    // cli.ts = bin (includes compiler / reader).
     "files": [
         "packages/server/src/index.ts",
         "plugins/src/index.ts",

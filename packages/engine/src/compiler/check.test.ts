@@ -130,7 +130,7 @@ describe("consistency report", () => {
         );
     });
 
-    it("reports missing translations even when the viewer can fall back to the source", () => {
+    it("reports missing translations even when the reader can fall back to the source", () => {
         const root = fixture("languages: [eng, jpn]");
         const rendered = compileSite(root, { locale: "jpn" });
         expect(rendered.errors).toEqual([]);
@@ -179,7 +179,7 @@ describe("consistency report", () => {
         );
     });
 
-    it("uses declared theme resolution and reports the viewer's fallback as a missing variant", () => {
+    it("uses declared theme resolution and reports the reader's fallback as a missing variant", () => {
         const root = fixture(
             "languages: [eng], themes: [dark]",
             `${english}\n\n![Diagram](files/a.svg)`,
@@ -286,7 +286,7 @@ describe("consistency report", () => {
         expect(report.languages).toEqual(["eng", "jpn"]);
     });
 
-    it("retains viewer fallbacks for undeclared themes without inventing missing variants", () => {
+    it("retains reader fallbacks for undeclared themes without inventing missing variants", () => {
         const root = fixture(
             "languages: [eng]",
             `${english}\n\n![A](files/a.svg)\n\n![B](files/b.svg)`,

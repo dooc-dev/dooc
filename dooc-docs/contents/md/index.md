@@ -20,7 +20,7 @@ dooc turns a folder of Markdown, diagrams, media and structured records into one
 | Step | What changes | Command |
 | --- | --- | --- |
 | Author | Pages, records and source assets | `dooc editor run node --client --server` |
-| Review | Your understanding of the current source | `dooc viewer run node --client --server` |
+| Review | Your understanding of the current source | `dooc reader run node --client --server` |
 | Check | A report about local consistency | `dooc check` |
 | Share | An HTML document or source bundle | `dooc build html`, `dooc build zip` |
 

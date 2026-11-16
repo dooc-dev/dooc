@@ -73,7 +73,7 @@ try {
     console.error("Invalid Desktop MCP connection link");
 }
 let settings = globalThis.__doocClientSettings ?? {};
-let rendered = !!document.getElementById("boot") || document.body?.dataset.doocViewer === "true";
+let rendered = !!document.getElementById("boot") || document.body?.dataset.doocReader === "true";
 let configuredServer = settings.server ?? "";
 
 async function openBrowser(
@@ -254,7 +254,7 @@ async function chooseWorkspace(pane?: string): Promise<void> {
         dialog.querySelector("details")?.remove();
         const folder = dialog.querySelector('[data-modes="folder"]');
         if (folder)
-            folder.textContent = "Choose a folder to read. This viewer does not change its files.";
+            folder.textContent = "Choose a folder to read. This reader does not change its files.";
     }
     for (const row of saved())
         savedSelect.add(new Option(`${row.name}${row.branch ? ` / ${row.branch}` : ""}`, row.id));
@@ -479,7 +479,7 @@ async function render(
     let html = await response.text();
     if (settings.readOnly)
         html = html
-            .replace("<body", '<body data-dooc-viewer="true"')
+            .replace("<body", '<body data-dooc-reader="true"')
             .replace("</body>", '<script src="/assets/client.js"></script></body>');
     const mounted = mountClientHtml(html);
     const nextUrl = response.url || url;

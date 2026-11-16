@@ -11,11 +11,11 @@ export * from "../../engine/src/core/figure-frame.js";
 // estimation / orthogonal routing / uid).
 export * from "../../engine/src/core/graph.js";
 export * from "../../engine/src/core/graph-common.js";
-// Block AST → HTML renderer, shared with the viewer.
+// Block AST → HTML renderer, shared with the reader.
 export * from "../../engine/src/core/html.js";
 export * from "../../engine/src/core/inline.js";
 // Language socket: the adapter interface + generic rules, and the built-in Japanese adapter
-// (browser-safe part; its prose lint is Node-only and lives in the viewer).
+// (browser-safe part; its prose lint is Node-only and lives in the reader).
 export * from "../../engine/src/core/language.js";
 export * from "../../engine/src/core/languages/ja.js";
 export * from "../../engine/src/core/previewers.js";

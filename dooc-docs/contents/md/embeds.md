@@ -72,7 +72,7 @@ JSON, YAML, TOML, and XML use the code previewer.
 | Source                             | Result                                     |
 | ---------------------------------- | ------------------------------------------ |
 | `https://` URL matched by a plugin | [Plugin card](contents/md/plugins.md)      |
-| `https://` URL of a text file      | Remote source embed, fetched by the viewer |
+| `https://` URL of a text file      | Remote source embed, fetched by the reader |
 | Any other URL                      | Stays a link                               |
 
 Use a public HTTPS file URL, such as a Git host's raw file URL. Git repository references such as `https://host/repo.git#ref:path` are not supported as embeds. To open a whole Git workspace, use [the CLI's `--repo` option](contents/md/cli.md#git-repositories).

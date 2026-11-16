@@ -222,7 +222,7 @@ export const rewriteFileLinks = (raw: string, moves: ReadonlyMap<string, string>
         if (node.type !== "image" && node.type !== "link" && node.type !== "definition") return;
         let file: string;
         try {
-            file = parseFileReference(node.url).file.replace(/^(\.\/)+/, "");
+            file = parseFileReference(node.url, true).file.replace(/^(\.\/)+/, "");
         } catch {
             return;
         }
@@ -271,7 +271,8 @@ export const rewriteFileLinks = (raw: string, moves: ReadonlyMap<string, string>
             check.children[0].url !== node.url
         )
             throw new Error(`Cannot update reference: ${node.url}`);
-        const fragment = node.url.includes("#") ? node.url.slice(node.url.indexOf("#")) : "";
+        const suffix = node.url.search(/[?#]/);
+        const fragment = suffix < 0 ? "" : node.url.slice(suffix);
         changes.push({ from: from + start, to: from + end, text: termFileUrl(next) + fragment });
     });
     for (const change of changes.sort((a, b) => b.from - a.from))

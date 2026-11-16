@@ -84,7 +84,7 @@ const normalizeHardcodedSurfaces = (markup: string): string =>
         )
         .replace(/background:\s*#fff(?:fff)?(?=[;}])/gi, "background:var(--doc-panel, #ffffff)");
 
-const withSvgTheme = (markup: string): string => {
+export const withSvgTheme = (markup: string): string => {
     const headEnd = markup.indexOf(">");
     if (headEnd < 0) {
         return markup;

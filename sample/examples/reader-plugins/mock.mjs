@@ -9,7 +9,7 @@ export const createSampleMock = ({ autoConnect = false, id = "sample", origin = 
             type: "ticket", id: "DOC-42", title: "Preview external service URLs", status: "In progress", author: "Alice Chen",
             body: "Keep tickets, reviews, and discussions right beside the docs.",
             project: "Editor", priority: "High", label: "Enhancement", cycle: "Cycle 08",
-            due: "2026-11-12", estimate: "3", labels: JSON.stringify(["Enhancement", "Viewer"]),
+            due: "2026-11-12", estimate: "3", labels: JSON.stringify(["Enhancement", "Reader"]),
             checklist: "- [x] Match service URLs\n- [x] Fetch preview data\n- [x] Render compact cards\n- [ ] Review accessibility\n- [ ] Ship the release",
             task1: "Match service URLs", task2: "Fetch preview data", task3: "Render compact cards", task4: "Review accessibility", task5: "Ship the release",
         },

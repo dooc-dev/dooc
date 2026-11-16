@@ -1,3 +1,84 @@
+// shortcut: browser-owned PDF and remote frame controls need host policy for stronger restrictions.
+export function mountDownloadBlock(): void {
+    const style = document.createElement("style");
+    style.textContent =
+        'html { -webkit-touch-callout: none; } a[download], a[data-resource-download], a[href^="data:"], a[href^="blob:"] { display: none !important; } @media print { body { display: none !important; } }';
+    document.head.append(style);
+    const stopDownload = (event: MouseEvent): void => {
+        if (
+            !(event.target instanceof Element) ||
+            !event.target.closest(
+                'a[download], a[data-resource-download], a[href^="data:"], a[href^="blob:"]',
+            )
+        )
+            return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    };
+    document.addEventListener("click", stopDownload, true);
+    document.addEventListener("auxclick", stopDownload, true);
+    document.addEventListener(
+        "keydown",
+        (event) => {
+            if ((event.ctrlKey || event.metaKey) && ["s", "p"].includes(event.key.toLowerCase())) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+            }
+        },
+        true,
+    );
+    document.addEventListener("contextmenu", (event) => event.preventDefault(), true);
+    document.addEventListener(
+        "dragstart",
+        (event) => {
+            if (
+                event.target instanceof Element &&
+                event.target.closest("img, video, audio, object, a[download]")
+            )
+                event.preventDefault();
+        },
+        true,
+    );
+    const restrictMedia = (): void => {
+        for (const media of document.querySelectorAll("video, audio")) {
+            const controls = new Set(
+                (media.getAttribute("controlslist") ?? "").split(/\s+/).filter(Boolean),
+            );
+            controls.add("nodownload");
+            media.setAttribute("controlslist", [...controls].join(" "));
+        }
+        for (const pdf of document.querySelectorAll<HTMLObjectElement>(
+            'object[type="application/pdf"]',
+        )) {
+            if (!/[#&]toolbar=0(?:&|$)/.test(pdf.data))
+                pdf.data += `${pdf.data.includes("#") ? "&" : "#"}toolbar=0`;
+        }
+        for (const frame of document.querySelectorAll("iframe")) {
+            if (!frame.hasAttribute("sandbox")) frame.setAttribute("sandbox", "allow-scripts");
+            frame.sandbox.remove("allow-downloads");
+            if (!frame.srcdoc) continue;
+            if (!frame.sandbox.contains("allow-scripts")) {
+                // Script-free SVG frames cannot intercept their own context menu.
+                frame.style.pointerEvents = "none";
+            } else if (!frame.srcdoc.includes("<script data-dooc-download-block>")) {
+                const script =
+                    `var __name = (f) => f; (${mountDownloadBlock.toString()})();`.replace(
+                        /<\/(script)/gi,
+                        "<\\/$1",
+                    );
+                frame.srcdoc += `<script data-dooc-download-block>${script}</script>`;
+            }
+        }
+    };
+    new MutationObserver(restrictMedia).observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["srcdoc"],
+    });
+    restrictMedia();
+}
+
 /** Self-contained for standalone HTML; data URLs use the browser's native download behavior. */
 export const mountResourceDownloads = (
     request: (url: string, init?: RequestInit, workspace?: string) => Promise<Response> = fetch,

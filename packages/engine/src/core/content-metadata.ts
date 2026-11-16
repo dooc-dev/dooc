@@ -179,7 +179,7 @@ export const parseManifest = (value: unknown): ParsedManifest => {
                 new Set(manifest.themes).size !== manifest.themes.length
             )
                 errors.push(
-                    `${MANIFEST_FILE}: themes must be a non-empty list of distinct light / dark themes supported by the viewer`,
+                    `${MANIFEST_FILE}: themes must be a non-empty list of distinct light / dark themes supported by the reader`,
                 );
             else themes = manifest.themes;
         }

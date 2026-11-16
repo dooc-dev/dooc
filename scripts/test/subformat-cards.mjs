@@ -5,7 +5,7 @@ import {
 } from "../../packages/frontend/src/resource-library-ui.ts";
 import { filterSubformats, hasSubformatDraft } from "../../packages/frontend/src/subformats-ui.ts";
 
-// Bundle with esbuild and run testSubformatCards() on a local HTTP origin with viewer styles.
+// Bundle with esbuild and run testSubformatCards() on a local HTTP origin with reader styles.
 window.testSubformatCards = async () => {
     const assert = (condition, message) => {
         if (!condition) throw new Error(message);
@@ -30,6 +30,8 @@ window.testSubformatCards = async () => {
             { name: "status", title: "Status", enum: ["Todo", "Done"] },
             { name: "due", title: "Due date", type: "string", format: "date" },
             { name: "metadata", title: "Metadata" },
+            { name: "points", title: "Points", type: "number" },
+            { name: "tags", title: "Tags", type: "array" },
         ],
         records: [
             {
@@ -44,6 +46,8 @@ window.testSubformatCards = async () => {
                     status: "Todo",
                     due: "2026-11-12",
                     metadata: { owner: "Sample" },
+                    points: 0,
+                    tags: ["review", "release"],
                 },
             },
         ],
@@ -243,12 +247,70 @@ window.testSubformatCards = async () => {
                 getComputedStyle(card()).borderTopWidth === "0px",
             "List records use rows without card boxes",
         );
+        assert(
+            !root.querySelector(".subformat-column > h2") && !setting("group_by"),
+            "Lists omit grouping headings and controls",
+        );
+        assert(
+            [...card().querySelectorAll(".subformat-card-meta dt")]
+                .map((field) => field.textContent)
+                .join(",") === "Status,Due date,Metadata,Points,Tags",
+            "Lists show every remaining field in schema order",
+        );
+        assert(
+            card()
+                .querySelector(".subformat-card-meta")
+                .textContent.includes('"owner": "Sample"') &&
+                card().querySelector(".subformat-card-meta").textContent.includes('"release"'),
+            "List parameters include objects and arrays",
+        );
+        assert(!card().draggable, "List status is a parameter, not a drag target");
+        const parameters = card().querySelector(".subformat-card-meta");
+        parameters.style.width = "190px";
+        assert(
+            parameters.tabIndex === 0 &&
+                parameters.scrollWidth > parameters.clientWidth &&
+                new Set([...parameters.children].map((field) => field.getBoundingClientRect().top))
+                    .size === 1,
+            "List parameters stay on one horizontally scrollable row",
+        );
+        parameters.scrollLeft = parameters.scrollWidth;
+        assert(parameters.scrollLeft > 0, "All parameters can be reached by scrolling");
+        parameters.click();
+        assert(!opened, "Interacting with the parameter scroller does not open the record");
+        const parameterTrigger = () => root.querySelector("[data-subformat-parameters]");
+        const parameterMenu = () =>
+            root.querySelector(`#${parameterTrigger().getAttribute("aria-controls")}`);
+        parameterTrigger().click();
+        assert(
+            parameterMenu().querySelector('[data-parameter="status"][data-move="up"]').disabled &&
+                !parameterMenu().querySelector('[data-parameter="title"]') &&
+                document.activeElement.dataset.move === "down",
+            "Parameter order excludes the title and focuses the first available move",
+        );
+        parameterMenu().querySelector('[data-parameter="due"][data-move="up"]').click();
+        assert(
+            card().querySelector(".subformat-card-meta dt").textContent === "Due date" &&
+                parameterMenu().matches(":popover-open") &&
+                document.activeElement.dataset.parameter === "due" &&
+                !document.activeElement.disabled,
+            "Moving a parameter updates every row and preserves an available menu action",
+        );
+        parameterMenu().hidePopover();
         card().querySelector(".subformat-card-toggle").click();
         assert(!details().hidden, "List rows retain expandable details");
+        assert(
+            getComputedStyle(card().querySelector(".subformat-card-meta")).display === "none",
+            "Expanded list rows hide the duplicate parameter summary",
+        );
         chooseSetting("view", "card");
         assert(
-            !card().hasAttribute("role") && !details().hidden,
-            "Changing views preserves expanded records",
+            !card().hasAttribute("role") &&
+                !details().hidden &&
+                setting("group_by").textContent === "Status" &&
+                card().draggable &&
+                !root.querySelector("[data-subformat-parameters]"),
+            "Changing views preserves expanded records and restores card grouping",
         );
         card().querySelector(".subformat-card-toggle").click();
         root.querySelector("[data-subformat-icon]").click();
@@ -476,6 +538,12 @@ window.testSubformatCards = async () => {
             "Resource replacement preserves temporary title selection",
         );
         chooseTitle("title");
+        chooseSetting("view", "list");
+        assert(
+            card().querySelector(".subformat-card-meta dt").textContent === "Due date",
+            "Parameter order survives view changes and resource replacement",
+        );
+        chooseSetting("view", "card");
         const beforeSelection = layouts.length;
         chooseSetting("sort_order", "desc");
         assert(
@@ -1028,23 +1096,34 @@ window.testSubformatCards = async () => {
         collection.layouts = configuredLayouts;
         delete collection.records[0].data.name;
         document.body.classList.add("edit");
+        collection.records.push({
+            file: "later.issue",
+            content: "original",
+            data: { title: "Later record", status: "Done", due: "2026-12-01" },
+        });
         root = createRoot();
         chooseSetting("view", "list");
+        chooseSetting("sort_by", "due");
+        chooseSetting("sort_order", "desc");
+        assert(
+            root.querySelectorAll(".subformat-column").length === 1 &&
+                [...root.querySelectorAll("[data-record-file]")]
+                    .map((row) => row.dataset.recordFile)
+                    .join(",") === "later.issue,card.issue",
+            "List sorting runs across statuses in a single list",
+        );
+        chooseSetting("sort_order", "asc");
         const listSaves = saves;
-        const listTransfer = new DataTransfer();
-        listTransfer.setDragImage = () => {};
-        card().dispatchEvent(
-            new DragEvent("dragstart", { bubbles: true, dataTransfer: listTransfer }),
-        );
-        root.querySelector('.subformat-column[aria-label="Done"] .subformat-cards').dispatchEvent(
-            new DragEvent("drop", { bubbles: true, dataTransfer: listTransfer }),
-        );
-        await wait(() => root.querySelector('[data-subformat-board][aria-busy="false"]'));
+        card().querySelector(".subformat-card-toggle").click();
+        const status = card().querySelector("select");
+        status.value = "1";
+        status.dispatchEvent(new Event("change", { bubbles: true }));
+        await wait(() => card().querySelector(".subformat-card-meta dd").textContent === "Done");
         assert(
             saves === listSaves + 1 &&
-                card().closest(".subformat-column").getAttribute("aria-label") === "Done" &&
+                root.querySelectorAll(".subformat-column").length === 1 &&
                 card().classList.contains("subformat-list-record"),
-            "List rows can be dragged between groups and keep their layout after saving",
+            "List status edits keep the flat list layout",
         );
         return "Passed: card/list views, SVG registration/edit/clear/conflicts, transparent cards, subformat edit/delete/confirmation/conflicts/last deletion/read-only actions, collapse, state restoration, click/keyboard editing, escaping, focus, whole-card dragging, same-column drop, drag preview/cancel, temporary error toast without layout shift, save failure/retry, read-only details";
     } finally {

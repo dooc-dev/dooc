@@ -7,7 +7,7 @@ import { zip } from "../../engine/src/compiler/zip.js";
 import type { ExtensionSummary } from "../../engine/src/core/extension-package.js";
 import { packExtension } from "./extension-pack.js";
 import { createExtensionManager, EXTENSIONS_DIR } from "./extensions.js";
-import { loadViewerPlugins } from "./plugin-config.js";
+import { loadReaderPlugins } from "./plugin-config.js";
 import { createLocalPluginStorage } from "./plugins/local-storage.js";
 import { createPluginHandler } from "./plugins.js";
 
@@ -54,11 +54,11 @@ const setup = () => {
         }) as Promise<{ items: ExtensionSummary[] }>;
     return { root, registry, request, install };
 };
-it("lists viewer-provided plugins with their names and icons without reading service data", async () => {
+it("lists reader-provided plugins with their names and icons without reading service data", async () => {
     const { root, registry } = setup();
-    const config = await loadViewerPlugins(
+    const config = await loadReaderPlugins(
         fileURLToPath(
-            new URL("../../../sample/examples/viewer-plugins/index.mjs", import.meta.url),
+            new URL("../../../sample/examples/reader-plugins/index.mjs", import.meta.url),
         ),
     );
     const reads = config.plugins.map((plugin) => vi.spyOn(plugin, "read"));
@@ -251,7 +251,7 @@ it("preserves plugins registered by the host and rejects collisions with live ID
     await expect(
         manager({ action: "enable", file: "example.zip", hash: installed.items[0]?.hash }),
     ).rejects.toThrow("already registered");
-    await expect(manager({ action: "delete", file: "viewer/example", hash: "" })).rejects.toThrow(
+    await expect(manager({ action: "delete", file: "reader/example", hash: "" })).rejects.toThrow(
         "ZIP",
     );
     manager.dispose();

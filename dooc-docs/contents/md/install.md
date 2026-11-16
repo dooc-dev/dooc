@@ -37,10 +37,10 @@ For global npm installations, the command runs `npm install -g @dooc-dev/dooc@la
 ## Open the documentation
 
 ```sh
-dooc viewer run node --client --server --project dooc-docs --repo https://github.com/dooc-dev/dooc.git
+dooc reader run node --client --server --project dooc-docs --repo https://github.com/dooc-dev/dooc.git
 ```
 
-This uses system Git to clone the repository's default branch and opens its `dooc-docs` folder in a local read-only viewer. It requires Git and a network connection on each launch; the documentation is not bundled in the npm package or standalone executable and may describe changes newer than your installed version.
+This uses system Git to clone the repository's default branch and opens its `dooc-docs` folder in a local read-only reader. It requires Git and a network connection on each launch; the documentation is not bundled in the npm package or standalone executable and may describe changes newer than your installed version.
 
 Run it from any directory and keep the command running while you read. If the browser does not open automatically, open the printed URL. The clone lives in a temporary directory that is removed when the command exits.
 

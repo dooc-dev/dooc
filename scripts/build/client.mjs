@@ -78,7 +78,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1])
         buildBrowserWorkspace(),
         buildBrowserWorkspace({
             define: { DOOC_READ_ONLY: "true", DOOC_MCP: "false" },
-            outfile: fileURLToPath(new URL("dist/workspace-viewer-worker.global.js", root)),
+            outfile: fileURLToPath(new URL("dist/workspace-reader-worker.global.js", root)),
         }),
         buildBrowserWorkspace({
             define: { DOOC_READ_ONLY: "false", DOOC_MCP: "true" },
@@ -86,7 +86,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1])
         }),
         buildBrowserWorkspace({
             define: { DOOC_READ_ONLY: "true", DOOC_MCP: "true" },
-            outfile: fileURLToPath(new URL("dist/workspace-viewer-mcp-worker.global.js", root)),
+            outfile: fileURLToPath(new URL("dist/workspace-reader-mcp-worker.global.js", root)),
         }),
         buildClientEntry(),
         buildMcpClient(),

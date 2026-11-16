@@ -1,7 +1,4 @@
 // Node adapters for the shared MCP tool catalog and JSON-RPC dispatcher.
-import { randomUUID } from "node:crypto";
-import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import type { CompileOptions } from "../../engine/src/compiler/compile.js";
 import { addProjectFont } from "../../engine/src/compiler/fonts.js";
@@ -12,6 +9,7 @@ import { parsePerson } from "../../workspace/src/history.js";
 import { type Args, handleRpc } from "../../workspace/src/mcp.js";
 import { createMcpTools } from "../../workspace/src/mcp-tools.js";
 import { buildBundle } from "./build.js";
+import { writeBuildOutput } from "./build-output.js";
 import { createGitHandler, validateGitOrigin } from "./git.js";
 import { folderHistory, gitHistory, workspaceHistory } from "./history.js";
 
@@ -28,29 +26,26 @@ export const createTools = (root: string, options: McpOptions = {}) => {
     const operations: Record<string, (args: Args) => unknown> = {
         ...createMcpOperations(root, options),
         build: async (a) => {
-            const file = `dist/bundle.${a.format}`;
+            const github = a.format === "github" || a.target === "github";
+            const file = `dist/bundle.${github ? "github." : ""}${a.format === "github" ? "zip" : a.format}`;
             textfilePath(root, file);
             const bundle = await buildBundle(root, {
-                format: a.format as "html" | "zip",
+                format: a.format as "html" | "zip" | "github",
+                target: a.target as "github" | undefined,
+                resources: a.resources as "copy" | "reference" | undefined,
+                referenceBase: a.reference_base as string | undefined,
                 urlPreview: (a.url_preview ?? (a.mode === "live" ? "network" : "embed")) as
                     | "embed"
                     | "network",
                 mode: a.mode as "static" | "live" | undefined,
                 auth: a.auth as "external" | undefined,
                 sourceUrl: a.source_url as string | undefined,
-                easyDownload: a.easy_download as boolean | undefined,
+                download: a.download as "easy" | "normal" | "block" | undefined,
                 previews: options.previews,
             });
             const path = textfilePath(root, file);
-            mkdirSync(dirname(path), { recursive: true });
-            const temp = join(dirname(path), `.bundle-${randomUUID()}.tmp`);
-            try {
-                writeFileSync(temp, bundle.data, { flag: "wx" });
-                renameSync(temp, path);
-                bundle.commitVersion?.();
-            } finally {
-                rmSync(temp, { force: true });
-            }
+            writeBuildOutput(path, bundle);
+            bundle.commitVersion?.();
             return {
                 file,
                 path,
@@ -58,6 +53,8 @@ export const createTools = (root: string, options: McpOptions = {}) => {
                 docs: bundle.docs,
                 ...(bundle.version ? { version: bundle.version } : {}),
                 ...(bundle.revision ? { revision: bundle.revision } : {}),
+                ...(bundle.warnings?.length ? { warnings: bundle.warnings } : {}),
+                ...(bundle.files ? { files: bundle.files.map(({ name }) => `dist/${name}`) } : {}),
                 url_preview: a.url_preview ?? (a.mode === "live" ? "network" : "embed"),
             };
         },
@@ -100,11 +97,16 @@ export const createTools = (root: string, options: McpOptions = {}) => {
     return createMcpTools((name, args) => operations[name]?.(args), options.readOnly);
 };
 
-export const startMcp = async (root: string, options: McpOptions = {}): Promise<void> => {
-    const tools = createTools(root, options);
-    console.error(`dooc mcp: ${root}`);
+export const startMcp = async (
+    root: string | (() => Promise<string>),
+    options: McpOptions = {},
+    signal?: AbortSignal,
+): Promise<void> => {
+    let currentRoot = typeof root === "string" ? root : "";
+    let tools = currentRoot ? createTools(currentRoot, options) : undefined;
     // Process requests in order so asynchronous builds and Git mutations cannot race edits.
-    for await (const line of createInterface({ input: process.stdin })) {
+    for await (const line of createInterface({ input: process.stdin, signal })) {
+        if (signal?.aborted) break;
         if (line.trim() === "") {
             continue;
         }
@@ -116,6 +118,11 @@ export const startMcp = async (root: string, options: McpOptions = {}): Promise<
                 `${JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "parse error" } })}\n`,
             );
             continue;
+        }
+        const nextRoot = typeof root === "string" ? root : await root();
+        if (!tools || nextRoot !== currentRoot) {
+            currentRoot = nextRoot;
+            tools = createTools(currentRoot, options);
         }
         const res = await handleRpc(tools, msg);
         if (res) {

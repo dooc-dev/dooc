@@ -39,7 +39,7 @@ console.log(summarize(["write", "preview", "review"]));
 
 ## Custom highlighting
 
-The `taskplan` fence uses a project grammar in `.dooc/code-languages/taskplan.json`. Pick `udev-gothic-regular.woff2` in **Editor font** or **Viewer font** to try a project font. The [font license](.dooc/fonts/LICENSE.txt) ships with this workspace.
+The `taskplan` fence uses a project grammar in `.dooc/code-languages/taskplan.json`. Pick `udev-gothic-regular.woff2` in **Editor font** or **Reader font** to try a project font. The [font license](.dooc/fonts/LICENSE.txt) ships with this workspace.
 
 ```taskplan
 task "Review the demo"
