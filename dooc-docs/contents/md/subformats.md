@@ -73,7 +73,7 @@ Schemas use JSON Schema 2020-12 and are validated strictly: unknown keywords and
 
 Cards are the default when `layouts.view` is omitted. List view is a flat, sorted list: every field other than the heading appears as a parameter, including status and nested values. Grouping and dragging between columns apply only to Cards. List view keeps search, record editing, and expandable details.
 
-List parameters stay on one horizontal row. Scroll the parameter area to reach more fields; expand the record for complete long values. **Parameter order** changes their left-to-right order for that list, independently of row sorting. This choice is kept while switching views, but is not saved to the schema or board defaults.
+List parameters stay on one horizontal row. Scroll the parameter area to reach more fields; expand the record for complete long values. **Fields** selects the visible parameters and changes their left-to-right order, independently of row sorting. Toggling visibility keeps each field in place; use the arrow buttons to reorder fields. These choices are kept while switching views, but are not saved to the schema or board defaults. **Filters** combines conditions on fields, including text, numbers, dates, and empty values.
 
 Card borders and list dividers follow Git status: green for new files, orange for modified ones. Moves keep YAML and TOML comments.
 
@@ -94,13 +94,16 @@ A link, an embed, and an inline fence all work with a registered extension.
 
 Embedding a record shows a card. Embedding its registered schema shows all records of that type as a table. Both use the current files, including unsaved record edits in the editor preview. Open a record to edit it in edit mode or inspect its details in the reader.
 
-Card and List embeds have menus for the view, heading field, sort field, and sort order. Cards also allow grouping. These choices affect only that embed for the current preview; they do not save board defaults or change the source URL.
+Every embed has controls above it for search, Cards / List / Table, sorting, and filters. The search icon opens an input alongside the other controls; press it again or Escape to close and clear the search. Cards also allow grouping; Cards and List can choose a heading field. List and Table offer **Fields** to select and order the displayed fields. Open a record to see its complete details regardless of the field selection. These choices affect only that embed for the current preview; they do not save board defaults or change the source URL.
+
+Long embeds scroll within an automatic height limit, with a smaller limit on phones. The controls stay above the scroll area, and table headers stay visible while scrolling.
 
 Use URL query parameters to customize an embed:
 
 ```md
 ![](contents/json/feature.schema.json?view=table&title=Planned%20features&filter.status=Planned)
 ![](contents/json/feature.schema.json?view=card&filter.area=Runtime)
+![](contents/json/feature.schema.json?view=list&fields=status,priority&sort_by=priority&sort_order=desc&filter.status[in]=Planned,Building)
 ![](contents/feature/mcp-subformat-tools.feature?view=list)
 ```
 
@@ -108,9 +111,22 @@ Use URL query parameters to customize an embed:
 | --------- | ------- |
 | `view` | `table`, `card`, or `list`; defaults to `table` for a schema and `card` for a record |
 | `title` | Heading for this embed; URL-encode spaces and special characters |
-| `filter.<field>` | Exact, case-sensitive match on a top-level scalar field; multiple fields must all match |
+| `fields` | Comma-separated field names in display order; empty shows only the record heading or file column |
+| `card_title` | Field used as the Card / List heading; empty uses the file name |
+| `group_by` | Enum field used to group Cards; empty disables grouping |
+| `sort_by` | Scalar field used for sorting; empty sorts by file name |
+| `sort_order` | `asc` or `desc`; enum fields follow their schema order, and dates sort chronologically |
+| `q` | Case-insensitive search of file names and record source; all space-separated words must match |
+| `filter.<field>` | Exact, case-sensitive match on a top-level scalar field |
+| `filter.<field>[eq]`, `[ne]` | Equals or does not equal a scalar value |
+| `filter.<field>[contains]` | Case-insensitive text substring, or exact scalar item in an array |
+| `filter.<field>[in]` | Matches any of the comma-separated scalar values |
+| `filter.<field>[gt]`, `[gte]`, `[lt]`, `[lte]` | Greater than, at least, less than, or at most; number and date fields only |
+| `filter.<field>[empty]` | `true` matches missing, null, empty text or an empty array; `false` matches other values |
 
-Boolean and numeric filter values use their text form, such as `filter.ready=false` or `filter.points=0`. Each parameter may appear once. Unknown parameters or fields are reported as errors; no matching records shows an empty view. Parameters affect this embed only and do not change board defaults.
+All filter conditions must match. For example, `filter.points[gte]=0&filter.points[lt]=10` selects a range. Boolean and numeric values use their text form, such as `filter.ready=false` or `filter.points=0`. Missing fields do not match comparisons, including `[ne]`; use `[empty]` to find them. Query filters and `q` determine which records are included in the embed. The interactive search and filters can further narrow those records; clearing them does not undo the query filters.
+
+Each parameter may appear once. Unknown parameters, fields, operators, and invalid comparison values are reported as errors; no matching records shows an empty view. Parameters affect this embed only and do not change board defaults. Field selection controls presentation; it does not remove data from the record details.
 
 A line range such as `![](file.feature#L1-L3)` still shows source code. Line ranges cannot be combined with embed parameters.
 

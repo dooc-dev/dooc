@@ -97,16 +97,21 @@ window.testSubformatForm = async () => {
                 const titleLabel = titleGroup.querySelector("legend label");
                 assert(
                     titleLabel.control === field("title") && titleLabel.textContent === "Title *",
-                    "Field names label their inputs from the border legend",
+                    "Field names label their inputs",
                 );
                 const legend = titleLabel.parentElement.getBoundingClientRect();
-                const group = titleGroup.getBoundingClientRect();
                 const input = field("title").getBoundingClientRect();
+                assert(input.top >= legend.bottom, "Field names stay above the value");
                 assert(
-                    legend.top <= group.top &&
-                        legend.bottom > group.top &&
-                        input.top >= legend.bottom,
-                    "Field names overlap the top border without covering the value",
+                    getComputedStyle(titleGroup).borderTopWidth === "0px" &&
+                        ["title", "status", "count", "locked"].every((name) => {
+                            const style = getComputedStyle(field(name));
+                            return (
+                                style.borderTopWidth === "0px" &&
+                                style.backgroundColor === "rgba(0, 0, 0, 0)"
+                            );
+                        }),
+                    "Record fields have no enclosing borders or backgrounds",
                 );
                 titleLabel.click();
                 assert(

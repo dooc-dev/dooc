@@ -36,7 +36,7 @@ export const mountResourceLibrary = (openSource?: (file: string, line: number) =
             !target.matches("[data-resource-search], [data-resource-filter], [data-subformat-page]")
         )
             return;
-        const root = target.closest<HTMLElement>("[data-resource-results]");
+        const root = target.closest<HTMLElement>("[data-resource-results], [data-subformat-embed]");
         if (!root) return;
         const query =
             root

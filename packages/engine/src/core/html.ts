@@ -16,7 +16,7 @@ import {
     graphUid,
     layoutGraph,
 } from "./graph.js";
-import { CHECK_ICON } from "./icons.js";
+import { CHECK_ICON, SEARCH_ICON_PATH } from "./icons.js";
 import { type InlineSegment, inlineSegmenter, termMap } from "./inline.js";
 import { type LanguageAdapter, termComparator } from "./language.js";
 import { isReferenceUrl, parseDocLink } from "./routing.js";
@@ -526,7 +526,11 @@ const blockContentHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
         case "code": {
             if (b.subformat) {
                 const label = b.embed?.title ?? b.alt ?? b.subformat.ext;
-                return `<section class="subformat-embed" data-subformat-embed="${escapeHtml(b.subformat.ext)}" data-subformat-embed-view="${escapeHtml(b.embed?.view ?? "card")}" aria-label="${escapeHtml(label)}">${b.embed?.title ? `<h2 class="subformat-embed-title">${escapeHtml(b.embed.title)}</h2>` : ""}<template data-subformats>${escapeHtml(JSON.stringify([b.subformat]))}</template><div data-subformat-board>${subformatTableHtml(b.subformat, label)}</div></section>`;
+                const fields =
+                    b.embed?.fields?.flatMap(
+                        (name) => b.subformat?.fields.filter((field) => field.name === name) ?? [],
+                    ) ?? b.subformat.fields;
+                return `<section class="subformat-embed" data-subformat-embed="${escapeHtml(b.subformat.ext)}" data-subformat-embed-view="${escapeHtml(b.embed?.view ?? "card")}" data-subformat-embed-options="${escapeHtml(JSON.stringify(b.embed ?? {}))}" aria-label="${escapeHtml(label)}">${b.embed?.title ? `<h2 class="subformat-embed-title">${escapeHtml(b.embed.title)}</h2>` : ""}<div class="subformat-embed-toolbar"><button type="button" class="pbtn subformat-search-toggle" data-subformat-search aria-expanded="false" aria-label="Search records" title="Search records" data-i18n-aria-label="Search records" data-i18n-title="Search records"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="${SEARCH_ICON_PATH}"/></svg></button><label class="resource-search" hidden><input type="search" data-resource-search placeholder="Search records" aria-label="Search records" data-i18n-placeholder="Search records" data-i18n-aria-label="Search records"></label><span class="resource-count" data-resource-count role="status" aria-live="polite">${b.subformat.records.length}</span></div><template data-subformats>${escapeHtml(JSON.stringify([b.subformat]))}</template><div data-subformat-board tabindex="0" role="region" aria-label="${escapeHtml(label)}">${subformatTableHtml({ ...b.subformat, fields }, label)}</div></section>`;
             }
             if (b.lang === "mermaid" && !b.unavailable)
                 return `<pre data-mermaid="pending" aria-label="${escapeHtml(b.alt || "Mermaid diagram")}" style="overflow:auto;background:var(--doc-bg);color:var(--doc-fg);padding:1rem">${escapeHtml(b.lines.join("\n"))}</pre>`;

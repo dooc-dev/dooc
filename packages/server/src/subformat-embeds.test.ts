@@ -166,6 +166,51 @@ it("refreshes cached schema embeds and previews unsaved records without writing 
     });
 });
 
+it("applies rich query filters and sorting before publication while retaining complete record details", () => {
+    const { root, write } = fixture(
+        "![](issue.schema.json?view=list&fields=status,points&card_title=title&group_by=status&sort_by=points&sort_order=desc&filter.status[in]=Todo,Done&filter.points[gte]=0&filter.points[lt]=10&q=first)\n",
+    );
+    write("second.issue", '{"title":"First follow-up","status":"Done","points":3}');
+    write("excluded.issue", '{"title":"First excluded","status":"Todo","points":20}');
+    const compiled = compileSite(root);
+    expect(compiled.errors).toEqual([]);
+    const blocks = compiled.docs[0]?.blocks ?? [];
+    expect(blocks[0]).toMatchObject({
+        embed: {
+            view: "list",
+            fields: ["status", "points"],
+            card_title: "title",
+            group_by: "status",
+            sort_by: "points",
+            sort_order: "desc",
+        },
+        subformat: {
+            records: [
+                { file: "second.issue" },
+                { file: "first.issue", data: { metadata: { owner: "Example" } } },
+            ],
+        },
+    });
+    const html = blocksHtml(blocks);
+    expect(html).toContain("data-subformat-embed-options=");
+    expect(html).toContain("data-resource-search");
+    expect(html).toContain('<th scope="col">status</th><th scope="col">points</th>');
+    expect(html).not.toContain('<th scope="col">Subject</th>');
+    expect(html).not.toContain("First excluded");
+    expect(compiled.sources.get("content/guide.md")?.referencedFiles).toContain("excluded.issue");
+});
+
+it.each([
+    "fields=missing",
+    "group_by=title",
+    "sort_by=metadata",
+    "filter.points[gte]=invalid",
+    "filter.title[gt]=3",
+])("reports invalid view parameters: %s", (query) => {
+    const { root } = fixture(`![](issue.schema.json?${query})\n`);
+    expect(compileSite(root).errors).not.toEqual([]);
+});
+
 it("keeps invalid records out of tables, retains invalid source, and rejects unknown filters", () => {
     const { root, write } = fixture("![](issue.schema.json)\n\n![](bad.issue)\n");
     write("bad.issue", '{"status":"Unknown"}');

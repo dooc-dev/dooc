@@ -30,8 +30,28 @@ export interface Subformat {
 export interface SubformatEmbedOptions {
     view?: "card" | "list" | "table";
     title?: string;
-    filters?: [string, string][];
+    card_title?: string;
+    group_by?: string;
+    sort_by?: string;
+    sort_order?: "asc" | "desc";
+    fields?: string[];
+    q?: string;
+    filters?: SubformatFilter[];
 }
+
+export const SUBFORMAT_FILTER_OPERATORS = {
+    eq: "Equals",
+    ne: "Does not equal",
+    contains: "Contains",
+    in: "Is one of",
+    gt: "Greater than",
+    gte: "At least",
+    lt: "Less than",
+    lte: "At most",
+    empty: "Is empty",
+} as const;
+export type SubformatFilterOperator = keyof typeof SUBFORMAT_FILTER_OPERATORS;
+export type SubformatFilter = [field: string, value: string, operator?: SubformatFilterOperator];
 
 export const parseSubformatQuery = (query: string): SubformatEmbedOptions => {
     const options: SubformatEmbedOptions = {};
@@ -41,10 +61,29 @@ export const parseSubformatQuery = (query: string): SubformatEmbedOptions => {
         seen.add(key);
         if (key === "view" && ["card", "list", "table"].includes(value))
             options.view = value as SubformatEmbedOptions["view"];
-        else if (key === "title") options.title = value;
-        else if (key.startsWith("filter.") && key.length > 7) {
+        else if (key === "title" || key === "q") options[key] = value;
+        else if (key === "card_title" || key === "group_by" || key === "sort_by")
+            options[key] = value;
+        else if (key === "sort_order" && (value === "asc" || value === "desc"))
+            options.sort_order = value;
+        else if (key === "fields") {
+            options.fields = value === "" ? [] : value.split(",").map((field) => field.trim());
+            if (
+                options.fields.some((field) => !field) ||
+                new Set(options.fields).size !== options.fields.length
+            )
+                throw new Error("Embed fields must be distinct, non-empty field names");
+        } else if (key.startsWith("filter.") && key.length > 7) {
+            const match = /^(.+?)(?:\[([a-z]+)\])?$/.exec(key.slice(7));
+            const operator = match?.[2];
+            if (!match || (operator && !Object.hasOwn(SUBFORMAT_FILTER_OPERATORS, operator)))
+                throw new Error(`Unknown subformat filter operator: ${key}`);
             options.filters ??= [];
-            options.filters.push([key.slice(7), value]);
+            options.filters.push(
+                operator
+                    ? [match[1] as string, value, operator as SubformatFilterOperator]
+                    : [match[1] as string, value],
+            );
         } else throw new Error(`Unknown embed parameter or value: ${key}=${value}`);
     }
     return options;
@@ -60,6 +99,109 @@ export interface SubformatField {
     /** Record files a reference field may point to (its pattern ends with `\\.<ext>$`). */
     options?: string[];
 }
+
+export const subformatFilterOperators = (field: SubformatField): SubformatFilterOperator[] =>
+    (Object.keys(SUBFORMAT_FILTER_OPERATORS) as SubformatFilterOperator[]).filter(
+        (operator) =>
+            !["gt", "gte", "lt", "lte"].includes(operator) ||
+            field.type === "number" ||
+            field.type === "integer" ||
+            !!field.format,
+    );
+
+export const validateSubformatOptions = (
+    options: SubformatEmbedOptions,
+    fields: SubformatField[],
+): void => {
+    for (const name of options.fields ?? [])
+        if (!fields.some((field) => field.name === name))
+            throw new Error(`Unknown subformat display field: ${name}`);
+    for (const key of ["card_title", "group_by", "sort_by"] as const) {
+        if (!options[key]) continue;
+        const field = fields.find((field) => field.name === options[key]);
+        if (
+            !field ||
+            (key === "group_by" && !field.enum?.length) ||
+            (key === "sort_by" && !field.enum && !field.format && !field.type)
+        )
+            throw new Error(`Invalid subformat ${key} field: ${options[key]}`);
+    }
+    for (const [name, value, operator = "eq"] of options.filters ?? []) {
+        const field = fields.find((field) => field.name === name);
+        if (!field) throw new Error(`Unknown subformat filter field: ${name}`);
+        if (!subformatFilterOperators(field).includes(operator))
+            throw new Error(`Unsupported subformat filter operator for ${name}: ${operator}`);
+        if (operator === "empty" && value !== "true" && value !== "false")
+            throw new Error(`Subformat empty filter requires true or false: ${name}`);
+        if (operator === "in" && value.split(",").some((item) => !item.trim()))
+            throw new Error(`Subformat in filter requires comma-separated values: ${name}`);
+        if (
+            ["gt", "gte", "lt", "lte"].includes(operator) &&
+            (!value.trim() || !Number.isFinite(field.format ? Date.parse(value) : Number(value)))
+        )
+            throw new Error(`Invalid subformat comparison value for ${name}: ${value}`);
+    }
+};
+
+export const matchesSubformatRecord = (
+    record: SubformatRecord,
+    options: SubformatEmbedOptions,
+    fields: SubformatField[],
+): boolean => {
+    if (options.q) {
+        const text = `${record.file} ${record.content}`.normalize("NFKC").toLowerCase();
+        if (
+            !options.q
+                .normalize("NFKC")
+                .toLowerCase()
+                .trim()
+                .split(/\s+/)
+                .every((word) => text.includes(word))
+        )
+            return false;
+    }
+    return (options.filters ?? []).every(([name, expected, operator = "eq"]) => {
+        const present = Object.hasOwn(record.data, name);
+        const value = present ? record.data[name] : undefined;
+        if (operator === "empty")
+            return (
+                (!present ||
+                    value == null ||
+                    value === "" ||
+                    (Array.isArray(value) && !value.length)) ===
+                (expected === "true")
+            );
+        if (!present) return false;
+        const scalar = (item: unknown): boolean =>
+            item === null || ["string", "number", "boolean"].includes(typeof item);
+        if (operator === "contains")
+            return typeof value === "string"
+                ? value
+                      .normalize("NFKC")
+                      .toLowerCase()
+                      .includes(expected.normalize("NFKC").toLowerCase())
+                : Array.isArray(value) &&
+                      value.some((item) => scalar(item) && String(item) === expected);
+        if (operator === "in")
+            return (
+                scalar(value) && expected.split(",").some((item) => String(value) === item.trim())
+            );
+        if (operator === "eq" || operator === "ne")
+            return scalar(value) && (String(value) === expected) === (operator === "eq");
+        const field = fields.find((field) => field.name === name);
+        const left = field?.format && typeof value === "string" ? Date.parse(value) : value;
+        const right = field?.format ? Date.parse(expected) : Number(expected);
+        if (typeof left !== "number" || !Number.isFinite(left) || !Number.isFinite(right))
+            return false;
+        return operator === "gt"
+            ? left > right
+            : operator === "gte"
+              ? left >= right
+              : operator === "lt"
+                ? left < right
+                : operator === "lte" && left <= right;
+    });
+};
 
 export interface SubformatRecord {
     file: string;

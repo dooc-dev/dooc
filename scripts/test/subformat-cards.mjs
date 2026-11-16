@@ -285,16 +285,46 @@ window.testSubformatCards = async () => {
         assert(
             parameterMenu().querySelector('[data-parameter="status"][data-move="up"]').disabled &&
                 !parameterMenu().querySelector('[data-parameter="title"]') &&
-                document.activeElement.dataset.move === "down",
-            "Parameter order excludes the title and focuses the first available move",
+                document.activeElement.dataset.subformatField === "status",
+            "Fields exclude the title and focus the first visibility toggle",
         );
+        const fieldOrder = () =>
+            [...parameterMenu().querySelectorAll("[data-subformat-field]")]
+                .map((button) => button.dataset.subformatField)
+                .join();
+        const initialOrder = fieldOrder();
+        assert(
+            [...parameterMenu().querySelectorAll("button")].every(
+                (button) => getComputedStyle(button).borderTopWidth === "0px",
+            ),
+            "Fields use the same borderless rows as other setting menus",
+        );
+        parameterMenu().querySelector('[data-subformat-field="status"]').click();
+        assert(
+            fieldOrder() === initialOrder &&
+                card().querySelector(".subformat-card-meta dt").textContent === "Due date",
+            "Hiding a field preserves its menu position",
+        );
+        parameterMenu().querySelector('[data-subformat-field="status"]').click();
+        assert(
+            fieldOrder() === initialOrder &&
+                card().querySelector(".subformat-card-meta dt").textContent === "Status",
+            "Showing a field restores its original display position",
+        );
+        parameterMenu().querySelector('[data-subformat-field="due"]').click();
         parameterMenu().querySelector('[data-parameter="due"][data-move="up"]').click();
+        assert(
+            fieldOrder().startsWith("due,status") &&
+                card().querySelector(".subformat-card-meta dt").textContent === "Status",
+            "Arrow buttons can move hidden fields without showing them",
+        );
+        parameterMenu().querySelector('[data-subformat-field="due"]').click();
         assert(
             card().querySelector(".subformat-card-meta dt").textContent === "Due date" &&
                 parameterMenu().matches(":popover-open") &&
-                document.activeElement.dataset.parameter === "due" &&
+                document.activeElement.dataset.subformatField === "due" &&
                 !document.activeElement.disabled,
-            "Moving a parameter updates every row and preserves an available menu action",
+            "Showing a moved field keeps its new position and focus",
         );
         parameterMenu().hidePopover();
         card().querySelector(".subformat-card-toggle").click();

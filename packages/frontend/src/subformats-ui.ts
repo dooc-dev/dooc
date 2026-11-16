@@ -3,13 +3,20 @@ import { defaultFilePath, localFile } from "../../engine/src/core/files.js";
 import { resourceDownloadHtml, subformatTableHtml } from "../../engine/src/core/html.js";
 import { CHECK_ICON } from "../../engine/src/core/icons.js";
 import {
+    matchesSubformatRecord,
+    SUBFORMAT_FILTER_OPERATORS,
     SUBFORMAT_SCHEMA_TEMPLATE,
     type Subformat,
     type SubformatCollection,
+    type SubformatEmbedOptions,
+    type SubformatFilter,
+    type SubformatFilterOperator,
     type SubformatRecord,
     sortSubformatRecords,
     subformatChange,
+    subformatFilterOperators,
     subformatSourcePath,
+    validateSubformatOptions,
 } from "../../engine/src/core/subformats.js";
 import { clientPath, workspacePath } from "../../workspace/src/client-path.js";
 import {
@@ -28,8 +35,15 @@ interface State {
     recordForm?: HTMLFormElement;
     iconForm?: HTMLFormElement;
     collections: SubformatCollection[];
-    views: Map<string, Required<NonNullable<Subformat["layouts"]>>>;
+    views: Map<
+        string,
+        Omit<Required<NonNullable<Subformat["layouts"]>>, "view"> & {
+            view: "card" | "list" | "table";
+        }
+    >;
     parameterOrders: Map<string, string[]>;
+    hiddenFields: Map<string, Set<string>>;
+    filters: Map<string, SubformatFilter[]>;
     expanded: Set<string>;
     openSource?: (file: string, line: number) => void;
     dialogOpen: boolean;
@@ -184,6 +198,8 @@ export const filterSubformats = (
             collections: JSON.parse(template.content.textContent ?? "[]"),
             views: new Map(),
             parameterOrders: new Map(),
+            hiddenFields: new Map(),
+            filters: new Map(),
             expanded: new Set(),
             openSource:
                 openSource &&
@@ -195,6 +211,30 @@ export const filterSubformats = (
             busy: false,
         };
         states.set(root, state);
+        const searchToggle = root.querySelector<HTMLButtonElement>("[data-subformat-search]");
+        const search = root.querySelector<HTMLInputElement>("[data-resource-search]");
+        const searchField = search?.closest<HTMLElement>(".resource-search");
+        if (searchToggle && search && searchField) {
+            searchField.id = `subformat-${state.id}-search`;
+            searchToggle.setAttribute("aria-controls", searchField.id);
+            searchToggle.addEventListener("click", () => {
+                const open = searchField.hidden;
+                searchField.hidden = !open;
+                searchToggle.setAttribute("aria-expanded", String(open));
+                if (open) search.focus();
+                else {
+                    search.value = "";
+                    search.dispatchEvent(new Event("input", { bubbles: true }));
+                    searchToggle.focus();
+                }
+            });
+            search.addEventListener("keydown", (event) => {
+                if (event.key !== "Escape") return;
+                event.preventDefault();
+                event.stopPropagation();
+                searchToggle.click();
+            });
+        }
     }
     const select = root.querySelector<HTMLSelectElement>("[data-resource-filter]");
     if (
@@ -243,6 +283,7 @@ export const filterSubformats = (
     if (!collection) {
         state.stopDrag?.();
         root.querySelector(".subformat-controls")?.remove();
+        root.querySelector(".subformat-filters")?.remove();
         // The diagram replaces the board, so the generic resource filter must not run.
         if (relations && !relations.hidden) {
             root.querySelector<HTMLElement>("[data-resource-empty]")?.setAttribute("hidden", "");
@@ -369,6 +410,8 @@ const deleteSubformat = async (
         state.collections = state.collections.filter((item) => item !== collection);
         state.views.delete(ext);
         state.parameterOrders.delete(ext);
+        state.hiddenFields.delete(ext);
+        state.filters.delete(ext);
         for (const option of [...select.options]) {
             if (option.value === ext) option.remove();
         }
@@ -544,6 +587,8 @@ export const restoreSubformatViews = (previous: Element, next: Element): void =>
     if (from && to && from.workspace === to.workspace) {
         to.views = from.views;
         to.parameterOrders = from.parameterOrders;
+        to.hiddenFields = from.hiddenFields;
+        to.filters = from.filters;
         to.expanded = from.expanded;
         to.openSetting = from.openSetting;
         if (after?.hasAttribute("data-subformat-page"))
@@ -591,70 +636,70 @@ const render = (
 ): void => {
     state.stopDrag?.();
     const embedded = root.hasAttribute("data-subformat-embed");
+    const options: SubformatEmbedOptions = JSON.parse(root.dataset.subformatEmbedOptions ?? "{}");
     const scrollLeft = board.querySelector(".subformat-columns")?.scrollLeft ?? 0;
     const published = !!document.querySelector("template[data-route]");
     const enums = collection.fields.filter((field) => field.enum?.length);
     const view = state.views.get(collection.ext) ?? {
         view: embedded
-            ? root.dataset.subformatEmbedView === "list"
-                ? "list"
-                : "card"
+            ? (options.view ??
+              (root.dataset.subformatEmbedView as "card" | "list" | "table") ??
+              "card")
             : (collection.layouts?.view ?? "card"),
-        card_title: collection.layouts?.card_title ?? "",
-        group_by: embedded ? "" : (collection.layouts?.group_by ?? enums[0]?.name ?? ""),
-        sort_by: collection.layouts?.sort_by ?? "",
-        sort_order: collection.layouts?.sort_order ?? "asc",
+        card_title: options.card_title ?? collection.layouts?.card_title ?? "",
+        group_by:
+            options.group_by ??
+            (embedded ? "" : (collection.layouts?.group_by ?? enums[0]?.name ?? "")),
+        sort_by: options.sort_by ?? collection.layouts?.sort_by ?? "",
+        sort_order: options.sort_order ?? collection.layouts?.sort_order ?? "asc",
     };
     state.views.set(collection.ext, view);
     if (!enums.some((field) => field.name === view.group_by)) view.group_by = "";
     const grouping =
-        view.view === "list" ? undefined : enums.find((field) => field.name === view.group_by);
+        view.view === "card" ? enums.find((field) => field.name === view.group_by) : undefined;
     const sortable = collection.fields.filter((field) => field.enum || field.format || field.type);
     if (!sortable.some((field) => field.name === view.sort_by)) view.sort_by = "";
     const sorting = sortable.find((field) => field.name === view.sort_by);
     const titleField = view.card_title;
-    const parameterOrder = state.parameterOrders.get(collection.ext) ?? [];
-    const displayFields =
-        view.view === "list"
-            ? [...collection.fields].sort((a, b) => {
-                  const left = parameterOrder.indexOf(a.name);
-                  const right = parameterOrder.indexOf(b.name);
-                  return (
-                      (left < 0 ? parameterOrder.length : left) -
-                      (right < 0 ? parameterOrder.length : right)
-                  );
-              })
-            : collection.fields;
+    const parameterOrder =
+        state.parameterOrders.get(collection.ext) ??
+        options.fields ??
+        collection.fields.map((field) => field.name);
+    const orderedFields = [
+        ...parameterOrder.flatMap((name) =>
+            collection.fields.filter((field) => field.name === name),
+        ),
+        ...collection.fields.filter((field) => !parameterOrder.includes(field.name)),
+    ];
+    const hiddenFields =
+        state.hiddenFields.get(collection.ext) ??
+        new Set(
+            collection.fields
+                .filter((field) => options.fields && !options.fields.includes(field.name))
+                .map((field) => field.name),
+        );
+    const displayFields = orderedFields.filter((field) => !hiddenFields.has(field.name));
+    const filters = state.filters.get(collection.ext) ?? [];
     const descending = view.sort_order === "desc";
     const records = sortSubformatRecords(
         collection.records.filter((record) => {
             const text = `${record.file} ${record.content}`.normalize("NFKC").toLowerCase();
-            return words.every((word) => text.includes(word));
+            return (
+                words.every((word) => text.includes(word)) &&
+                matchesSubformatRecord(record, { filters }, collection.fields)
+            );
         }),
         sorting,
         descending,
     );
     const empty = root.querySelector<HTMLElement>("[data-resource-empty]");
     if (empty) empty.hidden = records.length > 0;
-    if (embedded && root.dataset.subformatEmbedView === "table") {
-        board.innerHTML = subformatTableHtml(
-            { ...collection, records },
-            root.getAttribute("aria-label") ?? collection.ext,
-        );
-        for (const button of board.querySelectorAll<HTMLButtonElement>("[data-subformat-record]")) {
-            if (state.openSource) button.removeAttribute("aria-haspopup");
-            button.addEventListener("click", (event) => {
-                if (event.detail === 0) button.focus({ preventScroll: true });
-                const record = records[Number(button.dataset.subformatRecord)];
-                if (record) void openRecord(state, collection, record, record.file);
-            });
-        }
-        return;
-    }
+    const count = root.querySelector("[data-resource-count]");
+    if (count) count.textContent = String(records.length);
     const controls =
         root.querySelector<HTMLElement>(".subformat-controls") ?? document.createElement("div");
     controls.className = "subformat-controls";
-    if (embedded) root.insertBefore(controls, board);
+    if (embedded) root.querySelector(".subformat-embed-toolbar")?.insertBefore(controls, count);
     else root.querySelector(".resource-toolbar")?.append(controls);
     const openSetting = state.openSetting;
     controls.replaceChildren();
@@ -667,10 +712,18 @@ const render = (
             fields: [
                 { name: "card", title: t("Cards") },
                 { name: "list", title: t("List") },
+                ...(embedded ? [{ name: "table", title: t("Table") }] : []),
             ],
         },
-        { key: "card_title", fields: [{ name: "", title: t("File name") }, ...collection.fields] },
-        ...(enums.length && view.view !== "list"
+        ...(view.view === "table"
+            ? []
+            : [
+                  {
+                      key: "card_title" as const,
+                      fields: [{ name: "", title: t("File name") }, ...collection.fields],
+                  },
+              ]),
+        ...(enums.length && view.view === "card"
             ? [
                   {
                       key: "group_by" as const,
@@ -720,7 +773,7 @@ const render = (
             choose.addEventListener("click", () => {
                 if (state.busy) return;
                 if (key === "sort_order") view.sort_order = field.name as "asc" | "desc";
-                else if (key === "view") view.view = field.name as "card" | "list";
+                else if (key === "view") view.view = field.name as "card" | "list" | "table";
                 else view[key] = field.name;
                 popup.hidePopover();
                 render(root, board, state, collection, words);
@@ -793,13 +846,15 @@ const render = (
         });
         if (openSetting === key && trigger.isConnected) trigger.click();
     }
-    if (view.view === "list") {
-        const parameters = displayFields.filter((field) => field.name !== titleField);
+    if (view.view === "list" || view.view === "table") {
+        const parameters = orderedFields.filter(
+            (field) => view.view === "table" || field.name !== titleField,
+        );
         const trigger = document.createElement("button");
         trigger.type = "button";
-        trigger.textContent = t("Parameter order");
+        trigger.textContent = t("Fields");
         trigger.dataset.subformatParameters = "";
-        trigger.disabled = state.busy || parameters.length < 2;
+        trigger.disabled = state.busy || !parameters.length;
         trigger.setAttribute("aria-haspopup", "menu");
         trigger.setAttribute("aria-expanded", "false");
         const popup = document.createElement("div");
@@ -807,15 +862,37 @@ const render = (
         popup.className = "subformat-picker-menu subformat-setting-menu";
         popup.setAttribute("popover", "auto");
         popup.setAttribute("role", "menu");
-        popup.setAttribute("aria-label", t("Parameter order"));
+        popup.setAttribute("aria-label", t("Fields"));
         trigger.setAttribute("aria-controls", popup.id);
         controls.append(trigger, popup);
         for (const [index, field] of parameters.entries()) {
             const row = document.createElement("div");
-            row.className = "subformat-parameter-option";
+            row.className = "subformat-setting-option subformat-parameter-option";
             row.setAttribute("role", "none");
-            const label = document.createElement("span");
+            const label = document.createElement("button");
+            label.type = "button";
+            label.tabIndex = -1;
+            label.className = "subformat-field-toggle";
+            label.dataset.subformatField = field.name;
+            label.setAttribute("role", "menuitemcheckbox");
+            label.setAttribute("aria-checked", String(!hiddenFields.has(field.name)));
+            label.disabled = state.busy;
             label.textContent = field.title;
+            label.insertAdjacentHTML("beforeend", CHECK_ICON);
+            label.addEventListener("click", () => {
+                if (hiddenFields.has(field.name)) hiddenFields.delete(field.name);
+                else hiddenFields.add(field.name);
+                state.hiddenFields.set(collection.ext, hiddenFields);
+                const scrollTop = popup.scrollTop;
+                render(root, board, state, collection, words);
+                const next = controls.querySelector<HTMLElement>(`#${popup.id}`);
+                if (next) next.scrollTop = scrollTop;
+                controls
+                    .querySelector<HTMLElement>(
+                        `[data-subformat-field="${CSS.escape(field.name)}"]`,
+                    )
+                    ?.focus({ preventScroll: true });
+            });
             row.append(label);
             for (const direction of [-1, 1]) {
                 const button = document.createElement("button");
@@ -831,7 +908,7 @@ const render = (
                 button.addEventListener("click", () => {
                     const neighbor = parameters[index + direction];
                     if (state.busy || !neighbor) return;
-                    const names = displayFields.map((item) => item.name);
+                    const names = orderedFields.map((item) => item.name);
                     const from = names.indexOf(field.name);
                     const to = names.indexOf(neighbor.name);
                     names[from] = neighbor.name;
@@ -860,6 +937,104 @@ const render = (
         });
         if (openSetting === "parameters" && trigger.isConnected && !trigger.disabled)
             trigger.click();
+    }
+    const filterButton = document.createElement("button");
+    filterButton.type = "button";
+    filterButton.dataset.subformatFilters = "";
+    filterButton.textContent = `${t("Filters")}${filters.length ? ` (${filters.length})` : ""}`;
+    filterButton.disabled = state.busy || !collection.fields.length;
+    filterButton.setAttribute("aria-expanded", String(openSetting === "filters"));
+    filterButton.setAttribute("aria-controls", `subformat-${state.id}-filters`);
+    filterButton.addEventListener("click", () => {
+        state.openSetting = state.openSetting === "filters" ? undefined : "filters";
+        render(root, board, state, collection, words);
+        (
+            root.querySelector<HTMLElement>("[data-filter-field]") ??
+            controls.querySelector<HTMLElement>("[data-subformat-filters]")
+        )?.focus();
+    });
+    controls.append(filterButton);
+    root.querySelector(":scope > .subformat-filters")?.remove();
+    if (openSetting === "filters") {
+        const form = document.createElement("form");
+        form.id = `subformat-${state.id}-filters`;
+        form.className = "subformat-filters";
+        form.setAttribute("aria-label", t("Filters"));
+        form.innerHTML = `<p>${t("Match all conditions")}</p><div data-filter-rows></div><div class="subformat-filter-actions"><button type="button" data-filter-add>${t("Add filter")}</button><button type="submit">${t("Apply filters")}</button><button type="button" data-filter-clear>${t("Clear")}</button></div><p class="err" role="alert"></p>`;
+        root.insertBefore(form, board);
+        const rows = form.querySelector("[data-filter-rows]") as HTMLElement;
+        const add = form.querySelector("[data-filter-add]") as HTMLButtonElement;
+        const addRow = ([name, value, operator = "eq"]: SubformatFilter): void => {
+            const row = document.createElement("div");
+            row.className = "subformat-filter-row";
+            row.innerHTML = `<label>${t("Field")}<select data-filter-field></select></label><label>${t("Operator")}<select data-filter-operator></select></label><label>${t("Value")}<input data-filter-value></label><button type="button" data-filter-remove>${t("Remove filter")}</button>`;
+            const field = row.querySelector("[data-filter-field]") as HTMLSelectElement;
+            const operation = row.querySelector("[data-filter-operator]") as HTMLSelectElement;
+            const input = row.querySelector("input") as HTMLInputElement;
+            for (const item of collection.fields) field.add(new Option(item.title, item.name));
+            field.value = name;
+            input.value = value;
+            const operators = (): void => {
+                const selected = collection.fields.find((item) => item.name === field.value);
+                operation.replaceChildren();
+                if (selected)
+                    for (const key of subformatFilterOperators(selected))
+                        operation.add(new Option(t(SUBFORMAT_FILTER_OPERATORS[key]), key));
+            };
+            const hint = (): void => {
+                input.placeholder =
+                    operation.value === "in"
+                        ? t("Comma-separated values")
+                        : operation.value === "empty"
+                          ? "true / false"
+                          : "";
+            };
+            operators();
+            operation.value = operator;
+            hint();
+            field.addEventListener("change", () => {
+                operators();
+                hint();
+            });
+            operation.addEventListener("change", hint);
+            row.querySelector("[data-filter-remove]")?.addEventListener("click", () => {
+                row.remove();
+                add.focus();
+            });
+            rows.append(row);
+        };
+        for (const filter of filters) addRow(filter);
+        add.addEventListener("click", () => {
+            const field = collection.fields[0];
+            if (!field) return;
+            addRow([field.name, ""]);
+            rows.lastElementChild?.querySelector<HTMLElement>("select")?.focus();
+        });
+        form.addEventListener("submit", (event) => {
+            event.preventDefault();
+            const next: SubformatFilter[] = [...rows.children].map((row) => [
+                (row.querySelector("[data-filter-field]") as HTMLSelectElement).value,
+                (row.querySelector("[data-filter-value]") as HTMLInputElement).value,
+                (row.querySelector("[data-filter-operator]") as HTMLSelectElement)
+                    .value as SubformatFilterOperator,
+            ]);
+            try {
+                validateSubformatOptions({ filters: next }, collection.fields);
+                state.filters.set(collection.ext, next);
+                state.openSetting = undefined;
+                render(root, board, state, collection, words);
+                controls.querySelector<HTMLElement>("[data-subformat-filters]")?.focus();
+            } catch (error) {
+                const status = form.querySelector("[role=alert]") as HTMLElement;
+                status.textContent = error instanceof Error ? error.message : String(error);
+            }
+        });
+        form.querySelector("[data-filter-clear]")?.addEventListener("click", () => {
+            state.filters.delete(collection.ext);
+            state.openSetting = undefined;
+            render(root, board, state, collection, words);
+            controls.querySelector<HTMLElement>("[data-subformat-filters]")?.focus();
+        });
     }
     if (
         !embedded &&
@@ -1066,6 +1241,21 @@ const render = (
     if (state.iconForm?.dataset.ext === collection.ext) controls.append(state.iconForm);
     board.setAttribute("aria-busy", String(state.busy));
     board.dataset.subformatView = view.view;
+    if (view.view === "table") {
+        board.innerHTML = subformatTableHtml(
+            { ...collection, fields: displayFields, records },
+            root.getAttribute("aria-label") ?? collection.ext,
+        );
+        for (const button of board.querySelectorAll<HTMLButtonElement>("[data-subformat-record]")) {
+            if (state.openSource) button.removeAttribute("aria-haspopup");
+            button.addEventListener("click", (event) => {
+                if (event.detail === 0) button.focus({ preventScroll: true });
+                const record = records[Number(button.dataset.subformatRecord)];
+                if (record) void openRecord(state, collection, record, record.file);
+            });
+        }
+        return;
+    }
     board.innerHTML = '<div class="subformat-columns"></div>';
     const columns = board.querySelector(".subformat-columns") as HTMLElement;
     const writable =

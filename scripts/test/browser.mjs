@@ -181,6 +181,15 @@ for (const [file, names] of [
     }
 }
 
+for (const width of [1440, 390]) {
+    browserTest(`Subformat embed layout at ${width}px`, async (page) => {
+        await page.setViewportSize({ width, height: 1000 });
+        await blank(page, "reader");
+        await inject(page, "subformat-embeds");
+        await page.evaluate(() => window.testSubformatEmbedLayout());
+    });
+}
+
 browserTest("Sidebar collapse", async (page) => {
     await open(page, urls.reader, false);
     await inject(page, "sidebar-collapse");

@@ -14,7 +14,12 @@ import {
 } from "../core/previewers.js";
 import { type DocRef, docPath, parseDocLink } from "../core/routing.js";
 import { subformatReferences } from "../core/subformat-references.js";
-import type { SubformatRecord } from "../core/subformats.js";
+import {
+    matchesSubformatRecord,
+    type SubformatRecord,
+    sortSubformatRecords,
+    validateSubformatOptions,
+} from "../core/subformats.js";
 import type { Frontmatter } from "../core/taxonomy.js";
 import { isTermFile } from "../core/term-reference.js";
 import { isRemoteTextfile } from "../core/textfile.js";
@@ -252,9 +257,7 @@ const resolveFiles = (
             if (config) {
                 const loaded = loadSubformat(root, config, previews?.domains);
                 referencedFiles.add(config.schema);
-                for (const [field] of b.embed?.filters ?? [])
-                    if (!loaded.fields.some((item) => item.name === field))
-                        throw new Error(`Unknown subformat filter field: ${field}`);
+                validateSubformatOptions(b.embed ?? {}, loaded.fields);
                 const files = schema
                     ? projectFiles(root)
                           .filter(
@@ -273,15 +276,9 @@ const resolveFiles = (
                                 : (textfiles?.get(path) ?? readTextfile(root, path));
                         const data = parseSubformatRecord(content, config.format);
                         validateSubformatRecord(loaded, data);
-                        if (
-                            (b.embed?.filters ?? []).every(
-                                ([field, value]) =>
-                                    Object.hasOwn(data, field) &&
-                                    (data[field] === null || typeof data[field] !== "object") &&
-                                    String(data[field]) === value,
-                            )
-                        )
-                            records.push({ file: path, content, data });
+                        const record = { file: path, content, data };
+                        if (matchesSubformatRecord(record, b.embed ?? {}, loaded.fields))
+                            records.push(record);
                     } catch (error) {
                         if (!schema) throw error;
                         errors.push(`${path}: ${error instanceof Error ? error.message : error}`);
@@ -298,7 +295,14 @@ const resolveFiles = (
                     subformat: {
                         ...config,
                         fields: loaded.fields,
-                        records,
+                        records: sortSubformatRecords(
+                            records,
+                            loaded.fields.find(
+                                (field) =>
+                                    field.name === (b.embed?.sort_by ?? config.layouts?.sort_by),
+                            ),
+                            (b.embed?.sort_order ?? config.layouts?.sort_order) === "desc",
+                        ),
                     },
                 };
             }

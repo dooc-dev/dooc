@@ -1701,14 +1701,14 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .subformat-control > button > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .subformat-control > button > svg { flex: none; }
 .subformat-setting-menu { font-size: 13px; }
-.subformat-parameter-option { display: flex; align-items: center; gap: 4px; padding: 2px 4px; }
-.subformat-parameter-option > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.subformat-parameter-option > button { display: grid; place-items: center; flex: none; width: 30px; padding: 4px; }
 .subformat-parameter-option > button:disabled { opacity: .4; cursor: default; }
+.subformat-parameter-option > .subformat-field-toggle { display: flex; justify-content: space-between; flex: 1; width: auto; min-width: 0; }
+.subformat-field-toggle svg { flex: none; width: 14px; height: 14px; margin-left: 8px; }
+.subformat-field-toggle[aria-checked="false"] svg { visibility: hidden; }
 .subformat-setting-option { display: flex; align-items: stretch; }
 .subformat-setting-option > button:first-child { flex: 1; min-width: 0; max-width: none; border: 0; border-radius: 0; text-align: left; background: transparent; }
 .subformat-setting-option > button[aria-checked="true"] { background: var(--c-raised); }
-.subformat-setting-option > .subformat-default { display: grid; flex: none; place-items: center; width: 32px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--c-fg-muted); }
+.subformat-setting-option > .subformat-default, .subformat-parameter-option > [data-move] { display: grid; flex: none; place-items: center; width: 32px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--c-fg-muted); }
 .subformat-default[data-is-default="false"] svg { opacity: .25; }
 .subformat-default[data-is-default="true"], .subformat-default:is(:hover, :focus-visible) { color: var(--c-fg); }
 .subformat-setting-option > .subformat-default[data-layout-changed="true"] { color: var(--c-ok); }
@@ -1722,6 +1722,17 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .subformat-controls :is(select, button) { cursor: pointer; }
 .subformat-controls :is(select, button):hover, .subformat-card select:enabled:hover { background: var(--c-raised); }
 .subformat-controls :is(select, button):focus-visible, .subformat-card select:focus-visible { outline-color: var(--c-fg-muted); }
+.subformat-filters { margin: 12px 0 20px; font: 12px/1.6 var(--font-sans); }
+.subformat-filters p { margin: 8px 0; }
+.subformat-filter-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: 8px; margin: 10px 0; }
+.subformat-filter-row label { display: flex; flex-direction: column; gap: 4px; min-width: 0; color: var(--c-fg-muted); }
+.subformat-filters :is(select, input, button) { box-sizing: border-box; min-width: 0; max-width: 100%; min-height: 32px; padding: 4px 8px; border: 1px solid var(--c-line); border-radius: 4px; color: var(--c-fg); background: var(--c-bg1); font: inherit; }
+.subformat-filters :is(select, input) { width: 100%; }
+.subformat-filters button { cursor: pointer; }
+.subformat-filters button:hover { background: var(--c-raised); }
+.subformat-filters :focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.subformat-filter-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.subformat-filters .err:empty { display: none; }
 .subformat-card select:disabled { opacity: .55; cursor: default; }
 .subformat-toast { position: fixed; z-index: 1000; right: 20px; bottom: 20px; box-sizing: border-box;
   max-width: min(420px, calc(100vw - 40px)); max-height: 40vh; overflow: auto; padding: 12px 16px;
@@ -1785,9 +1796,17 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .subformat-card-details dd, .subformat-detail dd { white-space: pre-wrap; overflow-wrap: anywhere; }
 .subformat-card-details label { margin-top: 12px; }
 .subformat-card [hidden] { display: none; }
-.subformat-embed { margin: 24px 0; min-width: 0; }
+.subformat-embed { margin: 24px 0; min-width: 0; container-type: inline-size; }
 .subformat-embed .subformat-embed-title { margin: 0 0 20px; }
-.subformat-embed > .subformat-controls { margin: 0 0 24px; font: 12px/1.6 var(--font-sans); }
+.subformat-embed-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin-bottom: 12px; font: 12px/1.6 var(--font-sans); }
+.subformat-embed-toolbar > .subformat-controls { display: contents; }
+.subformat-embed-toolbar .subformat-search-toggle { flex: none; width: 34px; height: 34px; }
+.subformat-embed-toolbar .resource-search { flex: 1 1 160px; max-width: 260px; height: 32px; padding-inline: 8px; border: 1px solid var(--c-line); border-radius: 4px; }
+.subformat-embed-toolbar .resource-search[hidden] { display: none; }
+.subformat-embed-toolbar .resource-search:focus-within { border-color: var(--c-accent); }
+.subformat-embed > [data-subformat-board] { box-sizing: border-box; max-height: min(640px, 65dvh); padding: 12px 2px 4px; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--c-line) transparent; }
+.subformat-embed > [data-subformat-board]:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.subformat-embed .subformat-table { overflow: visible; }
 .subformat-embed .subformat-control-label { background: var(--doc-bg); }
 .subformat-embed .subformat-columns { display: block; padding: 0; overflow: visible; }
 .subformat-embed .subformat-column + .subformat-column { margin-top: 24px; }
@@ -1799,6 +1818,7 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .subformat-table table { width: 100%; margin: 0; border-collapse: collapse; font: 13px/1.6 var(--font-sans); }
 .subformat-table :is(th, td) { min-width: 100px; padding: 10px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--c-line); white-space: pre-wrap; overflow-wrap: anywhere; }
 .subformat-table th { font-weight: 500; }
+.subformat-embed .subformat-table thead th { position: sticky; top: -12px; z-index: 1; background: var(--doc-bg); }
 .subformat-table td > span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; max-width: 32ch; overflow: hidden; }
 .subformat-table button { padding: 0; border: 0; background: none; color: var(--doc-fg); font: inherit; text-align: left; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; cursor: pointer; }
 .subformat-table button:is(:hover, :focus-visible) { text-decoration: underline; text-underline-offset: 3px; }
@@ -1823,6 +1843,18 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 }
 @container (max-width: 420px) {
   .subformat-list-record .subformat-card-file { display: none; }
+}
+@container (max-width: 600px) {
+  .subformat-filter-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .subformat-filter-row > label:nth-child(3) { grid-column: 1; }
+  .subformat-embed-toolbar .subformat-control { flex: 1 1 120px; max-width: none; }
+}
+@media (max-width: 600px) {
+  .subformat-embed > [data-subformat-board] { max-height: min(480px, 55dvh); }
+  .subformat-filter-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .subformat-filters :is(select, input, button), .subformat-embed .subformat-controls button { min-height: 44px; }
+  .subformat-embed-toolbar .subformat-search-toggle { width: 44px; height: 44px; }
+  .subformat-embed-toolbar .resource-search { height: 42px; }
 }
 .subformat-icon-form { flex: 1 0 100%; min-width: 0; padding-block: 8px; }
 .subformat-icon-form fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
@@ -2063,10 +2095,12 @@ body.textfile-open #phead :is(.fm-language, #status, #validate, #save, #split-pr
 .schema-builder input[aria-invalid="true"], .schema-builder input[aria-invalid="true"]:focus-visible, .subformat-register-fields input:user-invalid { outline: 1px solid var(--c-danger); outline-offset: 1px; }
 .schema-json-note { margin: 8px 0 0; color: var(--c-fg-muted); font-size: 11px; }
 .schema-builder .schema-extra-fields { margin: 6px 0; }
-.subformat-value-form fieldset { min-width: 0; margin: 12px 0; padding: 0 12px; border: 1px solid var(--c-line); }
+.subformat-value-form fieldset { min-width: 0; margin: 12px 0; padding: 0 12px; border: 0; }
 .subformat-value-form legend { max-width: 100%; padding-inline: 4px; overflow-wrap: anywhere; color: var(--c-fg-muted); font-size: 11px; }
 .subformat-value-form .subformat-value-field { padding: 0 6px 6px; border-radius: 4px; }
 .subformat-value-form small { overflow-wrap: anywhere; }
+.schema-builder.subformat-value-form :is(input:not([type="checkbox"]), select, textarea, .language-select-input):is(:enabled, :disabled, :hover, :focus-visible) { border: 0; background: transparent; }
+.schema-builder.subformat-value-form :is(input, select, textarea):focus-visible:not([aria-invalid="true"]) { outline: 1px solid var(--c-fg-muted); outline-offset: 1px; }
 .date-control { position: relative; }
 .schema-builder .date-control > input { padding-right: 34px; font-variant-numeric: tabular-nums; }
 .schema-builder .date-trigger { position: absolute; top: 0; right: 0; display: grid; place-items: center; width: 30px; height: 100%; padding: 0; border: 0; background: transparent; color: var(--c-fg-muted); }
