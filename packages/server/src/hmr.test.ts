@@ -128,19 +128,20 @@ describe("watchProject", () => {
 
     it("watches referenced files through edits, atomic replacement, deletion and creation", async () => {
         const root = mkdtempSync(join(tmpdir(), "docs-hmr-files-"));
-        mkdirSync(join(root, "examples"));
-        const path = join(root, "examples/hello.rs");
+        // Keep recursive directory events from satisfying the polling assertions.
+        mkdirSync(join(root, "src"));
+        const path = join(root, "src/hello.rs");
         const seen: string[] = [];
         const watcher = watchProject(root, root, (_kind, files) => seen.push(...files), 10);
-        watcher.watchTextfiles(["examples/hello.rs", "../outside", "https://example.com/x"]);
+        watcher.watchTextfiles(["src/hello.rs", "../outside", "https://example.com/x"]);
         const changed = async (change: () => void) => {
             seen.length = 0;
             change();
-            await expect.poll(() => seen, { timeout: 2000 }).toContain("examples/hello.rs");
+            await expect.poll(() => seen, { timeout: 2000 }).toContain("src/hello.rs");
         };
         try {
             // The initial missing-file notification confirms the stat watcher is ready.
-            await expect.poll(() => seen, { timeout: 2000 }).toContain("examples/hello.rs");
+            await expect.poll(() => seen, { timeout: 2000 }).toContain("src/hello.rs");
             await changed(() => writeFileSync(path, "old"));
             await changed(() => writeFileSync(path, "edited"));
             await changed(() => {
