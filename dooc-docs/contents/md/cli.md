@@ -1,4 +1,4 @@
-Workspace application commands use `--project <path>` and default to `./dooc.yaml`. Local folders, named manifests (`<name>.dooc.yaml`) and local `file://` URLs are accepted. Add `--repo <url>` to `run node` to resolve the project inside a Git clone. Document commands such as `check`, `build html`, `build zip` and `export` accept a positional manifest path. Run `dooc help` or `dooc <command> --help` for details.
+Workspace application commands use `--project <path>` and default to `./dooc.yaml`. Local folders, named manifests (`<name>.dooc.yaml`) and local `file://` URLs are accepted. Add `--repo <url>` to `run node` to resolve the project inside a Git clone. Document commands such as `check`, `build` and `zip` accept a positional manifest path. Run `dooc help` or `dooc <command> --help` for details.
 
 `dooc editor` and `dooc reader` are aliases for `dooc editor run node --all` and `dooc reader run node --all`. They read `dooc.yaml` from the directory where the command is run and start the client, workspace server and MCP on port `3000`. Reader workspace and MCP operations remain read-only. Options are forwarded: `dooc editor --port 4000 --project docs/team.dooc.yaml` overrides the port and manifest, and `--no-mcp` disables MCP.
 
@@ -14,11 +14,10 @@ Use the explicit `build`/`run` form to choose components and runtimes. [App runt
 | `dooc reader <build\|run> <node\|web> [components]` | Build or run selected read-only components |
 | `dooc init [path]` | Create a manifest without overwriting an existing one |
 | `dooc check [dooc.yaml]` | Print a JSON consistency report |
-| `dooc build html [dooc.yaml] [out-dir]` | Build a standalone `bundle.html` |
-| `dooc build zip [dooc.yaml] [out-dir]` | Build `bundle.zip` |
-| `dooc build github [dooc.yaml] [out-dir]` | Build `bundle.github.zip` with GitHub reading pages and separate SVG/assets |
-| `dooc build <html\|zip> [dooc.yaml] [out-dir] --target github` | Select GitHub HTML with companion assets, or Markdown ZIP |
-| `dooc export [dooc.yaml] [out-dir]` | Collect source dependencies into `bundle.zip` |
+| `dooc build [dooc.yaml] [out-dir]` | Build the reading page as one file: `build/index.html` |
+| `dooc zip [dooc.yaml] [out-dir]` | Archive the workspace: `dist/bundle.zip` |
+| `dooc build [dooc.yaml] [out-dir] --target github` | Build a GitHub HTML body with companion assets |
+| `dooc zip [dooc.yaml] [out-dir] --target github` | Build `bundle.github.zip` with GitHub reading pages and separate SVG/assets |
 | `dooc editor run node --mcp --mcp-transport stdio` | Serve editable workspace operations over stdio |
 | `dooc reader run node --mcp --mcp-transport stdio` | Serve read-only published content over stdio |
 | `dooc relay --stdio` | Connect a Desktop MCP host to a browser workspace |
@@ -44,12 +43,12 @@ Explicit application commands require at least one of `--client`, `--server`, or
 | `editor/reader run node` | `--tls-cert <pem> --tls-key <pem>` | Serve HTTPS and secure WebSockets |
 | `editor/reader … node` | `--reader-plugins <module>` | Load an explicit workspace plugin module |
 | `editor/reader … node` | `--server-url <ws-url>` | Set the client's workspace connection |
-| `build` | `--reader-plugins <module>` | Load a build plugin module |
-| `build` | `--url_preview embed\|network` | Capture remote embeds; HTML can preserve network references; ZIP requires `embed` |
-| `build html` | `--mode static\|live` | Snapshot plugin cards or keep them fetching |
-| `build html` | `--auth external` | Use host authentication for live HTML |
-| `build html` | `--source-url <url>` | Set the base URL for record copy links |
-| `build html` | `--download easy\|normal\|block` | Add resource downloads, keep browser defaults, or suppress in-page saving; default `normal` |
+| `build`, `zip` | `--reader-plugins <module>` | Load a build plugin module |
+| `build`, `zip` | `--url_preview network\|embed` | Keep URL references (default) or capture remote embeds; static HTML and GitHub ZIP use `embed` |
+| `build` | `--mode static\|live` | Snapshot plugin cards or keep them fetching |
+| `build` | `--auth external` | Use host authentication for live HTML |
+| `build` | `--source-url <url>` | Set the base URL for record copy links |
+| `build` | `--download easy\|normal\|block` | Add resource downloads, keep browser defaults, or suppress in-page saving; default `normal` |
 | `check` | `--only render,languages,themes` | Select checks; the manifest is always checked |
 | `check` | `--allow-shared-svg` | Allow identical SVG bytes across themes |
 | `check` | `--warnings-as-errors` | Fail on warnings |
@@ -76,7 +75,7 @@ mkdir my-docs && cd my-docs
 dooc init
 dooc editor
 dooc check
-dooc build html ./dooc.yaml ./dist
+dooc build
 ```
 
 `dooc editor` keeps running while the editor is open. Save your changes and stop it with `Ctrl+C` before continuing, or run `check` and `build` in another terminal.
@@ -126,23 +125,25 @@ The check runs offline: remote content is not fetched or verified, and is report
 
 ## Build output
 
-`build html --target github` creates `bundle.github.html` and a `bundle.github/` companion directory. `build zip --target github` creates `bundle.github.zip`; `build github` is its alias. GitHub HTML supports `--resources reference` to link existing source files instead of copying them, and `--reference-base` to override the relative source directory. The default base is calculated from the output directory. ZIP always includes files and captures supported remote embeds. See [GitHub README output](contents/md/publishing.md#github-readme-output) for deployment paths, supported behavior and restrictions. MCP accepts `format: "html"` or `"zip"`, `target: "github"`, and for GitHub HTML, `resources: "reference"` and optional `reference_base` (default `..`, relative to `dist/`).
+`build` writes `<project>/build/index.html` and `zip` writes `<project>/dist/bundle.zip`. A named manifest (`<name>.dooc.yaml`) uses `build/<name>/` and `dist/<name>/`; an explicit output directory is used as it is. Only the artifact itself is replaced. The HTML folder can be served as it is: archives are written to a different folder, so serving it does not publish them. `build/` and `dist/` are not treated as project content.
 
-`check --github-output dist/bundle.github.html` (or `.zip`) checks the build manifest, source freshness, missing or modified generated files and reference location. Use `--only github` to select just that check; it requires `--github-output`. MCP exposes the same setting as `github_output`. Paths are relative to the manifest directory unless absolute. Remote resources are not downloaded during checking.
+`build --target github` creates `bundle.github.html` and a `bundle.github/` companion directory. `zip --target github` creates `bundle.github.zip`. GitHub HTML supports `--resources reference` to link existing source files instead of copying them, and `--reference-base` to override the relative source directory. The default base is calculated from the output directory. GitHub ZIP always includes files and captures supported remote embeds. See [GitHub README output](contents/md/publishing.md#github-readme-output) for deployment paths, supported behavior and restrictions. MCP accepts `format: "html"` or `"zip"`, `target: "github"`, and for GitHub HTML, `resources: "reference"` and optional `reference_base` (default `..`, relative to `dist/`).
+
+`check --github-output build/bundle.github.html` (or `dist/bundle.github.zip`) checks the build manifest, source freshness, missing or modified generated files and reference location. Use `--only github` to select just that check; it requires `--github-output`. MCP exposes the same setting as `github_output`. Paths are relative to the manifest directory unless absolute. Remote resources are not downloaded during checking.
 
 | Build                              | Opens                 | URL embeds                                 |
 | ---------------------------------- | --------------------- | ------------------------------------------ |
-| `build html`                       | Offline, as one file  | Stored in the file                         |
-| `build html --url_preview network` | As one file           | Fetched when opened                        |
-| `build html --mode live`           | With host integration | Fetched when opened                        |
-| `build zip`                        | After unpacking       | Saved in the ZIP; references are rewritten |
-| `export`                           | As a source workspace | Kept as URLs; nothing is downloaded        |
+| `build`                            | As one file           | Fetched when opened                        |
+| `build --url_preview embed`        | Offline, as one file  | Stored in the file                         |
+| `build --mode live`                | With host integration | Fetched when opened                        |
+| `zip`                              | As a source workspace | Kept as URLs; nothing is downloaded        |
+| `zip --url_preview embed`          | After unpacking       | Saved in the ZIP; references are rewritten |
 
-HTML and ZIP builds default to `--url_preview embed`; ZIP rejects `network` and local file references. Live HTML defaults to and requires `network`. An explicit `--mode static` requires `embed`. Modes apply only to HTML, and `--auth external` requires `--mode live`. The host connects live plugin requests through `window.dooc.setPluginTransport(request)`; the bundle provides no login UI or credentials. Build plugin modules must declare their plugins without a reader `setup` callback. See [Plugins](contents/md/plugins.md#plugins-in-a-build).
+`build` and `zip` default to `--url_preview network`: remote content is not downloaded unless you ask for it. GitHub ZIP always captures remote embeds and rejects `network`. Live HTML requires `network`. `--mode static` selects and requires `embed`. Modes apply only to HTML, and `--auth external` requires `--mode live`. The host connects live plugin requests through `window.dooc.setPluginTransport(request)`; the bundle provides no login UI or credentials. Build plugin modules must declare their plugins without a reader `setup` callback. See [Plugins](contents/md/plugins.md#plugins-in-a-build).
 
 Reader HTML also accepts `--download easy|normal|block` (MCP: `download`). The default `normal` hides download buttons and keeps right-click saving; `easy` adds buttons; `block` suppresses in-page downloads, context menus, save/print shortcuts, printed content and media dragging. It replaces `--easy-download`. This setting does not configure browser administrator policies or prevent saving through browser menus, native PDF viewers or developer tools. See [Download behavior](contents/md/publishing.md#choose-download-behavior).
 
-Only embeds are downloaded; ordinary links stay links. Snapshots require public HTTPS without credentials or redirects. HTML snapshots capture the server's HTML and declarative assets without executing the source site's JavaScript or signing in. HTML network mode fetches content when opened; remote text requires CORS permission from its server. `export` does not execute configuration or plugins, and does not download remote content.
+Only embeds are downloaded; ordinary links stay links. Snapshots require public HTTPS without credentials or redirects. HTML snapshots capture the server's HTML and declarative assets without executing the source site's JavaScript or signing in. HTML network mode fetches content when opened; remote text requires CORS permission from its server. `zip` without `--url_preview embed` does not execute configuration or plugins, and does not download remote content.
 
 A remote file is limited to 2 MiB, and a build to 64 MiB and 256 remote assets. A failed download stops the build before the previous output is replaced.
 
@@ -163,6 +164,6 @@ The root `dooc mcp` command has been removed. Replace it with the editor or read
 | Files   | `list_files`, `read_file`, `write_file`, `upload_file`, `update_files`                                 |
 | Library | `list_resources`                                                                                       |
 | Fonts   | `list_fonts`, `add_font`, `delete_font`                                                                |
-| Output  | `check`, `build`, `export`                                                                             |
+| Output  | `check`, `build`, `zip`                                                                                |
 | Git     | `git`                                                                                                  |
 | History | `history`                                                                                              |

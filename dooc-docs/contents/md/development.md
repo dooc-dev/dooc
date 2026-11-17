@@ -20,7 +20,7 @@ These tasks do not open `dooc-docs` or load sample plugins automatically. Use th
 mise run dooc --help
 mise run dooc editor run node --client --server --project dooc-docs
 mise run dooc reader run node --client --server --project dooc-docs
-mise run dooc build html dooc-docs/dooc.yaml
+mise run dooc build dooc-docs/dooc.yaml
 ```
 
 From inside `dooc-docs/`, `mise run dooc editor` or `mise run dooc reader` opens that directory's `dooc.yaml` with all components. These are aliases for `run node --all`; options such as `--port 4000` and `--project team.dooc.yaml` override the defaults.

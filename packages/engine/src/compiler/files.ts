@@ -54,7 +54,7 @@ import { textfilePath, writeTextfile } from "./textfile.js";
 import { themeNames, themeVariants } from "./theme-variants.js";
 
 // Project settings and translations have their own layout, outside file restructuring.
-const reserved = new Set(["docs.config.mjs", "node_modules", "dist", "locales"]);
+const reserved = new Set(["docs.config.mjs", "node_modules", "build", "dist", "locales"]);
 export const managedFile = (file: string): boolean =>
     localFile(file) &&
     !isManifestFile(file.split("/")[0] ?? "") &&

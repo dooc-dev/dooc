@@ -32,9 +32,9 @@ dooc reader run node --client --server --project sample/dooc-sample-project --re
 
 ```sh
 dooc check sample/dooc-sample-saas/dooc.yaml
-dooc build html sample/dooc-sample-saas/dooc.yaml build/saas --url_preview network
+dooc build sample/dooc-sample-saas/dooc.yaml build/saas
 dooc check sample/dooc-sample-project/dooc.yaml
-dooc build html sample/dooc-sample-project/dooc.yaml build/project --url_preview network
+dooc build sample/dooc-sample-project/dooc.yaml build/project
 ```
 
 To start your own document, copy one entire workspace directory. Change its title, replace the fictional data, and update records and figures together. Each sample includes its own schemas and assets, including any shared schema definitions; it has no dependency on files inside `dooc-docs` or the other sample.

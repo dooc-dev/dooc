@@ -26,7 +26,7 @@ The engine does not require the documentation or sample directories at runtime. 
 | Diagrams and media | Parse diagrams or select the matching previewer | Figures embedded in pages |
 | Theme and language variants | Select files for the requested theme and language | A consistent document variant |
 
-`dooc check` audits local inputs without fetching remote URLs. `dooc build html` compiles the document and, by default, downloads supported remote embeds into a standalone bundle. Use `--url_preview network` to retain network references. [Commands](contents/md/cli.md) documents the exact build options.
+`dooc check` audits local inputs without fetching remote URLs. `dooc build` compiles the document into one HTML file and, by default, keeps remote embeds as network references. Use `--url_preview embed` to download them into the file. [Commands](contents/md/cli.md) documents the exact build options.
 
 ## Editing a page
 

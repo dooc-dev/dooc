@@ -28,11 +28,11 @@ jobs:
           node contents/mjs/records.mjs dooc.yaml > records.json
           echo "containers=$(jq -c '[.[] | select(.type == "container" and .data.runtime == "Kubernetes")]' records.json)" >> "$GITHUB_OUTPUT"
       - name: Build the standalone document
-        run: dooc build html dooc.yaml site
+        run: dooc build dooc.yaml site
       - uses: actions/upload-artifact@v4
         with:
           name: docs
-          path: site/bundle.html
+          path: site/index.html
 
   deploy:
     needs: records

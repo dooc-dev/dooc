@@ -4,10 +4,10 @@ Choose whether the recipient needs a document snapshot, editable source or a liv
 
 | Recipient needs | Use | Result |
 | --- | --- | --- |
-| A document to read | `dooc build html` | `dist/bundle.html` |
-| Documentation inside a GitHub repository | `dooc build zip --target github` or `dooc build html --target github` | Markdown ZIP, or an HTML body with separate assets |
-| Editable source with captured remote embeds | `dooc build zip` | `dist/bundle.zip` |
-| The source files as authored | `dooc export` | `dist/bundle.zip`; remote references stay URLs |
+| A document to read or host | `dooc build` | `build/index.html` |
+| Documentation inside a GitHub repository | `dooc zip --target github` or `dooc build --target github` | Markdown ZIP, or an HTML body with separate assets |
+| The source files as authored | `dooc zip` | `dist/bundle.zip`; remote references stay URLs |
+| Editable source with captured remote embeds | `dooc zip --url_preview embed` | `dist/bundle.zip` |
 | A live editing or viewing application | [App runtimes](contents/md/runtimes.md) | Application assets and selected runtime components |
 | Agent access to a workspace | `dooc editor/reader run node --mcp`, or [Web MCP connections](contents/md/web-mcp.md) | An MCP connection with the selected access mode and transport |
 
@@ -21,23 +21,23 @@ Choose whether the recipient needs a document snapshot, editable source or a liv
 
 ```sh
 dooc check dooc.yaml
-dooc build html dooc.yaml dist
+dooc build
 ```
 
-The build commands create files; they do not deploy a site. Use [CI/CD](contents/md/ci.md) to repeat the validation and artifact steps in a pipeline.
+`build/` holds only the reading page, so that folder can be served as it is; `dooc zip` writes archives to `dist/` instead. The build commands create files; they do not deploy a site. Use [CI/CD](contents/md/ci.md) to repeat the validation and artifact steps in a pipeline.
 
 ## GitHub README output
 
 ```sh
-dooc build zip dooc.yaml dist --target github
-dooc build html dooc.yaml dist --target github --resources reference --url_preview network
+dooc zip --target github
+dooc build --target github --resources reference
 ```
 
-Choose `zip` or `html` independently of the `github` target. `build github` remains an alias for `build zip --target github`.
+The `github` target applies to both commands.
 
 ZIP output is `dist/bundle.github.zip`. The first manifest page becomes `README.md`; other documents live under `pages/`, record and library pages under `views/`, generated SVGs under `assets/`, and copied source files under `resources/`. ZIP builds always include local files and capture supported remote embeds. Extract to the destination and commit the reviewed files together, preserving their relative locations. ZIP rejects `--resources reference` and `--url_preview network`.
 
-HTML output is `dist/bundle.github.html`, a GitHub-compatible HTML body with all pages linked by local anchors. Its generated and copied assets live beside it under `dist/bundle.github/`. Keep that directory with the HTML. You can open the HTML for a static preview or paste its body into a README at the same directory level. This output has no reader runtime; code uses preformatted HTML, and authored Mermaid remains source code. Use ZIP's Markdown pages for GitHub's native fenced-code highlighting and Mermaid integration.
+HTML output is `build/bundle.github.html`, a GitHub-compatible HTML body with all pages linked by local anchors. Its generated and copied assets live beside it under `build/bundle.github/`. Keep that directory with the HTML. You can open the HTML for a static preview or paste its body into a README at the same directory level. This output has no reader runtime; code uses preformatted HTML, and authored Mermaid remains source code. Use ZIP's Markdown pages for GitHub's native fenced-code highlighting and Mermaid integration.
 
 The build does not replace an existing repository README or publish to GitHub. HTML companions are replaced only when the destination directory belongs to a previous dooc GitHub build.
 
@@ -50,7 +50,7 @@ References are relative to the HTML output directory. The default base is calcul
 ### Check a GitHub build
 
 ```sh
-dooc check dooc.yaml --github-output dist/bundle.github.html
+dooc check dooc.yaml --github-output build/bundle.github.html
 dooc check dooc.yaml --only github --github-output dist/bundle.github.zip
 ```
 
@@ -83,7 +83,7 @@ Graphth and schemath are not converted to Mermaid. In ZIP output, existing autho
 
 ### GitHub's boundary
 
-GitHub sanitizes README HTML. Authored `iframe`, scripts, custom page CSS, inline `svg`, form controls and dooc's JavaScript cannot be carried into a README. A hosted reader cannot be embedded there with an iframe. Link to a separately hosted reader or `build html` artifact when its interaction is required. See [GitHub's rendering pipeline](https://github.com/github/markup#github-markup) and [GFM's disallowed raw HTML](https://github.github.com/gfm/#disallowed-raw-html-extension-).
+GitHub sanitizes README HTML. Authored `iframe`, scripts, custom page CSS, inline `svg`, form controls and dooc's JavaScript cannot be carried into a README. A hosted reader cannot be embedded there with an iframe. Link to a separately hosted reader or `build` artifact when its interaction is required. See [GitHub's rendering pipeline](https://github.com/github/markup#github-markup) and [GFM's disallowed raw HTML](https://github.github.com/gfm/#disallowed-raw-html-extension-).
 
 An SVG file referenced by `img` can preserve shapes, text, internal styles and supported declarative animation. It does not preserve pointer interaction inside the image: graph hover highlighting, node links, dragging, zoom and pan do not operate in the README. Image rendering also restricts external dependencies. Local SVG dependencies are embedded; unavailable dependencies are reported. See [SVG image processing restrictions](https://www.w3.org/TR/SVG2/conform.html#secure-animated-mode).
 

@@ -9,8 +9,29 @@ import {
     writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { manifestFile } from "../../engine/src/compiler/manifest.js";
 import { textfilePath } from "../../engine/src/compiler/textfile.js";
 import type { ZipEntry } from "../../engine/src/compiler/zip.js";
+
+/**
+ * Default artifact path. HTML is published from build/ and archives are handed over from dist/,
+ * so serving the HTML folder never exposes an archive. Named manifests get their own subfolder.
+ */
+export const outputFile = (
+    root: string,
+    format: "html" | "zip",
+    github = false,
+    directory?: string,
+): string =>
+    join(
+        directory ??
+            join(
+                root,
+                format === "html" ? "build" : "dist",
+                manifestFile(root).replace(/\.?dooc\.yaml$/, ""),
+            ),
+        github ? `bundle.github.${format}` : format === "html" ? "index.html" : "bundle.zip",
+    );
 
 /** Install companions before the entry point, restoring the previous directory on failure. */
 export const writeBuildOutput = (

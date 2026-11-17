@@ -15,7 +15,7 @@ const definitions: Record<string, Omit<Tool, "run">> = {
     },
     build: {
         description:
-            "Build HTML or ZIP. target=github exports a GitHub HTML body with companion assets, or a Markdown ZIP. GitHub HTML supports resources=reference to link existing source files; copy is the default. format=github aliases zip with target=github. url_preview=embed captures remote embeds; HTML also supports network to preserve references. ZIP always includes files and captured URL content. Returns the artifact path, byte count, document count and warnings.",
+            "Build HTML into build/index.html or a ZIP into dist/bundle.zip; a named manifest uses build/<name>/ and dist/<name>/. target=github exports a GitHub HTML body with companion assets, or a Markdown ZIP. GitHub HTML supports resources=reference to link existing source files; copy is the default. format=github aliases zip with target=github. url_preview=embed captures remote embeds; HTML also supports network to preserve references. ZIP always includes files and captured URL content. Returns the artifact path, byte count, document count and warnings.",
         props: {
             format: { ...str, enum: ["html", "zip", "github"] },
             target: { ...str, enum: ["github"] },

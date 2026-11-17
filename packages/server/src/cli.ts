@@ -11,7 +11,7 @@ import {
     serializeManifest,
 } from "../../engine/src/core/content-metadata.js";
 import { prebuilt } from "./assets.js";
-import { writeBuildOutput } from "./build-output.js";
+import { outputFile, writeBuildOutput } from "./build-output.js";
 import { terminal } from "./terminal.js";
 
 process.env.NODE_ENV = prebuilt ? "production" : "development";
@@ -33,19 +33,18 @@ commands:
      --tls-cert <pem> --tls-key <pem>  serve HTTPS (run node)
      --shared <branch>                 record shared editor snapshots on a branch (run node --server)
   init [path]                          create a manifest in a directory or at a manifest path
-  build                                build the selected bundle (default <project>/dist)
-     html [dooc.yaml] [out-dir]        build bundle.html
-        --mode static|live             HTML snapshot or runtime plugin API
-        --auth external                host supplies live HTML authentication and transport
-        --source-url <url>             source directory URL for card copy links
-        --download easy|normal|block    HTML download behavior (default: normal)
-     zip [dooc.yaml] [out-dir]         build bundle.zip
-     github [dooc.yaml] [out-dir]      build bundle.github.zip (Markdown and SVG/assets)
-     --target github                  select GitHub output for html or zip
-     --resources copy|reference        copy assets or link existing files (GitHub HTML only)
-     --url_preview embed|network       URL handling (default: embed; ZIP requires embed)
+  build [dooc.yaml] [out-dir]          build the reading page: <project>/build/index.html
+     --mode static|live               HTML snapshot or runtime plugin API
+     --auth external                  host supplies live HTML authentication and transport
+     --source-url <url>               source directory URL for card copy links
+     --download easy|normal|block     HTML download behavior (default: normal)
+     --target github                  GitHub-compatible HTML body with companion assets
+     --resources copy|reference       copy assets or link existing files (GitHub HTML only)
+  zip [dooc.yaml] [out-dir]            archive the workspace: <project>/dist/bundle.zip
+     --target github                  Markdown and SVG/assets for GitHub
+  build and zip:
+     --url_preview network|embed      keep URL references (default) or capture their content
      --reader-plugins <module>         inject an external build plugin module
-  export [dooc.yaml] [out-dir]         collect source dependencies into bundle.zip
   check [dooc.yaml] [options]          JSON consistency report (check --help for options)
   plugin                               manage local plugins
      pack <built-dir> [zip]            package bundled JS and assets as a plugin ZIP
@@ -62,7 +61,7 @@ commands:
      --stdio                          connect a Desktop MCP host to a browser workspace
   help, --help, -h                     show this help
 
-Details: dooc <command> --help (editor, reader, init, build, export, check, plugin, font, self, relay).
+Details: dooc <command> --help (editor, reader, init, build, zip, check, plugin, font, self, relay).
 Default manifest: ./dooc.yaml. Named manifests (<name>.dooc.yaml) are also accepted.
 Paths use the current directory, or the repository root when --repo is given.
 Example: dooc reader run node --client --server --project dooc-docs --repo https://github.com/dooc-dev/dooc.git
@@ -80,7 +79,7 @@ const writeOut = (out: string, data: string | Buffer): void => {
 };
 
 const [command, ...args] = process.argv.slice(2);
-if (["editor", "reader", "self", "build"].includes(command ?? ""))
+if (["editor", "reader", "self", "build", "zip"].includes(command ?? ""))
     setDownloadProgressListener(terminal.download);
 switch (command) {
     case "editor":
@@ -383,40 +382,12 @@ Report:
         process.exitCode = report.exitCode;
         break;
     }
-    case "export": {
-        try {
-            const { positionals, values } = parseArgs({
-                args,
-                allowPositionals: true,
-                options: { help: { type: "boolean", short: "h" } },
-            });
-            if (values.help) {
-                console.log(`usage: dooc export [dooc.yaml] [out-dir]
-
-Collect the workspace's source dependencies into bundle.zip.
-Default manifest: ./dooc.yaml; named manifests are also accepted.
-Default output directory: <project>/dist.
-Configuration and plugins are not executed. Remote URLs stay unchanged; nothing is downloaded.
-
-options:
-  --help, -h  show this help`);
-                break;
-            }
-            if (positionals.length > 2)
-                throw new Error("export accepts a dooc.yaml path and an output directory");
-            const root = projectRoot(positionals[0]);
-            const out = join(resolve(positionals[1] ?? join(root, "dist")), "bundle.zip");
-            const { exportBundle } = await import("../../engine/src/compiler/export.js");
-            const { prepareDocumentSources } = await import("./remote-manifests.js");
-            await prepareDocumentSources(root);
-            writeOut(out, exportBundle(root));
-            console.log(out);
-        } catch (error) {
-            fail(error instanceof Error ? error.message : String(error));
-        }
+    case "export":
+        fail("dooc export was removed. Use dooc zip, which collects the same source files.");
         break;
-    }
-    case "build": {
+    case "build":
+    case "zip": {
+        const format = command === "zip" ? "zip" : "html";
         try {
             const { positionals, values } = parseArgs({
                 args,
@@ -435,72 +406,116 @@ options:
                 },
             });
             if (values.help) {
-                console.log(`usage: dooc build <html|zip|github> [dooc.yaml] [out-dir] [options]
+                console.log(
+                    format === "html"
+                        ? `usage: dooc build [dooc.yaml] [out-dir] [options]
 
-commands:
-  html [dooc.yaml] [out-dir]   build bundle.html
-     --mode static|live        HTML snapshot or runtime plugin API
-     --auth external           host supplies live HTML authentication and transport
-     --source-url <url>        HTTP(S) directory URL for card copy links
+Build the reading page as one HTML file: <project>/build/index.html.
+A named manifest (<name>.dooc.yaml) builds <project>/build/<name>/index.html.
+Serve the output folder as it is. Use dooc zip for an archive of the workspace.
+
+options:
+  --mode static|live           HTML snapshot or runtime plugin API
+  --auth external              host supplies live HTML authentication and transport
+  --source-url <url>           HTTP(S) directory URL for card copy links
                                paths are relative to dooc.yaml; overrides GitHub origin/HEAD
-     --download easy|normal|block
+  --download easy|normal|block
                                easy: add resource download buttons; normal: browser defaults
                                block: suppress in-page downloads (not browser policy)
                                default: normal
-  zip [dooc.yaml] [out-dir]    build bundle.zip
-  github [dooc.yaml] [out-dir] alias for zip --target github
-
-options:
-  --target github              GitHub-compatible HTML body or Markdown ZIP
+  --target github              GitHub-compatible HTML body: bundle.github.html and bundle.github/
   --resources copy|reference   GitHub HTML: copy files (default) or reference existing sources
   --reference-base <path>      path from the HTML output directory to the manifest directory
-                              reference mode only; default: relative path from out-dir
-  --url_preview embed|network  URL handling (default: embed; ZIP: embed; live HTML: network)
-    embed                     snapshot URL content and assets into the selected artifact
-    network                   preserve URL references without downloading them at build time
+                               reference mode only; default: relative path from out-dir
+  --url_preview network|embed  URL handling (default: network; static HTML: embed)
+    network                    preserve URL references without downloading them at build time
+    embed                      snapshot URL content and assets into the HTML
   --reader-plugins <module>    inject trusted build plugins
-  --help, -h                  show this help
+  --help, -h                   show this help
 
 Output:
-  A bundle is dooc.yaml and its managed content. Builds only the selected format.
-  Default output directory: <project>/dist. Source files are never rewritten.
-  Use dooc export for source dependencies without plugin execution or remote downloads.
+  Only the HTML entry point is replaced; other files in the output folder are left alone.
+  Source files are never rewritten.
 
 HTML modes:
   static  resolve enabled local plugins using build-time credentials and embed their views
           installed, enabled packages are discovered automatically
   live    expose window.dooc.setPluginTransport(request), without a login UI or credentials
   Examples:
-    dooc build html --mode static
-    dooc build html --mode live --auth external
+    dooc build --mode static
+    dooc build --mode live --auth external
 
 URL handling:
-  HTML embed: no network when opened. HTML network: fetch URLs when opened (text requires CORS).
-  ZIP always includes local files and captured URL content, with rewritten references.
+  network: fetch URLs when the page is opened (text requires CORS). embed: no network when opened.
   GitHub: export static pages and SVG images; network previews become links, without reader JS.
   Only embedded references such as ![](url) are downloaded; ordinary hyperlinks remain links.
   Snapshots use public HTTPS without credentials or redirects. Static HTML captures the server's
   HTML and declarative assets; it does not execute the source site's JavaScript or perform login.
   Remote files are limited to 2 MiB each and 64 MiB / 256 assets total.
-  A failed download or invalid source stops the build before replacing the selected artifact.
-  Use HTML --url_preview network or dooc export to preserve remote references without downloads.`);
+  A failed download or invalid source stops the build before replacing the artifact.`
+                        : `usage: dooc zip [dooc.yaml] [out-dir] [options]
+
+Archive the workspace: <project>/dist/bundle.zip.
+A named manifest (<name>.dooc.yaml) writes <project>/dist/<name>/bundle.zip.
+
+options:
+  --url_preview network|embed  URL handling (default: network; GitHub: embed)
+    network                    collect dooc.yaml and its source files as authored
+                               configuration and plugins are not executed; nothing is downloaded
+    embed                      also capture embedded URL content and rewrite its references
+  --target github              Markdown pages and SVG/assets for GitHub: bundle.github.zip
+  --reader-plugins <module>    inject trusted build plugins (embed and GitHub)
+  --help, -h                   show this help
+
+Output:
+  Source files are never rewritten. The archive is kept apart from dooc build's HTML folder,
+  so serving that folder does not publish it.
+
+URL handling:
+  Only embedded references such as ![](url) are downloaded; ordinary hyperlinks remain links.
+  Snapshots use public HTTPS without credentials or redirects.
+  Remote files are limited to 2 MiB each and 64 MiB / 256 assets total.
+  A failed download or invalid source stops the build before replacing the artifact.`,
+                );
                 break;
             }
-            const [format, rootArg, outArg] = positionals;
-            if (format !== "html" && format !== "zip" && format !== "github")
-                throw new Error("build format must be html | zip | github");
-            if (positionals.length > 3)
-                throw new Error(`build ${format} accepts a dooc.yaml path and an output directory`);
-            const urlPreview = values.url_preview ?? (values.mode === "live" ? "network" : "embed");
+            const [rootArg, outArg] = positionals;
+            // The format used to be a subcommand; a manifest path can never have these names.
+            if (rootArg === "html" || rootArg === "zip" || rootArg === "github")
+                throw new Error(
+                    rootArg === "html"
+                        ? "dooc build no longer takes a format: use dooc build [dooc.yaml] [out-dir]"
+                        : `dooc build ${rootArg} was replaced by dooc zip${rootArg === "github" ? " --target github" : ""}`,
+                );
+            if (positionals.length > 2)
+                throw new Error(`${command} accepts a dooc.yaml path and an output directory`);
+            if (values.target !== undefined && values.target !== "github")
+                throw new Error("--target must be github");
+            const github = values.target === "github";
+            // Remote content is left alone unless the artifact cannot work without a snapshot.
+            const urlPreview =
+                values.url_preview ??
+                (values.mode === "static" || (format === "zip" && github) ? "embed" : "network");
             if (urlPreview !== "embed" && urlPreview !== "network")
-                throw new Error("--url_preview must be embed | network");
+                throw new Error("--url_preview must be network | embed");
             const root = projectRoot(rootArg);
-            const github = format === "github" || values.target === "github";
-            const directory = resolve(outArg ?? join(root, "dist"));
-            const out = join(
-                directory,
-                `bundle.${github ? "github." : ""}${format === "github" ? "zip" : format}`,
-            );
+            const out = outputFile(root, format, github, outArg && resolve(outArg));
+            if (format === "zip" && !github && urlPreview === "network") {
+                if (
+                    Object.entries(values).some(
+                        ([name, value]) => name !== "url_preview" && value !== undefined,
+                    )
+                )
+                    throw new Error(
+                        "These options need dooc zip --url_preview embed or --target github",
+                    );
+                const { exportBundle } = await import("../../engine/src/compiler/export.js");
+                const { prepareDocumentSources } = await import("./remote-manifests.js");
+                await prepareDocumentSources(root);
+                writeOut(out, exportBundle(root));
+                console.log(out);
+                break;
+            }
             const { buildBundle } = await import("./build.js");
             const bundle = await buildBundle(root, {
                 format,
@@ -509,7 +524,7 @@ URL handling:
                 referenceBase:
                     values["reference-base"] ??
                     (values.resources === "reference"
-                        ? relative(directory, root).replaceAll("\\", "/") || "."
+                        ? relative(dirname(out), root).replaceAll("\\", "/") || "."
                         : undefined),
                 urlPreview,
                 mode: values.mode as "static" | "live" | undefined,

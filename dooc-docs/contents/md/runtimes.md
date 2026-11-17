@@ -122,7 +122,7 @@ npm install
 node start.mjs --project /path/to/documents --port 4000
 ```
 
-For an unreleased source build, install the matching local package instead of the published package. A build-time `--project` or `--reader-plugins` path is stored as an absolute path in the launcher; provide a run-time override when deploying elsewhere. Node client-only builds contain a `client/` directory of static assets and no launcher; host that directory at `/client/`. `dooc build html` and `dooc build zip` still produce document bundles; the component build commands produce applications.
+For an unreleased source build, install the matching local package instead of the published package. A build-time `--project` or `--reader-plugins` path is stored as an absolute path in the launcher; provide a run-time override when deploying elsewhere. Node client-only builds contain a `client/` directory of static assets and no launcher; host that directory at `/client/`. `dooc build` and `dooc zip` still produce document bundles; the component build commands produce applications.
 
 ## Separate server and client
 

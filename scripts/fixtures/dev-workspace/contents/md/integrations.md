@@ -35,8 +35,8 @@ The editor task starts its local MCP endpoint along with the client and workspac
 From the repository checkout, export the generated workspace or build a static reader:
 
 ```sh
-mise run dooc export build/dev/editor/dooc.yaml build/playground-source
-mise run dooc build html build/dev/editor/dooc.yaml build/playground-reader
+mise run dooc zip build/dev/editor/dooc.yaml build/playground-source
+mise run dooc build build/dev/editor/dooc.yaml build/playground-reader
 ```
 
 The source export keeps the local files, themes, translations, font, grammar, and editor-tool configuration. External plugin URLs stay references unless an explicitly configured build plugin supplies snapshots. [Publishing](contents/md/publishing.md) covers static, live, Node, and browser outputs.

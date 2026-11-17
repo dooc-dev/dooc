@@ -29,7 +29,7 @@ This directory is a complete document workspace. From the repository root:
 ```sh
 dooc editor run node --client --server --project sample/dooc-sample-project/dooc.yaml
 dooc check sample/dooc-sample-project/dooc.yaml
-dooc build html sample/dooc-sample-project/dooc.yaml build/project
+dooc build sample/dooc-sample-project/dooc.yaml build/project
 ```
 
-If you copy this directory out of the repository, run `dooc editor run node --client --server`, `dooc check` and `dooc build html` from the copied folder instead.
+If you copy this directory out of the repository, run `dooc editor run node --client --server`, `dooc check` and `dooc build` from the copied folder instead.
