@@ -26,13 +26,14 @@ import { assertNotIgnored, ignoredFiles } from "./ignored-files.js";
 import { siteContentLanguages, translationFile } from "./locales.js";
 import { manifestFile, readManifest } from "./manifest.js";
 import { readTextfile, textfilePath } from "./textfile.js";
-import { themeVariants } from "./theme-variants.js";
+import { siteThemes, themeVariants } from "./theme-variants.js";
 import { type ZipEntry, zip } from "./zip.js";
 
 /** Collect source dependencies without executing configuration, plugins or remote requests. */
 export const exportEntries = (root: string, file = manifestFile(root)): ZipEntry[] => {
     const manifest = readManifest(root, file);
     if (manifest.errors.length) throw new Error(manifest.errors.join("\n"));
+    const themes = siteThemes(root, manifest);
     const entries = new Map<string, ZipEntry>();
     const origins = new Map<string, string>();
     const add = (file: string, origin?: string): void => {
@@ -49,7 +50,8 @@ export const exportEntries = (root: string, file = manifestFile(root)): ZipEntry
         if (!statSync(path).isFile()) throw new Error(`Expected a regular source file: ${file}`);
         entries.set(file, { name: file, data: readFileSync(path) });
         if (origin) origins.set(file, origin);
-        for (const variant of Object.values(themeVariants(root, file))) add(variant, origin);
+        for (const variant of Object.values(themeVariants(root, file, themes, manifest)))
+            add(variant, origin);
     };
     const optional = (file: string, origin?: string) => {
         if (existsSync(textfilePath(root, file)) && !ignoredFiles(root, [file]).has(file))

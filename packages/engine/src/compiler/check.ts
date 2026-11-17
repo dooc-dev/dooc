@@ -356,7 +356,7 @@ export const checkSite = (root: string, options: CheckOptions = {}): CheckReport
             const original = read(file, context);
             let variants: Record<string, string>;
             try {
-                variants = themeVariants(report.root, file, report.themes);
+                variants = themeVariants(report.root, file, report.themes, manifest);
             } catch (error) {
                 add("FILE_UNREADABLE", "error", file, messageOf(error), context);
                 return;

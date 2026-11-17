@@ -28,12 +28,13 @@ export const siteThemes = (root: string, manifest: ParsedManifest = readManifest
 export const themeVariants = (
     root: string,
     file: string,
-    themes = siteThemes(root),
+    themes?: string[],
+    manifest = readManifest(root),
 ): Record<string, string> => {
-    const directory = manifestDirectory(sourceOrigin(readManifest(root), file));
+    const directory = manifestDirectory(sourceOrigin(manifest, file));
     const source = file.slice(directory.length);
     if (!localFile(file) || source.startsWith("themes/")) return {};
-    const variants = themes
+    const variants = (themes ?? siteThemes(root, manifest))
         .map((theme): [string, string] => [theme, directory + themeVariantFile(source, theme)])
         .filter(([, path]) => existsSync(textfilePath(root, path)));
     const ignored = ignoredFiles(

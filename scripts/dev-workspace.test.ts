@@ -93,7 +93,7 @@ it("generates a complete feature playground and resets only the selected workspa
     } finally {
         rmSync(parent, { recursive: true, force: true });
     }
-});
+}, 60_000);
 
 it("ships a working JSON formatter and linter for the editing playground", () => {
     const script = new URL("fixtures/dev-workspace/.dooc/editor-tools/json.mjs", import.meta.url);

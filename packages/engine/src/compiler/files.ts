@@ -425,7 +425,7 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
     for (const [source, target] of [...moves]) {
         const directory = manifestDirectory(sourceOrigin(manifest, source));
         for (const [theme, file] of Object.entries(
-            themeVariants(root, source, themeNames(join(root, directory))),
+            themeVariants(root, source, themeNames(join(root, directory)), manifest),
         ))
             moves.set(
                 file,

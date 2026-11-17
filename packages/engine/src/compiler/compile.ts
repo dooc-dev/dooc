@@ -195,6 +195,7 @@ const resolveFiles = (
     textfiles?: ReadonlyMap<string, string>,
     previews?: PreviewSettings,
     themes?: string[],
+    manifest = root ? readManifest(root) : undefined,
 ): ParsedFile => {
     if (
         !f.refs.terms.length &&
@@ -208,7 +209,7 @@ const resolveFiles = (
     const termFiles = new Set(f.refs.terms);
     const figureFiles = new Set(f.figureFiles);
     const docLinks = [...f.docLinks];
-    const subformats = root ? readManifest(root).subformats : undefined;
+    const subformats = manifest?.subformats;
     const referencedFiles = new Set(f.referencedFiles);
     const resolveItem = (item: ListItem): ListItem =>
         typeof item === "string"
@@ -225,7 +226,7 @@ const resolveFiles = (
                   : undefined;
         let variants: Record<string, string> = {};
         try {
-            if (file && root) variants = themeVariants(root, file, themes);
+            if (file && root) variants = themeVariants(root, file, themes, manifest);
         } catch (error) {
             errors.push(`${file}: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -528,7 +529,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                     if (!icon)
                         throw new Error("expected an SVG with a viewBox or width and height");
                     const variants = Object.entries(
-                        manifest.themeIcons ?? themeVariants(root, iconFile, themes),
+                        manifest.themeIcons ?? themeVariants(root, iconFile, themes, manifest),
                     );
                     if (variants.length)
                         iconVariants = Object.fromEntries(
@@ -612,7 +613,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                         siteErrors.push(`${file}: ${error}`);
                     }
                 }
-                parsed = resolveFiles(parsed, root, undefined, previews, themes);
+                parsed = resolveFiles(parsed, root, undefined, previews, themes, manifest);
                 files.push({ doc: toDoc(id, parent, rel, parsed, language, title), parsed });
             }
             for (const id of onDisk) {
