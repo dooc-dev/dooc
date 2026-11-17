@@ -1,5 +1,16 @@
 import assert from "node:assert/strict";
 
+async function activatePane(page, pane) {
+    await page
+        .locator('select[data-workspace-pane][data-active="true"]:enabled')
+        .waitFor({ state: "attached" });
+    await pane.click({ position: { x: 20, y: 90 } });
+    const id = await pane.getAttribute("data-pane-id");
+    await page
+        .locator(`select[data-workspace-pane=${JSON.stringify(id)}][data-active="true"]:enabled`)
+        .waitFor({ state: "attached" });
+}
+
 async function selectWorkspace(page, value, pane) {
     const select = page.locator(
         pane === undefined
@@ -249,17 +260,17 @@ export async function testBrowserWorkspace(page, url) {
     const rightSelector = page.locator(`select[data-workspace-pane=${JSON.stringify(secondPane)}]`);
     assert.equal(await page.locator(".workspace-select").count(), 2);
     assert.equal(await page.locator(".workspace-picker").count(), 2);
-    await first.click({ position: { x: 20, y: 90 } });
+    await activatePane(page, first);
     await page.evaluate(() => {
         const toggle = document.getElementById("opt-autosave");
         if (toggle?.checked) toggle.click();
     });
     await editor.fill("# Unsaved left\n\nKeep branch main draft.\n");
-    await second.click({ position: { x: 20, y: 90 } });
+    await activatePane(page, second);
     await page.waitForFunction(
         () => !document.querySelector("#cm .cm-content")?.textContent.includes("Unsaved left"),
     );
-    await first.click({ position: { x: 20, y: 90 } });
+    await activatePane(page, first);
     await page.waitForFunction(() =>
         document.querySelector("#cm .cm-content")?.textContent.includes("Unsaved left"),
     );
@@ -320,7 +331,7 @@ export async function testBrowserWorkspace(page, url) {
             document.querySelector('select[data-workspace-pane][data-active="true"]')?.dataset
                 .change === "added",
     );
-    await first.click({ position: { x: 20, y: 90 } });
+    await activatePane(page, first);
     await page.waitForFunction(() =>
         document.querySelector("#cm .cm-content")?.textContent.includes("Unsaved left"),
     );
@@ -517,7 +528,7 @@ export async function testBrowserWorkspace(page, url) {
         featureId,
     );
     assert.equal(await selector.locator('option[data-change="added"]').count(), 1);
-    await second.click({ position: { x: 20, y: 90 } });
+    await activatePane(page, second);
     await page.waitForFunction(
         (pane) =>
             document.querySelector('select[data-workspace-pane][data-active="true"]')?.dataset
@@ -546,7 +557,7 @@ export async function testBrowserWorkspace(page, url) {
     assert.equal(await first.getAttribute("data-workspace"), featureId);
     assert.equal(await second.getAttribute("data-workspace"), featureId);
     assert.equal(await selector.getAttribute("data-workspace-pane"), firstPane);
-    await second.click({ position: { x: 20, y: 90 } });
+    await activatePane(page, second);
     await page.waitForFunction(
         (pane) =>
             document.querySelector('select[data-workspace-pane][data-active="true"]')?.dataset
