@@ -7,17 +7,14 @@ import { compileSite } from "../../engine/src/compiler/compile.js";
 import { exportEntries } from "../../engine/src/compiler/export.js";
 import { filesSnapshot } from "../../engine/src/compiler/files.js";
 import { loadProjectFonts } from "../../engine/src/compiler/fonts.js";
-import { githubEntries } from "../../engine/src/compiler/github.js";
-import { githubHtml, githubManifest } from "../../engine/src/compiler/github-output.js";
 import { manifestFile, projectRoot, readManifest } from "../../engine/src/compiler/manifest.js";
 import { prepareStoredVersion } from "../../engine/src/compiler/stored-versions.js";
 import { textfilePath } from "../../engine/src/compiler/textfile.js";
 import { versionInput } from "../../engine/src/compiler/version-input.js";
-import { type ZipEntry, zip } from "../../engine/src/compiler/zip.js";
+import { zip } from "../../engine/src/compiler/zip.js";
 import { walkBlocks } from "../../engine/src/core/blocks.js";
 import { selectCodeGrammars } from "../../engine/src/core/code-grammars.js";
 import { parseVersionConfig } from "../../engine/src/core/document-version.js";
-import { contentLanguageCode } from "../../engine/src/core/language.js";
 import { type PreviewSettings, parsePreviewSettings } from "../../engine/src/core/previewers.js";
 import { loadBuildPlugins, pluginSnapshot } from "./build-plugins.js";
 import { createDocumentVersions } from "./document-versions.js";
@@ -27,11 +24,7 @@ import { prepareDocumentSources } from "./remote-manifests.js";
 import { gitHeadFile, sourceFileBase } from "./workspace.js";
 
 export interface BuildOptions {
-    format: "html" | "zip" | "github";
-    target?: "github";
-    resources?: "copy" | "reference";
-    /** Relative path from the GitHub HTML output directory to the manifest directory. */
-    referenceBase?: string;
+    format: "html" | "zip";
     urlPreview?: "embed" | "network";
     mode?: "static" | "live";
     auth?: "external";
@@ -48,8 +41,6 @@ export interface BuildOptions {
 export interface BuildResult {
     data: string | Buffer;
     docs: number;
-    /** GitHub HTML companion files, relative to the output directory. */
-    files?: ZipEntry[];
     warnings?: string[];
     version?: string;
     revision?: string;
@@ -60,34 +51,7 @@ export { writeBuildOutput } from "./build-output.js";
 
 /** Build one artifact from the manifest and its managed content. */
 export const buildBundle = async (root: string, options: BuildOptions): Promise<BuildResult> => {
-    const format = options.format === "github" ? "zip" : options.format;
-    const githubTarget = options.format === "github" || options.target === "github";
-    if (options.target !== undefined && options.target !== "github")
-        throw new Error("build target must be github");
-    if (options.resources !== undefined && !["copy", "reference"].includes(options.resources))
-        throw new Error("resources must be copy | reference");
-    if (!githubTarget && (options.resources !== undefined || options.referenceBase !== undefined))
-        throw new Error("Resource reference options apply to GitHub builds only");
-    const resources = options.resources ?? "copy";
-    if (format === "zip" && resources !== "copy")
-        throw new Error("ZIP builds include local files; resource references require GitHub HTML");
-    const referenceBase = options.referenceBase ?? "..";
-    if (
-        typeof referenceBase !== "string" ||
-        !referenceBase ||
-        /[\\\0\r\n:?#]/.test(referenceBase) ||
-        referenceBase.startsWith("/")
-    )
-        throw new Error("referenceBase must be a relative directory path");
-    if (options.referenceBase !== undefined && resources !== "reference")
-        throw new Error("referenceBase requires resources=reference");
-    if (
-        githubTarget &&
-        [options.mode, options.auth, options.sourceUrl, options.download].some(
-            (value) => value !== undefined,
-        )
-    )
-        throw new Error("Reader HTML options do not apply to GitHub output");
+    const format = options.format;
     if (options.download !== undefined && !["easy", "normal", "block"].includes(options.download))
         throw new Error("download must be easy | normal | block");
     if (options.download !== undefined && format !== "html")
@@ -105,8 +69,7 @@ export const buildBundle = async (root: string, options: BuildOptions): Promise<
         throw new Error("Static HTML requires embedded resources");
     if (options.mode === "live" && urlPreview !== "network")
         throw new Error("Live HTML requires network resources");
-    if (format !== "html" && format !== "zip")
-        throw new Error("build format must be html | zip | github");
+    if (format !== "html" && format !== "zip") throw new Error("build format must be html | zip");
     if (urlPreview !== "embed" && urlPreview !== "network")
         throw new Error("--url_preview must be embed | network");
     if (format === "zip" && urlPreview !== "embed")
@@ -124,7 +87,6 @@ export const buildBundle = async (root: string, options: BuildOptions): Promise<
     };
     await prepareDocumentSources(root);
     let entries = exportEntries(root);
-    const authoredEntries = entries;
     const versionConfig = readManifest(root).version;
     if (
         versionConfig &&
@@ -164,22 +126,9 @@ export const buildBundle = async (root: string, options: BuildOptions): Promise<
             ? new Map(entries.map(({ name, data }) => [name, data]))
             : undefined;
     let compiled = validate(root);
-    const renderGithub = (path: string) =>
-        githubEntries(
-            [
-                { site: compiled },
-                ...(compiled.contentLanguages ?? [])
-                    .filter((locale) => locale !== contentLanguageCode(compiled.defaultLang))
-                    .map((locale) => ({ site: validate(path, locale), locale })),
-            ],
-            entries,
-            authoredEntries,
-            { html: format === "html", resources, referenceBase },
-        );
-    let github: ReturnType<typeof githubEntries> | undefined;
     if (urlPreview === "embed") {
         const plugins =
-            (format !== "zip" || githubTarget) && !options.pluginTransport
+            format !== "zip" && !options.pluginTransport
                 ? await loadBuildPlugins(root, options.pluginModule)
                 : undefined;
         try {
@@ -200,31 +149,9 @@ export const buildBundle = async (root: string, options: BuildOptions): Promise<
                 writeFileSync(path, entry.data);
             }
             compiled = validate(projectRoot(join(temp, manifestFile(root))));
-            if (githubTarget) github = renderGithub(projectRoot(join(temp, manifestFile(root))));
         } finally {
             rmSync(temp, { recursive: true, force: true });
         }
-    }
-    if (githubTarget) {
-        github ??= renderGithub(root);
-        const html = format === "html" ? githubHtml(github.entries) : undefined;
-        const files = html
-            ? [{ name: "bundle.github.html", data: Buffer.from(html.data) }, ...html.files]
-            : github.entries;
-        const metadata = githubManifest(authoredEntries, files, {
-            format,
-            resources,
-            referenceBase,
-        });
-        return {
-            data: html ? html.data : zip([...files, metadata]),
-            ...(html ? { files: [...html.files, metadata] } : {}),
-            warnings: github.warnings,
-            docs: compiled.docs.length,
-            version,
-            revision,
-            commitVersion: stored?.commit,
-        };
     }
     if (format === "zip")
         return {

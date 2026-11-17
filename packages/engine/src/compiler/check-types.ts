@@ -1,14 +1,12 @@
-export const CHECK_KINDS = ["render", "languages", "themes", "github"] as const;
+export const CHECK_KINDS = ["render", "languages", "themes"] as const;
 export type CheckKind = (typeof CHECK_KINDS)[number];
 
 export interface CheckOptions {
-    /** Defaults to source checks; githubOutput enables the artifact check. Manifest validity is always checked. */
+    /** Defaults to every check. Manifest validity is always checked. */
     only?: readonly CheckKind[];
     /** Permit identical SVG files across themes, including symlinks and byte copies. */
     allowSharedSvg?: boolean;
     warningsAsErrors?: boolean;
-    /** Built ZIP or HTML path, relative to the manifest directory unless absolute. */
-    githubOutput?: string;
 }
 
 export type CheckCode =
@@ -34,12 +32,7 @@ export type CheckCode =
     | "THEME_VARIANT_MISSING"
     | "THEME_VARIANT_ORPHAN"
     | "THEME_CONTENT_IDENTICAL"
-    | "REMOTE_UNCHECKED"
-    | "GITHUB_OUTPUT_INVALID"
-    | "GITHUB_OUTPUT_CHANGED"
-    | "GITHUB_SOURCE_CHANGED"
-    | "GITHUB_REFERENCE_INVALID"
-    | "GITHUB_FILE_MISSING";
+    | "REMOTE_UNCHECKED";
 
 export interface CheckDiagnostic {
     check: CheckKind | "config";

@@ -157,9 +157,6 @@ it.each([
     await expect(buildBundle(root, { format: "zip", download })).rejects.toThrow(
         "HTML builds only",
     );
-    await expect(buildBundle(root, { format: "html", target: "github", download })).rejects.toThrow(
-        "Reader HTML options",
-    );
 });
 
 it("rejects invalid download modes before building", async () => {
@@ -367,12 +364,8 @@ it.each([
     }
 });
 
-it.each([
-    { format: "zip" },
-    { format: "zip", target: "github" },
-    { format: "github" },
-] as const)("rejects network resources in $format ZIP output before building", async (options) => {
-    await expect(buildBundle(root, { ...options, urlPreview: "network" })).rejects.toThrow(
+it("rejects network resources in a built ZIP before building", async () => {
+    await expect(buildBundle(root, { format: "zip", urlPreview: "network" })).rejects.toThrow(
         "ZIP builds require embedded URL resources",
     );
     expect(fetchPublicFile).not.toHaveBeenCalled();

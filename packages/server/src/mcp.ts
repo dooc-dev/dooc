@@ -1,5 +1,5 @@
 // Node adapters for the shared MCP tool catalog and JSON-RPC dispatcher.
-import { dirname, relative } from "node:path";
+import { relative } from "node:path";
 import { createInterface } from "node:readline";
 import type { CompileOptions } from "../../engine/src/compiler/compile.js";
 import { addProjectFont } from "../../engine/src/compiler/fonts.js";
@@ -28,18 +28,11 @@ export const createTools = (root: string, options: McpOptions = {}) => {
     const operations: Record<string, (args: Args) => unknown> = {
         ...createMcpOperations(root, options),
         build: async (a) => {
-            const github = a.format === "github" || a.target === "github";
-            if (a.format !== "html" && a.format !== "zip" && a.format !== "github")
-                throw new Error("build format must be html | zip | github");
-            const file = relative(
-                root,
-                outputFile(root, a.format === "html" ? "html" : "zip", github),
-            ).replaceAll("\\", "/");
+            if (a.format !== "html" && a.format !== "zip")
+                throw new Error("build format must be html | zip");
+            const file = relative(root, outputFile(root, a.format)).replaceAll("\\", "/");
             const bundle = await buildBundle(root, {
-                format: a.format as "html" | "zip" | "github",
-                target: a.target as "github" | undefined,
-                resources: a.resources as "copy" | "reference" | undefined,
-                referenceBase: a.reference_base as string | undefined,
+                format: a.format,
                 urlPreview: (a.url_preview ?? (a.mode === "live" ? "network" : "embed")) as
                     | "embed"
                     | "network",
@@ -60,9 +53,6 @@ export const createTools = (root: string, options: McpOptions = {}) => {
                 ...(bundle.version ? { version: bundle.version } : {}),
                 ...(bundle.revision ? { revision: bundle.revision } : {}),
                 ...(bundle.warnings?.length ? { warnings: bundle.warnings } : {}),
-                ...(bundle.files
-                    ? { files: bundle.files.map(({ name }) => `${dirname(file)}/${name}`) }
-                    : {}),
                 url_preview: a.url_preview ?? (a.mode === "live" ? "network" : "embed"),
             };
         },

@@ -15,16 +15,9 @@ const definitions: Record<string, Omit<Tool, "run">> = {
     },
     build: {
         description:
-            "Build HTML into build/index.html or a ZIP into dist/bundle.zip; a named manifest uses build/<name>/ and dist/<name>/. target=github exports a GitHub HTML body with companion assets, or a Markdown ZIP. GitHub HTML supports resources=reference to link existing source files; copy is the default. format=github aliases zip with target=github. url_preview=embed captures remote embeds; HTML also supports network to preserve references. ZIP always includes files and captured URL content. Returns the artifact path, byte count, document count and warnings.",
+            "Build HTML into build/index.html or a ZIP into dist/bundle.zip; a named manifest uses build/<name>/ and dist/<name>/. url_preview=embed captures remote embeds; HTML also supports network to preserve references. ZIP always includes files and captured URL content. Returns the artifact path, byte count, document count and warnings.",
         props: {
-            format: { ...str, enum: ["html", "zip", "github"] },
-            target: { ...str, enum: ["github"] },
-            resources: { ...str, enum: ["copy", "reference"] },
-            reference_base: {
-                ...str,
-                description:
-                    "Relative path from the GitHub HTML output directory to sources; reference mode only (default: ..).",
-            },
+            format: { ...str, enum: ["html", "zip"] },
             url_preview: { ...str, enum: ["embed", "network"] },
             mode: { ...str, enum: ["static", "live"] },
             auth: { ...str, enum: ["external"] },
@@ -175,16 +168,11 @@ const definitions: Record<string, Omit<Tool, "run">> = {
     },
     check: {
         description:
-            "Check rendering, translations and theme variants. github_output also checks a GitHub artifact, source fingerprints and reference location offline. Returns the CLI CheckReport plus the legacy errors list.",
+            "Check rendering, translations and theme variants. Returns the CLI CheckReport plus the legacy errors list.",
         props: {
             only: { type: "array", items: { ...str, enum: CHECK_KINDS } },
             allow_shared_svg: bool,
             warnings_as_errors: bool,
-            github_output: {
-                ...str,
-                description:
-                    "GitHub ZIP or HTML artifact to check against current sources; relative to manifest unless absolute.",
-            },
         },
     },
     add_doc: {

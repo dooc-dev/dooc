@@ -16,8 +16,6 @@ Use the explicit `build`/`run` form to choose components and runtimes. [App runt
 | `dooc check [dooc.yaml]` | Print a JSON consistency report |
 | `dooc build [dooc.yaml] [out-dir]` | Build the reading page as one file: `build/index.html` |
 | `dooc zip [dooc.yaml] [out-dir]` | Archive the workspace: `dist/bundle.zip` |
-| `dooc build [dooc.yaml] [out-dir] --target github` | Build a GitHub HTML body with companion assets |
-| `dooc zip [dooc.yaml] [out-dir] --target github` | Build `bundle.github.zip` with GitHub reading pages and separate SVG/assets |
 | `dooc editor run node --mcp --mcp-transport stdio` | Serve editable workspace operations over stdio |
 | `dooc reader run node --mcp --mcp-transport stdio` | Serve read-only published content over stdio |
 | `dooc relay --stdio` | Connect a Desktop MCP host to a browser workspace |
@@ -44,7 +42,7 @@ Explicit application commands require at least one of `--client`, `--server`, or
 | `editor/reader … node` | `--reader-plugins <module>` | Load an explicit workspace plugin module |
 | `editor/reader … node` | `--server-url <ws-url>` | Set the client's workspace connection |
 | `build`, `zip` | `--reader-plugins <module>` | Load a build plugin module |
-| `build`, `zip` | `--url_preview network\|embed` | Keep URL references (default) or capture remote embeds; static HTML and GitHub ZIP use `embed` |
+| `build`, `zip` | `--url_preview network\|embed` | Keep URL references (default) or capture remote embeds; static HTML uses `embed` |
 | `build` | `--mode static\|live` | Snapshot plugin cards or keep them fetching |
 | `build` | `--auth external` | Use host authentication for live HTML |
 | `build` | `--source-url <url>` | Set the base URL for record copy links |
@@ -127,10 +125,6 @@ The check runs offline: remote content is not fetched or verified, and is report
 
 `build` writes `<project>/build/index.html` and `zip` writes `<project>/dist/bundle.zip`. A named manifest (`<name>.dooc.yaml`) uses `build/<name>/` and `dist/<name>/`; an explicit output directory is used as it is. Only the artifact itself is replaced. The HTML folder can be served as it is: archives are written to a different folder, so serving it does not publish them. `build/` and `dist/` are not treated as project content.
 
-`build --target github` creates `bundle.github.html` and a `bundle.github/` companion directory. `zip --target github` creates `bundle.github.zip`. GitHub HTML supports `--resources reference` to link existing source files instead of copying them, and `--reference-base` to override the relative source directory. The default base is calculated from the output directory. GitHub ZIP always includes files and captures supported remote embeds. See [GitHub README output](contents/md/publishing.md#github-readme-output) for deployment paths, supported behavior and restrictions. MCP accepts `format: "html"` or `"zip"`, `target: "github"`, and for GitHub HTML, `resources: "reference"` and optional `reference_base` (default `..`, relative to `dist/`).
-
-`check --github-output build/bundle.github.html` (or `dist/bundle.github.zip`) checks the build manifest, source freshness, missing or modified generated files and reference location. Use `--only github` to select just that check; it requires `--github-output`. MCP exposes the same setting as `github_output`. Paths are relative to the manifest directory unless absolute. Remote resources are not downloaded during checking.
-
 | Build                              | Opens                 | URL embeds                                 |
 | ---------------------------------- | --------------------- | ------------------------------------------ |
 | `build`                            | As one file           | Fetched when opened                        |
@@ -139,7 +133,7 @@ The check runs offline: remote content is not fetched or verified, and is report
 | `zip`                              | As a source workspace | Kept as URLs; nothing is downloaded        |
 | `zip --url_preview embed`          | After unpacking       | Saved in the ZIP; references are rewritten |
 
-`build` and `zip` default to `--url_preview network`: remote content is not downloaded unless you ask for it. GitHub ZIP always captures remote embeds and rejects `network`. Live HTML requires `network`. `--mode static` selects and requires `embed`. Modes apply only to HTML, and `--auth external` requires `--mode live`. The host connects live plugin requests through `window.dooc.setPluginTransport(request)`; the bundle provides no login UI or credentials. Build plugin modules must declare their plugins without a reader `setup` callback. See [Plugins](contents/md/plugins.md#plugins-in-a-build).
+`build` and `zip` default to `--url_preview network`: remote content is not downloaded unless you ask for it. Live HTML requires `network`. `--mode static` selects and requires `embed`. Modes apply only to HTML, and `--auth external` requires `--mode live`. The host connects live plugin requests through `window.dooc.setPluginTransport(request)`; the bundle provides no login UI or credentials. Build plugin modules must declare their plugins without a reader `setup` callback. See [Plugins](contents/md/plugins.md#plugins-in-a-build).
 
 Reader HTML also accepts `--download easy|normal|block` (MCP: `download`). The default `normal` hides download buttons and keeps right-click saving; `easy` adds buttons; `block` suppresses in-page downloads, context menus, save/print shortcuts, printed content and media dragging. It replaces `--easy-download`. This setting does not configure browser administrator policies or prevent saving through browser menus, native PDF viewers or developer tools. See [Download behavior](contents/md/publishing.md#choose-download-behavior).
 
