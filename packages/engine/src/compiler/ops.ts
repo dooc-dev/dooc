@@ -54,11 +54,12 @@ import {
 import { ownsDocIcon } from "./icons.js";
 import { translationFile, translationFiles, translationLanguages } from "./locales.js";
 import { docFile, readManifest, sourceOrigin, writeManifest } from "./manifest.js";
+import { isRemoteSourceFile } from "./remote-manifests.js";
 import { textfilePath } from "./textfile.js";
 
 export interface OpError {
     error: string;
-    status: 400 | 404 | 409;
+    status: 400 | 403 | 404 | 409;
     referencedBy?: string[];
 }
 
@@ -484,6 +485,8 @@ export const createDocOps = (root: string) => {
 
     /** Overwrites an existing doc's full raw text. */
     const write = (id: string, raw: string): OpResult<{ id: string }> => {
+        if (isRemoteSourceFile(docFile(id, readManifest(root).files)))
+            return { error: "Remote document sources are read-only", status: 403 };
         const target = existingDoc(id);
         if (isOpError(target)) {
             return target;

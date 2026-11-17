@@ -31,6 +31,8 @@ The root owns `/`. Its file name never adds a URL segment to its children. A doc
 | Omitted, `""`, or `null` | Generate a table of contents |
 | `contents/md/guide.md` | Render a local Markdown file |
 | `reference/dooc.yaml` | Include that manifest's root and children |
+| `https://github.com/team/docs/blob/main/reference/dooc.yaml` | Include a Git-hosted manifest and its referenced files; GitHub raw URLs work too |
+| `https://git.example.com/team/docs.git#main:reference/dooc.yaml` | Include a manifest at an explicit Git branch, tag, or commit |
 | `https://example.com` | Navigate directly to that website; HTTP is also accepted |
 | `/guide/install` | Navigate directly to a page in this site; queries and heading fragments are allowed |
 | `redirect:first` | Redirect to the first immediate child; a child is required |
@@ -41,7 +43,13 @@ An included manifest keeps its own file. Its relative content paths and Markdown
 
 The selected manifest controls workspace settings such as offered languages and themes. Included record types must not conflict with the workspace's existing definitions.
 
-Included Markdown pages remain editable. Change their tree structure in the child manifest; the parent sidebar does not move or delete included pages.
+Locally included Markdown pages remain editable. Change their tree structure in the child manifest; the parent sidebar does not move or delete included pages.
+
+Remote Git manifests are read-only in the including workspace. Their Markdown, images, schemas, translations, and nested manifests resolve relative to the remote manifest. The workspace keeps referenced sources under `dooc-imports/`, and source exports include these files. Edit the source repository to change remote content. Public HTTPS sources are supported; embedded credentials, private network addresses, and remote include cycles are rejected. Browser Git access requires a remote that permits browser requests or the Git CORS proxy explicitly configured for that workspace.
+
+Remote branch and tag references are resolved once for a server process or browser worker. Restart the server or reopen the browser workspace to refresh them; use a commit reference for reproducible content. A remote manifest at the repository root uses the repository name as its section URL. Named manifests and manifests in subfolders use the same names as local includes.
+
+Each section uses the version configuration and history of the manifest that provides it, including remote Git sections. See [Document versions](contents/md/version.md).
 
 The [Version specification](contents/md/version.md) describes the `version` setting, automatic numbering, and reader publication selectors.
 

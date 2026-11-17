@@ -2,6 +2,10 @@ Document versions identify the document set defined by one [manifest](contents/m
 
 Document versions apply to one manifest and its referenced files. The Node and browser readers use the same numbering and publication selectors.
 
+When a document tree includes other manifests, the version control follows the currently open page. Pages owned by the root use the root manifest's version; pages from an included `dooc.yaml` or named manifest use that manifest's configuration and history. A remote section uses its source Git repository's history, independently of the including workspace. Moving between sections updates the available versions and current selection.
+
+Opening a historical section shows that section's document tree in a read-only workspace. The selected manifest and version are recorded in the URL, so reloading a child section does not select the parent's version. Returning to the current workspace restores its drafts. The original manifest, checkout, and working files stay unchanged while viewing history.
+
 ## Configuration
 
 Add `version` at the top level of the manifest. In a Git workspace, omitted settings default to `major: 0`, `minor: git`, and `patch: git`. Major remains a user-controlled number. Outside Git, omit `version` to keep the document unversioned, or explicitly choose fixed values or `hash`.

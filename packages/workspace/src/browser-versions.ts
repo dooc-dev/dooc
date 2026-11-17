@@ -1,4 +1,5 @@
 import git from "isomorphic-git";
+import { exportEntries } from "../../engine/src/compiler/export.js";
 import { manifestFile, projectRoot, readManifest } from "../../engine/src/compiler/manifest.js";
 import {
     storedDocumentVersions,
@@ -16,14 +17,19 @@ import {
 import { fs } from "./browser-host.js";
 import { type FileSnapshot, replaceMemory } from "./browser-storage.js";
 
-export const createBrowserVersions = (repository: string, root: string) => {
+export const createBrowserVersions = (
+    repository: string,
+    root: string,
+    name = manifestFile(root),
+    prepare: (root: string) => Promise<void> = async () => {},
+) => {
     const prefix = root === repository ? "" : `${root.slice(repository.length + 1)}/`;
     const temporary = `/versions-${crypto.randomUUID()}`;
     let cachedHead = "";
     let cached: DocumentRevision[] = [];
+    const revisionVersions = new Map<string, string>();
     const snapshot = async (revision: string): Promise<string> => {
         const destination = `${temporary}/${revision}`;
-        const name = manifestFile(root);
         if (fs.existsSync(`${destination}/${name}`)) return projectRoot(`${destination}/${name}`);
         const files: FileSnapshot = new Map();
         let size = 0;
@@ -54,18 +60,18 @@ export const createBrowserVersions = (repository: string, root: string) => {
         return projectRoot(`${destination}/${name}`);
     };
     const list = async (): Promise<DocumentRevision[]> => {
-        if (!fs.existsSync(`${root}/${manifestFile(root)}`)) return [];
-        const manifest = readManifest(root);
+        if (!fs.existsSync(`${root}/${name}`)) return [];
+        const manifest = readManifest(root, name);
         if (manifest.errors.length && !fs.existsSync(`${repository}/.git`))
             throw new Error(manifest.errors.join("\n"));
         const config = manifest.version;
         if (config && [config.minor, config.patch].includes("hash"))
-            return selectVersions(storedDocumentVersions(root), parseVersionSelection("*"));
+            return selectVersions(storedDocumentVersions(root, name), parseVersionSelection("*"));
         if (!fs.existsSync(`${repository}/.git`)) {
             if (!config) return [];
             if ([config.minor, config.patch].includes("git"))
                 throw new Error("Git versioning requires a Git workspace");
-            const stored = storedDocumentVersions(root);
+            const stored = storedDocumentVersions(root, name);
             return stored.length
                 ? selectVersions(stored, parseVersionSelection("*"))
                 : [
@@ -79,6 +85,7 @@ export const createBrowserVersions = (repository: string, root: string) => {
         const head = await git.resolveRef({ fs, dir: repository, ref: "HEAD" }).catch(() => "");
         if (!head) return [];
         if (head === cachedHead) return cached;
+        revisionVersions.clear();
         if (
             fs.existsSync(`${repository}/.git/shallow`) &&
             String(fs.readFileSync(`${repository}/.git/shallow`)).trim()
@@ -101,7 +108,7 @@ export const createBrowserVersions = (repository: string, root: string) => {
                         fs,
                         dir: repository,
                         oid: revision,
-                        filepath: `${prefix}${manifestFile(root)}`,
+                        filepath: `${prefix}${name}`,
                     })
                     .then(
                         () => true,
@@ -112,6 +119,7 @@ export const createBrowserVersions = (repository: string, root: string) => {
                     continue;
                 }
                 const historical = await snapshot(revision);
+                await prepare(historical);
                 const definition = readManifest(historical);
                 if (definition.errors.length) throw new Error(definition.errors.join("\n"));
                 const config = definition.version ?? parseVersionConfig({});
@@ -119,7 +127,11 @@ export const createBrowserVersions = (repository: string, root: string) => {
                     state = undefined;
                     continue;
                 }
-                state = advanceVersion(versionInput(historical, config), state);
+                state = advanceVersion(
+                    versionInput(historical, config, exportEntries(historical, name), name),
+                    state,
+                );
+                revisionVersions.set(revision, state.version);
                 rows.set(state.version, { version: state.version, revision, current: false });
             } finally {
                 fs.rmSync(destination, { recursive: true, force: true });
@@ -134,16 +146,29 @@ export const createBrowserVersions = (repository: string, root: string) => {
     return {
         enabled: () =>
             fs.existsSync(`${repository}/.git`) ||
-            (fs.existsSync(`${root}/${manifestFile(root)}`) && !!readManifest(root).version),
+            (fs.existsSync(`${root}/${name}`) && !!readManifest(root, name).version),
         list,
+        async versionAt(revision: string): Promise<string | undefined> {
+            const rows = await list();
+            return (
+                revisionVersions.get(revision) ??
+                rows.find((row) => row.revision === revision)?.version
+            );
+        },
         async open(revision: string) {
             if (!(await list()).some((row) => row.revision === revision))
                 throw new Error("Document version is not available");
-            return revision === "current"
-                ? root
-                : revision.startsWith("hash-")
-                  ? storedVersionRoot(root, revision)
-                  : snapshot(revision);
+            if (revision === "current") {
+                const destination = `${temporary}/current`;
+                replaceMemory(
+                    destination,
+                    new Map(exportEntries(root, name).map(({ name, data }) => [name, data])),
+                );
+                return projectRoot(`${destination}/${name}`);
+            }
+            return revision.startsWith("hash-")
+                ? storedVersionRoot(root, revision, name)
+                : snapshot(revision);
         },
         close: () => fs.rmSync(temporary, { recursive: true, force: true }),
     };

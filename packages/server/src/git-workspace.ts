@@ -108,10 +108,18 @@ const cleanMessage = (message: string): string =>
 export const prepareGitWorkspace = async (
     source: string,
     mode: "edit" | "view",
-    options: { path?: string } = {},
+    options: { path?: string; ref?: string; public?: boolean; address?: string } = {},
 ) => {
     const remote = parseSource(source);
     const selected = selectedPath(options.path);
+    if (
+        options.ref &&
+        (options.ref.startsWith("-") ||
+            /[\s\0~^:?*[\\]/.test(options.ref) ||
+            options.ref.includes("..") ||
+            options.ref.includes("@{"))
+    )
+        throw new Error("Invalid Git reference");
     const dataHome = process.env.XDG_DATA_HOME;
     const directory = join(
         dataHome && isAbsolute(dataHome) ? dataHome : join(homedir(), ".local/share"),
@@ -187,8 +195,14 @@ export const prepareGitWorkspace = async (
                 GIT_ALLOW_PROTOCOL: "https:http:ssh",
                 GIT_OPTIONAL_LOCKS: "0",
                 LC_ALL: "C",
-                ...(globalConfig ? {} : { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: devNull }),
+                ...(globalConfig && !options.public
+                    ? {}
+                    : { GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: devNull }),
             });
+            if (options.public) {
+                delete env.GIT_ASKPASS;
+                delete env.SSH_ASKPASS;
+            }
             child = spawn(
                 "git",
                 [
@@ -198,6 +212,19 @@ export const prepareGitWorkspace = async (
                     "core.fsmonitor=false",
                     "-c",
                     "submodule.recurse=false",
+                    ...(options.address ? ["-c", `http.curloptResolve=${options.address}`] : []),
+                    ...(options.public
+                        ? [
+                              "-c",
+                              "credential.helper=",
+                              "-c",
+                              "http.extraHeader=",
+                              "-c",
+                              "http.proxy=",
+                              "-c",
+                              "http.followRedirects=false",
+                          ]
+                        : []),
                     ...args,
                 ],
                 {
@@ -337,6 +364,7 @@ export const prepareGitWorkspace = async (
                     `refs/remotes/origin/${branch}`,
                 ]);
         }
+        if (options.ref) await run(["-C", repository, "checkout", "--detach", options.ref, "--"]);
         manifestIn(repository, selected);
         if (mode === "view") {
             const workspace = result(staging, false);

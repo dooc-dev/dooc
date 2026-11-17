@@ -218,6 +218,7 @@ interface PageResponse extends Omit<RenderSnapshot, "blockLines"> {
 }
 
 interface ResourcePage {
+    versionManifest?: string;
     sourceFile?: string;
     path: string;
     title: string;
@@ -268,6 +269,8 @@ const localeUrl = (path: string): string => {
     url.searchParams.set("lang", boot.contentLanguage ?? boot.defaultLang);
     const revision = workspaceConnection()?.revision;
     if (revision) url.searchParams.set("version", revision.version);
+    const manifest = workspaceConnection()?.manifest;
+    if (revision && manifest) url.searchParams.set("manifest", manifest);
     return clientPath(url.pathname) + url.search + url.hash;
 };
 const localeFetch = (
@@ -2397,6 +2400,9 @@ const syncPane = (): void => {
     currentPath = boot.path;
     closeLanguageMenu();
     $("boot").textContent = JSON.stringify(boot);
+    document.body.dataset.documentManifest = resourceView?.versionManifest ?? boot.origin ?? "";
+    document.body.dataset.documentPath = resourceView?.path ?? boot.path;
+    document.dispatchEvent(new Event("dooc:document-changed"));
     for (const pane of panes) {
         pane.element.dataset.paneId = String(pane.id);
         pane.element.dataset.workspace = pane.workspace;
@@ -2818,6 +2824,9 @@ const showResource = (resource: ResourcePage): void => {
                       activePane.workspace,
                   ),
     };
+    document.body.dataset.documentManifest = resource.versionManifest ?? boot.origin ?? "";
+    document.body.dataset.documentPath = resource.path;
+    document.dispatchEvent(new Event("dooc:document-changed"));
     document.body.classList.toggle(
         "resource-library-open",
         !!element.querySelector(".resource-library"),
@@ -2885,7 +2894,11 @@ const activatePane = async (pane: PreviewPane): Promise<void> => {
         await changeWorkspace(id, pane);
     }
 };
-const changeWorkspace = async (id: string, pane = activePane): Promise<void> => {
+const changeWorkspace = async (
+    id: string,
+    pane = activePane,
+    path = currentPath,
+): Promise<void> => {
     if (!panes.includes(pane) || id === pane.workspace) return;
     if (paneBusy) {
         pane.pendingWorkspace = id;
@@ -2904,7 +2917,7 @@ const changeWorkspace = async (id: string, pane = activePane): Promise<void> => 
         let page: PageResponse | undefined;
         let nav = "";
         if (!saved) {
-            let response = await workspaceFetch(localeUrl(currentPath), undefined, id);
+            let response = await workspaceFetch(localeUrl(path), undefined, id);
             if (!response.ok) response = await workspaceFetch("/", undefined, id);
             if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
             const document = new DOMParser().parseFromString(await response.text(), "text/html");
@@ -3049,7 +3062,8 @@ document.addEventListener("dooc:select-workspace", (event) => {
         id,
         from,
         pane: target,
-    } = (event as CustomEvent<{ id: string; from?: string; pane?: string }>).detail;
+        path,
+    } = (event as CustomEvent<{ id: string; from?: string; pane?: string; path?: string }>).detail;
     const pane =
         target === undefined ? activePane : panes.find((item) => String(item.id) === target);
     if (!pane || (from && pane.workspace !== from)) {
@@ -3061,7 +3075,7 @@ document.addEventListener("dooc:select-workspace", (event) => {
         syncPane();
         return;
     }
-    void changeWorkspace(id, pane);
+    void changeWorkspace(id, pane, path);
 });
 document.addEventListener("dooc:select-draft", (event) => {
     const draft = (event as CustomEvent<DraftLocation>).detail;

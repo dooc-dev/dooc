@@ -73,6 +73,31 @@ describe("theme variants", () => {
         expect(createCompiler(root).compile().errors).toEqual([]);
     });
 
+    it("resolves and renames variants relative to an included manifest", () => {
+        const { root, put } = fixture();
+        put("dooc.yaml", "document:\n  children:\n    - document: { url: child/dooc.yaml }\n");
+        put("child/dooc.yaml", "document: { url: guide.md }\n");
+        put("child/guide.md", "![](files/child.txt)\n");
+        put("child/files/child.txt", "Default child");
+        put("child/themes/dark/files/child.txt", "Dark child");
+        expect(themeVariants(root, "child/files/child.txt")).toEqual({
+            dark: "child/themes/dark/files/child.txt",
+        });
+        updateFiles(root, {
+            action: "rename",
+            file: "child/files/child.txt",
+            name: "renamed.txt",
+            revision: filesSnapshot(root).revision,
+        });
+        expect(readFileSync(join(root, "child/themes/dark/files/renamed.txt"), "utf8")).toBe(
+            "Dark child",
+        );
+        expect(readFileSync(join(root, "child/guide.md"), "utf8")).toContain("files/renamed.txt");
+        expect(exportEntries(root).map(({ name }) => name)).toContain(
+            "child/themes/dark/files/renamed.txt",
+        );
+    });
+
     it("rejects traversal and variant symlinks that leave the docs root", () => {
         const { root, put } = fixture();
         for (const [file, theme] of [

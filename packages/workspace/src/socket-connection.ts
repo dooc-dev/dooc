@@ -20,6 +20,7 @@ interface ServerWorkspace {
     branch?: string;
     readOnly?: boolean;
     revision?: WorkspaceConnection["revision"];
+    manifest?: string;
 }
 
 const serverConnections = new Map<string, WorkspaceClient>();
@@ -91,10 +92,11 @@ export async function connectServer(
             branch: info.branch,
             readOnly: readOnly || info.readOnly,
             revision: info.revision,
+            manifest: info.manifest,
             client: id === "local" ? shared : scoped,
             fetch: id === "local" ? (input, init) => fetch(input, init) : workspaceHttp(scoped),
-            openVersion: async (version) =>
-                bind(await scoped.request("versions", { action: "open", version })),
+            openVersion: async (version, manifest) =>
+                bind(await scoped.request("versions", { action: "open", version, manifest })),
             openBranch:
                 !readOnly && !info.readOnly && info.branch
                     ? (branch, create = false) =>

@@ -18,12 +18,14 @@ import {
     isDocumentFileName,
     localFile,
     MAX_FILE_UPLOAD_BYTES,
+    manifestDirectory,
     parseFileLayout,
 } from "../core/files.js";
 import { codeBlockAt, contentLinks, embeddedImages, parseMdast } from "../core/markdown.js";
 import { docPath } from "../core/routing.js";
 import { termFileUrl } from "../core/term-reference.js";
 import { isRemoteTextfile, parseFileReference } from "../core/textfile.js";
+import { themeVariantFile } from "../core/theme-variants.js";
 import { assetReferences } from "./asset-references.js";
 import { fileSig } from "./file-cache.js";
 import {
@@ -46,6 +48,7 @@ import {
 import { ignoredFiles, withinRead } from "./ignored-files.js";
 import { translationFile, translationFiles, translationLanguages } from "./locales.js";
 import { manifestFile, parseManifestText, readManifest, sourceOrigin } from "./manifest.js";
+import { isRemoteSourceFile } from "./remote-manifests.js";
 import { rewriteSchemaFiles } from "./schema-file-references.js";
 import { textfilePath, writeTextfile } from "./textfile.js";
 import { themeNames, themeVariants } from "./theme-variants.js";
@@ -346,7 +349,7 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
     } else if (input.action === "restructure") {
         const taken = new Set(paths);
         for (const file of paths) {
-            if (file.startsWith("themes/")) continue;
+            if (file.startsWith("themes/") || isRemoteSourceFile(file)) continue;
             let target = defaultFilePath(file);
             if (target === file) continue;
             const ext = posix.extname(target);
@@ -413,9 +416,23 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
             }
         }
     } else throw new Error("Unknown file action");
+    if (
+        [...moves].some(
+            ([source, target]) => isRemoteSourceFile(source) || isRemoteSourceFile(target),
+        )
+    )
+        throw new Error("Remote document sources are read-only");
     for (const [source, target] of [...moves]) {
-        for (const [theme, file] of Object.entries(themeVariants(root, source, themeNames(root))))
-            moves.set(file, `themes/${theme}/${target}`);
+        const directory = manifestDirectory(sourceOrigin(manifest, source));
+        for (const [theme, file] of Object.entries(
+            themeVariants(root, source, themeNames(join(root, directory))),
+        ))
+            moves.set(
+                file,
+                target.startsWith(directory)
+                    ? directory + themeVariantFile(target.slice(directory.length), theme)
+                    : themeVariantFile(target, theme),
+            );
     }
     const translated = translationFiles(root);
     const origins = new Map(

@@ -344,7 +344,10 @@ Report:
                 break;
             }
             if (positionals.length > 1) throw new Error("check accepts at most one dooc.yaml path");
-            report = checkSite(projectRoot(positionals[0]), {
+            const root = projectRoot(positionals[0]);
+            const { prepareDocumentSources } = await import("./remote-manifests.js");
+            await prepareDocumentSources(root);
+            report = checkSite(root, {
                 ...(values.only
                     ? {
                           only: values.only.flatMap((value) =>
@@ -404,6 +407,8 @@ options:
             const root = projectRoot(positionals[0]);
             const out = join(resolve(positionals[1] ?? join(root, "dist")), "bundle.zip");
             const { exportBundle } = await import("../../engine/src/compiler/export.js");
+            const { prepareDocumentSources } = await import("./remote-manifests.js");
+            await prepareDocumentSources(root);
             writeOut(out, exportBundle(root));
             console.log(out);
         } catch (error) {

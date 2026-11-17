@@ -142,7 +142,7 @@ it.each([
     expect(readManifest(root).subformats).toHaveLength(1);
 });
 
-it("compiles a subformat-only site and publishes its board in the sidebar", () => {
+it("compiles a subformat-only site and publishes its board in the sidebar", async () => {
     const { root, ops, write } = fixture();
     ops.addSubformat("issue", "Issues <board>");
     const compiled = compileSite(root);
@@ -173,7 +173,7 @@ it("compiles a subformat-only site and publishes its board in the sidebar", () =
     expect(html).not.toContain('class="nav-create"');
     expect(navGroupsHtml("edit", site)).toContain("data-subformat-nav");
     expect(filesSnapshot(root).documents).toEqual({});
-    expect(createTools(root).read_doc?.run({ id })).toMatchObject({
+    expect(await createTools(root).read_doc?.run({ id })).toMatchObject({
         file: "dooc.yaml",
         subformat: { ext: "issue" },
     });

@@ -14,6 +14,7 @@ import {
     serializeManifest,
 } from "../core/content-metadata.js";
 import { docFile, fileDocumentId, parseFileLayout } from "../core/files.js";
+import { isRemoteManifest } from "../core/remote-manifest.js";
 import { documentPathErrors } from "../core/routing.js";
 import { createFileCache } from "./file-cache.js";
 import {
@@ -27,6 +28,7 @@ import {
     writeFileSync,
 } from "./host.js";
 import { assertNotIgnored } from "./ignored-files.js";
+import { manifestSourcePath, remoteManifestFile } from "./remote-manifests.js";
 import { textfilePath } from "./textfile.js";
 
 const manifests = new Map<string, string>();
@@ -44,6 +46,16 @@ export const sourceOrigin = (manifest: ParsedManifest, file: string): string | u
             (owner) => posix.dirname(owner) === "." || file.startsWith(`${posix.dirname(owner)}/`),
         )
         .sort((a, b) => b.length - a.length)[0];
+};
+
+export const sectionManifest = (root: string, value?: unknown): string => {
+    const file = value === undefined ? manifestFile(root) : value;
+    if (
+        typeof file !== "string" ||
+        (file !== manifestFile(root) && !readManifest(root).includedManifests?.includes(file))
+    )
+        throw new Error("Document section is not available");
+    return manifestSourcePath(textfilePath(root, file));
 };
 
 /** Select the manifest for subsequent operations on its parent directory. */
@@ -82,8 +94,7 @@ export const parseManifestText = (
 };
 
 /** Empty tree if missing (a new docs root with zero docs). */
-export const readManifest = (root: string): ParsedManifest => {
-    const file = manifestFile(root);
+export const readManifest = (root: string, file = manifestFile(root)): ParsedManifest => {
     if (!existsSync(join(root, file))) return { tree: [], errors: [] };
     const active = new Set<string>();
     const load = (file: string, imported = false): ParsedManifest => {
@@ -106,7 +117,11 @@ export const readManifest = (root: string): ParsedManifest => {
                     if (imported) {
                         if (isContentPage(node))
                             node.file = qualify(node.file ?? docFile(oldId, manifest.files));
-                        if (node.url && ["content", "manifest"].includes(pageUrlKind(node.url)))
+                        if (
+                            node.url &&
+                            !isRemoteManifest(node.url) &&
+                            ["content", "manifest"].includes(pageUrlKind(node.url))
+                        )
                             node.url = qualify(node.url);
                         node.id = fileDocumentId(
                             node.file ??
@@ -119,7 +134,9 @@ export const readManifest = (root: string): ParsedManifest => {
                     }
                     visit(node.children);
                     if (node.url === undefined || pageUrlKind(node.url) !== "manifest") continue;
-                    const included = node.url;
+                    const included = isRemoteManifest(node.url)
+                        ? qualify(remoteManifestFile(node.url))
+                        : node.url;
                     const child = load(included, true);
                     manifest.errors.push(...child.errors);
                     node.resolved = child.tree[0]?.root

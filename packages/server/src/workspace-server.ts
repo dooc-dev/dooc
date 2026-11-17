@@ -9,7 +9,13 @@ import {
     updateFiles,
     uploadFile,
 } from "../../engine/src/compiler/files.js";
-import { manifestFile, projectRoot } from "../../engine/src/compiler/manifest.js";
+import {
+    manifestFile,
+    projectRoot,
+    readManifest,
+    sectionManifest,
+} from "../../engine/src/compiler/manifest.js";
+import { flattenTree } from "../../engine/src/core/content-metadata.js";
 import {
     type DocumentRevision,
     latestVersionOnly,
@@ -18,6 +24,7 @@ import {
 } from "../../engine/src/core/document-version.js";
 import { MAX_FILE_UPLOAD_BYTES } from "../../engine/src/core/files.js";
 import { parsePreviewSettings } from "../../engine/src/core/previewers.js";
+import { docPath } from "../../engine/src/core/routing.js";
 import { parseWorkspaceSource } from "../../engine/src/core/workspace.js";
 import {
     type ApplicationRequest,
@@ -53,6 +60,7 @@ import { loggedWorkspaceOps } from "./operation-log.js";
 import { loadReaderPlugins, type ReaderRuntime } from "./plugin-config.js";
 import { createLocalPluginStorage } from "./plugins/local-storage.js";
 import { createPluginHandler } from "./plugins.js";
+import { prepareDocumentSources } from "./remote-manifests.js";
 import { terminal } from "./terminal.js";
 import { readWorkspaceSource, sourceFileBase } from "./workspace.js";
 
@@ -62,6 +70,7 @@ export interface WorkspaceDescription {
     branch?: string;
     readOnly?: boolean;
     revision?: DocumentRevision;
+    manifest?: string;
 }
 
 export const clientOrigin = (value: string): string => {
@@ -98,9 +107,11 @@ export const nodeWorkspaceOperations = async (
             history: ReturnType<typeof createHistoryOp>;
             versions: ReturnType<typeof createDocumentVersions>;
             owner: string;
+            sourceRoot: string;
         }
     >();
     const closes: (() => void)[] = [];
+    const sectionCatalogs = new Map<string, ReturnType<typeof createDocumentVersions>>();
     type Session = { local: boolean; user?: Person; origin?: string; pluginSession?: string };
     const plugins = await loadReaderPlugins(pluginModule);
     let workspace = plugins.workspace;
@@ -141,11 +152,20 @@ export const nodeWorkspaceOperations = async (
             configure();
         },
     };
-    const add = async (root: string, id: string, owner = id, revision?: DocumentRevision) => {
+    const add = async (
+        root: string,
+        id: string,
+        owner = id,
+        revision?: DocumentRevision,
+        catalogOverride?: ReturnType<typeof createDocumentVersions>,
+        section?: string,
+        sourceRoot = root,
+    ) => {
         const existing = entries.get(id);
         if (existing) return existing;
         const source = workspace ?? readWorkspaceSource(root);
         const app = createDocumentApplication(root, {
+            prepareSources: prepareDocumentSources,
             fontCss,
             readWorkspaceSource,
             sourceFileBase,
@@ -158,6 +178,7 @@ export const nodeWorkspaceOperations = async (
         });
         const description: WorkspaceDescription = {
             id,
+            ...(section ? { manifest: section } : {}),
             label:
                 source.protocol === "git"
                     ? `${source.branch}/${source.repo ?? basename(root)}`
@@ -167,7 +188,8 @@ export const nodeWorkspaceOperations = async (
                 ? { revision, readOnly: true, label: `${revision.version}/${basename(primary)}` }
                 : {}),
         };
-        const catalog = entries.get(owner)?.versions ?? createDocumentVersions(root);
+        const catalog =
+            catalogOverride ?? entries.get(owner)?.versions ?? createDocumentVersions(root);
         const entry = {
             description,
             root,
@@ -179,6 +201,7 @@ export const nodeWorkspaceOperations = async (
             ),
             versions: catalog,
             owner,
+            sourceRoot,
         };
         entries.set(id, entry);
         const watcher = watchProject(root, "", (kind, files) =>
@@ -202,7 +225,42 @@ export const nodeWorkspaceOperations = async (
         return value;
     };
     let opening = false;
+    const versionContext = async (current: ReturnType<typeof entry>, manifest?: unknown) => {
+        await prepareDocumentSources(current.root);
+        if (manifest === undefined) return { current, basePath: "" };
+        sectionManifest(current.root, manifest);
+        const selected = sectionManifest(current.sourceRoot, manifest);
+        let catalog = sectionCatalogs.get(selected);
+        if (!catalog) {
+            catalog = createDocumentVersions(dirname(selected), basename(selected));
+            sectionCatalogs.set(selected, catalog);
+        }
+        const pages = flattenTree(readManifest(current.root).tree);
+        const mount = pages.find((page) => page.origin === manifest);
+        const section = current.description.manifest
+            ? join(dirname(current.description.manifest), String(manifest)).replaceAll("\\", "/")
+            : String(manifest);
+        const revision = current.description.revision;
+        const selectedVersion = revision ? await catalog.versionAt(revision.revision) : undefined;
+        return {
+            current: {
+                ...current,
+                versions: catalog,
+                sourceRoot: dirname(selected),
+                description: {
+                    ...current.description,
+                    manifest: section,
+                    revision:
+                        revision && selectedVersion
+                            ? { ...revision, version: selectedVersion }
+                            : undefined,
+                },
+            },
+            basePath: mount ? docPath(pages, mount.id) : "",
+        };
+    };
     const versionRows = async (current: ReturnType<typeof entry>) => {
+        await prepareDocumentSources(current.sourceRoot);
         const all = await current.versions.list();
         const rows = selectVersions(all, selection);
         if (readOnly && !all.length && current.versions.enabled())
@@ -220,19 +278,22 @@ export const nodeWorkspaceOperations = async (
         const owner = entries.get(current.owner);
         if (!owner) throw new Error("Version workspace is not open");
         if (revision.current && !readOnly) return owner;
-        const id = `${owner.description.id}@${revision.revision}`;
+        const id = `${owner.description.id}${current.description.manifest ? `#${current.description.manifest}` : ""}@${revision.revision}`;
         const opened = entries.get(id);
         if (opened) return opened;
         return add(
-            await owner.versions.open(revision.revision),
+            await current.versions.open(revision.revision),
             id,
             owner.description.id,
             revision,
+            current.versions,
+            current.description.manifest,
+            current.sourceRoot,
         );
     };
     const ops: WorkspaceOps<Session> = {
         versions: async (input) => {
-            const current = entry(input);
+            const { current, basePath } = await versionContext(entry(input), input.manifest);
             if (input.action === "open") {
                 if (typeof input.version !== "string") throw new Error("Choose a document version");
                 return (await openVersion(current, input.version)).description;
@@ -241,6 +302,7 @@ export const nodeWorkspaceOperations = async (
             const rows = await versionRows(current);
             return {
                 versions: rows,
+                basePath,
                 selected:
                     current.description.revision?.version ??
                     (readOnly ? rows[0]?.version : rows.find((row) => row.current)?.version),
@@ -464,7 +526,11 @@ export const nodeWorkspaceOperations = async (
         close: () => {
             for (const close of closes) close();
             for (const { history } of entries.values()) void history.flush();
-            for (const catalog of new Set([...entries.values()].map((value) => value.versions)))
+            for (const catalog of new Set(
+                [...entries.values()]
+                    .map((value) => value.versions)
+                    .concat([...sectionCatalogs.values()]),
+            ))
                 catalog.close();
         },
     };

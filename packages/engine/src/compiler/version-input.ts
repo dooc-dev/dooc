@@ -27,8 +27,8 @@ export const versionInput = (
     root: string,
     config: VersionConfig,
     entries: readonly ZipEntry[] = withIgnoredFilesCache(() => exportEntries(root)),
+    manifest = manifestFile(root),
 ): VersionInput => {
-    const manifest = manifestFile(root);
     const source = entries.find((entry) => entry.name === manifest);
     if (!source) throw new Error(`Version source is missing ${manifest}`);
     const definition = parse(source.data.toString("utf8"));

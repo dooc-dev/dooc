@@ -23,6 +23,7 @@ import { loadBuildPlugins, pluginSnapshot } from "./build-plugins.js";
 import { createDocumentVersions } from "./document-versions.js";
 import { loadSiteLanguages } from "./languages.js";
 import { loadReaderPlugins } from "./plugin-config.js";
+import { prepareDocumentSources } from "./remote-manifests.js";
 import { gitHeadFile, sourceFileBase } from "./workspace.js";
 
 export interface BuildOptions {
@@ -121,6 +122,7 @@ export const buildBundle = async (root: string, options: BuildOptions): Promise<
             throw new Error(`Content validation failed:\n${compiled.errors.join("\n")}`);
         return compiled;
     };
+    await prepareDocumentSources(root);
     let entries = exportEntries(root);
     const authoredEntries = entries;
     const versionConfig = readManifest(root).version;

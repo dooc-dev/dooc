@@ -44,6 +44,7 @@ import {
     isOpError,
     type OpResult,
 } from "../../engine/src/compiler/ops.js";
+import { isRemoteSourceFile } from "../../engine/src/compiler/remote-manifests.js";
 import {
     compileSubformatSchema,
     subformatResponse,
@@ -297,6 +298,7 @@ export interface EditorBoot {
     spellcheckLang: string;
 }
 export interface ApplicationHost {
+    prepareSources?(root: string): Promise<void>;
     fontCss(inline: boolean): string;
     readWorkspaceSource(root: string): WorkspaceSource;
     sourceFileBase(root: string): string | undefined;
@@ -3051,6 +3053,7 @@ body.edit .nav-row { cursor: grab; }
 
     // Navigation follows the manifest hierarchy via routing.docPath.
     const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
+        const currentDocument = site.entries.find((entry) => entry.id === opts.currentId);
         const nav = navGroupsHtml(
             historicalReadOnly ? "preview" : mode,
             site,
@@ -3099,7 +3102,7 @@ ${opts.publish ? `<meta name="referrer" content="no-referrer"><meta http-equiv="
 (${initializeThemes.toString()})(${JSON.stringify(site.themes)});
 (${mountFigureFrames.toString()})(document);</script>
 <style>${fontCss(Boolean(opts.publish))}${CSS}${mode === "edit" ? EDIT_CSS : ""}</style></head>
-<body${mode === "edit" ? ' class="edit"' : ""}${site.download ? ` data-download="${site.download}"` : ""}${site.sourceBase ? ` data-source-base="${escapeHtml(site.sourceBase)}"` : ""}><nav id="sidebar"><div id="sidebar-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" data-i18n-aria-label="Resize sidebar" title="Resize sidebar" data-i18n-title="Resize sidebar"></div><div id="sidebar-head">${siteIcon}<div id="site-title" class="site-title" title="${siteTitle}"${mode === "edit" ? ` data-title="${escapeHtml(site.title ?? "")}" tabindex="0" role="button" aria-label="Edit site title" data-i18n-aria-label="Edit site title"` : ""}>${siteTitle}</div><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button></div><div id="sidebar-content"><div id="nav-groups">${nav}</div><div id="nav-status" role="status" aria-live="polite"></div></div></nav>${main}${opts.aside ?? ""}
+<body data-document-manifest="${escapeHtml(currentDocument?.origin ?? "")}" data-document-path="${escapeHtml(currentDocument ? docPath(site.entries, currentDocument.id) : "/")}"${mode === "edit" ? ' class="edit"' : ""}${site.download ? ` data-download="${site.download}"` : ""}${site.sourceBase ? ` data-source-base="${escapeHtml(site.sourceBase)}"` : ""}><nav id="sidebar"><div id="sidebar-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" data-i18n-aria-label="Resize sidebar" title="Resize sidebar" data-i18n-title="Resize sidebar"></div><div id="sidebar-head">${siteIcon}<div id="site-title" class="site-title" title="${siteTitle}"${mode === "edit" ? ` data-title="${escapeHtml(site.title ?? "")}" tabindex="0" role="button" aria-label="Edit site title" data-i18n-aria-label="Edit site title"` : ""}>${siteTitle}</div><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button></div><div id="sidebar-content"><div id="nav-groups">${nav}</div><div id="nav-status" role="status" aria-live="polite"></div></div></nav>${main}${opts.aside ?? ""}
 <script>
 (${mountThemePickers.toString()})(${JSON.stringify(THEME_ICONS)}, ${JSON.stringify(site.themes)});
 (${mountThemeVariants.toString()})(document);
@@ -3916,7 +3919,9 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
             .filter(({ ref }) => ref.startsWith(directory))
             .map((doc) => ({ ...doc, ref: doc.ref.slice(directory.length) }));
         return {
-            ...(historicalReadOnly ? { readOnly: true } : {}),
+            ...(historicalReadOnly || (entry.origin && isRemoteSourceFile(entry.origin))
+                ? { readOnly: true }
+                : {}),
             gitBase: entryGitBase(entry, site),
             ...(site.title === undefined ? {} : { siteTitle: site.title }),
             ...(site.icon === undefined ? {} : { siteIcon: svgDataUri(site.icon) }),
@@ -4048,6 +4053,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
                 status: 200,
                 body: {
                     resource: true,
+                    versionManifest: doc.origin ?? "",
                     path,
                     title: pageTitle("edit", docDisplayName(doc.frontmatter, doc.id), site.title),
                     html,
@@ -4309,6 +4315,14 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
             return;
         }
         const previous = docIconFile(id, manifest.files);
+        if (
+            flattenTree(manifest.tree).some(
+                (node) => node.id === id && node.origin && isRemoteSourceFile(node.origin),
+            )
+        ) {
+            sendJson(res, 403, { error: "Remote document sources are read-only" });
+            return;
+        }
         let file =
             manifest.format === undefined &&
             manifest.files?.defaultLayout !== false &&
@@ -4435,6 +4449,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
         req: IncomingMessage,
         res: ServerResponse,
     ): Promise<void> => {
+        await host.prepareSources?.(root);
         const requestUrl = new URL(req.url ?? "/", "http://localhost");
         const requestedLanguage =
             req.headers["x-docs-language"] ??
@@ -4868,6 +4883,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
                             path,
                             title: pageTitle(mode, opts.title, site.title),
                             html: entryMain(site, doc),
+                            versionManifest: doc.origin ?? "",
                         },
                     },
                 });

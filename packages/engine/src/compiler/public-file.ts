@@ -3,6 +3,7 @@ export async function fetchPublicFile(
     source: string,
     contentType?: (type: string) => void,
     progress?: (received: number, total?: number) => void,
+    address?: (hostname: string, address: string) => void,
 ): Promise<Buffer> {
     const { request } = await import("node:https");
     const { lookup } = await import("node:dns/promises");
@@ -63,6 +64,7 @@ export async function fetchPublicFile(
                                 callback(new Error("BLOCKED"), "", 0);
                                 return;
                             }
+                            address?.(hostname, first.address);
                             if (options.all) callback(null, addresses);
                             else callback(null, first.address, first.family);
                         },

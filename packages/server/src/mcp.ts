@@ -12,6 +12,7 @@ import { buildBundle } from "./build.js";
 import { writeBuildOutput } from "./build-output.js";
 import { createGitHandler, validateGitOrigin } from "./git.js";
 import { folderHistory, gitHistory, workspaceHistory } from "./history.js";
+import { prepareDocumentSources } from "./remote-manifests.js";
 
 export { handleRpc, MCP_HTTP_VERSIONS } from "../../workspace/src/mcp.js";
 export interface McpOptions extends CompileOptions {
@@ -94,7 +95,10 @@ export const createTools = (root: string, options: McpOptions = {}) => {
             return { snapshots };
         },
     };
-    return createMcpTools((name, args) => operations[name]?.(args), options.readOnly);
+    return createMcpTools(async (name, args) => {
+        await prepareDocumentSources(root);
+        return operations[name]?.(args);
+    }, options.readOnly);
 };
 
 export const startMcp = async (

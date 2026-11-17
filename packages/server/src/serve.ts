@@ -47,6 +47,7 @@ import { loggedWorkspaceOps, logHttpOperation } from "./operation-log.js";
 import { loadReaderPlugins, type ReaderRuntime } from "./plugin-config.js";
 import { createLocalPluginStorage } from "./plugins/local-storage.js";
 import { createPluginHandler } from "./plugins.js";
+import { prepareDocumentSources } from "./remote-manifests.js";
 import { terminal } from "./terminal.js";
 import { readWorkspaceSource, sourceFileBase } from "./workspace.js";
 import { nodeWorkspaceOperations } from "./workspace-server.js";
@@ -69,6 +70,7 @@ const frontendRoot = join(pkgRoot, "packages/frontend/src");
 const root = resolve(process.env.DOCS_ROOT ?? process.cwd());
 
 const application = createDocumentApplication(root, {
+    prepareSources: prepareDocumentSources,
     fontCss,
     readWorkspaceSource,
     sourceFileBase,

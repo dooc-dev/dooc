@@ -190,17 +190,31 @@ async function openBrowser(
                           })
                     : undefined,
         };
-        const openVersion = async (version: string): Promise<WorkspaceConnection> => {
-            const revision = await client.request<DocumentRevision>("versions", {
-                action: "open",
-                version,
-            });
+        const openVersion = async (
+            version: string,
+            manifest?: string,
+            section?: string,
+        ): Promise<WorkspaceConnection> => {
+            const revision = await client.request<DocumentRevision & { manifest?: string }>(
+                "versions",
+                {
+                    action: "open",
+                    version,
+                    manifest,
+                    section,
+                },
+            );
             if (revision.current && !settings.readOnly) return connection;
-            const id = `${item.id}@${revision.revision}`;
+            const id = `${item.id}${revision.manifest ? `#${revision.manifest}` : ""}@${revision.revision}`;
             const existing = workspaceConnection(id);
             if (existing) return existing;
             const scoped: WorkspaceClient = {
-                request: (op, args) => client.request(op, { ...args, revision: revision.revision }),
+                request: (op, args) =>
+                    client.request(op, {
+                        ...args,
+                        revision: revision.revision,
+                        section: revision.manifest,
+                    }),
                 on: client.on,
                 opened: client.opened,
             };
@@ -210,9 +224,11 @@ async function openBrowser(
                 label: `${revision.version}/${item.name}`,
                 readOnly: true,
                 revision,
+                manifest: revision.manifest,
                 client: scoped,
                 fetch: workspaceHttp(scoped),
-                openVersion,
+                openVersion: (version, manifest) =>
+                    openVersion(version, manifest, revision.manifest),
             };
             registerWorkspace(historical);
             return historical;
@@ -415,13 +431,18 @@ function attach(): void {
         ?.addEventListener("click", () => void chooseWorkspace());
     if (settings.readOnly && rendered) {
         document.addEventListener("dooc:select-workspace", (event) => {
-            const { id, from } = (event as CustomEvent<{ id: string; from?: string }>).detail;
+            const { id, from, path } = (
+                event as CustomEvent<{ id: string; from?: string; path?: string }>
+            ).detail;
             if (from && workspaceConnection()?.id !== from) return;
             const next = workspaceConnection(id);
             if (!next) return;
             const url = new URL(location.href);
+            if (path) url.pathname = path;
             if (next.revision) url.searchParams.set("version", next.revision.version);
             else url.searchParams.delete("version");
+            if (next.manifest) url.searchParams.set("manifest", next.manifest);
+            else url.searchParams.delete("manifest");
             void render(next, url.href, true).catch((error) => alert(errorText(error)));
         });
         document.addEventListener("click", (event) => {
@@ -469,7 +490,10 @@ async function render(
     const target = new URL(url, location.origin);
     const version = target.searchParams.get("version");
     if (version && connection.openVersion && connection.revision?.version !== version)
-        connection = await connection.openVersion(version);
+        connection = await connection.openVersion(
+            version,
+            target.searchParams.get("manifest") ?? undefined,
+        );
     else if (!version && connection.revision && connection.openVersion)
         connection = await connection.openVersion("latest");
     selectWorkspace(connection.id);

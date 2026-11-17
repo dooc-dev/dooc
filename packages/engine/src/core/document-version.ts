@@ -15,6 +15,7 @@ export interface DocumentRevision {
 }
 
 export interface DocumentVersionList {
+    basePath?: string;
     versions: DocumentRevision[];
     selected?: string;
     current?: string;

@@ -41,6 +41,11 @@ export const mountDocumentVersions = (drafts: () => DraftLocation[] = () => []) 
     status.hidden = true;
     footer.append(status);
     let sequence = 0;
+    let basePath = "";
+    const section = (): string | undefined =>
+        (document.body.dataset.documentManifest ??
+            JSON.parse(document.getElementById("boot")?.textContent || "{}").origin) ||
+        undefined;
     let unsubscribe: (() => void) | undefined;
     const visibility = () => {
         footer.hidden = versions.box.hidden && pending.box.hidden && status.hidden;
@@ -60,6 +65,7 @@ export const mountDocumentVersions = (drafts: () => DraftLocation[] = () => []) 
     const refresh = async () => {
         const request = ++sequence;
         const id = workspaceId();
+        const manifest = section();
         versions.select.disabled = true;
         try {
             const hello = await pageWorkspace(id).request<{ ops: string[] }>("hello");
@@ -69,8 +75,10 @@ export const mountDocumentVersions = (drafts: () => DraftLocation[] = () => []) 
             }
             const data = await pageWorkspace(id).request<DocumentVersionList>("versions", {
                 action: "list",
+                manifest,
             });
-            if (request !== sequence || id !== workspaceId()) return;
+            if (request !== sequence || id !== workspaceId() || manifest !== section()) return;
+            basePath = data.basePath ?? "";
             versions.select.replaceChildren(
                 ...data.versions.map((row, index) => {
                     const option = new Option(
@@ -106,10 +114,21 @@ export const mountDocumentVersions = (drafts: () => DraftLocation[] = () => []) 
                 (await connectServer(`${location.origin}/api/workspace`, true));
             if (!connection.openVersion)
                 throw new Error("Version switching is unavailable for this workspace");
-            const next = await connection.openVersion(version);
+            const next = await connection.openVersion(version, section());
             if (workspaceId() !== from) return;
+            const path =
+                document.body.dataset.documentPath ??
+                (JSON.parse(document.getElementById("boot")?.textContent || "{}").path as
+                    | string
+                    | undefined);
             document.dispatchEvent(
-                new CustomEvent("dooc:select-workspace", { detail: { id: next.id, from } }),
+                new CustomEvent("dooc:select-workspace", {
+                    detail: {
+                        id: next.id,
+                        from,
+                        path: path && basePath ? path.slice(basePath.length) || "/" : path,
+                    },
+                }),
             );
         })()
             .catch((error) => {
@@ -132,6 +151,7 @@ export const mountDocumentVersions = (drafts: () => DraftLocation[] = () => []) 
         void refresh();
     };
     document.addEventListener("dooc:workspace-changed", watch);
+    document.addEventListener("dooc:document-changed", () => void refresh());
     document.addEventListener("dooc:drafts-changed", refreshDrafts);
     document.addEventListener("docs:ui-language", refreshDrafts);
     watch();

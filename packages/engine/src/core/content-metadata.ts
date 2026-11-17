@@ -5,6 +5,7 @@ import { stringify } from "yaml";
 import { parseVersionConfig, type VersionConfig } from "./document-version.js";
 import { docFile, type FileLayout, fileDocumentId, localFile, parseFileLayout } from "./files.js";
 import { contentLanguageCode, DEFAULT_LANG, isLangTag } from "./language.js";
+import { isRemoteManifest, remoteManifestSource } from "./remote-manifest.js";
 import { parseSubformats, type Subformat } from "./subformats.js";
 
 export const MANIFEST_FILE = "dooc.yaml";
@@ -61,6 +62,10 @@ export const pageUrlKind = (
         const target = new URL(url);
         if (!target.hostname || target.username || target.password)
             throw new Error("Document links require a host and must not contain credentials");
+        if (isRemoteManifest(url)) {
+            remoteManifestSource(url);
+            return "manifest";
+        }
         return "link";
     }
     if (url.startsWith("/") && !url.startsWith("//")) {
@@ -526,6 +531,8 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                     throw new Error(`Duplicate document: ${node.file}`);
                 if (file) documents[id] = file;
                 if (typeof node.icon === "string") icons[id] = node.icon;
+                const remote = url && isRemoteManifest(url) ? remoteManifestSource(url) : undefined;
+                const manifestPath = remote?.path ?? url;
                 return {
                     id,
                     ...location,
@@ -534,9 +541,14 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                         ? {
                               name:
                                   kind === "manifest"
-                                      ? (url as string).split("/").at(-1) === MANIFEST_FILE
-                                          ? ((url as string).split("/").at(-2) ?? "index")
-                                          : ((url as string)
+                                      ? (manifestPath as string).split("/").at(-1) === MANIFEST_FILE
+                                          ? ((manifestPath as string).split("/").at(-2) ??
+                                            remote?.repository
+                                                .split("/")
+                                                .at(-1)
+                                                ?.replace(/\.git$/, "") ??
+                                            "index")
+                                          : ((manifestPath as string)
                                                 .split("/")
                                                 .at(-1)
                                                 ?.replace(/\.dooc\.yaml$/, "") ?? "index")

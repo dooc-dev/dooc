@@ -30,8 +30,8 @@ import { themeVariants } from "./theme-variants.js";
 import { type ZipEntry, zip } from "./zip.js";
 
 /** Collect source dependencies without executing configuration, plugins or remote requests. */
-export const exportEntries = (root: string): ZipEntry[] => {
-    const manifest = readManifest(root);
+export const exportEntries = (root: string, file = manifestFile(root)): ZipEntry[] => {
+    const manifest = readManifest(root, file);
     if (manifest.errors.length) throw new Error(manifest.errors.join("\n"));
     const entries = new Map<string, ZipEntry>();
     const origins = new Map<string, string>();
@@ -55,7 +55,7 @@ export const exportEntries = (root: string): ZipEntry[] => {
         if (existsSync(textfilePath(root, file)) && !ignoredFiles(root, [file]).has(file))
             add(file, origin);
     };
-    add(manifestFile(root));
+    add(file);
     for (const file of manifest.includedManifests ?? []) add(file);
     for (const file of manifest.includedAssets ?? []) add(file);
     if (manifest.licence) add(manifest.licence);

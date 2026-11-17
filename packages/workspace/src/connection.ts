@@ -8,11 +8,12 @@ export interface WorkspaceConnection {
     branch?: string;
     readOnly?: boolean;
     revision?: DocumentRevision;
+    manifest?: string;
     readonly branches?: readonly string[];
     client: WorkspaceClient;
     fetch(input: string | URL, init?: RequestInit): Promise<Response>;
     openBranch?(branch: string, create?: boolean): Promise<WorkspaceConnection>;
-    openVersion?(version: string): Promise<WorkspaceConnection>;
+    openVersion?(version: string, manifest?: string): Promise<WorkspaceConnection>;
     close?(): void;
 }
 

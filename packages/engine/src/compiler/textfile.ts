@@ -20,7 +20,7 @@ import {
     writeFileSync,
 } from "./host.js";
 import { assertNotIgnored, withinRead } from "./ignored-files.js";
-
+import { isRemoteSourceFile } from "./remote-manifests.js";
 import { readRemoteTextfile, readRemoteTextfileAsync } from "./textfile-remote.js";
 
 export { parseTextfileRange } from "../core/textfile.js";
@@ -123,6 +123,7 @@ export const writeTextfile = (
     content: string,
     base: string | null,
 ): boolean => {
+    if (isRemoteSourceFile(file)) throw new Error("Remote document sources are read-only");
     if (/[\0\uD800-\uDFFF]/u.test(content)) throw new Error("expected UTF-8 text");
     const path = textfilePath(root, file);
     const exists = lstatSync(path, { throwIfNoEntry: false });

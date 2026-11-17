@@ -55,13 +55,20 @@ const readStore = (root: string): VersionStore => {
     return store;
 };
 
-export const storedVersionRoot = (root: string, revision: string): string => {
+export const storedVersionRoot = (
+    root: string,
+    revision: string,
+    name = manifestFile(root),
+): string => {
     if (!/^hash-[a-f\d]{64}$/.test(revision)) throw new Error("Invalid stored document revision");
-    return projectRoot(textfilePath(root, `.dooc/versions/${revision}/${manifestFile(root)}`));
+    return projectRoot(textfilePath(root, `.dooc/versions/${revision}/${name}`));
 };
 
-export const storedDocumentVersions = (root: string): DocumentRevision[] => {
-    const rows = readStore(root).manifests[manifestFile(root)] ?? [];
+export const storedDocumentVersions = (
+    root: string,
+    name = manifestFile(root),
+): DocumentRevision[] => {
+    const rows = readStore(root).manifests[name] ?? [];
     return rows.map((row, index) => ({
         version: row.version,
         revision: row.revision,

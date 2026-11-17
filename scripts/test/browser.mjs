@@ -235,6 +235,52 @@ for (const latest of [false, true]) {
     });
 }
 
+for (const product of ["editor", "reader"]) {
+    browserTest(`Section versions (${product})`, async (page) => {
+        const project = join(root, `section-${product}`);
+        mkdirSync(join(project, "child"), { recursive: true });
+        writeFileSync(
+            join(project, "dooc.yaml"),
+            "version: { major: 1, minor: 0, patch: 0 }\ndocument:\n  title: Parent\n  url: parent.md\n  children:\n    - document: { url: child/dooc.yaml }\n",
+        );
+        writeFileSync(join(project, "parent.md"), "Parent content.\n");
+        writeFileSync(
+            join(project, "child/dooc.yaml"),
+            "version: { major: 4, minor: 0, patch: git }\ndocument: { title: Child, url: guide.md }\n",
+        );
+        writeFileSync(join(project, "child/guide.md"), "Old child content.\n");
+        const git = (...args) => execFileSync("git", ["-C", project, ...args], { stdio: "pipe" });
+        git("init", "-b", "main");
+        git("config", "user.name", "Test");
+        git("config", "user.email", "test@example.com");
+        git("add", ".");
+        git("commit", "-m", "Initial");
+        writeFileSync(join(project, "child/guide.md"), "New child content.\n");
+        git("add", ".");
+        git("commit", "-m", "Update child");
+        const url = await start(
+            product,
+            "node",
+            project,
+            product === "reader" ? ["--versions", "*"] : [],
+        );
+        await open(page, url, product === "editor");
+        await page.waitForFunction(
+            () => document.querySelector("#document-version-select")?.value === "1.0.0",
+        );
+        await page.locator('#nav-groups a[href*="/child"]').click();
+        await page.waitForFunction(
+            () => document.querySelector("#document-version-select")?.value === "4.0.1",
+        );
+        if (product === "editor") await testDocumentVersionDrafts(page);
+        else {
+            await testDocumentVersionReader(page, false);
+            assert.equal(new URL(page.url()).searchParams.get("manifest"), "child/dooc.yaml");
+            assert.match(await page.locator("main").innerText(), /Old child content/);
+        }
+    });
+}
+
 for (const [file, names] of [
     ["code-editing", ["testCodeEditing"]],
     ["subformat-form", ["testSubformatForm", "testReferencedEnumForm", "testSubformatDatePicker"]],

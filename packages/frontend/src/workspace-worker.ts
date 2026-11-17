@@ -6,20 +6,23 @@ import {
     updateFiles,
     uploadFile,
 } from "../../engine/src/compiler/files.js";
-import { projectRoot } from "../../engine/src/compiler/manifest.js";
+import { projectRoot, readManifest, sectionManifest } from "../../engine/src/compiler/manifest.js";
+import { flattenTree } from "../../engine/src/core/content-metadata.js";
 import {
     type DocumentRevision,
     latestVersionOnly,
     parseVersionSelection,
     selectVersions,
 } from "../../engine/src/core/document-version.js";
+import { docPath } from "../../engine/src/core/routing.js";
 import type { WorkspaceSource } from "../../engine/src/core/workspace.js";
 import {
     type BrowserGitOptions,
     createBrowserGit,
     gitOptions,
 } from "../../workspace/src/browser-git.js";
-import { fs } from "../../workspace/src/browser-host.js";
+import { basename, dirname, fs, join } from "../../workspace/src/browser-host.js";
+import { prepareBrowserSources } from "../../workspace/src/browser-manifests.js";
 import { messagePort } from "../../workspace/src/browser-port.js";
 import {
     changedFiles,
@@ -64,9 +67,11 @@ let catalog: ReturnType<typeof createBrowserVersions>;
 let selection = parseVersionSelection(readOnly ? "latest" : "*");
 let selectionText = readOnly ? "latest" : "*";
 const historicalApps = new Map<string, ReturnType<typeof createDocumentApplication>>();
+const sectionCatalogs = new Map<string, ReturnType<typeof createBrowserVersions>>();
 
 const makeApp = (path: string) =>
     createDocumentApplication(path, {
+        prepareSources: (root) => prepareBrowserSources(root, options.corsProxy),
         fontCss: () =>
             "@font-face{font-family:'UDEV Gothic';font-style:normal;font-weight:400;font-display:swap;src:url(/assets/fonts/udev-gothic-regular.woff2) format('woff2')}",
         readWorkspaceSource: () => source,
@@ -87,16 +92,44 @@ const makeApp = (path: string) =>
         validateCodeTools,
         validateTextfileCode,
     });
-const versionRows = async () => {
-    const all = await catalog.list();
+const versionRows = async (selected = catalog) => {
+    const all = await selected.list();
     const rows = selectVersions(all, selection);
-    if (readOnly && !all.length && catalog.enabled())
+    if (readOnly && !all.length && selected.enabled())
         throw new Error(
             "No published document versions. Commit Git sources or build a source snapshot first.",
         );
     if (readOnly && !rows.length && (all.length || selectionText !== "latest"))
         throw new Error("No document versions match the publication selection");
     return rows;
+};
+const versionContext = (input: Record<string, unknown>) => {
+    const section = typeof input.section === "string" ? input.section : undefined;
+    const selected =
+        typeof input.manifest === "string"
+            ? section
+                ? join(dirname(section), input.manifest)
+                : input.manifest
+            : section;
+    if (!selected) return { catalog, manifest: undefined, basePath: "" };
+    const file = sectionManifest(root, selected);
+    let next = sectionCatalogs.get(file);
+    if (!next) {
+        let repository = dirname(file);
+        while (!fs.existsSync(`${repository}/.git`) && dirname(repository) !== repository)
+            repository = dirname(repository);
+        next = createBrowserVersions(repository, dirname(file), basename(file), (root) =>
+            prepareBrowserSources(root, options.corsProxy),
+        );
+        sectionCatalogs.set(file, next);
+    }
+    const pages = flattenTree(readManifest(root).tree);
+    const mount = pages.find((page) => page.origin === selected);
+    return {
+        catalog: next,
+        manifest: selected,
+        basePath: !section && mount ? docPath(pages, mount.id) : "",
+    };
 };
 
 const manifestAt = async (ref: string): Promise<boolean> => {
@@ -190,7 +223,9 @@ const initialize = async (input: Record<string, unknown>) => {
             ? createBrowserGit(repository, options, label)
             : undefined;
         app = makeApp(root);
-        catalog = createBrowserVersions(repository, root);
+        catalog = createBrowserVersions(repository, root, manifest.split("/").at(-1), (root) =>
+            prepareBrowserSources(root, options.corsProxy),
+        );
         await configure();
         server.broadcast("phase", "storage");
         if (!readOnly) await persistFiles(directory, before, memoryFiles(repository));
@@ -209,13 +244,19 @@ const initialize = async (input: Record<string, unknown>) => {
 const operations = {
     initialize,
     versions: async (input: Record<string, unknown>) => {
-        const rows = await versionRows();
+        const context = versionContext(input);
+        const rows = await versionRows(context.catalog);
+        const selectedVersion =
+            typeof input.revision === "string"
+                ? await context.catalog.versionAt(input.revision)
+                : undefined;
         if (input.action === "list")
             return {
                 versions: rows,
+                basePath: context.basePath,
                 current: rows.find((row) => row.current)?.version,
                 selected:
-                    rows.find((row) => row.revision === input.revision)?.version ??
+                    selectedVersion ??
                     (readOnly ? rows[0]?.version : rows.find((row) => row.current)?.version),
                 selector: selectionText,
                 showSelector: rows.length > 1 && !(readOnly && latestVersionOnly(selection)),
@@ -226,7 +267,7 @@ const operations = {
                 ? rows[0]
                 : rows.find((row) => row.version === input.version);
         if (!row) throw new Error("Document version is not published");
-        return row;
+        return { ...row, manifest: context.manifest };
     },
     ...(mcpEnabled
         ? {
@@ -320,7 +361,8 @@ const server = createWorkspaceServer(
                     const execute = async () => {
                         if (name === "versions" || (!readOnly && input.revision === undefined))
                             return op(input);
-                        const rows = await versionRows();
+                        const context = versionContext(input);
+                        const rows = await versionRows(context.catalog);
                         const row: DocumentRevision | undefined =
                             input.revision === undefined
                                 ? rows[0]
@@ -331,7 +373,7 @@ const server = createWorkspaceServer(
                         if (name !== "mcp") assertReadOnlyOperation(name, input, !readOnly);
                         const previousRoot = root;
                         const previousApp = app;
-                        root = await catalog.open(row.revision);
+                        root = await context.catalog.open(row.revision);
                         let historical = historicalApps.get(root);
                         if (!historical) {
                             historical = makeApp(root);
@@ -358,6 +400,7 @@ const server = createWorkspaceServer(
                     const before = await readDirectory(directory);
                     replaceMemory(repository, before);
                     await configure();
+                    await prepareBrowserSources(root, options.corsProxy);
                     checkDeadline();
                     if (readOnly || input.revision !== undefined) return execute();
                     try {
