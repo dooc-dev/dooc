@@ -326,7 +326,8 @@ const rewriteManifestPaths = (
     }
     const visit = (nodes: DocNode[]) => {
         for (const node of nodes) {
-            if (node.url && pageUrlKind(node.url) === "manifest") node.url = rewrite(node.url);
+            if (node.url && ["manifest", "file"].includes(pageUrlKind(node.url)))
+                node.url = rewrite(node.url);
             visit(node.children);
         }
     };

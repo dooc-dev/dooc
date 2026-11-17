@@ -30,10 +30,11 @@ The root owns `/`. Its file name never adds a URL segment to its children. A doc
 | --- | --- |
 | Omitted, `""`, or `null` | Generate a table of contents |
 | `contents/md/guide.md` | Render a local Markdown file |
+| `contents/pdf/guide.pdf` | Open a local file with its usual previewer |
 | `reference/dooc.yaml` | Include that manifest's root and children |
 | `https://github.com/team/docs/blob/main/reference/dooc.yaml` | Include a Git-hosted manifest and its referenced files; GitHub raw URLs work too |
 | `https://git.example.com/team/docs.git#main:reference/dooc.yaml` | Include a manifest at an explicit Git branch, tag, or commit |
-| `https://example.com` | Navigate directly to that website; HTTP is also accepted |
+| `https://example.com` | Show the website inside dooc; HTTP is also accepted |
 | `/guide/install` | Navigate directly to a page in this site; queries and heading fragments are allowed |
 | `redirect:first` | Redirect to the first immediate child; a child is required |
 
@@ -51,7 +52,44 @@ Remote branch and tag references are resolved once for a server process or brows
 
 Each section uses the version configuration and history of the manifest that provides it, including remote Git sections. See [Document versions](contents/md/version.md).
 
+### Clicks and link titles
+
+The reader chooses how to open an entry. There is no author-defined `mode` setting.
+
+- A regular click opens the content inside dooc: Markdown as a page, a local file in its previewer, an included document as its section, and a Web URL in an iframe.
+- A middle click or Ctrl/Cmd-click opens a new tab. For Web URLs, that tab opens the original website directly.
+- On phones, a regular click on a Web URL asks **Open externally?**. **Open externally** opens the website in a new tab; **Cancel** stays on the current page.
+- A detected iframe failure shows the same confirmation. Node workspaces also check public HTTPS response headers for explicit framing denials. Browsers can hide cross-origin framing failures, and header checks cannot resolve every policy or redirect, so the Web page also has an **Open externally** action that shows this confirmation. A loading timeout offers the same action without claiming the website refused embedding.
+
+Sidebar rows and generated contents cards identify links through the title: entries that open an included document, an HTTP(S) website, another site page, or `redirect:first` use an underlined title in the link color. Ordinary Markdown, local files and generated contents keep their normal title styling. There are no destination badges, auxiliary icons, or type/extension labels. Existing page artwork remains unchanged. A Git-hosted `dooc.yaml` opens as an included document, not a Web preview.
+
+Static HTML exports remain offline: Web pages ask before opening the website externally. Network-enabled HTML exports can show Web pages in iframes.
+
 The [Version specification](contents/md/version.md) describes the `version` setting, automatic numbering, and reader publication selectors.
+
+### Planned manifest authorization
+
+**Status: Planned; not implemented.** Server-hosted dooc will support additional authorization when `document.url` resolves to another `dooc.yaml` or `<name>.dooc.yaml`. This includes local child manifests and supported remote manifest sources. Access to the selected root manifest remains subject to the host's existing access policy; opening the root does not automatically authorize a protected child.
+
+This feature applies only to manifest connections. Ordinary Web URLs, iframe previews, local file previews and Markdown links do not acquire a new authentication option. Web destinations retain their own login flow and sessions. A manifest connection uses data requests controlled by dooc, so the server can handle credentials, authorization challenges and retries explicitly. An iframe or normal browser navigation cannot accept arbitrary authorization headers from the parent page; cross-origin communication requires cooperation from the destination. See [same-origin restrictions](https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Same-origin_policy).
+
+The server owns the policy for each resolved target manifest and the integration with its authentication provider. Document files do not supply executable authentication handlers, secrets or arbitrary credential destinations. This decision introduces no new YAML keys or public authentication API; the provider and host configuration remain to be designed.
+
+The intended flow is:
+
+1. Before authorization, show the parent-authored entry title and a locked state. Do not expose the child's contents or descendants through the parent page.
+2. On entry, the server checks the user's root access and target policy. It returns **allow**, **challenge** or **deny**. A challenge requests the additional authentication needed; deny means the user lacks access.
+3. After successful authentication, the server checks authorization again and opens the requested child page. An existing valid grant can be reused for that session and target until it expires or is revoked.
+
+Permission to read a document and the strength or freshness of a user's authentication are separate checks. Reauthentication or MFA can satisfy a challenge without granting a missing permission. [RFC 9470](https://www.rfc-editor.org/rfc/rfc9470.html) describes step-up authentication challenges.
+
+For a child on the same server, the grant can stay in the server session. A remote source requires credentials accepted by that destination, limited to that destination and the required access. Never forward the root session cookie or bearer token to an arbitrary manifest URL or redirect. The current remote importer supports public Git sources only; authenticated remote retrieval still needs implementation.
+
+The target manifest defines an access boundary for its contents, including nested documents and their assets. The server must enforce it on direct URLs, search, previews, file and record operations, attachments, version history, MCP and export requests. Alternate links to the same protected source must not bypass the policy, and nested includes must retain their parent restrictions. Shared caches and change notifications must not disclose protected content or reuse another user's authorization. The existing eager manifest expansion must respect this boundary before returning data to a client.
+
+Browser-only workspaces and standalone HTML or ZIP files cannot enforce this server policy. Exporting protected content requires an explicit server-side policy because the resulting artifact cannot preserve the runtime access boundary. A source that is publicly accessible at its original URL also remains publicly accessible outside dooc.
+
+Implementation is tracked as **Manifest step-up authorization** in **Development → Feature gaps**.
 
 ## Keys
 
@@ -85,6 +123,8 @@ A Library page lists one kind of content from the whole workspace. Its view is a
 URLs follow the `document.children` hierarchy. Each Markdown page uses its file name without `.md`: `contents/md/start.md` directly under the root is `/start`, and the same page under `contents/md/guide.md` is `/guide/start`. Source folders and the `_docs` prefix are not part of the URL. Changing a Markdown page's display title does not change its URL. Generated pages and links use their title as the URL segment, or `page-N` when untitled. URL segments are percent-encoded.
 
 Library pages use their `library` value, and record boards use their `subformat` value. For example, `library: termth` under `reference.md` is `/reference/termth`.
+
+Other local files keep their full file name as the URL segment: `contents/pdf/guide.pdf` directly under the root is `/guide.pdf`.
 
 Sibling pages must have distinct URL names. Top-level names starting with `_`, plus `api` and `assets`, are reserved for application routes. Language and version remain query parameters, such as `/start?lang=eng&version=1.0.0`. The app adds its hosting prefix, such as `/client`, when needed.
 

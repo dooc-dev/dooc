@@ -1,0 +1,5 @@
+system:
+  default_lang: eng
+document:
+  title: GitHub raw URL
+  url: https://raw.githubusercontent.com/dooc-dev/dooc/dooc-v0.0.16/sample/dooc-sample-project/dooc.yaml

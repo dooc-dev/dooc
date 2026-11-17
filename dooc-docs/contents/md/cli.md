@@ -2,6 +2,8 @@ Workspace application commands use `--project <path>` and default to `./dooc.yam
 
 `dooc editor` and `dooc reader` are aliases for `dooc editor run node --all` and `dooc reader run node --all`. They read `dooc.yaml` from the directory where the command is run and start the client, workspace server and MCP on port `3000`. Reader workspace and MCP operations remain read-only. Options are forwarded: `dooc editor --port 4000 --project docs/team.dooc.yaml` overrides the port and manifest, and `--no-mcp` disables MCP.
 
+For source development, `mise run dev` starts independent editor and reader processes on ports `2000` and `2001`, or use `mise run editor` / `mise run reader` individually. Those tasks use generated playgrounds and application hot reload; see [Development](contents/md/development.md).
+
 Use the explicit `build`/`run` form to choose components and runtimes. [App runtimes](contents/md/runtimes.md) describes these options and single-port routing.
 
 ## Commands
@@ -23,6 +25,7 @@ Use the explicit `build`/`run` form to choose components and runtimes. [App runt
 | `dooc plugin pack <built-dir> [zip]` | Package a plugin |
 | `dooc plugin add <zip> [dooc.yaml] [port]` | Install a plugin and print login links |
 | `dooc plugin login <id> [dooc.yaml] [port]` | Open an installed plugin's login flow |
+| `dooc plugin remove <zip> [dooc.yaml]` | Remove an installed plugin ZIP and its workspace approval |
 | `dooc font add <file> [dooc.yaml]` | Register a project font |
 | `dooc font list [dooc.yaml]` | List project fonts |
 | `dooc font remove <name> [dooc.yaml]` | Remove a project font |
@@ -30,7 +33,7 @@ Use the explicit `build`/`run` form to choose components and runtimes. [App runt
 | `dooc self docs` | Download documentation and open a local reader |
 | `dooc help`, `dooc --help`, `dooc -h` | Show command help |
 
-Explicit application commands require at least one of `--client`, `--server`, or `--mcp`; `--all` selects all three. The shortcuts supply `run node --all` when no action or runtime is given. Runs default to port `3000` and bind to loopback. Document bundles default to `dist/` beside the manifest. Application builds default to `./dooc-<editor\|reader>-<node\|web>` and require an empty output directory.
+Explicit application commands require at least one of `--client`, `--server`, or `--mcp`; `--all` selects all three. The shortcuts supply `run node --all` when no action or runtime is given. Runs default to port `3000` and bind to loopback. Document HTML defaults to `build/` and source ZIPs to `dist/` beside the manifest; named manifests use a subdirectory with the manifest name. Explicit relative output paths use the current working directory. Application builds default to `./dooc-<editor\|reader>-<node\|web>` and require an empty output directory.
 
 ## Options
 
@@ -41,13 +44,14 @@ Explicit application commands require at least one of `--client`, `--server`, or
 | `editor/reader run node` | `--tls-cert <pem> --tls-key <pem>` | Serve HTTPS and secure WebSockets |
 | `editor/reader … node` | `--reader-plugins <module>` | Load an explicit workspace plugin module |
 | `editor/reader … node` | `--server-url <ws-url>` | Set the client's workspace connection |
+| `reader` | `--versions <selection>` | Select published versions; default `latest`, or quote `*` for all |
 | `build`, `zip` | `--reader-plugins <module>` | Load a build plugin module |
 | `build`, `zip` | `--url_preview network\|embed` | Keep URL references (default) or capture remote embeds; static HTML uses `embed` |
 | `build` | `--mode static\|live` | Snapshot plugin cards or keep them fetching |
 | `build` | `--auth external` | Use host authentication for live HTML |
 | `build` | `--source-url <url>` | Set the base URL for record copy links |
 | `build` | `--download easy\|normal\|block` | Add resource downloads, keep browser defaults, or suppress in-page saving; default `normal` |
-| `check` | `--only render,languages,themes` | Select checks; the manifest is always checked |
+| `check` | `--only render,languages,themes` | Select checks; repeat the flag or use commas; the manifest is always checked |
 | `check` | `--allow-shared-svg` | Allow identical SVG bytes across themes |
 | `check` | `--warnings-as-errors` | Fail on warnings |
 | `editor/reader … node --mcp` | `--mcp-transport stdio\|http` | Select Node MCP transport; default `http` |
@@ -63,6 +67,8 @@ Explicit flags override their environment defaults. Builds require explicit plug
 ## Plugins and fonts
 
 `plugin add` and `plugin login` start a local editor on port `5179` by default and print browser login links. Keep the command running while signing in. Pass the manifest before a custom port: `dooc plugin login tracker ./dooc.yaml 5181`. See [Plugins](contents/md/plugins.md) for package installation and authentication.
+
+`plugin remove` takes the installed ZIP file name shown in the **Plugins** tool: `dooc plugin remove tracker.zip ./dooc.yaml`. It removes that ZIP from `.dooc/plugins/` and clears its workspace approval without executing plugin code or starting a server. Saved logins remain available to other workspaces; sign out before removing the plugin to disconnect the account. Named manifests are accepted, and the default manifest is `./dooc.yaml`.
 
 `font add` copies a TTF, OTF, WOFF, or WOFF2 file into the selected workspace's `.dooc/fonts/`. Existing names are never overwritten. `font list` prints registered file names as JSON; use that exact name with `font remove`. Registered fonts are included in HTML and ZIP bundles. Reload the reader after changing them.
 
@@ -119,9 +125,11 @@ See [Install](contents/md/install.md#open-the-documentation) for opening this do
 
 Each diagnostic has a `code`, a `severity`, a `message`, and a `file`. `line` and `column` are optional and one-based when present. The report includes `schemaVersion`, `checks`, `diagnostics`, `summary`, and `exitCode`.
 
-The check runs offline: remote content is not fetched or verified, and is reported as `REMOTE_UNCHECKED`. Language detection is a heuristic; detected mismatches produce warnings. Short text and unsupported formats can produce informational unchecked or inconclusive diagnostics. A passing report does not prove that remote resources are available or that every translation was recognized.
+The CLI first resolves Git-hosted child manifests, which can require Git and network access. The checks then inspect the resolved local sources; embedded remote content is not fetched or verified and is reported as `REMOTE_UNCHECKED`. Language detection is a heuristic; detected mismatches produce warnings. Short text and unsupported formats can produce informational unchecked or inconclusive diagnostics. A passing report does not prove that remote resources are available or that every translation was recognized.
 
 ## Build output
+
+`dooc build` publishes the document; `dooc editor build` and `dooc reader build` produce application assets without copying documents. `dooc zip` collects authored dependencies such as child manifests, local pages, schemas, translations, theme variants, fonts and editor-tool definitions. Add `--url_preview embed` to capture supported remote embeds in the ZIP.
 
 `build` writes `<project>/build/index.html` and `zip` writes `<project>/dist/bundle.zip`. A named manifest (`<name>.dooc.yaml`) uses `build/<name>/` and `dist/<name>/`; an explicit output directory is used as it is. Only the artifact itself is replaced. The HTML folder can be served as it is: archives are written to a different folder, so serving it does not publish them. `build/` and `dist/` are not treated as project content.
 
@@ -130,14 +138,14 @@ The check runs offline: remote content is not fetched or verified, and is report
 | `build`                            | As one file           | Fetched when opened                        |
 | `build --url_preview embed`        | Offline, as one file  | Stored in the file                         |
 | `build --mode live`                | With host integration | Fetched when opened                        |
-| `zip`                              | As a source workspace | Kept as URLs; nothing is downloaded        |
+| `zip`                              | As a source workspace | Kept as URLs; embeds are not captured      |
 | `zip --url_preview embed`          | After unpacking       | Saved in the ZIP; references are rewritten |
 
-`build` and `zip` default to `--url_preview network`: remote content is not downloaded unless you ask for it. Live HTML requires `network`. `--mode static` selects and requires `embed`. Modes apply only to HTML, and `--auth external` requires `--mode live`. The host connects live plugin requests through `window.dooc.setPluginTransport(request)`; the bundle provides no login UI or credentials. Build plugin modules must declare their plugins without a reader `setup` callback. See [Plugins](contents/md/plugins.md#plugins-in-a-build).
+`build` and `zip` default to `--url_preview network`: remote embeds are not captured unless you ask for it. Live HTML requires `network`. `--mode static` selects and requires `embed`. Modes apply only to HTML, and `--auth external` requires `--mode live`. The host connects live plugin requests through `window.dooc.setPluginTransport(request)`; the bundle provides no login UI or credentials. Build plugin modules must declare their plugins without a reader `setup` callback. See [Plugins](contents/md/plugins.md#plugins-in-a-build).
 
 Reader HTML also accepts `--download easy|normal|block` (MCP: `download`). The default `normal` hides download buttons and keeps right-click saving; `easy` adds buttons; `block` suppresses in-page downloads, context menus, save/print shortcuts, printed content and media dragging. It replaces `--easy-download`. This setting does not configure browser administrator policies or prevent saving through browser menus, native PDF viewers or developer tools. See [Download behavior](contents/md/publishing.md#choose-download-behavior).
 
-Only embeds are downloaded; ordinary links stay links. Snapshots require public HTTPS without credentials or redirects. HTML snapshots capture the server's HTML and declarative assets without executing the source site's JavaScript or signing in. HTML network mode fetches content when opened; remote text requires CORS permission from its server. `zip` without `--url_preview embed` does not execute configuration or plugins, and does not download remote content.
+Only embeds are captured; ordinary links stay links. Snapshots require public HTTPS without credentials or redirects. HTML snapshots capture the server's HTML and declarative assets without executing the source site's JavaScript or signing in. HTML network mode fetches content when opened; remote text requires CORS permission from its server. `zip` without `--url_preview embed` does not execute configuration or plugins, and does not capture remote embeds. Git-hosted child manifests are resolved before `build`, `zip` and `check`, including network-mode builds; this can require Git and network access. Their referenced source files are copied under `dooc-imports/` and included in source ZIPs. Authored manifest URLs are retained.
 
 A remote file is limited to 2 MiB, and a build to 64 MiB and 256 remote assets. A failed download stops the build before the previous output is replaced.
 

@@ -32,6 +32,8 @@ export interface FigureEntry {
 export type CompiledDoc = Frontmatter &
     Pick<DocNode, "url" | "root" | "name" | "origin"> & {
         id: string;
+        /** The entry mounts another manifest's root at this position. */
+        included?: boolean;
         subformat?: SubformatCollection;
         /** Library view shown by a display page (`schemath`, `urls`, ...). */
         library?: string;

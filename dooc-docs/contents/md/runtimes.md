@@ -74,7 +74,7 @@ Client-only and web commands do not read a Node workspace. Choose a folder or sa
 
 Disabled components leave their routes unavailable. When the client is enabled, `/` redirects to `/client/`. A document named `mcp` or `server` remains under `/client/mcp` or `/client/server` and does not occupy an API endpoint. The client origin is the origin alone, such as `http://localhost:3000`, without `/client/`.
 
-The Node client opens its configured server workspace directly. Editor and reader servers watch document changes and update the open page automatically. Application source hot reload is enabled by the development tasks `mise run editor` and `mise run reader`; regular `dooc` commands keep watching document data only.
+The Node client opens its configured server workspace directly. Editor and reader servers watch document changes and update the open page automatically. Application source hot reload is enabled by `mise run dev`, which starts editor on port 2000 and reader on port 2001 as separate processes. Each serves `/client/` and `/mcp`; editor also exposes `/server`. Its reader previews working files without allowing writes. Regular `dooc` commands keep watching document data only. See [Development](contents/md/development.md) for the development routes and defaults.
 
 HTTP MCP uses stateless Streamable HTTP: JSON replies to POST requests, no session ID, and no GET/SSE stream. Supported protocol versions are `2025-03-26`, `2025-06-18`, and `2025-11-25`. Select `--mcp-transport stdio` for local MCP hosts. Stdio uses stdin/stdout for protocol messages and stderr for logs, with the same editor/reader permissions and reader publication selection as HTTP.
 

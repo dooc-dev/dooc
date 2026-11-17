@@ -170,7 +170,9 @@ export const staticClientHandler =
         const fallback =
             !path.startsWith("assets/") &&
             !path.startsWith("api/") &&
-            (!path.includes(".") || /^_(?:docs|files)\//.test(path));
+            (!path.includes(".") ||
+                /^_(?:docs|files)\//.test(path) ||
+                req.headers.accept?.includes("text/html"));
         const file = files.has(path) ? path : fallback ? "index.html" : "";
         const data = files.get(file);
         if (!data) {

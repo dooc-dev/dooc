@@ -1,0 +1,4 @@
+kind,example,regular_click
+Document,sections/handbook/dooc.yaml,Open the included section
+Web,https://example.com,Preview or ask to open externally
+File,contents/txt/checklist.txt,Open the file preview

@@ -10,43 +10,51 @@ import {
     MANIFEST_FILE,
     serializeManifest,
 } from "../../engine/src/core/content-metadata.js";
+import type { ExtensionSummary } from "../../engine/src/core/extension-package.js";
 import { prebuilt } from "./assets.js";
 import { outputFile, writeBuildOutput } from "./build-output.js";
 import { terminal } from "./terminal.js";
 
 process.env.NODE_ENV = prebuilt ? "production" : "development";
 
-const USAGE = `usage: dooc <command>
+const USAGE = `usage: dooc <command> [options]
 
 commands:
-  editor [options]                    alias for editor run node --all (default: ./dooc.yaml)
-  reader [options]                    alias for reader run node --all (default: ./dooc.yaml)
-  editor <build|run> <node|web>         build or run selected editor components
-  reader <build|run> <node|web>         build or run selected read-only reader components
-     --client --server --mcp           select components (explicit build/run: all off by default)
-     --all --no-client --no-server --no-mcp  select all, with explicit exclusions
+  editor [options]                    alias for editor run node --all
+  reader [options]                    alias for reader run node --all (read-only)
+  editor <build|run> <node|web>         build or run editor application components
+  reader <build|run> <node|web>         build or run read-only application components
+     --client --server --mcp           select components; explicit build/run defaults to none
+     --all --no-client --no-server --no-mcp  select all, then apply exclusions
      --mcp-transport stdio|http        Node MCP transport (default: http)
-     --port <port>                     shared run port (default: 3000); node: /client/, /server, /mcp
-     --project <path> --out <dir>       workspace path / empty build output directory
-     --relay-url <https-origin>        optional hosted relay for web --mcp; omit for Desktop
-     --repo <git-url>                   resolve --project inside a Git clone (run node)
+     --project <path>                 workspace folder or manifest (default: ./dooc.yaml)
+     --port <port>                    run port (default: 3000)
+     --out <dir>                      application build: require an empty directory
+     --server-url <ws-url>            client connection to a separate Node workspace
+     --client-origin <origin>         allowed Node browser origin
+     --relay-url <https-origin>       hosted relay for web MCP; omit for Desktop
+     --reader-plugins <module>        Node workspace plugin module
+     --repo <git-url>                 resolve --project inside a Git clone (run node)
+     --versions <selection>           reader publication selection (default: latest)
      --tls-cert <pem> --tls-key <pem>  serve HTTPS (run node)
-     --shared <branch>                 record shared editor snapshots on a branch (run node --server)
+     --shared <branch>                editor snapshots (run node --server without --mcp)
   init [path]                          create a manifest in a directory or at a manifest path
   build [dooc.yaml] [out-dir]          build the reading page: <project>/build/index.html
      --mode static|live               HTML snapshot or runtime plugin API
      --auth external                  host supplies live HTML authentication and transport
      --source-url <url>               source directory URL for card copy links
      --download easy|normal|block     HTML download behavior (default: normal)
-  zip [dooc.yaml] [out-dir]            archive the workspace: <project>/dist/bundle.zip
-  build and zip:
      --url_preview network|embed      keep URL references (default) or capture their content
-     --reader-plugins <module>         inject an external build plugin module
+     --reader-plugins <module>        inject an external build plugin module
+  zip [dooc.yaml] [out-dir]            archive the workspace: <project>/dist/bundle.zip
+     --url_preview network|embed      keep URL references (default) or capture their content
+     --reader-plugins <module>        inject an external build plugin module (embed only)
   check [dooc.yaml] [options]          JSON consistency report (check --help for options)
   plugin                               manage local plugins
      pack <built-dir> [zip]            package bundled JS and assets as a plugin ZIP
      add <zip> [dooc.yaml] [port]      install a local plugin and print login links
      login <id> [dooc.yaml] [port]     open a local login flow for an installed plugin
+     remove <zip> [dooc.yaml]          remove an installed plugin ZIP
   font                                 manage project fonts (.dooc/fonts/)
      add <file> [dooc.yaml]            register a font in the project
      list [dooc.yaml]                  list registered project fonts
@@ -56,13 +64,7 @@ commands:
      docs                             download GitHub docs and open the local reader
   relay                                browser MCP relay (relay --help for options)
      --stdio                          connect a Desktop MCP host to a browser workspace
-  help, --help, -h                     show this help
-
-Details: dooc <command> --help (editor, reader, init, build, zip, check, plugin, font, self, relay).
-Default manifest: ./dooc.yaml. Named manifests (<name>.dooc.yaml) are also accepted.
-Paths use the current directory, or the repository root when --repo is given.
-Example: dooc reader run node --client --server --project dooc-docs --repo https://github.com/dooc-dev/dooc.git
-Paths and .dooc/ are relative to the selected manifest's directory.`;
+  help, --help, -h                     show this help`;
 
 const fail = (message: string): never => {
     terminal.close();
@@ -104,7 +106,8 @@ commands:
   docs    download documentation from GitHub and open the local read-only reader
 
 Homebrew and mise installations must be updated through their package manager.
-Documentation requires a network connection. Keep this command running while using the reader.
+Documentation requires a network connection. The local reader uses port 5179.
+Keep this command running while using the reader.
 
 options:
   --help, -h  show this help`);
@@ -144,7 +147,8 @@ options:
 
 Create dooc.yaml in the selected directory (default: current directory), or specify
 a dooc.yaml / <name>.dooc.yaml file path. Missing directories are created.
-Existing files are never overwritten. Run dooc editor run node --client --server --project <manifest-path> to add your first document.
+Creates a root document with an automatic table of contents. Existing files are never overwritten.
+Run dooc editor --project <manifest-path> to add your first document.
 
 options:
   --help, -h  show this help`);
@@ -184,6 +188,7 @@ commands:
   pack <built-dir> [output.zip]        package bundled JS and assets as a plugin ZIP
   add <zip> [dooc.yaml] [port]         install a local plugin and print login links
   login <plugin-id> [dooc.yaml] [port]  open a local login flow for an installed plugin
+  remove <zip> [dooc.yaml]             remove an installed plugin ZIP and its approval
 
 options:
   --help, -h  show this help
@@ -195,9 +200,12 @@ Package:
   Limit: 16 MiB / 256 files. Default output: <built-dir>.zip.
 
 Storage and login:
+  Default manifest: ./dooc.yaml; named manifests are accepted. Default login port: 5179.
   Installed ZIPs: <project>/.dooc/plugins/.
   Personal logins and plugin approvals: ~/.dooc/plugins/ (override with DOOC_USER_DIR).
   Add/login starts a local editor and prints browser login links. Keep it running while signing in.
+  Remove takes the installed ZIP file name, without a directory, and does not execute plugins.
+  Saved logins are kept; sign out in the Plugins tool to disconnect an account.
   Tokens stay on this computer and never enter exported documents.`);
                 break;
             }
@@ -210,6 +218,31 @@ Storage and login:
                 extensionFile(basename(output));
                 writeOut(output, await packExtension(resolve(value), output));
                 console.log(output);
+            } else if (action === "remove" && value && positionals.length <= 3) {
+                const { extensionFile } = await import(
+                    "../../engine/src/core/extension-package.js"
+                );
+                const file = extensionFile(value);
+                const { createExtensionManager } = await import("./extensions.js");
+                const { createPluginHandler } = await import("./plugins.js");
+                const { createLocalPluginStorage } = await import("./plugins/local-storage.js");
+                const manager = createExtensionManager(
+                    projectRoot(rootArg),
+                    createPluginHandler([]),
+                    { plugins: [], mocks: {} },
+                    createLocalPluginStorage(),
+                );
+                try {
+                    const { items } = (await manager({ action: "list" })) as {
+                        items: ExtensionSummary[];
+                    };
+                    const item = items.find((item) => item.file === file);
+                    if (!item) throw new Error(`Plugin not found: ${file}`);
+                    await manager({ action: "delete", file, hash: item.hash });
+                    console.log(`Removed plugin: ${file}`);
+                } finally {
+                    manager.dispose();
+                }
             } else if (
                 (action === "add" || action === "login") &&
                 value &&
@@ -239,7 +272,7 @@ Storage and login:
                 }
             } else
                 throw new Error(
-                    "usage: dooc plugin pack <built-dir> [zip] | add <zip> [dooc.yaml] [port] | login <id> [dooc.yaml] [port]",
+                    "usage: dooc plugin pack <built-dir> [zip] | add <zip> [dooc.yaml] [port] | login <id> [dooc.yaml] [port] | remove <zip> [dooc.yaml]",
                 );
         } catch (error) {
             fail(error instanceof Error ? error.message : String(error));
@@ -261,7 +294,7 @@ Storage and login:
 
 commands:
   add <file> [dooc.yaml]       register a font in the project
-  list [dooc.yaml]             list registered project fonts
+  list [dooc.yaml]            list registered project fonts as JSON
   remove <name> [dooc.yaml]    remove a registered project font
 
 options:
@@ -270,7 +303,8 @@ options:
 Fonts:
   Fonts are copied to <project>/.dooc/fonts/ and included in ZIP and HTML bundles.
   Supported formats: TTF, OTF, WOFF, WOFF2. Existing names are never overwritten.
-  Reload the reader after changing registered fonts. Default manifest: ./dooc.yaml.`);
+  Reload the reader after changing registered fonts. Default manifest: ./dooc.yaml.
+  Named manifests (<name>.dooc.yaml) are accepted. Use a listed file name with remove.`);
                 break;
             }
             const [action, value, rootArg] = positionals;
@@ -307,8 +341,10 @@ Fonts:
             if (values.help) {
                 console.log(`usage: dooc check [dooc.yaml] [options]
 
+Default manifest: ./dooc.yaml; <name>.dooc.yaml is also accepted.
+
 options:
-  --only render,languages,themes  select checks
+  --only <checks>                 comma-separated or repeated: render,languages,themes
                                  manifest validity is always checked
   --allow-shared-svg              allow identical SVG bytes across themes (missing variants still fail)
   --warnings-as-errors            fail on warnings as well as errors
@@ -322,6 +358,9 @@ dooc.yaml example:
   document: {}
 
 Checks:
+  Defaults: render, languages and themes.
+  Git-hosted child manifests are resolved first and can require Git and network access.
+  Embedded remote content is not fetched or verified by these checks.
   render     uses the reader compiler
   languages  checks availability and prose; translations: locales/<ISO 639-3>/<source path>
   themes     checks variants: themes/<theme>/<asset path>
@@ -403,6 +442,7 @@ Report:
 Build the reading page as one HTML file: <project>/build/index.html.
 A named manifest (<name>.dooc.yaml) builds <project>/build/<name>/index.html.
 Serve the output folder as it is. Use dooc zip for an archive of the workspace.
+The manifest defaults to ./dooc.yaml; explicit relative output paths use the current directory.
 
 options:
   --mode static|live           HTML snapshot or runtime plugin API
@@ -432,7 +472,8 @@ HTML modes:
     dooc build --mode live --auth external
 
 URL handling:
-  network: fetch URLs when the page is opened (text requires CORS). embed: no network when opened.
+  network: fetch URLs when opened (text requires CORS). embed: captured previews work offline.
+  Git-hosted child manifests are resolved in both modes and can require Git and network access.
   Only embedded references such as ![](url) are downloaded; ordinary hyperlinks remain links.
   Snapshots use public HTTPS without credentials or redirects. Static HTML captures the server's
   HTML and declarative assets; it does not execute the source site's JavaScript or perform login.
@@ -442,11 +483,12 @@ URL handling:
 
 Archive the workspace: <project>/dist/bundle.zip.
 A named manifest (<name>.dooc.yaml) writes <project>/dist/<name>/bundle.zip.
+The manifest defaults to ./dooc.yaml; explicit relative output paths use the current directory.
 
 options:
   --url_preview network|embed  URL handling (default: network)
     network                    collect dooc.yaml and its source files as authored
-                               configuration and plugins are not executed; nothing is downloaded
+                               configuration and plugins are not executed; embeds are not captured
     embed                      also capture embedded URL content and rewrite its references
   --reader-plugins <module>    inject trusted build plugins (embed only)
   --help, -h                   show this help
@@ -456,6 +498,8 @@ Output:
   so serving that folder does not publish it.
 
 URL handling:
+  Git-hosted child manifests are resolved in both modes and can require Git and network access.
+  Their source files are included under dooc-imports/ while authored manifest URLs are retained.
   Only embedded references such as ![](url) are downloaded; ordinary hyperlinks remain links.
   Snapshots use public HTTPS without credentials or redirects.
   Remote files are limited to 2 MiB each and 64 MiB / 256 assets total.

@@ -49,6 +49,8 @@ Values save as you leave a field. Cards refresh every five seconds and when you 
 
 A ZIP is installed per project and can be enabled, disabled, replaced, or deleted in the **Plugins** tool. A reader module is trusted code chosen by whoever starts dooc; its plugins show as **Provided by reader**.
 
+To remove an installed ZIP from a terminal, run `dooc plugin remove example.zip [dooc.yaml]` with the file name shown in the **Plugins** tool. This deletes the ZIP and its workspace approval without executing it. Saved logins are retained; sign out before removing the plugin to disconnect the account. Reader modules are selected through the startup configuration and are not installed ZIPs.
+
 In an `edit` or `view` session opened with `--repo`, workspace ZIPs remain files but are not activated, even if previously approved. Installing, enabling, replacing, or editing a workspace plugin is disabled in that session. An explicitly selected local `--reader-plugins` module remains supported; `edit` and `view` also accept `DOOC_READER_PLUGINS`. To use workspace ZIPs, inspect and trust a local checkout, then open its manifest without `--repo`.
 
 ## Sign in

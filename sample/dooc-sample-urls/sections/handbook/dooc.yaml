@@ -1,0 +1,11 @@
+version:
+  major: 2
+  minor: 1
+  patch: 0
+document:
+  title: Local handbook
+  url: introduction.md
+  children:
+    - document:
+        title: Getting started
+        url: getting-started.md

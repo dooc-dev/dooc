@@ -449,5 +449,12 @@
     "At least": "At least",
     "Less than": "Less than",
     "At most": "At most",
-    "Is empty": "Is empty"
+    "Is empty": "Is empty",
+    "Open externally?": "Open externally?",
+    "Open externally": "Open externally",
+    "Open this website in a new tab?": "Open this website in a new tab?",
+    "Open this website externally to view it.": "Open this website externally to view it.",
+    "This website could not be displayed here. Open it externally?": "This website could not be displayed here. Open it externally?",
+    "This website has not loaded. Open it externally?": "This website has not loaded. Open it externally?",
+    "Loading website…": "Loading website…"
 }

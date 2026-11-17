@@ -38,6 +38,7 @@ import {
 } from "./editor-tools.js";
 import { createExtensionManager } from "./extensions.js";
 import { fontCss, readFont } from "./fonts.js";
+import { frameBlocked } from "./frame-policy.js";
 import { createGitHandler, validateGitOrigin } from "./git.js";
 import { gitBaseBody, gitBaseText, setSubformatChanges } from "./git-diff.js";
 import { workspaceHistory } from "./history.js";
@@ -71,6 +72,7 @@ const root = resolve(process.env.DOCS_ROOT ?? process.cwd());
 
 const application = createDocumentApplication(root, {
     prepareSources: prepareDocumentSources,
+    frameBlocked,
     fontCss,
     readWorkspaceSource,
     sourceFileBase,
@@ -577,7 +579,10 @@ export const startServer = async (
     server.once("listening", () => {
         const addr = server.address();
         const p = typeof addr === "object" && addr ? addr.port : port;
-        terminal.ready(mode === "preview" ? "view" : mode, root, `${scheme}://localhost:${p}/`);
+        terminal.ready(mode === "preview" ? "view" : mode, {
+            [mode === "edit" ? "Editor" : "Reader"]: `${scheme}://localhost:${p}/`,
+            Project: root,
+        });
         if (startup?.open) {
             const url = `${scheme}://localhost:${p}/`;
             const command = process.platform === "darwin" ? "open" : "xdg-open";

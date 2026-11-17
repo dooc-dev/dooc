@@ -85,6 +85,22 @@ it.each([
         ).toContain("javascript");
         for (const route of ["/api/save", "/assets/missing.js", "/dooc.yaml"])
             expect((await fetch(`${origin}${basePath}${route}`)).status).toBe(404);
+        for (const route of ["/guide.pdf", "/File%20previews/checklist.txt", "/v1.0/start"]) {
+            const response = await fetch(`${origin}${basePath}${route}`, {
+                headers: { Accept: "text/html,application/xhtml+xml" },
+            });
+            expect(response.status).toBe(200);
+            expect(response.headers.get("content-type")).toContain("text/html");
+            expect(await response.text()).toContain("Read documents");
+        }
+        for (const route of ["/api/save", "/assets/missing.js"])
+            expect(
+                (
+                    await fetch(`${origin}${basePath}${route}`, {
+                        headers: { Accept: "text/html" },
+                    })
+                ).status,
+            ).toBe(404);
         if (basePath)
             for (const route of ["/", "/guide", "/clients", "/client-extra"])
                 expect((await fetch(`${origin}${route}`)).status).toBe(404);

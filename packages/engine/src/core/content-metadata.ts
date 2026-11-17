@@ -53,7 +53,7 @@ export interface ParsedManifest {
 
 export const pageUrlKind = (
     url: string,
-): "index" | "content" | "manifest" | "link" | "redirect" => {
+): "index" | "content" | "file" | "manifest" | "link" | "redirect" => {
     if (!url) return "index";
     if (url === "redirect:first") return "redirect";
     // biome-ignore lint/suspicious/noControlCharactersInRegex: Reject control characters before URL normalization.
@@ -77,9 +77,10 @@ export const pageUrlKind = (
     if (localFile(url)) {
         if (url.endsWith(".md")) return "content";
         if (isManifestFile(url.split("/").at(-1) ?? "")) return "manifest";
+        return "file";
     }
     throw new Error(
-        "Document URL must be empty, a local .md or dooc.yaml file, an HTTP(S) URL, a site path, or redirect:first",
+        "Document URL must be empty, a local file, an HTTP(S) URL, a site path, or redirect:first",
     );
 };
 
@@ -545,21 +546,24 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                     ...(documentFormat && kind !== "content"
                         ? {
                               name:
-                                  kind === "manifest"
-                                      ? (manifestPath as string).split("/").at(-1) === MANIFEST_FILE
-                                          ? ((manifestPath as string).split("/").at(-2) ??
-                                            remote?.repository
-                                                .split("/")
-                                                .at(-1)
-                                                ?.replace(/\.git$/, "") ??
-                                            "index")
-                                          : ((manifestPath as string)
-                                                .split("/")
-                                                .at(-1)
-                                                ?.replace(/\.dooc\.yaml$/, "") ?? "index")
-                                      : typeof node.title === "string"
-                                        ? node.title.trim()
-                                        : `page-${index + 1}`,
+                                  kind === "file"
+                                      ? (url as string).split("/").at(-1)
+                                      : kind === "manifest"
+                                        ? (manifestPath as string).split("/").at(-1) ===
+                                          MANIFEST_FILE
+                                            ? ((manifestPath as string).split("/").at(-2) ??
+                                              remote?.repository
+                                                  .split("/")
+                                                  .at(-1)
+                                                  ?.replace(/\.git$/, "") ??
+                                              "index")
+                                            : ((manifestPath as string)
+                                                  .split("/")
+                                                  .at(-1)
+                                                  ?.replace(/\.dooc\.yaml$/, "") ?? "index")
+                                        : typeof node.title === "string"
+                                          ? node.title.trim()
+                                          : `page-${index + 1}`,
                           }
                         : {}),
                     ...(typeof node.title === "string" ? { title: node.title.trim() } : {}),

@@ -1,0 +1,11 @@
+version:
+  major: 3
+  minor: 0
+  patch: 0
+document:
+  title: Named reference
+  url: ""
+  children:
+    - document:
+        title: Reference entry
+        url: reference.md

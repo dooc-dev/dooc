@@ -101,6 +101,7 @@ interface Boot {
     filePreviews: FilePreviewResults;
     siteTitle?: string;
     siteIcon?: string;
+    rootJump?: string;
     workspaceLabel?: string;
     contentLanguage?: string;
     sourceLanguage?: string;
@@ -204,6 +205,7 @@ interface NavResponse {
     html: string;
     siteTitle?: string;
     siteIcon?: string;
+    rootJump?: string;
 }
 
 /**
@@ -1119,6 +1121,13 @@ const updateNavLocation = (): void => {
     if (!header.querySelector("form") && header.textContent !== (siteTitle ?? "dooc"))
         header.textContent = header.title = siteTitle ?? "dooc";
     header.dataset.title = siteTitle ?? "";
+    if (boot.rootJump && /^https?:\/\//i.test(boot.rootJump))
+        header.dataset.jumpUrl = boot.rootJump;
+    else delete header.dataset.jumpUrl;
+    const rootCurrent = (resourceView?.path ?? boot.path) === "/";
+    header.classList.toggle("cur", rootCurrent);
+    if (rootCurrent) header.setAttribute("aria-current", "page");
+    else header.removeAttribute("aria-current");
     const logo = $<HTMLImageElement>("site-icon");
     logo.hidden = !siteIcon;
     if (siteIcon) logo.src = siteIcon;
@@ -1147,19 +1156,16 @@ const updateNavLocation = (): void => {
         if (current) link.setAttribute("aria-current", "page");
         else link.removeAttribute("aria-current");
     }
-    const item = resourceView
-        ? [...document.querySelectorAll<HTMLAnchorElement>("[data-subformat-nav] > .nav-row > a")]
-              .find((link) => workspacePath(link.pathname) === resourceView?.path)
-              ?.closest<HTMLElement>("[data-doc-id]")
-        : document.querySelector<HTMLElement>(
-              `#nav-groups .nav-item[data-doc-id="${CSS.escape(boot.docId)}"]`,
-          );
-    if (!item) {
-        // Doc not in the list (e.g. right after a rename): leave it to the nav refresh
-        // (refreshNav).
-        return;
-    }
-    const cur = item.querySelector(":scope > .nav-row > a");
+    const item = rootCurrent
+        ? undefined
+        : resourceView
+          ? [...document.querySelectorAll<HTMLAnchorElement>("[data-subformat-nav] > .nav-row > a")]
+                .find((link) => workspacePath(link.pathname) === resourceView?.path)
+                ?.closest<HTMLElement>("[data-doc-id]")
+          : document.querySelector<HTMLElement>(
+                `#nav-groups .nav-item[data-doc-id="${CSS.escape(boot.docId)}"]`,
+            );
+    const cur = item?.querySelector(":scope > .nav-row > a");
     for (const a of document.querySelectorAll("#nav-docs .nav-row > a"))
         a.classList.toggle("cur", a === cur);
     // Reflect the current title (empty -> id, like the server's docDisplayName).
@@ -1169,7 +1175,7 @@ const updateNavLocation = (): void => {
         if (cur.getAttribute("title") !== docTitle) cur.setAttribute("title", docTitle);
     }
     for (
-        let it = item.parentElement?.closest(".nav-item");
+        let it = item?.parentElement?.closest(".nav-item");
         it;
         it = it.parentElement?.closest(".nav-item")
     ) {
@@ -1305,7 +1311,11 @@ const refreshNav = async (): Promise<void> => {
     const pageId = [
         ...document.querySelectorAll<HTMLAnchorElement>("[data-subformat-nav] > .nav-row > a"),
     ]
-        .find((link) => workspacePath(link.pathname) === requestedResource?.path)
+        .find(
+            (link) =>
+                requestedResource?.path !== "/" &&
+                workspacePath(link.pathname) === requestedResource?.path,
+        )
         ?.closest<HTMLElement>("[data-doc-id]")?.dataset.docId;
     try {
         const res = await localeFetch(
@@ -1320,6 +1330,7 @@ const refreshNav = async (): Promise<void> => {
         siteIcon = data.siteIcon;
         boot.siteTitle = data.siteTitle;
         boot.siteIcon = data.siteIcon;
+        boot.rootJump = data.rootJump;
         boot.translatedLanguages = data.translatedLanguages;
         updateLanguageControls();
         const navGroups = document.getElementById("nav-groups");
@@ -3369,16 +3380,20 @@ const scrollToAnchor = (hash: string): void => {
 };
 
 const isResourcePath = (path: string): boolean =>
-    [...document.querySelectorAll<HTMLAnchorElement>("[data-subformat-nav] > .nav-row > a")].some(
-        (link) => workspacePath(link.pathname) === path,
-    ) ||
-    path === "/_extensions" ||
-    path === "/_subformats" ||
-    path === "/_git" ||
-    path === "/_library" ||
-    path.startsWith("/_library/") ||
-    path === "/_files" ||
-    path.startsWith("/_files/");
+    path === "/"
+        ? document.querySelector(".nav-root[data-root-resource]") !== null
+        : [
+              ...document.querySelectorAll<HTMLAnchorElement>(
+                  "[data-subformat-nav] > .nav-row > a",
+              ),
+          ].some((link) => workspacePath(link.pathname) === path) ||
+          path === "/_extensions" ||
+          path === "/_subformats" ||
+          path === "/_git" ||
+          path === "/_library" ||
+          path.startsWith("/_library/") ||
+          path === "/_files" ||
+          path.startsWith("/_files/");
 let navigationTask: Promise<void> | undefined;
 const navigateTo = (path: string, hash = ""): Promise<void> => {
     navigationTask ??= (async () => {
@@ -3428,6 +3443,7 @@ if (initialAction) {
 
 // Document links stay in the editor; full navigation also checks drafts before leaving.
 const isDocPath = (path: string): boolean =>
+    path === "/" ||
     [
         ...document.querySelectorAll<HTMLAnchorElement>("#nav-groups [data-doc-id] > .nav-row > a"),
     ].some((link) => workspacePath(new URL(link.href).pathname) === path);
@@ -3443,7 +3459,7 @@ document.addEventListener("click", (ev) => {
     ) {
         return;
     }
-    const a = (ev.target as HTMLElement).closest("a");
+    const a = (ev.target as HTMLElement).closest<HTMLAnchorElement>("a[href]");
     if (!a || a.target === "_blank" || a.hasAttribute("download")) {
         return;
     }

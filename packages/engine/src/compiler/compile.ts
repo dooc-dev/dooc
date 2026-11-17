@@ -2,7 +2,7 @@
 // bundles. createCompiler caches unchanged files; compileSite performs a one-shot compilation.
 
 import { type Block, type ListItem, type TocEntry, walkBlocks } from "../core/blocks.js";
-import { docIdOfFile, flattenTree, isContentPage } from "../core/content-metadata.js";
+import { docIdOfFile, flattenTree, isContentPage, pageUrlKind } from "../core/content-metadata.js";
 import type { CompiledDoc, FigureEntry, TermEntry } from "../core/content-types.js";
 import { termMap } from "../core/inline.js";
 import { DEFAULT_LANG, isLangTag } from "../core/language.js";
@@ -787,6 +787,17 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             if (!doc && !isContentPage(node) && !node.subformat && !node.library) {
                 const file = `page:${node.id}`;
                 const pageTitle = node.title ?? (node.root ? title : node.name) ?? "Contents";
+                if (node.url && pageUrlKind(node.url) === "file") {
+                    try {
+                        assertNotIgnored(root, node.url);
+                        if (!statSync(textfilePath(root, node.url)).isFile())
+                            throw new Error("Expected a regular file");
+                    } catch (error) {
+                        const message = `${node.url}: ${error instanceof Error ? error.message : error}`;
+                        siteErrors.push(message);
+                        errors.push(message);
+                    }
+                }
                 doc = {
                     id: node.id,
                     parent: node.parent,
@@ -802,7 +813,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                 docs.push(doc);
                 sources.set(file, {
                     terms: [],
-                    referencedFiles: [],
+                    referencedFiles: node.url && pageUrlKind(node.url) === "file" ? [node.url] : [],
                     raw: "",
                     frontmatter: { title: pageTitle },
                     lines: [],
@@ -815,6 +826,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                     root: node.root,
                     name: node.name,
                     origin: node.origin,
+                    included: !!node.resolved,
                 });
         }
         docs.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));

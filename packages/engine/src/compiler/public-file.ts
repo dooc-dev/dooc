@@ -4,6 +4,7 @@ export async function fetchPublicFile(
     contentType?: (type: string) => void,
     progress?: (received: number, total?: number) => void,
     address?: (hostname: string, address: string) => void,
+    inspectHeaders?: (headers: Record<string, string | string[] | undefined>) => void,
 ): Promise<Buffer> {
     const { request } = await import("node:https");
     const { lookup } = await import("node:dns/promises");
@@ -84,6 +85,12 @@ export async function fetchPublicFile(
                     return;
                 }
                 contentType?.(response.headers["content-type"] ?? "");
+                if (inspectHeaders) {
+                    inspectHeaders(response.headers);
+                    response.destroy();
+                    resolve(Buffer.alloc(0));
+                    return;
+                }
                 const length = response.headers["content-length"];
                 const total =
                     typeof length === "string" &&

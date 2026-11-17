@@ -3,24 +3,26 @@ node = "22"
 pnpm = "10.28.2"
 bun = "1.4.4"
 
-[tasks.editor]
-description = "Run the editor with hot reload and a disposable feature playground"
+[tasks.dev]
+description = "Run editor and reader on separate ports with hot reload and a shared playground"
 dir = "{{config_root}}"
-env = { DOOC_USER_DIR = "{{config_root}}/build/dev/editor/.dooc/user" }
-usage = 'flag "--port <port>" default="3000"'
-run = [
-  "node --import tsx scripts/dev-workspace.ts editor",
-  "pnpm exec tsx watch --clear-screen=false --include './packages/frontend/src/**' --include './packages/workspace/src/**' packages/server/src/cli.ts editor run node --client --server --mcp --reader-plugins ./sample/examples/reader-plugins/index.mjs --project build/dev/editor --port \"$usage_port\"",
-]
+usage = '''
+flag "--editor-port <port>" default="2000"
+flag "--reader-port <port>" default="2001"
+'''
+run = 'node --import tsx scripts/dev-live.ts all "$usage_editor_port" "$usage_reader_port"'
+
+[tasks.editor]
+description = "Run the development editor with its MCP and workspace server"
+dir = "{{config_root}}"
+usage = 'flag "--port <port>" default="2000"'
+run = 'node --import tsx scripts/dev-live.ts editor "$usage_port"'
 
 [tasks.reader]
-description = "Run the reader with hot reload and a fresh disposable workspace"
+description = "Run the development reader with read-only MCP"
 dir = "{{config_root}}"
-usage = 'flag "--port <port>" default="3001"'
-run = [
-  "node --import tsx scripts/dev-workspace.ts reader",
-  "pnpm exec tsx watch --clear-screen=false --include './packages/frontend/src/**' --include './packages/workspace/src/**' packages/server/src/cli.ts reader run node --client --server --project build/dev/reader --port \"$usage_port\"",
-]
+usage = 'flag "--port <port>" default="2001"'
+run = 'node --import tsx scripts/dev-live.ts reader "$usage_port"'
 
 [tasks.dooc]
 description = "Run the source CLI. e.g. mise run dooc editor run node --all --project dooc-docs"

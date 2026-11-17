@@ -1,6 +1,8 @@
 # Feature playground
 
-This disposable workspace contains working examples of every built-in preview, linked records, editor controls, and local demo plugins. Edit freely: starting `mise run editor` again recreates the workspace. Hot reload preserves edits during the current run.
+This disposable workspace contains working examples of every built-in preview, linked records, editor controls, and local demo plugins. Edit freely: starting `mise run dev` again recreates the workspace. Hot reload preserves edits during the current run.
+
+With `mise run dev`, open `http://localhost:2000/client/` to edit and `http://localhost:2001/client/` to preview the same working files. Each runs in its own process on the port printed by the development task. Saved edits update both views automatically.
 
 ## Choose something to try
 

@@ -53,7 +53,12 @@ import {
 import { readTextfile, textfilePath, writeTextfile } from "../../engine/src/compiler/textfile.js";
 import { type Block, type TocEntry, walkBlocks } from "../../engine/src/core/blocks.js";
 import { selectCodeGrammars, subformatCodeGrammars } from "../../engine/src/core/code-grammars.js";
-import { docIdOfFile, flattenTree, isContentPage } from "../../engine/src/core/content-metadata.js";
+import {
+    docIdOfFile,
+    flattenTree,
+    isContentPage,
+    pageUrlKind,
+} from "../../engine/src/core/content-metadata.js";
 import type { CompiledDoc, FigureEntry, TermEntry } from "../../engine/src/core/content-types.js";
 import { figureFrameHtml, mountFigureFrames } from "../../engine/src/core/figure-frame.js";
 import {
@@ -115,6 +120,8 @@ import { siteIconResponse } from "../../workspace/src/site-icon.js";
 import { siteTitleResponse } from "../../workspace/src/site-title.js";
 import { previewTextfiles, textfileResponse } from "../../workspace/src/textfile.js";
 import { mountBundleNetwork } from "./bundle-network.js";
+import { mountDocumentLinks } from "./document-links.js";
+import { showDialog } from "./edit-dialog.js";
 import { deferredFigureHtml, mountFigurePreviews } from "./figure-preview.js";
 import { type FilePreviewResults, fileReferences } from "./file-references.js";
 import { mountFontPickers } from "./font-picker.js";
@@ -154,7 +161,7 @@ export type ServeMode = "preview" | "edit";
  * file is `<id>.md` (= same shape as the save API's file parameter; CompiledDoc.file minus the
  * content/ prefix).
  */
-export interface Entry extends Pick<CompiledDoc, "url" | "root" | "name" | "origin"> {
+export interface Entry extends Pick<CompiledDoc, "url" | "root" | "name" | "origin" | "included"> {
     id: string;
     subformat?: CompiledDoc["subformat"];
     library?: string;
@@ -270,6 +277,7 @@ export interface EditorBoot {
     previews?: PreviewSettings;
     siteTitle?: string;
     siteIcon?: string;
+    rootJump?: string;
     workspaceLabel?: string;
     contentLanguage?: string;
     sourceLanguage?: string;
@@ -299,6 +307,7 @@ export interface EditorBoot {
 }
 export interface ApplicationHost {
     prepareSources?(root: string): Promise<void>;
+    frameBlocked?(source: string, parent: string): Promise<boolean | undefined>;
     fontCss(inline: boolean): string;
     readWorkspaceSource(root: string): WorkspaceSource;
     sourceFileBase(root: string): string | undefined;
@@ -332,6 +341,7 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
         root: doc.root,
         name: doc.name,
         origin: doc.origin,
+        included: doc.included,
         ...(doc.subformat ? { subformat: doc.subformat } : {}),
         ...(doc.library ? { library: doc.library } : {}),
         ...(doc.parent == null ? {} : { parent: doc.parent }),
@@ -566,12 +576,15 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
 
     // fallbackTitle stands in for the h1 when frontmatter is missing. Each doc renders with its own
     // language's adapter (term ordering) and `<article lang>`.
+    const isLinkedEntry = (entry: Entry): boolean =>
+        !!entry.included || !!(entry.url && ["link", "redirect"].includes(pageUrlKind(entry.url)));
     const docLinks = (site: Site, html: string): string =>
-        html.replace(/href="\/([a-z0-9][a-z0-9-]*)(?=["?#])/g, (whole, id: string) =>
-            site.entries.some((entry) => entry.id === id)
-                ? `href="${escapeHtml(docHref(site.entries, id))}`
-                : whole,
-        );
+        html.replace(/href="\/([a-z0-9][a-z0-9-]*)(?=["?#])/g, (whole, id: string) => {
+            const entry = site.entries.find((entry) => entry.id === id);
+            if (!entry) return whole;
+            const jump = docHref(site.entries, id);
+            return `${isLinkedEntry(entry) ? "data-document-link " : ""}${/^https?:\/\//i.test(jump) ? `data-jump-url="${escapeHtml(jump)}" ` : ""}href="${escapeHtml(docHref(site.entries, id, true))}`;
+        });
 
     /** Easy download offers the page's own Markdown beside its title. */
     const pageDownload = (site: Site, entry: Entry): Pick<RenderCtx, "pageDownload"> => {
@@ -939,9 +952,7 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
     const svgImg = (svg: string, cls: string): string => {
         const uri = svgDataUri(svg);
         const img = `<img class="${cls}" alt="" src="${uri}">`;
-        return cls.includes("doc-icon")
-            ? `<span class="doc-icon-frame" style="--doc-icon:url('${uri}')">${img}</span>`
-            : img;
+        return cls.includes("doc-icon") ? `<span class="doc-icon-frame">${img}</span>` : img;
     };
     const GEAR_ICON = icon(
         '<path d="M4 6h7M15 6h1M4 14h1M9 14h7"/><circle cx="13" cy="6" r="2"/><circle cx="7" cy="14" r="2"/>',
@@ -1133,8 +1144,10 @@ body.sidebar-closed .site-title { display: none; }
 body.sidebar-closed #site-icon-slot { margin: 0 auto; }
 body.sidebar-closed #sidebar-toggle { position: absolute; inset: 0; width: 100%; justify-content: center; padding: 0; }
 body.sidebar-closed #sidebar-toggle svg { visibility: hidden; }
-.site-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-  padding-right: 12px; color: var(--c-fg); white-space: nowrap; }
+.site-title { position: relative; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  padding: 7px 12px 7px 0; color: var(--c-fg); white-space: nowrap; text-decoration: none; }
+.site-title:hover { text-decoration: underline; text-underline-offset: 3px; }
+.site-title.cur { color: var(--c-accent); font-weight: 600; }
 #sidebar-content { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
   padding: 10px 0 8px; }
 #nav-groups { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -1192,7 +1205,7 @@ body[data-version-read-only="true"] :is(.nav-doc-actions, .nav-icon-clear, #site
 .nav-icon { flex: none; }
 .nav-row :is(svg.nav-icon, .doc-icon-frame) { translate: 0 1px; }
 .workspace-icon { width: 18px; height: 18px; object-fit: contain; }
-.nav-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* The doc tree. Top-level docs are .nav-link with an icon,
    descendants are .nav-tree. --nav-depth is set on the children list (top level's children = 2),
    --nav-pad = where that level's label starts, --nav-line = x of that level's guide line. Each
@@ -1264,9 +1277,6 @@ img.doc-icon { flex: none; width: 18px; height: 18px; object-fit: contain; }
 .doc-icon-frame > img { width: 100%; height: 100%; }
 .nav-tree-link > .doc-icon-frame, .nav-tree-link > .nav-icon { width: 15px; height: 15px; margin-right: 7px; }
 .nav-row > a.cur :is(.nav-icon, .doc-icon-frame), .nav-doc-row:has(> a.cur) > .nav-doc-icon { color: var(--c-accent); }
-.nav-row > a.cur .doc-icon-frame > img, .nav-doc-row:has(> a.cur) > .nav-doc-icon .doc-icon-frame > img { visibility: hidden; }
-.nav-row > a.cur .doc-icon-frame::after, .nav-doc-row:has(> a.cur) > .nav-doc-icon .doc-icon-frame::after {
-  content: ""; position: absolute; inset: 0; background: currentColor; mask: var(--doc-icon) center / contain no-repeat; }
 body.sidebar-closed :is(#sidebar-content, #nav-groups > .nav-root) { scrollbar-width: none; scrollbar-gutter: auto; }
 body.sidebar-closed #nav-groups { --nav-rail: 8px; }
 body.sidebar-closed #nav-groups .nav-label, body.sidebar-closed #nav-status { opacity: 0; pointer-events: none; }
@@ -1591,6 +1601,17 @@ article blockquote > :first-child { margin-top: 0; }
 article blockquote > :last-child { margin-bottom: 0; }
 ul.idx { list-style: none; padding: 0; }
 ul.idx li { margin: 10px 0; }
+ul.idx a { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--doc-border); border-radius: 6px; color: var(--doc-fg); text-decoration: none; }
+ul.idx a:hover { background: var(--doc-panel-2); }
+ul.idx a > .nav-icon { width: 18px; height: 18px; }
+.document-card-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.nav-row > a[data-document-link] .nav-label,
+#sidebar:has(.nav-root[data-document-link]) .site-title,
+ul.idx a[data-document-link] .document-card-label {
+  color: color-mix(in srgb, var(--doc-accent-2) 85%, var(--doc-fg)); text-decoration: underline; text-underline-offset: 2px; }
+.document-web-tools { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+.document-web-tools span { min-width: 0; overflow-wrap: anywhere; color: var(--doc-fg-2); }
+.document-web-frame { display: block; width: 100%; height: 70vh; min-height: 320px; border: 1px solid var(--doc-border); background: #fff; }
 details summary { cursor: pointer; opacity: .8; }
 /* Figure and term file links show previews on hover. */
 .figref, .dictref { color: var(--doc-accent-2); text-decoration: none;
@@ -2042,8 +2063,6 @@ a.file-editor-title:hover { color: var(--c-accent); text-decoration: underline; 
 #cm .cm-lineNumbers .cm-gutterElement:hover { color: var(--c-accent); text-decoration: underline; cursor: pointer; }
 body.git-diff-hidden .cm-lineNumbers :is(.cm-git-added, .cm-git-modified, .cm-git-deleted-start, .cm-git-deleted-end) { box-shadow: none; }
 body.git-diff-hidden .cm-line:is(.cm-git-added, .cm-git-modified, .cm-git-deleted-start, .cm-git-deleted-end) { background-color: transparent; }
-#site-title[role="button"] { cursor: text; position: relative; }
-#site-title:focus-visible { outline: 1px solid var(--c-line); }
 #site-title .nav-rename-form { inset: 0; padding: 0; }
 #site-icon-slot input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 #site-icon-slot:hover, #site-icon-slot:focus-within, #sidebar-head.over #site-icon-slot { background: var(--c-line); border-radius: 3px; }
@@ -2256,7 +2275,7 @@ body.edit #nav-groups { --nav-rail: 22px; --nav-icon-half: 9px; }
 .nav-doc-row:has(> a.cur) { background: var(--c-raised); }
 .nav-row.nav-doc-row > a { padding: 4px 2px; background: transparent; }
 .nav-doc-row > a::before { display: none; }
-.nav-doc-name { display: flex; flex-direction: column; min-width: 0; line-height: 17px; }
+.nav-doc-name { display: flex; flex: 1; flex-direction: column; min-width: 0; line-height: 17px; }
 .nav-doc-icon { position: relative; flex: none; display: flex; align-items: center; justify-content: center;
   width: 20px; height: 24px; cursor: pointer; border-radius: 3px; color: var(--c-fg-faint); }
 .nav-doc-icon:hover, .nav-doc-icon.over, .nav-doc-icon:focus-within { background: var(--c-line); color: var(--c-fg); }
@@ -2570,7 +2589,6 @@ body.edit .nav-row { cursor: grab; }
                 ? (libraryIcon(e.library) ?? STATICS_ICON)
                 : DOCS_ICON;
     };
-
     // `GET /api/nav` (edit mode; the client reconciles changed nodes after an md change)
     // (= the same value isn't declared in two places).
     // Each item is a page row and its children list, emitted even when empty
@@ -2622,13 +2640,10 @@ body.edit .nav-row { cursor: grab; }
                     ? `<div class="nav-item nav-placeholder"><div class="nav-row"><button class="nav-create" type="button" data-parent="${rootPage?.file ? escapeHtml(rootPage.id) : ""}" popovertarget="nav-page-menu" aria-haspopup="menu" title="Add doc" data-i18n-title="Add doc" aria-label="Add doc" data-i18n-aria-label="Add doc">${PLUS_ICON}</button></div></div>`
                     : "";
             return depth === 0
-                ? `<div class="nav-list nav-root" data-parent="${rootPage?.file ? escapeHtml(rootPage.id) : ""}"${mode === "edit" ? ' id="nav-docs"' : ""}>${items}${placeholder}</div>`
+                ? `<div class="nav-list nav-root" data-parent="${rootPage?.file ? escapeHtml(rootPage.id) : ""}"${rootPage && !isContentPage(rootPage) ? " data-root-resource" : ""}${rootPage && isLinkedEntry(rootPage) ? " data-document-link" : ""}${mode === "edit" ? ' id="nav-docs"' : ""}>${items}${placeholder}</div>`
                 : `<div class="nav-list nav-tree" data-parent="${escapeHtml(parent ?? "")}" style="--nav-depth:${depth + 1}">${items}${placeholder}</div>`;
         };
         const html =
-            (rootPage
-                ? `<div class="nav-item" data-doc-id="${escapeHtml(rootPage.id)}"${!isContentPage(rootPage) ? " data-subformat-nav" : ""}><div class="nav-row"><a class="nav-link${rootPage.id === currentId ? " cur" : ""}" href="/${rootPage.id}">${entryIcon(rootPage, "nav-icon doc-icon")}<span class="nav-label">${escapeHtml(docDisplayName(rootPage.frontmatter, rootPage.id))}</span></a></div></div>`
-                : "") +
             list(rootPage?.id, 0) +
             '<div id="document-versions" hidden></div>' +
             (mode === "edit"
@@ -3054,6 +3069,9 @@ body.edit .nav-row { cursor: grab; }
     // Navigation follows the manifest hierarchy via routing.docPath.
     const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
         const currentDocument = site.entries.find((entry) => entry.id === opts.currentId);
+        const rootPage = site.entries.find((entry) => entry.root);
+        const rootJump = rootPage ? docHref(site.entries, rootPage.id) : "";
+        const rootCurrent = currentDocument?.root && (!opts.currentRes || opts.currentRes === "/");
         const nav = navGroupsHtml(
             historicalReadOnly ? "preview" : mode,
             site,
@@ -3102,8 +3120,9 @@ ${opts.publish ? `<meta name="referrer" content="no-referrer"><meta http-equiv="
 (${initializeThemes.toString()})(${JSON.stringify(site.themes)});
 (${mountFigureFrames.toString()})(document);</script>
 <style>${fontCss(Boolean(opts.publish))}${CSS}${mode === "edit" ? EDIT_CSS : ""}</style></head>
-<body data-document-manifest="${escapeHtml(currentDocument?.origin ?? "")}" data-document-path="${escapeHtml(currentDocument ? docPath(site.entries, currentDocument.id) : "/")}"${mode === "edit" ? ' class="edit"' : ""}${site.download ? ` data-download="${site.download}"` : ""}${site.sourceBase ? ` data-source-base="${escapeHtml(site.sourceBase)}"` : ""}><nav id="sidebar"><div id="sidebar-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" data-i18n-aria-label="Resize sidebar" title="Resize sidebar" data-i18n-title="Resize sidebar"></div><div id="sidebar-head">${siteIcon}<div id="site-title" class="site-title" title="${siteTitle}"${mode === "edit" ? ` data-title="${escapeHtml(site.title ?? "")}" tabindex="0" role="button" aria-label="Edit site title" data-i18n-aria-label="Edit site title"` : ""}>${siteTitle}</div><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button></div><div id="sidebar-content"><div id="nav-groups">${nav}</div><div id="nav-status" role="status" aria-live="polite"></div></div></nav>${main}${opts.aside ?? ""}
+<body data-document-manifest="${escapeHtml(currentDocument?.origin ?? "")}" data-document-path="${escapeHtml(currentDocument ? docPath(site.entries, currentDocument.id) : "/")}"${mode === "edit" ? ' class="edit"' : ""}${site.download ? ` data-download="${site.download}"` : ""}${site.sourceBase ? ` data-source-base="${escapeHtml(site.sourceBase)}"` : ""}><nav id="sidebar"><div id="sidebar-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" data-i18n-aria-label="Resize sidebar" title="Resize sidebar" data-i18n-title="Resize sidebar"></div><div id="sidebar-head">${siteIcon}<a id="site-title" class="site-title${rootCurrent ? " cur" : ""}" href="/"${/^https?:\/\//i.test(rootJump) ? ` data-jump-url="${escapeHtml(rootJump)}"` : ""} title="${siteTitle}"${rootCurrent ? ' aria-current="page"' : ""}${mode === "edit" ? ` data-title="${escapeHtml(site.title ?? "")}" aria-keyshortcuts="F2"` : ""}>${siteTitle}</a><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button></div><div id="sidebar-content"><div id="nav-groups">${nav}</div><div id="nav-status" role="status" aria-live="polite"></div></div></nav>${main}${opts.aside ?? ""}
 <script>
+(${mountDocumentLinks.toString()})(${showDialog.toString()}, ${!opts.publish || !!opts.publish.network}${opts.publish ? "" : `, ${workspaceFetch.toString()}`});
 (${mountThemePickers.toString()})(${JSON.stringify(THEME_ICONS)}, ${JSON.stringify(site.themes)});
 (${mountThemeVariants.toString()})(document);
 ${site.download === "block" ? `(${inlineScript(mountDownloadBlock.toString())})();` : ""}
@@ -3265,6 +3284,7 @@ ${
     const target = context();
     if (document.querySelector(".nav-rename-form")) return;
     const original = label.textContent;
+    const href = label.getAttribute("href");
     const baseTitle = label.dataset.title || null;
     const form = document.createElement("form");
     form.className = "nav-rename-form";
@@ -3277,6 +3297,7 @@ ${
     input.setAttribute("aria-label", t("Site title"));
     form.append(input);
     label.replaceChildren(form);
+    label.removeAttribute("href");
     input.select();
     let busy = false;
     let closed = false;
@@ -3285,6 +3306,7 @@ ${
       closed = true;
       form.remove();
       label.textContent = original;
+      label.setAttribute("href", href);
       void refresh();
     };
     form.addEventListener("focusout", (event) => {
@@ -3313,6 +3335,7 @@ ${
         form.remove();
         label.textContent = label.title = result.title;
         label.dataset.title = result.title;
+        label.setAttribute("href", href);
         await refresh();
         label.focus();
         setStatus("", false);
@@ -3341,7 +3364,7 @@ ${
     docAction(row.closest("[data-doc-id]"), "rename");
   };
   document.addEventListener("dblclick", editLabel);
-  document.addEventListener("keydown", (event) => { if (event.key === "F2" || (event.key === "Enter" && event.target.id === "site-title")) editLabel(event); });
+  document.addEventListener("keydown", (event) => { if (event.key === "F2") editLabel(event); });
   const setIcon = async (slot, file) => {
     const target = context();
     if (file && !/\\.svg$/i.test(file.name) && file.type !== "image/svg+xml") {
@@ -3758,8 +3781,11 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
     document.dispatchEvent(new Event("docs:page-shown"));
     if (actions) main.prepend(actions);
     document.title = page.dataset.title;
-    for (const a of document.querySelectorAll("#nav-groups a")) {
-      a.classList.toggle("cur", a.getAttribute("href").split("?")[0] === "#/" + route);
+    for (const a of document.querySelectorAll("#site-title, #nav-groups a")) {
+      const current = a.getAttribute("href").split("?")[0] === "#/" + route;
+      a.classList.toggle("cur", current);
+      if (current) a.setAttribute("aria-current", "page");
+      else a.removeAttribute("aria-current");
     }
     const cur = document.querySelector("#nav-groups a.cur");
     for (let it = cur && cur.closest(".nav-item").parentElement.closest(".nav-item"); it; it = it.parentElement.closest(".nav-item")) {
@@ -3802,8 +3828,8 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
                 title: docDisplayName(e.frontmatter, e.id),
                 main: entryMain(site, e),
                 redirect:
-                    docHref(site.entries, e.id) !== docPath(site.entries, e.id)
-                        ? docHref(site.entries, e.id)
+                    docHref(site.entries, e.id, true) !== docPath(site.entries, e.id)
+                        ? docHref(site.entries, e.id, true)
                         : undefined,
             }));
         const first = pages[0]?.route ?? "";
@@ -3869,6 +3895,15 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
     // A doc's main content. A doc with an empty body and children (a chapter-heading-only doc) shows
     // its children list in place of the body.
     const entryMain = (site: Site, e: Entry): string => {
+        if (e.url && /^https?:\/\//i.test(e.url)) {
+            const title = docDisplayName(e.frontmatter, e.id);
+            return `<article><h1>${escapeHtml(title)}</h1><section class="document-web" data-web-url="${escapeHtml(e.url)}" data-title="${escapeHtml(title)}"><div class="document-web-tools"><span>${escapeHtml(e.url)}</span><a href="${escapeHtml(e.url)}" data-web-open data-i18n="Open externally">Open externally</a></div><p data-web-status role="status" data-i18n="Loading website…">Loading website…</p></section></article>`;
+        }
+        if (e.url && pageUrlKind(e.url) === "file")
+            return (
+                linkedFilePage(site, e.url)?.main ??
+                `<article><h1>${escapeHtml(docDisplayName(e.frontmatter, e.id))}</h1><p role="alert">File not found: ${escapeHtml(e.url)}</p></article>`
+            );
         const html = renderEntryHtml(site, e).html;
         const kids = childrenOf(site.entries, e.id);
         if (e.subformat || e.library || e.blocks.length > 0 || kids.length === 0) {
@@ -3877,10 +3912,13 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
         const items = kids
             .map(
                 (k) =>
-                    `<li><a href="${escapeHtml(docHref(site.entries, k.id))}">${escapeHtml(docDisplayName(k.frontmatter, k.id))}</a></li>`,
+                    `<li><a href="/${k.id}">${entryIcon(k, "doc-icon")}<span class="document-card-label">${escapeHtml(docDisplayName(k.frontmatter, k.id))}</span></a></li>`,
             )
             .join("");
-        return html.replace(/<\/article>\s*$/, `<ul class="idx">${items}</ul></article>`);
+        return docLinks(
+            site,
+            html.replace(/<\/article>\s*$/, `<ul class="idx">${items}</ul></article>`),
+        );
     };
 
     const languageFieldHtml = (
@@ -3925,6 +3963,7 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
             gitBase: entryGitBase(entry, site),
             ...(site.title === undefined ? {} : { siteTitle: site.title }),
             ...(site.icon === undefined ? {} : { siteIcon: svgDataUri(site.icon) }),
+            rootJump: docHref(site.entries, site.entries.find((entry) => entry.root)?.id ?? ""),
             ...(site.workspace
                 ? {
                       workspaceLabel:
@@ -4045,7 +4084,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
             return { status: 404, body: { error: `${path} is not a doc route` } };
         }
         const html = entryMain(site, doc);
-        const href = docHref(site.entries, doc.id);
+        const href = docHref(site.entries, doc.id, true);
         if (href !== docPath(site.entries, doc.id))
             return { status: 200, body: { redirect: href } };
         if (!isContentPage(doc))
@@ -4748,6 +4787,20 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
             );
             return;
         }
+        if (req.method === "GET" && path === "/api/frame-policy") {
+            const url = requestUrl.searchParams.get("url") ?? "";
+            if (!site.entries.some((entry) => entry.url === url && /^https?:\/\//i.test(url))) {
+                sendJson(res, 404, { error: "Website not found" });
+                return;
+            }
+            sendJson(res, 200, {
+                blocked: await host.frameBlocked?.(
+                    url,
+                    requestUrl.searchParams.get("parent") ?? "",
+                ),
+            });
+            return;
+        }
         // edit-mode-only APIs (used by edit-client.ts). handle() strips the query from path, so
         // the query is read from req.url via URL/URLSearchParams.
         if (mode === "edit" && req.method === "GET" && path === "/api/nav") {
@@ -4755,6 +4808,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
             sendJson(res, 200, {
                 siteTitle: site.title,
                 siteIcon: site.icon ? svgDataUri(site.icon) : undefined,
+                rootJump: docHref(site.entries, site.entries.find((entry) => entry.root)?.id ?? ""),
                 translatedLanguages: site.entries.find(
                     (entry) => entry.id === requestUrl.searchParams.get("current"),
                 )?.translatedLanguages,
@@ -4847,7 +4901,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
             notFound(res, path);
             return;
         }
-        const href = docHref(site.entries, doc.id);
+        const href = docHref(site.entries, doc.id, true);
         if (href !== docPath(site.entries, doc.id)) {
             const target = new URL(href, "http://localhost");
             if (href.startsWith("/"))

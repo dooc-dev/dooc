@@ -23,4 +23,4 @@ The sidebar **Version** picker lists 1.0.1 and 1.0.0 on main. Selecting 1.0.0 op
 2. Open **Files → History** and create a snapshot.
 3. Make another change, then inspect or restore a checkpoint.
 
-Git history and document versions are related: a committed content change advances the automatic patch version. Edits remain disposable across a fresh `mise run editor` start. Read [Document versions](contents/md/version.md) for the increment rules and [Workspace history](contents/md/workspaces.md#history) for restore behavior.
+Git history and document versions are related: a committed content change advances the automatic patch version. Edits remain disposable across a fresh `mise run dev` start. Read [Document versions](contents/md/version.md) for the increment rules and [Workspace history](contents/md/workspaces.md#history) for restore behavior.

@@ -120,7 +120,7 @@ export const readManifest = (root: string, file = manifestFile(root)): ParsedMan
                         if (
                             node.url &&
                             !isRemoteManifest(node.url) &&
-                            ["content", "manifest"].includes(pageUrlKind(node.url))
+                            ["content", "file", "manifest"].includes(pageUrlKind(node.url))
                         )
                             node.url = qualify(node.url);
                         node.id = fileDocumentId(

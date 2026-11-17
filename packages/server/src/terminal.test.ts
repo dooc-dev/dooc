@@ -42,16 +42,28 @@ afterEach(() => {
 it("keeps piped logs plain and removes credentials, URL parameters and terminal controls", () => {
     const stdout = vi.spyOn(process.stdout, "write");
     const { terminal, text } = capture();
-    terminal.ready(
-        "edit",
-        "/docs\nforged line",
-        "http://alice:secret@localhost:5179/?token=secret#secret",
-    );
+    terminal.ready("editor", {
+        Client: "http://alice:secret@localhost:2000/client/?token=secret#secret",
+        MCP: "http://localhost:2000/mcp",
+        Server: "ws://localhost:2000/server",
+        Project: "/docs\nforged line",
+    });
+    terminal.ready("reader", {
+        Client: "http://localhost:2001/client/",
+        MCP: "http://localhost:2001/mcp",
+    });
     terminal.info("Fetch https://user:secret@example.test/file?access_token=secret#secret");
     terminal.warn("\u001b[31mwarning\u001b[0m\r\u0007");
     terminal.error("\u001b]8;;https://example.test/?secret\u0007failure\u001b]8;;\u0007");
     terminal.operation("Save", "file.md\u202E");
-    expect(text()).toContain("http://localhost:5179/");
+    expect(text()).toContain(
+        "  Client:  http://localhost:2000/client/\n" +
+            "  MCP:     http://localhost:2000/mcp\n" +
+            "  Server:  ws://localhost:2000/server\n",
+    );
+    expect(text()).toContain(
+        "  Client: http://localhost:2001/client/\n  MCP:    http://localhost:2001/mcp\n",
+    );
     expect(text()).toContain("https://example.test/file");
     expect(text()).toContain("/docs forged line");
     expect(text()).toMatch(/\d{2}:\d{2}:\d{2} Save {2}file.md/);

@@ -83,14 +83,18 @@ export function createTerminal(output: Writable & { isTTY?: boolean } = process.
         render();
     };
     return {
-        ready(mode: string, root: string, url: string) {
+        ready(mode: string, endpoints: Record<string, string>) {
             clear();
+            const width =
+                Math.max(0, ...Object.keys(endpoints).map((name) => safeText(name).length)) + 1;
             log.message(
                 [
                     "",
                     color("bold", `dooc · ${safeText(mode)}`),
-                    `  ${color("cyan", safeText(url))}`,
-                    `  ${safeText(root)}`,
+                    ...Object.entries(endpoints).map(
+                        ([name, value]) =>
+                            `  ${`${safeText(name)}:`.padEnd(width)} ${color("cyan", safeText(value))}`,
+                    ),
                     color("gray", "  Ctrl+C to stop"),
                     "",
                 ],

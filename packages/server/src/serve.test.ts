@@ -547,7 +547,7 @@ describe("navGroupsHtml", () => {
             '<img class="nav-icon doc-icon" alt="" src="data:image/svg+xml;base64,',
         );
         expect(html).toContain('title="B"><span class="doc-icon-frame"');
-        expect(html).toContain("--doc-icon:url('data:image/svg+xml;base64,");
+        expect(html).not.toContain("--doc-icon:");
     });
 
     it("lists Markdown filenames in Files with escaped source and a link to the document", () => {
@@ -654,6 +654,7 @@ describe("editorBoot / pageDataResponse (backing `GET /api/page`)", () => {
         const entry = site.entries.find((entry) => !entry.root) as Entry;
         expect(editorBoot(entry, site)).toEqual({
             gitBase: null,
+            rootJump: "/",
             file: "a.md",
             docId: "a",
             title: "A",
@@ -711,11 +712,13 @@ describe("editorBoot / pageDataResponse (backing `GET /api/page`)", () => {
         });
         const html = publishHtml(site, "");
         expect(html).toContain(
-            '<div id="site-title" class="site-title" title="資料 &amp; &quot;API&quot; &lt;guide&gt;">資料 &amp; &quot;API&quot; &lt;guide&gt;</div>',
+            '<a id="site-title" class="site-title" href="#/" title="資料 &amp; &quot;API&quot; &lt;guide&gt;">資料 &amp; &quot;API&quot; &lt;guide&gt;</a>',
         );
         expect(html).toContain('data-title="A — 資料 &amp; &quot;API&quot; &lt;guide&gt;"');
         expect(html).not.toContain("crumb-");
-        expect(publishHtml(docSite(), "")).toContain('class="site-title" title="dooc">dooc</div>');
+        expect(publishHtml(docSite(), "")).toContain(
+            'class="site-title" href="#/" title="dooc">dooc</a>',
+        );
     });
 
     it("pageDataResponse: 404 when not a doc route (the caller falls back to normal navigation)", () => {
@@ -806,7 +809,7 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
         expect(site.title).toBe("dooc documentation");
         expect(html).toContain("<title>dooc documentation</title>");
         expect(html).toContain(
-            'class="site-title" title="dooc documentation">dooc documentation</div>',
+            'class="site-title" href="#/" title="dooc documentation">dooc documentation</a>',
         );
     });
 
@@ -898,7 +901,10 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
             /<template data-route="markdown\/embeds"[^>]*>(.*?)<\/template>/s.exec(output)?.[1] ??
             "";
         expect(guide).toContain(
-            '<ul class="idx"><li><a href="#/markdown/embeds/media">Images, video &amp; HTML</a>',
+            '<ul class="idx"><li><a href="#/markdown/embeds/media"><span class="doc-icon-frame">',
+        );
+        expect(guide).toContain(
+            '<span class="document-card-label">Images, video &amp; HTML</span>',
         );
     });
 

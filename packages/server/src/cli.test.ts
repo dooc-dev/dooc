@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import {
     existsSync,
     mkdirSync,
     mkdtempSync,
     readdirSync,
     readFileSync,
+    realpathSync,
     rmSync,
     symlinkSync,
     writeFileSync,
@@ -11,10 +13,12 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { zip } from "../../engine/src/compiler/zip.js";
+import { createLocalPluginStorage } from "./plugins/local-storage.js";
 import { terminal } from "./terminal.js";
 
 vi.mock("./terminal.js", () => ({
-    terminal: { info: vi.fn(), download: vi.fn(), close: vi.fn() },
+    terminal: { ready: vi.fn(), info: vi.fn(), download: vi.fn(), close: vi.fn() },
 }));
 
 const originalArgv = process.argv;
@@ -319,6 +323,79 @@ describe("source-based CLI", () => {
             expect.stringContaining("--mcp-transport stdio"),
         );
         expect(result.stderr).toHaveBeenCalledWith(expect.stringContaining("dooc relay"));
+    });
+
+    it.each([
+        undefined,
+        "team.dooc.yaml",
+    ])("removes a plugin ZIP and its approval without executing it (manifest=%s)", async (manifest) => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-plugin-remove-"));
+        roots.push(root);
+        const project = manifest ? join(root, "docs") : root;
+        const folder = join(project, ".dooc/plugins");
+        mkdirSync(folder, { recursive: true });
+        writeFileSync(join(project, manifest ?? "dooc.yaml"), "document: {}\n");
+        const archive = zip([
+            {
+                name: "package.json",
+                data: Buffer.from(
+                    JSON.stringify({
+                        name: "example",
+                        version: "1.0.0",
+                        type: "module",
+                        main: "index.mjs",
+                    }),
+                ),
+            },
+            { name: "index.mjs", data: Buffer.from("throw new Error('Plugin must not execute');") },
+        ]);
+        writeFileSync(join(folder, "example.zip"), archive);
+        writeFileSync(join(folder, "other.zip"), archive);
+        vi.stubEnv("DOOC_USER_DIR", join(root, "personal"));
+        const personal = createLocalPluginStorage();
+        const approval = `extensions-${createHash("sha256").update(realpathSync(project)).digest("hex")}.json`;
+        const revision = createHash("sha256").update(archive).digest("hex");
+        personal.write(approval, { "example.zip": revision, "other.zip": revision });
+        const credentials = `credentials-${"a".repeat(64)}.json`;
+        personal.write(credentials, { saved: true });
+        const startServer = vi.fn();
+        vi.doMock("./serve.js", () => ({ startServer }));
+        const result = cli(
+            "plugin",
+            "remove",
+            "example.zip",
+            ...(manifest ? [join(project, manifest)] : []),
+        );
+        await result.run();
+        expect(existsSync(join(folder, "example.zip"))).toBe(false);
+        expect(readFileSync(join(folder, "other.zip"))).toEqual(archive);
+        expect(personal.read(approval)).toEqual({ "other.zip": revision });
+        expect(personal.read(credentials)).toEqual({ saved: true });
+        expect(result.stdout).toHaveBeenCalledWith("Removed plugin: example.zip");
+        expect(startServer).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        [[], "usage: dooc plugin"],
+        [["../example.zip"], "Choose a plugin ZIP file"],
+        [["missing.zip"], "Plugin not found: missing.zip"],
+        [["example.zip", "dooc.yaml", "extra"], "usage: dooc plugin"],
+    ])("rejects invalid plugin removal %j without deleting files", async (args, message) => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-plugin-remove-invalid-"));
+        roots.push(root);
+        mkdirSync(join(root, ".dooc/plugins"), { recursive: true });
+        writeFileSync(join(root, "dooc.yaml"), "document: {}\n");
+        writeFileSync(join(root, ".dooc/plugins/example.zip"), "Keep this invalid package.");
+        writeFileSync(join(root, "example.zip"), "Keep this external file.");
+        vi.stubEnv("DOOC_USER_DIR", join(root, "personal"));
+        const result = cli("plugin", "remove", ...args);
+        await expect(result.run()).rejects.toThrow("CLI exit");
+        expect(result.stderr).toHaveBeenCalledWith(expect.stringContaining(message));
+        expect(readFileSync(join(root, ".dooc/plugins/example.zip"), "utf8")).toBe(
+            "Keep this invalid package.",
+        );
+        expect(readFileSync(join(root, "example.zip"), "utf8")).toBe("Keep this external file.");
+        expect(existsSync(join(root, "personal"))).toBe(false);
     });
 
     it("registers, lists and removes project fonts through the CLI", async () => {

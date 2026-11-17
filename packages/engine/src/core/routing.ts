@@ -101,7 +101,7 @@ export const docPath = (docs: readonly DocRef[], id: string): string => {
 };
 
 /** Navigation targets share routing in the server, editor and standalone reader. */
-const resolveDocHref = (docs: readonly DocRef[], id: string): string => {
+const resolveDocHref = (docs: readonly DocRef[], id: string, inline = false): string => {
     const seen = new Set<string>();
     const parameters = new URLSearchParams();
     let fragment = "";
@@ -133,15 +133,15 @@ const resolveDocHref = (docs: readonly DocRef[], id: string): string => {
                 }
                 return destination(url.pathname);
             }
-            return doc.url;
+            return inline ? destination(docPath(docs, target)) : doc.url;
         }
         return destination(docPath(docs, target));
     }
 };
 
-export const docHref = (docs: readonly DocRef[], id: string): string => {
+export const docHref = (docs: readonly DocRef[], id: string, inline = false): string => {
     try {
-        return resolveDocHref(docs, id);
+        return resolveDocHref(docs, id, inline);
     } catch {
         return docPath(docs, id);
     }

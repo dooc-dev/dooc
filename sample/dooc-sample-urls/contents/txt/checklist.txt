@@ -1,0 +1,7 @@
+URL gallery checklist
+
+1. Look for underlined link titles before clicking.
+2. Open a local file inside dooc.
+3. Open an included document and inspect its version.
+4. Middle-click a Web entry to visit the original website.
+5. Cancel an external-opening confirmation and keep reading.

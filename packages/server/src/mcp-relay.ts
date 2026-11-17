@@ -303,16 +303,19 @@ export const relayCommand = async (args: string[]) => {
        dooc relay --public-url <https-origin> --client-origin <https-origin> [options]
 
 --stdio lets a Desktop MCP host start a loopback relay on demand through connect_browser.
+It cannot be combined with HTTP hosting options.
 
-Host a browser workspace relay. Set DOOC_MCP_RELAY_SECRET to a persistent random secret
-of at least 32 characters. No workspace files are read by this service.
+HTTP hosting options:
+  --public-url <https-origin>   public relay origin (required)
+  --client-origin <https-origin>  permitted browser origin (required)
   --port <port>                 listen port (default: 3000)
   --host <address>              listen address (default: 127.0.0.1)
   --tls-cert <pem> --tls-key <pem>  terminate HTTPS directly; otherwise use an HTTPS proxy
   --help, -h                    show this help
 
-Routes: /mcp for Claude, /relay/* for the configured browser origin.
-Loopback HTTP origins are supported for development.`);
+HTTP hosting requires DOOC_MCP_RELAY_SECRET: a persistent random secret of at least 32 characters.
+Routes: /mcp for MCP clients, /relay/* for the configured browser origin.
+Loopback HTTP origins are supported for development. This service does not read workspace files.`);
         return;
     }
     if (values.stdio) {

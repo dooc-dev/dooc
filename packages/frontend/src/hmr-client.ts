@@ -79,6 +79,11 @@ export const mountHmr = (mode: "preview" | "edit"): void => {
         if (title && nextTitle) {
             title.textContent = nextTitle.textContent;
             title.title = nextTitle.title;
+            for (const name of ["href", "class", "aria-current", "data-jump-url"]) {
+                const value = nextTitle.getAttribute(name);
+                if (value === null) title.removeAttribute(name);
+                else title.setAttribute(name, value);
+            }
         }
         const nextLogo = next.getElementById("site-icon");
         if (nextLogo) document.getElementById("site-icon")?.replaceWith(nextLogo);

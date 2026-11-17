@@ -13,6 +13,16 @@ vi.mock("node:https", () => ({ request: vi.fn() }));
 const dnsLookup = vi.mocked(
     lookup as (host: string, options: LookupAllOptions) => Promise<LookupAddress[]>,
 );
+
+it("inspects headers without downloading a response body", async () => {
+    headers = { "x-frame-options": "DENY" };
+    payload = Buffer.alloc(3 * 1024 * 1024);
+    const inspect = vi.fn();
+    expect(
+        await fetchPublicFile("https://example.com", undefined, undefined, undefined, inspect),
+    ).toEqual(Buffer.alloc(0));
+    expect(inspect).toHaveBeenCalledWith(headers);
+});
 let status: number;
 let payload: Buffer;
 let chunks: Buffer[] | undefined;

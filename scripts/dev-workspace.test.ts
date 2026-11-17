@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -9,7 +9,55 @@ import { compileSite } from "../packages/engine/src/compiler/compile.js";
 import { exportEntries } from "../packages/engine/src/compiler/export.js";
 import { walkBlocks } from "../packages/engine/src/core/blocks.js";
 import { createDocumentVersions } from "../packages/server/src/document-versions.js";
-import { createDevWorkspace } from "./dev-workspace.js";
+import { createDevWorkspace, syncDevWorkspace } from "./dev-workspace.js";
+
+it("syncs generated changes without overwriting local edits, deletions or redirected files", () => {
+    const root = mkdtempSync(join(tmpdir(), "dooc-dev-sync-"));
+    const snapshot = (files: Record<string, string>) =>
+        new Map(Object.entries(files).map(([file, body]) => [file, Buffer.from(body)]));
+    const before = snapshot({
+        "updated.md": "Old source",
+        "edited.md": "Old source",
+        "deleted.md": "Old source",
+        "removed.md": "Old source",
+        "redirected.md": "Old source",
+    });
+    const after = snapshot({
+        "updated.md": "New source",
+        "edited.md": "New source",
+        "deleted.md": "New source",
+        "redirected.md": "New source",
+        "added.md": "New page",
+        "collision.md": "New page",
+    });
+    try {
+        for (const [file, body] of before) writeFileSync(join(root, file), body);
+        writeFileSync(join(root, "edited.md"), "Local edit");
+        writeFileSync(join(root, "collision.md"), "Local page");
+        writeFileSync(join(root, "private.txt"), "Keep runtime data");
+        rmSync(join(root, "deleted.md"));
+        rmSync(join(root, "redirected.md"));
+        symlinkSync(join(root, "private.txt"), join(root, "redirected.md"));
+        const result = syncDevWorkspace(root, before, after);
+        expect(result.updated.sort()).toEqual(["added.md", "removed.md", "updated.md"]);
+        expect(result.conflicts.sort()).toEqual([
+            "collision.md",
+            "deleted.md",
+            "edited.md",
+            "redirected.md",
+        ]);
+        expect(readFileSync(join(root, "updated.md"), "utf8")).toBe("New source");
+        expect(readFileSync(join(root, "added.md"), "utf8")).toBe("New page");
+        expect(readFileSync(join(root, "edited.md"), "utf8")).toBe("Local edit");
+        expect(readFileSync(join(root, "collision.md"), "utf8")).toBe("Local page");
+        expect(readFileSync(join(root, "private.txt"), "utf8")).toBe("Keep runtime data");
+        expect(existsSync(join(root, "deleted.md"))).toBe(false);
+        expect(existsSync(join(root, "removed.md"))).toBe(false);
+        expect(syncDevWorkspace(root, after, after)).toEqual({ updated: [], conflicts: [] });
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});
 
 it("generates a complete feature playground and resets only the selected workspace", async () => {
     const parent = mkdtempSync(join(tmpdir(), "dooc-dev-workspace-"));

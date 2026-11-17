@@ -1,6 +1,6 @@
 # Local integrations
 
-`mise run editor` loads the existing demo plugins. Their fictional services run locally and do not contact a real ticket, Git, or chat service. Changes to their mock data last until the server restarts.
+`mise run dev` loads the existing demo plugins. Their fictional services run locally and do not contact a real ticket, Git, or chat service. Changes to their mock data last until the server restarts.
 
 ## Ticket fields
 
@@ -30,13 +30,13 @@ Reader-provided plugins are listed separately from installed ZIP packages. To tr
 
 ## MCP and export
 
-The editor task starts its local MCP endpoint along with the client and workspace server. Open **MCP connection** to connect an assistant you choose. Connecting an external assistant is a separate action; the sample contains no assistant credentials.
+The development task starts editor MCP at `http://localhost:2000/mcp` and reader MCP at `http://localhost:2001/mcp`. Editor MCP includes editing tools; reader MCP exposes read tools only and rejects writes. Connect your MCP client to the endpoint with the permissions you need. Open **MCP connection** for the browser connection options. Connecting an external assistant is a separate action; the sample contains no assistant credentials.
 
-From the repository checkout, export the generated workspace or build a static reader:
+From the repository checkout, archive the generated workspace or build a reader:
 
 ```sh
-mise run dooc zip build/dev/editor/dooc.yaml build/playground-source
-mise run dooc build build/dev/editor/dooc.yaml build/playground-reader
+mise run dooc zip build/dev/workspace/dooc.yaml build/playground-source
+mise run dooc build build/dev/workspace/dooc.yaml build/playground-reader
 ```
 
 The source export keeps the local files, themes, translations, font, grammar, and editor-tool configuration. External plugin URLs stay references unless an explicitly configured build plugin supplies snapshots. [Publishing](contents/md/publishing.md) covers static, live, Node, and browser outputs.

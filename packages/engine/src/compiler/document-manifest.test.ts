@@ -53,7 +53,8 @@ it("always renders a root, with an index when its URL is empty or missing", () =
         expect(page).toMatchObject({ status: 200, body: { resource: true, path: "/" } });
         expect((page.body as { html: string }).html).toContain('href="/guide"');
         expect(publishHtml(site, "")).toContain('<template data-route=""');
-        expect(navGroupsHtml("edit", site)).toContain('href="/"');
+        expect(navGroupsHtml("edit", site)).not.toContain('href="/"');
+        expect(publishHtml(site, "")).toContain('id="site-title" class="site-title" href="#/"');
     }
     const { root } = fixture();
     expect(compileSite(root).errors).toEqual([]);
@@ -114,7 +115,65 @@ it("shares direct links and explicit first-child redirects with standalone HTML"
     expect(html).toContain('data-redirect="/guide"');
     expect(html).toContain('href="https://example.com/?a=1&amp;b=2"');
     site.contentLanguage = "jpn";
-    expect(navGroupsHtml("preview", site)).toContain('href="https://example.com/?a=1&amp;b=2"');
+    expect(navGroupsHtml("preview", site)).toContain(
+        'data-jump-url="https://example.com/?a=1&amp;b=2"',
+    );
+    expect(navGroupsHtml("preview", site)).toContain('href="/Website?lang=jpn"');
+    expect(pageDataResponse(site, "/Website")).toMatchObject({
+        status: 200,
+        body: {
+            resource: true,
+            path: "/Website",
+            html: expect.stringContaining('class="document-web"'),
+        },
+    });
+    expect(html).not.toContain('data-redirect="https://example.com/');
+});
+
+it("previews and exports local files from their owning manifest", () => {
+    const { root, write } = fixture({ children: [{ document: { url: "child/dooc.yaml" } }] });
+    write(
+        "child/dooc.yaml",
+        stringify({
+            document: { url: "notes.txt", children: [{ document: { url: "guide.md" } }] },
+        }),
+    );
+    write("child/notes.txt", "A plain file preview.\n");
+    write("child/guide.md", "Guide body.\n");
+    const compiled = compileSite(root);
+    expect(compiled.errors).toEqual([]);
+    const site = siteFrom(compiled);
+    const included = site.entries.find((entry) => entry.included);
+    site.root = root;
+    expect(included?.url).toBe("child/notes.txt");
+    expect(pageDataResponse(site, "/child")).toMatchObject({
+        status: 200,
+        body: { resource: true, html: expect.stringContaining("A plain file preview.") },
+    });
+    expect(navGroupsHtml("preview", site)).toContain('data-document-link href="/child"');
+    expect(
+        exportEntries(root)
+            .find((entry) => entry.name === "child/notes.txt")
+            ?.data.toString(),
+    ).toBe("A plain file preview.\n");
+    expect(publishHtml(site, "")).toContain("A plain file preview.");
+    updateFiles(root, {
+        action: "move",
+        paths: ["child/notes.txt"],
+        directory: "child/renamed",
+        revision: filesSnapshot(root).revision,
+    });
+    expect(compileSite(root).errors).toEqual([]);
+    expect(readManifest(root).tree[0]?.children[0]?.resolved?.url).toBe("child/renamed/notes.txt");
+});
+
+it("reports missing and ignored local file pages without exporting them", () => {
+    const { root, write } = fixture({ url: "private.txt" });
+    expect(compileSite(root).errors.join()).toContain("private.txt");
+    write("private.txt", "Private content");
+    write(".gitignore", "private.txt\n");
+    expect(compileSite(root).errors.join()).toContain("ignored");
+    expect(() => exportEntries(root)).toThrow();
 });
 
 it("keeps child translations, embedded editors and exported assets relative to the child manifest", () => {

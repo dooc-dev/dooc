@@ -44,6 +44,7 @@ import {
 } from "./editor-tools.js";
 import { createExtensionManager } from "./extensions.js";
 import { fontCss } from "./fonts.js";
+import { frameBlocked } from "./frame-policy.js";
 import {
     createGitHandler,
     git,
@@ -112,7 +113,13 @@ export const nodeWorkspaceOperations = async (
     >();
     const closes: (() => void)[] = [];
     const sectionCatalogs = new Map<string, ReturnType<typeof createDocumentVersions>>();
-    type Session = { local: boolean; user?: Person; origin?: string; pluginSession?: string };
+    type Session = {
+        local: boolean;
+        readOnly?: boolean;
+        user?: Person;
+        origin?: string;
+        pluginSession?: string;
+    };
     const plugins = await loadReaderPlugins(pluginModule);
     let workspace = plugins.workspace;
     let gitOrigin = plugins.gitOrigin;
@@ -166,6 +173,7 @@ export const nodeWorkspaceOperations = async (
         const source = workspace ?? readWorkspaceSource(root);
         const app = createDocumentApplication(root, {
             prepareSources: prepareDocumentSources,
+            frameBlocked,
             fontCss,
             readWorkspaceSource,
             sourceFileBase,
@@ -388,7 +396,7 @@ export const nodeWorkspaceOperations = async (
                 opening = false;
             }
         },
-        http: async (input) => {
+        http: async (input, session) => {
             if (
                 typeof input.url !== "string" ||
                 !input.url.startsWith("/") ||
@@ -399,7 +407,7 @@ export const nodeWorkspaceOperations = async (
                 throw new Error("Invalid document request");
             const result = await applicationRequest(
                 entry(input).app,
-                readOnly ? "preview" : "edit",
+                readOnly || session.readOnly ? "preview" : "edit",
                 {
                     url: input.url,
                     method: String(input.method),
@@ -467,7 +475,7 @@ export const nodeWorkspaceOperations = async (
         Object.entries(ops).map(([name, operation]) => [
             name,
             (input: Record<string, unknown>, session: Session) => {
-                if (readOnly) assertReadOnlyOperation(name, input);
+                if (readOnly || session.readOnly) assertReadOnlyOperation(name, input);
                 const id = typeof input.workspace === "string" ? input.workspace : "main";
                 const run = async () => {
                     let target = entry(input);
@@ -545,14 +553,16 @@ export const attachWorkspaceServer = async (
     path = "/server",
     shared?: string,
     versions = "latest",
+    workingCopy = false,
 ) => {
     const allowed = clientOrigin(origin);
     let channel: ReturnType<typeof createWorkspaceServer<{ local: boolean }>> | undefined;
+    // Development reads working files; each connection still enforces its read-only access.
     const manager = await nodeWorkspaceOperations(
         manifest,
         pluginModule,
         (event, data) => channel?.broadcast(event, data),
-        readOnly,
+        readOnly && !workingCopy,
         shared,
         versions,
     );
@@ -590,6 +600,7 @@ export const attachWorkspaceServer = async (
             const session = {
                 local: (req.headers.host ?? "").endsWith(`:${req.socket.localPort}`),
                 origin: `${requestScheme(req)}://${req.headers.host}`,
+                readOnly,
             };
             const detach = activeChannel.connect(
                 {

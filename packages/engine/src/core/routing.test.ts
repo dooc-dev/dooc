@@ -3,6 +3,7 @@ import { fileDocumentId } from "./files.js";
 import {
     ancestorsOf,
     childrenOf,
+    docHref,
     docPath,
     documentPathErrors,
     headingAnchor,
@@ -18,6 +19,18 @@ const docs = [
     { id: "deep", parent: "setup" },
     { id: "reference" },
 ];
+
+it("keeps inline Web routes separate from jump targets through aliases and redirects", () => {
+    const pages = [
+        { id: "home", root: true, url: "redirect:first" },
+        { id: "shortcut", parent: "home", url: "/site" },
+        { id: "site", parent: "home", url: "https://example.com/?a=1&b=2" },
+    ];
+    for (const { id } of pages) {
+        expect(docHref(pages, id)).toBe("https://example.com/?a=1&b=2");
+        expect(docHref(pages, id, true)).toBe("/site");
+    }
+});
 
 describe("routing", () => {
     it("allows reference URLs and rejects executable protocols after browser normalization", () => {

@@ -48,9 +48,8 @@ export interface ApplicationOptions {
     versions?: string;
 }
 
-export const applicationUsage = (
-    product: "editor" | "reader",
-) => `usage: dooc ${product} <build|run> <node|web> [options]
+export const applicationUsage = (product: "editor" | "reader") => `usage: dooc ${product} [options]
+       dooc ${product} <build|run> <node|web> [options]
 
 Shortcut: dooc ${product} [options] = dooc ${product} run node --all [options].
 Reads ./dooc.yaml from the current directory; --project and --port override the defaults.
@@ -66,28 +65,39 @@ Options:
   --mcp-transport stdio|http    Node MCP transport (default: http; requires --mcp)
   --project <path>              workspace folder or manifest (default: ./dooc.yaml)
   --port <port>                 shared run port (default: 3000)
-  --out <directory>             build into an empty directory (default: ./dooc-${product}-<runtime>)
-  --server-url <ws-url>         optional Node workspace connection for the client
+  --out <directory>             application assets in an empty directory (default: ./dooc-${product}-<runtime>)
+  --server-url <ws-url>         separate Node workspace connection (requires --client)
   --relay-url <https-origin>    hosted relay for web MCP (requires --client --server --mcp)
   --client-origin <origin>      permitted browser origin (default: http://localhost:<port>)
   --reader-plugins <module>     Node workspace plugin module
   --repo <git-url>              clone a repository and resolve --project inside it (run node)
-  --versions <selection>       published document versions (reader; default: latest)
+${product === "reader" ? "  --versions <selection>       published document versions (default: latest; '*' selects all)" : "  --shared <branch>             record shared editor snapshots (run node --server; no --mcp)"}
   --tls-cert <pem> --tls-key <pem>  serve HTTPS (run node; or DOOC_TLS_CERT / DOOC_TLS_KEY)
-  --shared <branch>             record shared editor snapshots (run node --server; no --mcp)
   --help, -h                    show this help
 
-Reader backends and MCP tools are read-only. Web MCP connects through Desktop or a hosted relay.
+${product === "reader" ? "Reader workspace and MCP tools are read-only." : "Editor workspace and MCP tools can read and edit documents."}
+Web MCP connects through Desktop or a hosted relay.
 Web run --server requires --client to host the Worker. Web build can emit either component.
 Node builds emit start.mjs and package.json when server or MCP is selected. Install their
 dependencies, then run node start.mjs --project <path>. Documents are not copied into builds.
-Node routes: /client/ (frontend), /server (WebSocket), /mcp (HTTP).
+Node run uses one loopback port: /client/ (frontend), /server (WebSocket), /mcp (HTTP).
+The enabled client opens at http://localhost:<port>/client/; / redirects there.
 Web serves static assets at /. Stdio MCP uses stdin/stdout; logs go to stderr.
 Stdio-only runs open no port. Closing stdin stops the selected components.
 Examples:
+  dooc ${product} --project docs/team.dooc.yaml
+  dooc ${product} build web --client --server --out ./web-${product}
   dooc ${product} run node --mcp --mcp-transport stdio --project docs/dooc.yaml
   dooc ${product} run node --mcp --mcp-transport http --port 4000
-Browser relays are started separately with dooc relay --help.`;
+Browser relays are started separately with dooc relay --help.
+Document publishing uses dooc build; source archives use dooc zip.
+DOOC_READER_PLUGINS supplies the Node run plugin module when --reader-plugins is omitted.
+
+Source development (repository checkout):
+  mise run ${product}                  generated playground on port ${product === "editor" ? "2000" : "2001"}, with hot reload
+  mise run dev                     editor :2000 and reader :2001 as separate processes
+Development reader and MCP preview working files with read-only permissions.
+Regular reader commands use published versions; regular run defaults to port 3000.`;
 
 export const parseApplicationOptions = (
     product: "editor" | "reader",
@@ -224,16 +234,27 @@ const clientOptions = (options: ApplicationOptions) => ({
     ...(options.relayUrl ? { relayUrl: options.relayUrl } : {}),
 });
 
-const socketUrl = (options: ApplicationOptions) =>
+const socketUrl = (options: ApplicationOptions, path = "/server") =>
     options.runtime === "node"
-        ? (options.serverUrl ?? `${options.tls ? "wss" : "ws"}://localhost:${options.port}/server`)
+        ? (options.serverUrl ?? `${options.tls ? "wss" : "ws"}://localhost:${options.port}${path}`)
         : undefined;
 
-export const runApplication = async (options: ApplicationOptions) => {
+export const runApplication = async (options: ApplicationOptions, development = false) => {
+    if (
+        development &&
+        (options.runtime !== "node" ||
+            !options.client ||
+            !options.server ||
+            !options.mcp ||
+            options.mcpTransport === "stdio")
+    )
+        throw new Error("Development requires run node --all with HTTP MCP");
+    const serverPath = development && options.product === "reader" ? "/client" : "/server";
+    const frontend = clientOptions(options);
     const client = options.client
         ? staticClientHandler(
-              await clientAssets(socketUrl(options), clientOptions(options)),
-              clientOptions(options).basePath,
+              await clientAssets(socketUrl(options, serverPath), frontend),
+              frontend.basePath,
           )
         : undefined;
     let mcp: ReturnType<typeof createMcpHandler> | undefined;
@@ -251,7 +272,7 @@ export const runApplication = async (options: ApplicationOptions) => {
             }
             if (path === "/mcp" && mcp) return mcp(req, res);
             if (path === "/" && client) {
-                res.writeHead(302, { Location: "/client/" });
+                res.writeHead(302, { Location: `${frontend.basePath}/` });
                 res.end();
                 return;
             }
@@ -335,9 +356,10 @@ export const runApplication = async (options: ApplicationOptions) => {
                     options.origin,
                     options.pluginModule,
                     options.product === "reader",
-                    "/server",
+                    serverPath,
                     options.shared,
                     options.versions,
+                    development,
                 );
                 dispose = workspaceServer;
                 plugins = workspaceServer.plugins;
@@ -348,7 +370,7 @@ export const runApplication = async (options: ApplicationOptions) => {
                 disposeVersions = catalog.close;
                 const selection = parseVersionSelection(options.versions ?? "latest");
                 const mcpRoot =
-                    options.product === "reader"
+                    options.product === "reader" && !development
                         ? async () => {
                               const all = await catalog.list();
                               const latest = selectVersions(all, selection)[0];
@@ -380,19 +402,20 @@ export const runApplication = async (options: ApplicationOptions) => {
             const address = server.address();
             const port = typeof address === "object" && address ? address.port : options.port;
             const origin = `${options.tls ? "https" : "http"}://localhost:${port}`;
-            terminal.ready(
-                options.product,
-                options.runtime,
-                client ? `${origin}${clientOptions(options).basePath}/` : origin,
-            );
-            if (options.server && options.runtime === "node")
-                terminal.info(
-                    `Workspace: ${options.tls ? "wss" : "ws"}://localhost:${port}/server`,
-                );
-            if (mcp) terminal.info(`MCP: ${origin}/mcp`);
+            const endpoints: Record<string, string> = {};
+            if (client)
+                endpoints[
+                    development ? "Client" : options.product === "editor" ? "Editor" : "Reader"
+                ] = `${origin}${frontend.basePath}/`;
+            if (mcp) endpoints.MCP = `${origin}/mcp`;
+            else if (startStdio) endpoints.MCP = "stdio";
+            if (options.server && options.runtime === "node" && serverPath === "/server")
+                endpoints[development ? "Server" : "Workspace"] =
+                    `${options.tls ? "wss" : "ws"}://localhost:${port}${serverPath}`;
+            terminal.ready(options.product, endpoints);
         }
         if (startStdio) {
-            terminal.info(`MCP: stdio (${options.product})`);
+            if (!client && !options.server) terminal.ready(options.product, { MCP: "stdio" });
             done = startStdio();
         }
         return { server, close, done };

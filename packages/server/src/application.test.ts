@@ -16,9 +16,11 @@ import { WebSocket } from "ws";
 import { createWorkspaceClient } from "../../workspace/src/client.js";
 import { buildApplication, parseApplicationOptions, runApplication } from "./application.js";
 import { packageVersion } from "./assets.js";
+import { git } from "./git.js";
 import { prepareGitWorkspace } from "./git-workspace.js";
 import * as mcp from "./mcp.js";
 import { clientAssets } from "./static-client.js";
+import { terminal } from "./terminal.js";
 
 vi.mock("./static-client.js", async (original) => ({
     ...(await original<typeof import("./static-client.js")>()),
@@ -256,6 +258,177 @@ it("serves client, read-only workspace and MCP on one port with separate paths",
     }
     expect(running.server.listening).toBe(false);
 });
+
+it.each([
+    "editor",
+    "reader",
+] as const)("runs development %s with matching client and MCP permissions", async (product) => {
+    const project = fixture();
+    writeFileSync(join(project, "dooc.yaml"), "document:\n  title: Guide\n  url: guide.md\n");
+    writeFileSync(join(project, "guide.md"), "Committed document.\n");
+    await git(project, ["init", "-b", "main"]);
+    await git(project, ["add", "."]);
+    await git(project, [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-m",
+        "Initial document",
+    ]);
+    writeFileSync(join(project, "guide.md"), "Uncommitted development content.\n");
+    vi.mocked(clientAssets).mockResolvedValueOnce(
+        new Map([["index.html", Buffer.from("Development client")]]),
+    );
+    const ready = vi.spyOn(terminal, "ready");
+    const parsed = parseApplicationOptions(product, ["--project", project]);
+    if (!parsed) throw new Error("Missing options");
+    parsed.port = 0;
+    const running = await runApplication(parsed, true);
+    const readOnly = product === "reader";
+    let socket: WebSocket | undefined;
+    try {
+        const address = running.server.address();
+        if (!address || typeof address === "string") throw new Error("Missing address");
+        const origin = `http://127.0.0.1:${address.port}`;
+        for (const path of ["/client", "/client/guide.pdf"])
+            expect(
+                await (
+                    await fetch(`${origin}${path}`, { headers: { Accept: "text/html" } })
+                ).text(),
+            ).toBe("Development client");
+        expect((await fetch(origin, { redirect: "manual" })).headers.get("location")).toBe(
+            "/client/",
+        );
+        for (const path of [
+            "/client/assets/missing.js",
+            "/editor/",
+            "/reader/",
+            "/guide",
+            "/server",
+        ])
+            expect((await fetch(`${origin}${path}`)).status).toBe(404);
+        const socketPath = readOnly ? "/client" : "/server";
+        const connection = new WebSocket(`${origin.replace("http:", "ws:")}${socketPath}`, {
+            origin: parsed.origin,
+        });
+        socket = connection;
+        await new Promise<void>((resolve, reject) => {
+            connection.once("open", resolve);
+            connection.once("error", reject);
+        });
+        const client = createWorkspaceClient({
+            send: (message) => connection.send(JSON.stringify(message)),
+            receive: (handler) =>
+                connection.on("message", (data) => handler(JSON.parse(data.toString()))),
+            closed: (handler) => connection.on("close", handler),
+        });
+        expect(await client.request("hello")).toMatchObject({ readOnly });
+        const request = { method: "GET", url: "/", headers: {}, body: "" };
+        const response = await client.request<{ body: string }>("http", request);
+        expect(response.body.includes('src="/assets/edit.js"')).toBe(!readOnly);
+        expect(response.body).toContain("Uncommitted development content.");
+        if (readOnly) {
+            for (const [op, args] of [
+                ["http", { method: "POST", url: "/api/save", body: "{}", headers: {} }],
+                ["files", { action: "upload", name: "test.txt", data: "eA==" }],
+                ["git", { action: "commit", message: "Change" }],
+                ["history", { action: "restore" }],
+                ["workspaces", { action: "branch", branch: "new", create: true }],
+                ["extensions", { action: "install", file: "plugin.zip", data: "", base: null }],
+                ["plugins", { action: "act", plugin: "sample" }],
+            ] as const)
+                await expect(client.request(op, { ...args, readOnly: false })).rejects.toThrow(
+                    "read-only",
+                );
+        } else {
+            const uploaded = await client.request<{ file: string }>("files", {
+                action: "upload",
+                name: "test.txt",
+                data: "eA==",
+            });
+            expect(readFileSync(join(project, uploaded.file), "utf8")).toBe("x");
+        }
+        const changed = new Promise<void>((resolve) => {
+            const stop = client.on("change", () => {
+                stop();
+                resolve();
+            });
+        });
+        writeFileSync(join(project, "guide.md"), "Updated development content.\n");
+        await changed;
+        expect((await client.request<{ body: string }>("http", request)).body).toContain(
+            "Updated development content.",
+        );
+        const rpc = async (method: string, params: Record<string, unknown> = {}) => {
+            const response = await fetch(`${origin}/mcp`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    Accept: "application/json, text/event-stream",
+                },
+                body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+            });
+            expect(response.status).toBe(200);
+            return response.json();
+        };
+        const names = (await rpc("tools/list")).result.tools.map(
+            (tool: { name: string }) => tool.name,
+        );
+        expect(names).toContain("read_file");
+        const read = await rpc("tools/call", {
+            name: "read_file",
+            arguments: { file: "guide.md" },
+        });
+        expect(JSON.parse(read.result.content[0].text)).toMatchObject({
+            content: "Updated development content.\n",
+        });
+        const write = {
+            name: "write_file",
+            arguments: { file: "mcp-note.txt", content: "Written through editor MCP", base: null },
+        };
+        if (readOnly) {
+            for (const name of [
+                "write_file",
+                "write_doc",
+                "add_doc",
+                "delete_doc",
+                "git",
+                "build",
+                "history",
+            ]) {
+                expect(names).not.toContain(name);
+                expect(await rpc("tools/call", { ...write, name })).toMatchObject({
+                    error: { code: -32602 },
+                });
+            }
+            expect(existsSync(join(project, "mcp-note.txt"))).toBe(false);
+        } else {
+            expect(names).toContain("write_file");
+            expect((await rpc("tools/call", write)).result.isError).toBe(false);
+            expect(readFileSync(join(project, "mcp-note.txt"), "utf8")).toBe(
+                "Written through editor MCP",
+            );
+        }
+        expect(clientAssets).toHaveBeenCalledWith(
+            `ws://localhost:0${socketPath}`,
+            expect.objectContaining({ readOnly, basePath: "/client", worker: false }),
+        );
+        expect(ready).toHaveBeenCalledWith(product, {
+            Client: `http://localhost:${address.port}/client/`,
+            MCP: `http://localhost:${address.port}/mcp`,
+            ...(readOnly ? {} : { Server: `ws://localhost:${address.port}/server` }),
+        });
+    } finally {
+        await running.close();
+        socket?.terminate();
+        ready.mockRestore();
+    }
+    expect(running.server.listening).toBe(false);
+}, 20_000);
 
 it("releases its workspace service when the shared port is occupied", async () => {
     const project = fixture();

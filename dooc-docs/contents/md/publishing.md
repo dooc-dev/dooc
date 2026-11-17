@@ -35,7 +35,7 @@ dooc build
 | `--url_preview embed` | Capture supported remote embeds during the build | A portable snapshot |
 | `dooc build --mode live --auth external` | Keep plugin requests live with a host-provided transport | An integrated application with authentication supplied by its host |
 
-Ordinary links remain links. Remote capture has download limits and does not execute a source site's JavaScript or sign in. Network-mode text embeds need the remote server's CORS permission. See [Build output](contents/md/cli.md#build-output) for exact constraints and failure behavior.
+Git-hosted child manifests are resolved before `build` or `zip`, including network mode, and can require Git and network access. Source ZIPs include their referenced files under `dooc-imports/` while keeping authored manifest URLs. Ordinary links remain links. Remote capture has download limits and does not execute a source site's JavaScript or sign in. Network-mode text embeds need the remote server's CORS permission. See [Build output](contents/md/cli.md#build-output) for exact constraints and failure behavior.
 
 ## Choose download behavior
 
@@ -47,7 +47,7 @@ Reader HTML accepts `--download easy|normal|block`. This replaces `--easy-downlo
 | `easy` | Add download buttons for complete resource files and record sources |
 | `block` | Hide download links, suppress context menus, save/print shortcuts and media dragging, hide printed content and request media controls without a download button |
 
-`block` also restricts embedded HTML frames, prevents pointer interaction inside script-free SVG frames and requests a hidden PDF toolbar. Reading navigation and code-copy controls remain available. Browser menus, native PDF viewers, external destinations and developer tools can still save content. The HTML already contains the material required to display it. For managed Chrome, [DownloadRestrictions](https://support.google.com/chrome/a/answer/7579271?hl=en) and [AllowFileSelectionDialogs](https://chromeenterprise.google/policies/allow-file-selection-dialogs/) are administrator policies; a dooc build cannot set them. ZIP and GitHub output reject `--download` because they do not run the reader's controls.
+`block` also restricts embedded HTML frames, prevents pointer interaction inside script-free SVG frames and requests a hidden PDF toolbar. Reading navigation and code-copy controls remain available. Browser menus, native PDF viewers, external destinations and developer tools can still save content. The HTML already contains the material required to display it. For managed Chrome, [DownloadRestrictions](https://support.google.com/chrome/a/answer/7579271?hl=en) and [AllowFileSelectionDialogs](https://chromeenterprise.google/policies/allow-file-selection-dialogs/) are administrator policies; a dooc build cannot set them. ZIP output rejects `--download` because it does not run the reader's controls.
 
 ## Integrate a service or agent
 

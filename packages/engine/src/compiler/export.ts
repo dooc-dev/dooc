@@ -1,5 +1,5 @@
 import { visit } from "unist-util-visit";
-import { flattenTree, isContentPage } from "../core/content-metadata.js";
+import { flattenTree, isContentPage, pageUrlKind } from "../core/content-metadata.js";
 import { docFile, docIconFile, fileExtension, localFile } from "../core/files.js";
 import { contentLinks, parseMdast } from "../core/markdown.js";
 import { visitSchema } from "../core/schema-refs.js";
@@ -66,6 +66,7 @@ export const exportEntries = (root: string, file = manifestFile(root)): ZipEntry
         const { id, origin } = node;
         const file = isContentPage(node) ? docFile(id, manifest.files) : undefined;
         if (file) add(file, origin);
+        if (node.url && pageUrlKind(node.url) === "file") add(node.url, origin);
         if (manifest.files?.icons?.[id]) add(docIconFile(id, manifest.files));
         else optional(docIconFile(id, manifest.files));
         if (!file) continue;

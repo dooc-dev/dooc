@@ -1,0 +1,106 @@
+system:
+  default_lang: eng
+  files:
+    default_layout: false
+version:
+  major: 1
+  minor: 0
+  patch: 0
+document:
+  title: URL gallery
+  url: ""
+  children:
+    - document:
+        title: How to use this gallery
+        url: contents/md/guide.md
+    - document:
+        title: Automatic contents
+        children:
+          - document:
+              title: Omitted URL
+              children:
+                - document:
+                    title: Open the guide
+                    url: /guide
+          - document:
+              title: Empty string
+              url: ""
+              children:
+                - document:
+                    title: Open the guide
+                    url: /guide
+          - document:
+              title: Null value
+              url: null
+              children:
+                - document:
+                    title: Open the guide
+                    url: /guide
+    - document:
+        title: File previews
+        children:
+          - document:
+              title: Reading checklist
+              url: contents/txt/checklist.txt
+          - document:
+              title: Destination table
+              url: contents/csv/destinations.csv
+          - document:
+              title: Destination data
+              url: contents/json/destinations.json
+          - document:
+              title: Welcome page
+              url: contents/html/welcome.html
+          - document:
+              title: Gallery marker
+              url: contents/svg/marker.svg
+              icon: contents/svg/marker.svg
+          - document:
+              title: Printable checklist
+              url: contents/pdf/checklist.pdf
+    - document:
+        title: Local documents
+        children:
+          - document:
+              title: Local handbook
+              url: sections/handbook/dooc.yaml
+          - document:
+              title: Named reference
+              url: sections/reference.dooc.yaml
+    - document:
+        title: Remote documents
+        children:
+          - document:
+              title: Project delivery from GitHub
+              url: https://github.com/dooc-dev/dooc/blob/dooc-v0.0.16/sample/dooc-sample-project/dooc.yaml
+          - document:
+              title: Product reference from Git
+              url: https://github.com/dooc-dev/dooc.git#dooc-v0.0.16:dooc-docs/dooc.yaml
+    - document:
+        title: Web destinations
+        children:
+          - document:
+              title: Example website
+              url: https://example.com
+          - document:
+              title: Website that refuses framing
+              url: https://github.com
+          - document:
+              title: Example website over HTTP
+              url: http://example.com
+    - document:
+        title: Internal links
+        children:
+          - document:
+              title: Existing page
+              url: /guide
+          - document:
+              title: Page with language and heading
+              url: /guide?lang=eng#click-behavior
+    - document:
+        title: First child redirect
+        url: redirect:first
+        children:
+          - document:
+              title: Redirect destination
+              url: contents/md/first.md

@@ -28,7 +28,7 @@ const urls = {};
 const styles = {};
 let browser;
 
-async function start(product, runtime, project, extra = []) {
+async function start(product, runtime, project, extra = [], development = false) {
     const probe = createServer();
     await new Promise((resolve, reject) => {
         probe.once("error", reject);
@@ -49,7 +49,7 @@ async function start(product, runtime, project, extra = []) {
         project,
         ...extra,
     ]);
-    applications.push(await runApplication(options));
+    applications.push(await runApplication(options, development));
     return `http://localhost:${port}${runtime === "node" ? "/client/" : "/"}`;
 }
 
@@ -153,11 +153,19 @@ browserTest("Document roots, included editors and standalone redirects", async (
     const url = await start("editor", "node", project);
     await page.goto(url);
     await page.locator("#nav-groups").waitFor();
+    await page.locator('#site-title.cur[aria-current="page"]').waitFor();
+    assert.equal(
+        await page
+            .locator("#nav-groups a")
+            .filter({ hasText: /^Handbook$/ })
+            .count(),
+        0,
+    );
     assert.equal(
         await page
             .locator("#nav-groups a")
             .filter({ hasText: /^Website$/ })
-            .getAttribute("href"),
+            .getAttribute("data-jump-url"),
         "https://example.com/",
     );
     assert.match(await page.locator("main").textContent(), /Handbook/);
@@ -166,14 +174,14 @@ browserTest("Document roots, included editors and standalone redirects", async (
         .filter({ hasText: /^Reference$/ })
         .click();
     await page.locator("#cm .cm-content").waitFor();
+    await page.locator("#site-title:not(.cur):not([aria-current])").waitFor();
     assert.match(await page.locator("#cm .cm-content").textContent(), /example\.txt/);
     await page.locator('[data-file="child/example.txt"]').first().waitFor();
     assert.match(await page.locator("main").textContent(), /Child content/);
-    await page
-        .locator("#nav-groups a")
-        .filter({ hasText: /^Handbook$/ })
-        .click();
+    await page.locator("#site-title").click();
     await page.waitForURL((current) => !current.pathname.endsWith("/child"));
+    await page.locator('#site-title.cur[aria-current="page"]').waitFor();
+    assert.equal(await page.locator("#nav-groups a.cur").count(), 0);
     assert.match(await page.locator("main").textContent(), /Handbook/);
     for (const redirect of [false, true]) {
         if (redirect) {
@@ -194,9 +202,252 @@ browserTest("Document roots, included editors and standalone redirects", async (
         if (redirect) {
             await page.waitForURL((current) => current.hash === "#/child");
             assert.match(await page.locator("main").textContent(), /Child content/);
+            assert.equal(await page.locator("#site-title").getAttribute("aria-current"), null);
+            await page.locator("#site-title").click();
+            await page.waitForURL((current) => current.hash === "#/child");
         } else {
             assert.match(await page.locator("main").textContent(), /Handbook/);
             assert.equal(new URL(page.url()).hash, "");
+            await page.locator('#site-title.cur[aria-current="page"]').waitFor();
+            await page
+                .locator("#nav-groups a")
+                .filter({ hasText: /^Reference$/ })
+                .click();
+            await page.locator("#site-title:not(.cur):not([aria-current])").waitFor();
+            await page.locator("#site-title").press("Enter");
+            await page.locator('#site-title.cur[aria-current="page"]').waitFor();
+            assert.equal(new URL(page.url()).hash, "#/");
+        }
+    }
+});
+
+browserTest("Root document header navigation and title editing", async (page) => {
+    const project = join(root, "root-header");
+    mkdirSync(project);
+    writeFileSync(
+        join(project, "dooc.yaml"),
+        "document:\n  title: Handbook\n  url: cover.md\n  children:\n    - document:\n        title: Guide\n        url: guide.md\n",
+    );
+    writeFileSync(join(project, "cover.md"), "Welcome to the handbook.\n");
+    writeFileSync(join(project, "guide.md"), "Read the guide.\n");
+    for (const product of ["editor", "reader"]) {
+        const url = await start(product, "node", project);
+        await open(page, `${url}?lang=eng`, product === "editor");
+        await page.locator('#site-title.cur[aria-current="page"]').waitFor();
+        assert.equal(
+            new URL(await page.locator("#site-title").getAttribute("href"), url).pathname,
+            "/client/",
+        );
+        await page
+            .locator("#nav-groups a")
+            .filter({ hasText: /^Guide$/ })
+            .click();
+        await page.locator("#site-title:not(.cur):not([aria-current])").waitFor();
+        await page.locator("#site-title").press("Enter");
+        await page.locator('#site-title.cur[aria-current="page"]').waitFor();
+        assert.match(await page.locator("main").textContent(), /Welcome to the handbook/);
+        assert.equal(await page.locator("#nav-groups a.cur").count(), 0);
+        assert.equal(new URL(page.url()).searchParams.get("lang"), "eng");
+        if (product !== "editor") continue;
+        await page.locator("#site-title").press("F2");
+        const input = page.locator('#site-title input[name="title"]');
+        await input.fill("Cancelled title");
+        await input.click();
+        assert.equal(await page.locator("#site-title").getAttribute("href"), null);
+        await input.press("Escape");
+        assert.equal(await page.locator("#site-title").textContent(), "Handbook");
+        await page.locator("#site-title").press("F2");
+        await input.fill("Updated handbook");
+        await input.press("Enter");
+        await page
+            .locator("#site-title[href]")
+            .filter({ hasText: /^Updated handbook$/ })
+            .waitFor();
+        assert.equal(await page.locator("#site-title").getAttribute("aria-current"), "page");
+        await page
+            .locator("#nav-groups a")
+            .filter({ hasText: /^Guide$/ })
+            .click();
+        await page.locator("#site-title:not(.cur)").waitFor();
+        await page.locator("#site-title").dblclick();
+        await input.press("Escape");
+        await page.locator('#site-title.cur[aria-current="page"]').waitFor();
+    }
+});
+
+browserTest("Document link titles, gestures and external confirmations", async (page) => {
+    const project = join(root, "document-links");
+    mkdirSync(join(project, "child"), { recursive: true });
+    writeFileSync(
+        join(project, "dooc.yaml"),
+        `document:
+  title: Linked handbook
+  children:
+    - document:
+        title: Guide
+        url: guide.md
+    - document:
+        title: Reference
+        url: child/dooc.yaml
+    - document:
+        title: Website
+        url: https://example.test/site?a=1&b=2
+        icon: web.svg
+    - document:
+        title: Notes
+        url: notes.txt
+    - document:
+        title: Guide shortcut
+        url: /guide
+    - document:
+        title: First page
+        url: redirect:first
+        children:
+          - document:
+              title: First child
+              url: first.md
+`,
+    );
+    writeFileSync(join(project, "guide.md"), "Guide body.\n");
+    writeFileSync(join(project, "notes.txt"), "A local file preview.\n");
+    writeFileSync(join(project, "first.md"), "First child body.\n");
+    writeFileSync(
+        join(project, "child/dooc.yaml"),
+        "document:\n  title: Reference\n  url: guide.md\n",
+    );
+    writeFileSync(join(project, "child/guide.md"), "Child guide.\n");
+    writeFileSync(
+        join(project, "web.svg"),
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/></svg>',
+    );
+    await page.context().route("https://example.test/**", (route) =>
+        route.fulfill({
+            contentType: "text/html",
+            body: "<h1>External website</h1>",
+        }),
+    );
+    const website = () => page.locator("#nav-groups a").filter({ hasText: /^Website$/ });
+    const confirm = () => page.getByRole("dialog", { name: "Open externally?" });
+    const jump = async (action) => {
+        const popup = page.context().waitForEvent("page");
+        await action();
+        const tab = await popup;
+        await tab.waitForURL("https://example.test/site?a=1&b=2");
+        assert.equal(await tab.evaluate(() => window.opener), null);
+        await tab.close();
+    };
+    for (const product of ["editor", "reader"]) {
+        const url = await start(product, "node", project);
+        await page.goto(url);
+        await website().waitFor();
+        assert.equal(await page.locator(".document-kind").count(), 0);
+        for (const selector of ["#nav-groups a", "main .idx a"])
+            for (const [title, linked] of [
+                ["Website", true],
+                ["Reference", true],
+                ["Guide shortcut", true],
+                ["First page", true],
+                ["Guide", false],
+                ["Notes", false],
+            ]) {
+                const label = page
+                    .locator(selector)
+                    .filter({ hasText: new RegExp(`^${title}$`) })
+                    .locator(".nav-label, .document-card-label");
+                assert.equal(
+                    await label.evaluate((element) =>
+                        getComputedStyle(element).textDecorationLine.includes("underline"),
+                    ),
+                    linked,
+                    `${selector}: ${title}`,
+                );
+            }
+        const linkColor = await website()
+            .locator(".nav-label")
+            .evaluate((element) => getComputedStyle(element).color);
+        const pageColor = await page
+            .locator("#nav-groups a")
+            .filter({ hasText: /^Guide$/ })
+            .locator(".nav-label")
+            .evaluate((element) => getComputedStyle(element).color);
+        assert.notEqual(linkColor, pageColor);
+        const address = page.url();
+        await jump(() => website().click({ button: "middle" }));
+        await jump(() => website().click({ modifiers: ["Control"] }));
+        await jump(() => website().click({ modifiers: ["Meta"] }));
+        assert.equal(page.url(), address);
+        await website().click();
+        await page
+            .frameLocator("iframe.document-web-frame")
+            .getByRole("heading", { name: "External website" })
+            .waitFor();
+        assert.match(new URL(page.url()).pathname, /\/Website$/);
+        const iconRow = website().locator("..");
+        const customIcon = iconRow.locator(".doc-icon-frame img");
+        assert.equal(
+            await customIcon.evaluate((element) => getComputedStyle(element).visibility),
+            "visible",
+            "Selecting a page preserves its original SVG image",
+        );
+        assert.equal(await iconRow.locator(".document-kind").count(), 0);
+        assert.equal(
+            await page.locator(".document-web-frame").getAttribute("sandbox"),
+            "allow-scripts allow-forms allow-popups",
+        );
+        await page.locator(".document-web-frame").dispatchEvent("error");
+        await confirm().waitFor();
+        await confirm().getByRole("button", { name: "Cancel", exact: true }).click();
+        assert.match(new URL(page.url()).pathname, /\/Website$/);
+        await page.locator("[data-web-open]").click();
+        await jump(() =>
+            confirm().getByRole("button", { name: "Open externally", exact: true }).click(),
+        );
+        await page.locator("#site-title").click();
+        await page.waitForURL((current) => current.pathname === new URL(url).pathname);
+        await page
+            .locator("#nav-groups a")
+            .filter({ hasText: /^Notes$/ })
+            .click();
+        await page.getByText("A local file preview.", { exact: true }).waitFor();
+        await page.locator("#site-title").click();
+        await page.waitForURL((current) => current.pathname === new URL(url).pathname);
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.evaluate(() => document.body.classList.remove("sidebar-closed"));
+        const mobileAddress = page.url();
+        await website().click();
+        await confirm().waitFor();
+        assert.equal(await page.locator(".document-web-frame").count(), 0);
+        await confirm().getByRole("button", { name: "Cancel", exact: true }).click();
+        assert.equal(page.url(), mobileAddress);
+        await website().click();
+        await jump(() =>
+            confirm().getByRole("button", { name: "Open externally", exact: true }).click(),
+        );
+        assert.equal(page.url(), mobileAddress);
+        await page.setViewportSize({ width: 1440, height: 1000 });
+    }
+    for (const mode of ["static", "network"]) {
+        const result = await buildBundle(project, {
+            format: "html",
+            urlPreview: mode === "network" ? "network" : "embed",
+        });
+        const file = join(root, `links-${mode}.html`);
+        writeFileSync(file, result.data);
+        await page.goto(pathToFileURL(file).href);
+        await website().click();
+        if (mode === "static") {
+            await confirm().waitFor();
+            assert.equal(await page.locator(".document-web-frame").count(), 0);
+            await jump(() =>
+                confirm().getByRole("button", { name: "Open externally", exact: true }).click(),
+            );
+        } else {
+            await page
+                .frameLocator("iframe.document-web-frame")
+                .getByRole("heading", { name: "External website" })
+                .waitFor();
+            assert.equal(new URL(page.url()).hash, "#/Website");
+            await jump(() => website().click({ button: "middle" }));
         }
     }
 });
@@ -415,6 +666,72 @@ browserTest("Browser extension storage", async (page) => {
         readFileSync(file).toString("base64"),
     );
 });
+
+browserTest(
+    "Development editor and reader share saved content and mounted navigation",
+    async (page) => {
+        const project = join(root, "development");
+        mkdirSync(project);
+        writeFileSync(
+            join(project, "dooc.yaml"),
+            `system:
+  default_lang: eng
+document:
+  title: Development
+  url: guide.md
+  children:
+    - document:
+        title: Details
+        url: details.md
+`,
+        );
+        const source = join(project, "guide.md");
+        writeFileSync(source, "Shared development document.\n");
+        writeFileSync(join(project, "details.md"), "Development details.\n");
+        const editorUrl = await start("editor", "node", project, ["--mcp"], true);
+        const readerUrl = await start("reader", "node", project, ["--mcp"], true);
+        const readerApplication = applications.at(-1);
+        assert.notEqual(new URL(editorUrl).port, new URL(readerUrl).port);
+        const reader = await page.context().newPage();
+        const errors = [];
+        reader.on("pageerror", (error) => errors.push(error.message));
+        await open(page, editorUrl);
+        await open(reader, readerUrl, false);
+        assert.equal(await reader.locator("#cm").count(), 0);
+        const editor = page.locator("#cm .cm-content");
+        await editor.focus();
+        await page.keyboard.press("Control+End");
+        await page.keyboard.insertText("\nShared saved edit.");
+        await page.locator("#save").click();
+        await page.waitForFunction(() => document.getElementById("save").dataset.state === "saved");
+        await reader.waitForFunction(() =>
+            document.querySelector("main article")?.textContent.includes("Shared saved edit."),
+        );
+        assert(readFileSync(source, "utf8").includes("Shared saved edit."));
+        await reader.locator(".nav-row a", { hasText: "Details" }).click();
+        await reader.waitForFunction(() =>
+            document.querySelector("main article")?.textContent.includes("Development details."),
+        );
+        assert.equal(new URL(reader.url()).pathname, "/client/details");
+        await reader.locator("#site-title").click();
+        await reader.waitForURL((url) => url.pathname === "/client/");
+        await reader.locator('#site-title[aria-current="page"]').waitFor();
+        writeFileSync(source, "Updated from the shared development source.\n");
+        for (const current of [page, reader])
+            await current.waitForFunction(() =>
+                document
+                    .querySelector("main article")
+                    ?.textContent.includes("Updated from the shared development source."),
+            );
+        assert(
+            (await editor.textContent()).includes("Updated from the shared development source."),
+        );
+        assert.deepEqual(errors, []);
+        await reader.close();
+        await readerApplication.close();
+        assert.equal((await fetch(editorUrl)).status, 200);
+    },
+);
 
 for (const dirty of [false, true]) {
     browserTest(
