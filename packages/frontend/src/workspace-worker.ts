@@ -169,7 +169,10 @@ const initialize = async (input: Record<string, unknown>) => {
         } else if (input.create) {
             if (before.size) throw new Error("New workspace storage must be empty");
             fs.mkdirSync(`${repository}/content`, { recursive: true });
-            fs.writeFileSync(`${repository}/dooc.yaml`, "docs: [welcome]\n");
+            fs.writeFileSync(
+                `${repository}/dooc.yaml`,
+                "document:\n  title: Welcome\n  url: content/welcome.md\n",
+            );
             fs.writeFileSync(
                 `${repository}/content/welcome.md`,
                 "# Welcome\n\nWrite your first document here.\n",

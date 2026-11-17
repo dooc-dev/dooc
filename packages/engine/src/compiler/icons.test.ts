@@ -25,6 +25,27 @@ describe("squareSvg (makes an icon 1:1)", () => {
 });
 
 describe("compileSite icons/", () => {
+    it("loads source-path default icons and still reports unregistered nested icons", () => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-document-icons-"));
+        try {
+            mkdirSync(join(root, "content"));
+            mkdirSync(join(root, "icons/content"), { recursive: true });
+            writeFileSync(join(root, "dooc.yaml"), "document: {url: content/guide.md}\n");
+            writeFileSync(join(root, "content/guide.md"), "Guide\n");
+            const svg = '<svg viewBox="0 0 1 1"/>';
+            writeFileSync(join(root, "icons/content/guide.md.svg"), svg);
+            const site = compileSite(root);
+            expect(site.errors).toEqual([]);
+            expect(site.docs[0]?.icon).toBe(svg);
+            writeFileSync(join(root, "icons/content/ghost.svg"), svg);
+            expect(compileSite(root).errors.join("\n")).toContain(
+                "icons/content/ghost.svg: no matching doc",
+            );
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it.each([
         "file",
         "directory",

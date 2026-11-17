@@ -21,7 +21,10 @@ const fixture = (licence = "LICENSE") => {
     roots.push(root);
     writeFileSync(
         join(root, "dooc.yaml"),
-        stringify({ system: { licence }, center_contents: [{ file: "guide.md" }] }),
+        stringify({
+            system: { licence },
+            document: { children: [{ document: { url: "guide.md" } }] },
+        }),
     );
     writeFileSync(join(root, "guide.md"), "Guide content.\n");
     mkdirSync(dirname(join(root, licence)), { recursive: true });
@@ -62,7 +65,7 @@ it.each([
     ".dooc/credentials.json",
     "LICENSE\n",
 ])("rejects invalid licence references: %j", (licence) => {
-    expect(parseManifest({ system: { licence }, center_contents: [] }).errors).toEqual([
+    expect(parseManifest({ system: { licence }, document: {} }).errors).toEqual([
         "dooc.yaml: system.licence must be a local file path",
     ]);
 });

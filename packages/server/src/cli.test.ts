@@ -187,7 +187,11 @@ describe("source-based CLI", () => {
         await result.run();
         expect(readdirSync(root)).toEqual(["dooc.yaml"]);
         const { readManifest } = await import("../../engine/src/compiler/manifest.js");
-        expect(readManifest(root)).toMatchObject({ format: "nested", tree: [], errors: [] });
+        expect(readManifest(root)).toMatchObject({
+            format: "document",
+            tree: [{ root: true, url: "", children: [] }],
+            errors: [],
+        });
         expect(result.stdout).toHaveBeenCalledWith(
             expect.stringContaining("dooc editor run node --client --server --project"),
         );
@@ -214,8 +218,8 @@ describe("source-based CLI", () => {
                 "../../engine/src/compiler/manifest.js"
             );
             expect(readManifest(projectRoot(file))).toMatchObject({
-                format: "nested",
-                tree: [],
+                format: "document",
+                tree: [{ root: true, url: "", children: [] }],
                 errors: [],
             });
             expect(result.stdout).toHaveBeenCalledWith(expect.stringContaining(file));
@@ -233,7 +237,7 @@ describe("source-based CLI", () => {
         roots.push(root);
         const manifest = join(root, name);
         const target = symlink ? join(root, "existing.yaml") : manifest;
-        const raw = "# Keep this configuration\ncenter_contents: []\n";
+        const raw = "document: {}\n";
         writeFileSync(target, raw);
         if (symlink) symlinkSync(target, manifest);
         const result = cli("init", name);
@@ -409,11 +413,11 @@ describe("source-based CLI", () => {
         expect(example).toBeDefined();
         const { parseManifestText } = await import("../../engine/src/compiler/manifest.js");
         expect(parseManifestText(example?.replace(/^ {2}/gm, "") ?? "")).toMatchObject({
-            format: "nested",
+            format: "document",
             defaultLang: "jpn",
             languages: ["jpn", "eng"],
             themes: ["light", "dark"],
-            tree: [],
+            tree: [{ root: true, url: "", children: [] }],
             errors: [],
         });
     });
@@ -425,7 +429,10 @@ describe("source-based CLI", () => {
         const root = mkdtempSync(join(tmpdir(), "dooc-cli-export-"));
         roots.push(root);
         mkdirSync(join(root, "docs"));
-        writeFileSync(join(root, "dooc.yaml"), "center_contents:\n  - file: docs/guide.md\n");
+        writeFileSync(
+            join(root, "dooc.yaml"),
+            "document:\n  children:\n    - document:\n        url: docs/guide.md\n",
+        );
         writeFileSync(join(root, "docs/guide.md"), "![](https://private.example/item)\n");
         writeFileSync(join(root, "docs.config.mjs"), 'throw new Error("Do not execute");');
         const out = join(root, custom ? "custom" : "dist");
@@ -442,7 +449,7 @@ describe("source-based CLI", () => {
     ])("rejects invalid export argument %s before replacing output", async (argument) => {
         const root = mkdtempSync(join(tmpdir(), "dooc-cli-export-invalid-"));
         roots.push(root);
-        writeFileSync(join(root, "dooc.yaml"), "center_contents: []\n");
+        writeFileSync(join(root, "dooc.yaml"), "document: {}\n");
         const out = join(root, "dist");
         mkdirSync(out);
         writeFileSync(join(out, "bundle.zip"), "Previous bundle");

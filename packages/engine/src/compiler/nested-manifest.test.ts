@@ -20,11 +20,20 @@ afterEach(() => {
 });
 const config = () => ({
     system: { languages: ["eng", "jpn"], default_lang: "eng", themes: ["light", "dark"] },
-    left_sidebar: {
-        title: { eng: "Guide", jpn: "ガイド" },
-        icon: { light: "icons/light.svg", dark: "icons/dark.svg" },
+    document: {
+        sidebar: {
+            title: { eng: "Guide", jpn: "ガイド" },
+            icon: { light: "icons/light.svg", dark: "icons/dark.svg" },
+        },
+        children: [
+            {
+                document: {
+                    url: "one/guide.md",
+                    children: [{ document: { url: "two/guide.md" } }],
+                },
+            },
+        ],
     },
-    center_contents: [{ file: "one/guide.md", children: [{ file: "two/guide.md" }] }],
 });
 const fixture = () => {
     const root = mkdtempSync(join(tmpdir(), "dooc-nested-"));
@@ -46,7 +55,7 @@ it("uses complete paths for identity, preserves ordered children and localizes t
     const { root } = fixture();
     const manifest = readManifest(root);
     expect(manifest.errors).toEqual([]);
-    expect(new Set(flattenTree(manifest.tree).map((doc) => doc.id)).size).toBe(2);
+    expect(new Set(flattenTree(manifest.tree).map((doc) => doc.id)).size).toBe(3);
     expect(parseManifest(parse(serializeManifest(manifest.tree, manifest)))).toEqual(manifest);
     const compiled = compileSite(root, { locale: "jpn" });
     expect(compiled.errors).toEqual([]);
@@ -74,14 +83,14 @@ it("preserves nested configuration through document edits and file renames", () 
     expect(ops.move(fileDocumentId("two/renamed.md"))).not.toHaveProperty("error");
     expect(readFileSync(join(root, "one/guide.md"), "utf8")).toContain("two/renamed.md");
     expect(readManifest(root).titles).toEqual({ eng: "Guide", jpn: "ガイド" });
-    expect(readManifest(root).tree.map((node) => node.file)).toEqual([
+    expect(readManifest(root).tree[0]?.children.map((node) => node.file)).toEqual([
         "one/guide.md",
         "two/renamed.md",
     ]);
     expect(compileSite(root).errors).toEqual([]);
     const saved = parse(readFileSync(join(root, "dooc.yaml"), "utf8"));
     expect(saved).not.toHaveProperty("docs");
-    expect(JSON.stringify(saved.center_contents)).not.toContain('"id"');
+    expect(JSON.stringify(saved.document.children)).not.toContain('"id"');
 });
 
 it("routes Unicode and reserved folder names without collisions or double decoding", () => {
@@ -89,7 +98,13 @@ it("routes Unicode and reserved folder names without collisions or double decodi
     const files = ["api/日本語 %.md", "_files/guide.md", "docs/a b.md", "docs/a%20b.md"];
     write(
         "dooc.yaml",
-        stringify({ ...config(), center_contents: files.map((file) => ({ file })) }),
+        stringify({
+            ...config(),
+            document: {
+                ...config().document,
+                children: files.map((url) => ({ document: { url } })),
+            },
+        }),
     );
     for (const file of files) write(file, "Body\n");
     const compiled = compileSite(root);
@@ -133,10 +148,20 @@ it("reports duplicate and reserved routes in hand-written manifests", () => {
     const { root, write } = fixture();
     write(
         "dooc.yaml",
-        stringify({ center_contents: [{ file: "one/guide.md" }, { file: "two/guide.md" }] }),
+        stringify({
+            document: {
+                children: [
+                    { document: { url: "one/guide.md" } },
+                    { document: { url: "two/guide.md" } },
+                ],
+            },
+        }),
     );
     expect(readManifest(root).errors.join("\n")).toContain("Duplicate page path: /guide");
-    write("dooc.yaml", stringify({ center_contents: [{ file: "content/_git.md" }] }));
+    write(
+        "dooc.yaml",
+        stringify({ document: { children: [{ document: { url: "content/_git.md" } }] } }),
+    );
     expect(readManifest(root).errors.join("\n")).toContain("Reserved page path: /_git");
 });
 
@@ -167,7 +192,10 @@ it("updates normalized language tags without creating duplicate title languages"
         "dooc.yaml",
         stringify({
             ...value,
-            left_sidebar: { ...value.left_sidebar, title: { en: "Guide", ja: "ガイド" } },
+            document: {
+                ...value.document,
+                sidebar: { ...value.document.sidebar, title: { en: "Guide", ja: "ガイド" } },
+            },
         }),
     );
     expect(
@@ -180,10 +208,15 @@ it("updates normalized language tags without creating duplicate title languages"
 it.each([
     { ...config(), extra: true },
     { ...config(), system: { languages: ["eng"], default_lang: "jpn" } },
-    { ...config(), left_sidebar: { title: { jpn: "日本語" } } },
-    { ...config(), center_contents: [{ file: "../escape.md" }] },
-    { ...config(), center_contents: [{ file: "same.md" }, { file: "same.md" }] },
-    { ...config(), center_contents: [{ file: "one.md", id: "one" }] },
+    { ...config(), document: { sidebar: { title: { jpn: "日本語" } } } },
+    { ...config(), document: { url: "../escape.md" } },
+    {
+        ...config(),
+        document: {
+            children: [{ document: { url: "same.md" } }, { document: { url: "same.md" } }],
+        },
+    },
+    { ...config(), document: { url: "one.md", id: "one" } },
 ])("rejects malformed nested manifests: %j", (value) => {
     expect(parseManifest(value).errors.length).toBeGreaterThan(0);
 });
@@ -191,18 +224,28 @@ it.each([
 it("takes document titles from the manifest, falling back to the file name", () => {
     const { root } = fixture();
     const one = fileDocumentId("one/guide.md");
-    expect(compileSite(root).docs.map((doc) => doc.title)).toEqual(["guide", "guide"]);
+    expect(
+        compileSite(root)
+            .docs.filter((doc) => !doc.root)
+            .map((doc) => doc.title),
+    ).toEqual(["guide", "guide"]);
     const ops = createDocOps(root);
     expect(ops.setTitle(one, " Getting started ")).toEqual({ id: one });
-    expect(parse(readFileSync(join(root, "dooc.yaml"), "utf8")).center_contents[0]).toMatchObject({
-        file: "one/guide.md",
+    expect(
+        parse(readFileSync(join(root, "dooc.yaml"), "utf8")).document.children[0].document,
+    ).toMatchObject({
+        url: "one/guide.md",
         title: "Getting started",
     });
     const added = ops.addFile("new.md", "New page");
     if (!("id" in added)) throw new Error("Document was not created");
     const compiled = compileSite(root);
     expect(compiled.errors).toEqual([]);
-    expect(compiled.docs.map((doc) => doc.title)).toEqual(["Getting started", "guide", "New page"]);
+    expect(compiled.docs.filter((doc) => !doc.root).map((doc) => doc.title)).toEqual([
+        "Getting started",
+        "guide",
+        "New page",
+    ]);
     // Titles survive unrelated manifest rewrites and never enter the Markdown file.
     ops.move(added.id, one);
     expect(compileSite(root).docs.find((doc) => doc.id === added.id)?.title).toBe("New page");

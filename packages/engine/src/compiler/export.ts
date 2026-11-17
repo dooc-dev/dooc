@@ -1,5 +1,5 @@
 import { visit } from "unist-util-visit";
-import { flattenTree } from "../core/content-metadata.js";
+import { flattenTree, isContentPage } from "../core/content-metadata.js";
 import { docFile, docIconFile, fileExtension, localFile } from "../core/files.js";
 import { contentLinks, parseMdast } from "../core/markdown.js";
 import { visitSchema } from "../core/schema-refs.js";
@@ -9,7 +9,7 @@ import { assetReferences } from "./asset-references.js";
 import { CODE_LANGUAGES_DIR } from "./code-languages.js";
 import { CONFIG_FILE } from "./config.js";
 import { collectRefs } from "./dialect.js";
-import { projectFiles } from "./files.js";
+import { projectFiles, rebaseFileLinks } from "./files.js";
 import { PROJECT_FONTS_DIR } from "./fonts.js";
 import {
     existsSync,
@@ -34,7 +34,8 @@ export const exportEntries = (root: string): ZipEntry[] => {
     const manifest = readManifest(root);
     if (manifest.errors.length) throw new Error(manifest.errors.join("\n"));
     const entries = new Map<string, ZipEntry>();
-    const add = (file: string): void => {
+    const origins = new Map<string, string>();
+    const add = (file: string, origin?: string): void => {
         file = file.replace(/^(\.\/)+/, "");
         if (entries.has(file)) return;
         const settingsFile = [PROJECT_FONTS_DIR, CODE_LANGUAGES_DIR, ".dooc/editor-tools"].some(
@@ -47,23 +48,27 @@ export const exportEntries = (root: string): ZipEntry[] => {
         assertNotIgnored(root, file);
         if (!statSync(path).isFile()) throw new Error(`Expected a regular source file: ${file}`);
         entries.set(file, { name: file, data: readFileSync(path) });
-        for (const variant of Object.values(themeVariants(root, file))) add(variant);
+        if (origin) origins.set(file, origin);
+        for (const variant of Object.values(themeVariants(root, file))) add(variant, origin);
     };
-    const optional = (file: string) => {
+    const optional = (file: string, origin?: string) => {
         if (existsSync(textfilePath(root, file)) && !ignoredFiles(root, [file]).has(file))
-            add(file);
+            add(file, origin);
     };
     add(manifestFile(root));
+    for (const file of manifest.includedManifests ?? []) add(file);
+    for (const file of manifest.includedAssets ?? []) add(file);
     if (manifest.licence) add(manifest.licence);
     optional(CONFIG_FILE);
-    for (const { id, subformat, library } of flattenTree(manifest.tree)) {
-        const file = subformat || library ? undefined : docFile(id, manifest.files);
-        if (file) add(file);
+    for (const node of flattenTree(manifest.tree)) {
+        const { id, origin } = node;
+        const file = isContentPage(node) ? docFile(id, manifest.files) : undefined;
+        if (file) add(file, origin);
         if (manifest.files?.icons?.[id]) add(docIconFile(id, manifest.files));
         else optional(docIconFile(id, manifest.files));
         if (!file) continue;
         for (const language of siteContentLanguages(root, manifest))
-            optional(translationFile(file, language));
+            optional(translationFile(file, language, origin), origin);
     }
     for (const file of new Set([manifest.icon, ...Object.values(manifest.themeIcons ?? {})]))
         if (file) add(file);
@@ -124,17 +129,18 @@ export const exportEntries = (root: string): ZipEntry[] => {
     for (const entry of entries.values()) {
         const ext = fileExtension(entry.name);
         if (["md", "callouth"].includes(ext)) {
-            const tree = parseMdast(entry.data.toString("utf8"));
+            const origin = origins.get(entry.name);
+            const tree = parseMdast(rebaseFileLinks(entry.data.toString("utf8"), origin));
             const refs = collectRefs(tree);
-            for (const file of refs.figures) if (!isRemoteTextfile(file)) add(file);
+            for (const file of refs.figures) if (!isRemoteTextfile(file)) add(file, origin);
             for (const file of [...refs.terms, ...refs.textfiles])
                 if (!isRemoteTextfile(file)) {
                     readTextfile(root, file);
-                    add(file);
+                    add(file, origin);
                 }
             const reference = (url: string) => {
                 if (/^(?:[a-z][\w+.-]*:|[/#])/i.test(url)) return;
-                add(parseFileReference(url, true).file.replace(/^(\.\/)+/, ""));
+                add(parseFileReference(url, true).file.replace(/^(\.\/)+/, ""), origin);
             };
             visit(tree, "image", (node) => reference(node.url));
             for (const link of contentLinks(tree)) reference(link.url);

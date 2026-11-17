@@ -33,7 +33,11 @@ import { tags } from "@lezer/highlight";
 import type { TocEntry } from "../../engine/src/core/blocks.js";
 import { isManifestFile, subformatPageId } from "../../engine/src/core/content-metadata.js";
 import type { TermEntry } from "../../engine/src/core/content-types.js";
-import { fileDocumentId, isDocumentFileName } from "../../engine/src/core/files.js";
+import {
+    fileDocumentId,
+    isDocumentFileName,
+    manifestDirectory,
+} from "../../engine/src/core/files.js";
 import { formatJson } from "../../engine/src/core/json-tools.js";
 import type { PreviewSettings } from "../../engine/src/core/previewers.js";
 import { CODE_LANGS, CODE_TEMPLATES } from "../../engine/src/core/taxonomy.js";
@@ -54,8 +58,10 @@ import { editorCodeHighlight } from "./edit-code-highlight.js";
 import { chooseConflict } from "./edit-conflict.js";
 import { confirmDialog, showDialog, showNotice } from "./edit-dialog.js";
 import {
+    fileOriginState,
     filePreviewState,
     previewSettingsState,
+    setFileOrigin,
     setFilePreviews,
     setPreviewSettings,
 } from "./edit-file-preview.js";
@@ -102,9 +108,12 @@ interface Boot {
     translatedLanguages?: string[];
     file: string;
     sourceFile?: string;
+    origin?: string;
     /** Stable resolution key for URLs / file links. */
     docId: string;
     title: string;
+    /** Title before an explicit rename; ordinary body saves never rename the document. */
+    baseTitle?: string;
     path: string;
     body: string;
     figures: string[];
@@ -156,7 +165,9 @@ interface DraftFrontmatter {
  */
 interface RenderSnapshot {
     gitBase: string | null;
+    frontmatter?: DraftFrontmatter;
     sourceFile?: string;
+    origin?: string;
     previews?: PreviewSettings;
     filePreviews: FilePreviewResults;
     html: string;
@@ -175,8 +186,7 @@ interface DraftResponse extends RenderSnapshot {
     conflict: boolean;
     /** New base (after a normal save = what was written; on conflict = current disk content). */
     raw: string;
-    /** Only on conflict: current frontmatter/body on disk (to reflect into the editor). */
-    frontmatter?: DraftFrontmatter;
+    /** Only on conflict: current body on disk (to reflect into the editor). */
     body?: string;
 }
 
@@ -337,6 +347,7 @@ const setPreviewState = (
         for (const { file } of fileReferences(
             doc.toString(),
             view.state.field(previewSettingsState, false),
+            view.state.field(fileOriginState, false),
         )) {
             if (!files || files.includes(file)) previews.set(file, { state, message });
         }
@@ -711,17 +722,22 @@ const docsComplete = (
     if (inCodeContext(ctx)) {
         return null;
     }
-    const paths = filePathCompletion(ctx, [
-        ...DOC_REF_OPTS,
-        ...boot.terms
-            .filter((term) => isTermFile(term.id))
-            .map((term) => ({
-                label: termFileUrl(term.id),
-                detail: term.name,
-                info: term.definition,
-                type: "text",
-            })),
-    ]);
+    const directory = manifestDirectory(boot.origin);
+    const paths = filePathCompletion(
+        ctx,
+        [
+            ...DOC_REF_OPTS,
+            ...boot.terms
+                .filter((term) => isTermFile(term.id) && term.id.startsWith(directory))
+                .map((term) => ({
+                    label: termFileUrl(term.id.slice(directory.length)),
+                    detail: term.name,
+                    info: term.definition,
+                    type: "text",
+                })),
+        ],
+        boot.origin,
+    );
     if (paths !== undefined) return paths;
     const slashM = ctx.matchBefore(/\/[^\s/]*/);
     if (
@@ -869,6 +885,7 @@ const editorExtensions = (): Extension[] => [
     inlineFoldButtons,
     codeFileButtons(() => boot.docId),
     previewSettingsState.init(() => boot.previews),
+    fileOriginState.init(() => boot.origin),
     filePreviewState,
     textfiles.extension,
     markdown({ base: markdownLanguage }),
@@ -1081,6 +1098,7 @@ const post = async (url: string): Promise<DraftResponse> => {
         body: JSON.stringify({
             file: boot.file,
             frontmatter: readFm(),
+            baseTitle: boot.baseTitle,
             body: view.state.doc.toString(),
             baseRaw,
             textfiles: textfiles.previewFiles(),
@@ -1158,11 +1176,16 @@ const updateNavLocation = (): void => {
 };
 
 const apply = (r: RenderSnapshot, keepLastValid = true): void => {
+    if (r.frontmatter && boot.baseTitle === undefined) applyFm(r.frontmatter);
     if (view.state.field(gitBaseState) !== r.gitBase) {
         boot.gitBase = r.gitBase;
         view.dispatch({ effects: setGitBase.of(r.gitBase) });
     }
     if (r.sourceFile) boot.sourceFile = r.sourceFile;
+    if (view.state.field(fileOriginState) !== r.origin) {
+        boot.origin = r.origin;
+        view.dispatch({ effects: setFileOrigin.of(r.origin) });
+    }
     if (JSON.stringify(view.state.field(previewSettingsState)) !== JSON.stringify(r.previews)) {
         boot.previews = r.previews;
         view.dispatch({ effects: setPreviewSettings.of(r.previews) });
@@ -1195,6 +1218,7 @@ const apply = (r: RenderSnapshot, keepLastValid = true): void => {
 //   HMR's onContent (handleContentChange) on an external change to our own file = called only
 //   when not dirty (= no unsaved edits to discard).
 const reflectExternal = (r: ExternalSnapshot, message: string): void => {
+    delete boot.baseTitle;
     suppressChange = true;
     view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: r.body ?? "" },
@@ -1213,7 +1237,7 @@ const handleConflict = async (r: ExternalSnapshot): Promise<"local" | "external"
     const choice = await chooseConflict(
         boot.sourceFile ?? boot.file,
         `${JSON.stringify(readFm(), null, 2)}\n\n${view.state.doc}`,
-        r.raw,
+        `${JSON.stringify(r.frontmatter, null, 2)}\n\n${r.raw}`,
     );
     if (boot !== currentBoot) return;
     if (choice === "external") {
@@ -1221,6 +1245,8 @@ const handleConflict = async (r: ExternalSnapshot): Promise<"local" | "external"
         conflictPending = false;
     } else if (choice === "local") {
         baseRaw = r.raw;
+        if (boot.baseTitle !== undefined) boot.baseTitle = r.frontmatter?.title ?? "";
+        else applyFm(r.frontmatter);
         conflictPending = false;
     } else {
         setStatus(
@@ -1428,6 +1454,7 @@ const saveCurrent = async (): Promise<void> => {
     const savingBoot = boot;
     const savingDoc = view.state.doc;
     const savingFm = JSON.stringify(readFm());
+    const savingTitle = boot.title;
     const savingFiles = JSON.stringify(textfiles.previewFiles());
     setSaveState("saving");
     $("save").setAttribute("aria-busy", "true");
@@ -1440,6 +1467,10 @@ const saveCurrent = async (): Promise<void> => {
             return;
         }
         baseRaw = r.raw;
+        if (boot.baseTitle !== undefined) {
+            if (boot.title === savingTitle) delete boot.baseTitle;
+            else boot.baseTitle = r.frontmatter?.title ?? savingTitle;
+        }
         // Credits this session on the next snapshot; a server without identities ignores it.
         void pageWorkspace(savingWorkspace)
             .request("history", { action: "contribute" })
@@ -1646,6 +1677,7 @@ const startRename = (): void => {
     const link = row?.querySelector<HTMLAnchorElement>(":scope > a");
     if (!row || !link) return;
     const editingBoot = boot;
+    const originalTitle = boot.title;
     const originalSource = ownWatchPath();
     const originalName = originalSource.split("/").pop() ?? boot.file;
     const form = document.createElement("form");
@@ -1758,6 +1790,7 @@ const startRename = (): void => {
                 await saveTask;
                 if (boot !== editingBoot) return;
                 if (boot.title !== title.value) {
+                    boot.baseTitle ??= originalTitle;
                     boot.title = title.value;
                     setDirty(true);
                 }
@@ -3254,6 +3287,7 @@ const swapDoc = (data: PageResponse, remember = true): void => {
             blockLines: boot.blockLines,
             filePreviews: boot.filePreviews,
             previews: boot.previews,
+            origin: boot.origin,
         },
         false,
     );
@@ -3284,13 +3318,19 @@ const openDoc = async (
         if (!res.ok) {
             return false;
         }
-        const data = (await res.json()) as PageResponse;
+        const data = (await res.json()) as PageResponse & { redirect?: string };
         if (
             boot !== requestedBoot ||
             view.state.doc !== requestedDoc ||
             JSON.stringify(readFm()) !== requestedFm
         )
             return;
+        if (data.redirect) {
+            location.assign(
+                data.redirect.startsWith("/") ? resourceUrl(data.redirect) : data.redirect,
+            );
+            return;
+        }
         swapDoc(data);
         return true;
     } catch {

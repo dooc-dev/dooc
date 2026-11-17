@@ -42,7 +42,7 @@ it.each([
     expect(compiled.errors).toEqual([]);
     const code = { codeLanguages: [format], codeGrammars: await loadCodeGrammars([format]) };
     const site = siteFrom(compiled, undefined, code);
-    const entry = site.entries[0];
+    const entry = site.entries.find((entry) => !entry.root);
     if (!entry) throw new Error("Missing document");
     expect(entry.blocks[0]).toEqual({ type: "code", lang: ".issue", lines: source.split("\n") });
     expect(editorBoot(entry, site).codeLanguages).toContain(".issue");

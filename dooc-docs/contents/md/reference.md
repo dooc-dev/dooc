@@ -41,8 +41,8 @@ Look up syntax and configuration here, then follow the linked guide for behavior
 | ------------- | ------------------------------------ | ------------------------------------ |
 | Theme variant | `themes/<theme>/<same path>`         | [Variants](contents/md/variants.md)  |
 | Translation   | `locales/<ISO 639-3>/<same path>.md` | [Variants](contents/md/variants.md)  |
-| Site icon     | `left_sidebar.icon.light` / `.dark`  | [dooc.yaml](contents/md/manifest.md) |
-| Page icon     | `icon` on a `center_contents` entry  | [dooc.yaml](contents/md/manifest.md) |
+| Site icon     | `document.sidebar.icon.light` / `.dark`  | [dooc.yaml](contents/md/manifest.md) |
+| Page icon     | `icon` on a `document` entry  | [dooc.yaml](contents/md/manifest.md) |
 
 ## Records
 
@@ -50,7 +50,7 @@ Look up syntax and configuration here, then follow the linked guide for behavior
 | --------------------------- | ------------------------------------------------------------ | ---------------------------------------- |
 | Record type                 | `json_subformats` entry: `ext`, `format`, `schema`, `icon`   | [Subformats](contents/md/subformats.md)  |
 | Board defaults              | `layouts`: `card_title`, `group_by`, `sort_by`, `sort_order` | [Subformats](contents/md/subformats.md)  |
-| Board page                  | `center_contents` entry: `subformat`, `title`                | [Subformats](contents/md/subformats.md)  |
+| Board page                  | `document` entry: `subformat`, `title`                | [Subformats](contents/md/subformats.md)  |
 | Columns                     | top-level `enum` property                                    | [Subformats](contents/md/subformats.md)  |
 | Date sorting                | `format: date` or `date-time`                                | [Subformats](contents/md/subformats.md)  |
 | Create template             | first entry of schema `examples`                             | [Subformats](contents/md/subformats.md)  |
@@ -64,7 +64,7 @@ Look up syntax and configuration here, then follow the linked guide for behavior
 
 | Feature           | Where                                                | Page                                 |
 | ----------------- | ---------------------------------------------------- | ------------------------------------ |
-| Page tree         | `center_contents`                                    | [dooc.yaml](contents/md/manifest.md) |
+| Page tree         | `document.children`                                    | [dooc.yaml](contents/md/manifest.md) |
 | Languages, themes | `system`                                             | [dooc.yaml](contents/md/manifest.md) |
 | Project folder    | `.dooc/fonts`, `.dooc/plugins`, `.dooc/editor-tools` | [dooc.yaml](contents/md/manifest.md) |
 | Edit and view     | `dooc editor run node --client --server`, `dooc reader run node --client --server`                             | [Commands](contents/md/cli.md)       |

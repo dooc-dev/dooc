@@ -6,11 +6,13 @@ import {
     type DocNode,
     flattenTree,
     insertDoc,
+    isContentPage,
     isDocId,
     isLibraryView,
     libraryPageId,
     moveDoc,
     type ParsedManifest,
+    pageUrlKind,
     removeDoc,
     renameDoc,
     subformatPageId,
@@ -22,10 +24,21 @@ import {
     isDocumentFileName,
     parseFileLayout,
 } from "../core/files.js";
-import { documentPathErrors, parseDocLink } from "../core/routing.js";
+import {
+    documentPathErrors,
+    docPath as pagePath,
+    parseDocLink,
+    resolveDocPath,
+} from "../core/routing.js";
 import { collectDocLinks, compileSite } from "./compile.js";
 import { figureName, figureUploadName } from "./figures.js";
-import { filesSnapshot, projectFiles, rewriteFileLinks, updateFiles } from "./files.js";
+import {
+    filesSnapshot,
+    projectFiles,
+    rebaseFileLinks,
+    rewriteFileLinks,
+    updateFiles,
+} from "./files.js";
 import {
     dirname,
     existsSync,
@@ -40,7 +53,7 @@ import {
 } from "./host.js";
 import { ownsDocIcon } from "./icons.js";
 import { translationFile, translationFiles, translationLanguages } from "./locales.js";
-import { docFile, readManifest, writeManifest } from "./manifest.js";
+import { docFile, readManifest, sourceOrigin, writeManifest } from "./manifest.js";
 import { textfilePath } from "./textfile.js";
 
 export interface OpError {
@@ -83,7 +96,7 @@ export const createDocOps = (root: string) => {
         typeof id === "string" &&
         isDocId(id) &&
         !flattenTree(readManifest(root).tree).some(
-            (node) => node.id === id && (node.subformat || node.library),
+            (node) => node.id === id && !isContentPage(node),
         ) &&
         existsSync(docPath(id))
             ? { id }
@@ -95,14 +108,18 @@ export const createDocOps = (root: string) => {
             /\.(md|callouth)$/.test(file),
         );
     const referencingFiles = (id: string, removed: readonly string[]): string[] => {
-        const target = docFile(id, readManifest(root).files);
+        const manifest = readManifest(root);
+        const target = docFile(id, manifest.files);
         return referenceFiles()
             .filter(
                 (file) =>
                     !removed.includes(file) &&
-                    collectDocLinks(readFileSync(textfilePath(root, file), "utf8")).some(
-                        (url) => parseDocLink(url)?.file === target,
-                    ),
+                    collectDocLinks(
+                        rebaseFileLinks(
+                            readFileSync(textfilePath(root, file), "utf8"),
+                            sourceOrigin(manifest, file),
+                        ),
+                    ).some((url) => parseDocLink(url)?.file === target),
             )
             .map((file) => file.replace(/^content\//, ""));
     };
@@ -129,7 +146,7 @@ export const createDocOps = (root: string) => {
         if (isOpError(loaded)) {
             return loaded;
         }
-        if (loaded.format === "nested") {
+        if (loaded.format) {
             const file =
                 loaded.files?.defaultLayout !== false
                     ? defaultFilePath(filename ?? `${id}.md`)
@@ -143,10 +160,7 @@ export const createDocOps = (root: string) => {
         if (!tree) {
             return { error: `duplicate id "${id}" or missing parent "${parent}"`, status: 409 };
         }
-        if (
-            loaded.format !== "nested" &&
-            (filename !== undefined || loaded.files?.defaultLayout !== false)
-        ) {
+        if (!loaded.format && (filename !== undefined || loaded.files?.defaultLayout !== false)) {
             loaded.files ??= parseFileLayout({});
             loaded.files.documents[id] = loaded.files.defaultLayout
                 ? defaultFilePath(filename ?? `${id}.md`)
@@ -227,13 +241,21 @@ export const createDocOps = (root: string) => {
             nodes.some((node) => {
                 if (node.id === id) {
                     node.title = title.trim();
+                    if (
+                        node.url !== undefined &&
+                        ["index", "link", "redirect"].includes(pageUrlKind(node.url))
+                    )
+                        node.name = node.title;
                     return true;
                 }
                 return visit(node.children);
             });
         if (!visit(loaded.tree)) return { error: "Page not found", status: 404 };
+        const invalidPath = pathError(loaded.tree, loaded);
+        if (invalidPath) return invalidPath;
+        const path = pagePath(flattenTree(loaded.tree), id);
         writeManifest(root, loaded.tree, loaded);
-        return { id };
+        return { id: resolveDocPath(flattenTree(readManifest(root).tree), path) ?? id };
     };
 
     /**
@@ -245,6 +267,7 @@ export const createDocOps = (root: string) => {
         if (isOpError(loaded)) {
             return loaded;
         }
+        parent ??= loaded.tree[0]?.root ? loaded.tree[0].id : undefined;
         const at =
             index ??
             flattenTree(loaded.tree).filter((n) => n.parent === parent && n.id !== id).length;
@@ -257,8 +280,9 @@ export const createDocOps = (root: string) => {
         }
         const invalidPath = pathError(tree, loaded);
         if (invalidPath) return invalidPath;
+        const path = pagePath(flattenTree(tree), id);
         writeManifest(root, tree, loaded);
-        return { id };
+        return { id: resolveDocPath(flattenTree(readManifest(root).tree), path) ?? id };
     };
 
     /**
@@ -277,7 +301,7 @@ export const createDocOps = (root: string) => {
             return { id: oldId, updatedRefs: 0 };
         }
         const manifest = readManifest(root);
-        if (manifest.format === "nested") {
+        if (manifest.format) {
             const name = newId.endsWith(".md") ? newId : `${newId}.md`;
             if (!isDocumentFileName(name))
                 return { error: "Enter a Markdown file name", status: 400 };
@@ -286,7 +310,10 @@ export const createDocOps = (root: string) => {
                 const next = posix.join(posix.dirname(file), name);
                 const moves = new Map([[file, next]]);
                 const updatedRefs = referenceFiles().filter((path) => {
-                    const raw = readFileSync(textfilePath(root, path), "utf8");
+                    const raw = rebaseFileLinks(
+                        readFileSync(textfilePath(root, path), "utf8"),
+                        sourceOrigin(manifest, path),
+                    );
                     return rewriteFileLinks(raw, moves) !== raw;
                 }).length;
                 updateFiles(root, {
@@ -296,7 +323,9 @@ export const createDocOps = (root: string) => {
                     revision: filesSnapshot(root).revision,
                 });
                 return {
-                    id: fileDocumentId(next),
+                    id:
+                        flattenTree(readManifest(root).tree).find((node) => node.file === next)
+                            ?.id ?? fileDocumentId(next),
                     updatedRefs,
                 };
             } catch (error) {
@@ -383,8 +412,15 @@ export const createDocOps = (root: string) => {
     ): OpResult<{ parent: string | undefined; danglingRefs: number }> => {
         const manifest = loadTree();
         if (isOpError(manifest)) return manifest;
+        const selected = flattenTree(manifest.tree).find((node) => node.id === id);
+        if (selected?.root) return { error: "The root document cannot be removed", status: 409 };
+        if (selected?.origin)
+            return {
+                error: "Edit the included document's own manifest to change its structure",
+                status: 409,
+            };
         const page = flattenTree(manifest.tree).find(
-            (node) => node.id === id && (node.subformat || node.library),
+            (node) => node.id === id && !isContentPage(node),
         );
         if (page) {
             const tree = removeDoc(manifest.tree, id);

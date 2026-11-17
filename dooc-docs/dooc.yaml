@@ -2,118 +2,158 @@ system:
   default_lang: eng
   files:
     default_layout: false
-left_sidebar:
-  title:
-    eng: dooc documentation
-  icon:
-    light: contents/svg/_site.svg
-    dark: themes/dark/contents/svg/_site.svg
-center_contents:
-  - file: contents/md/index.md
-    title: Getting started
-    icon: contents/svg/icons/overview.svg
-    children:
-      - file: contents/md/install.md
-        title: Install & update
-        icon: contents/svg/icons/install.svg
-      - file: contents/md/quickstart.md
-        title: First document
-      - file: contents/md/samples.md
-        title: Sample workspaces
-  - file: contents/md/markdown.md
-    title: Writing content
-    icon: contents/svg/icons/markdown.svg
-    children:
-      - file: contents/md/blocks.md
-        title: Diagrams & blocks
-        icon: contents/svg/icons/blocks.svg
-      - file: contents/md/embeds.md
-        title: File embeds
-        icon: contents/svg/icons/embeds.svg
+document:
+  title: dooc documentation
+  url: ""
+  sidebar:
+    title:
+      eng: dooc documentation
+    icon:
+      light: contents/svg/_site.svg
+      dark: themes/dark/contents/svg/_site.svg
+  children:
+    - document:
+        title: Getting started
+        icon: contents/svg/icons/overview.svg
+        url: contents/md/index.md
         children:
-          - file: contents/md/media.md
-            title: Images, video & HTML
-            icon: contents/svg/icons/media.svg
-      - file: contents/md/variants.md
-        title: Themes & languages
-        icon: contents/svg/icons/variants.svg
-      - file: contents/md/subformats.md
-        title: Structured records
-        icon: contents/svg/icons/subformats.svg
+          - document:
+              title: Install & update
+              icon: contents/svg/icons/install.svg
+              url: contents/md/install.md
+          - document:
+              title: First document
+              url: contents/md/quickstart.md
+          - document:
+              title: Sample workspaces
+              url: contents/md/samples.md
+    - document:
+        title: Writing content
+        icon: contents/svg/icons/markdown.svg
+        url: contents/md/markdown.md
         children:
-          - file: contents/md/records.md
-            title: Linked records
-            icon: contents/svg/icons/records.svg
-  - file: contents/md/editor.md
-    title: Using the editor
-    icon: contents/svg/icons/editor.svg
-    children:
-      - file: contents/md/ux.md
-        title: Screen guide
+          - document:
+              title: Diagrams & blocks
+              icon: contents/svg/icons/blocks.svg
+              url: contents/md/blocks.md
+          - document:
+              title: File embeds
+              icon: contents/svg/icons/embeds.svg
+              url: contents/md/embeds.md
+              children:
+                - document:
+                    title: Images, video & HTML
+                    icon: contents/svg/icons/media.svg
+                    url: contents/md/media.md
+          - document:
+              title: Themes & languages
+              icon: contents/svg/icons/variants.svg
+              url: contents/md/variants.md
+          - document:
+              title: Structured records
+              icon: contents/svg/icons/subformats.svg
+              url: contents/md/subformats.md
+              children:
+                - document:
+                    title: Linked records
+                    icon: contents/svg/icons/records.svg
+                    url: contents/md/records.md
+    - document:
+        title: Using the editor
+        icon: contents/svg/icons/editor.svg
+        url: contents/md/editor.md
         children:
-          - file: contents/md/ux-layout.md
-            title: Screen layout
-          - file: contents/md/ux-sidebar.md
-            title: Sidebar
-          - file: contents/md/ux-header.md
-            title: Editor header
-      - file: contents/md/workspaces.md
-        title: Workspaces & branches
-      - file: contents/md/code-tools.md
-        title: Code tools
-  - file: contents/md/publishing.md
-    title: Publish & integrate
-    children:
-      - file: contents/md/ci.md
-        title: Validation pipeline
-        icon: contents/svg/icons/ci.svg
-      - file: contents/md/plugins.md
-        title: Plugins
-        icon: contents/svg/icons/plugins.svg
+          - document:
+              title: Screen guide
+              url: contents/md/ux.md
+              children:
+                - document:
+                    title: Screen layout
+                    url: contents/md/ux-layout.md
+                - document:
+                    title: Sidebar
+                    url: contents/md/ux-sidebar.md
+                - document:
+                    title: Editor header
+                    url: contents/md/ux-header.md
+          - document:
+              title: Workspaces & branches
+              url: contents/md/workspaces.md
+          - document:
+              title: Code tools
+              url: contents/md/code-tools.md
+    - document:
+        title: Publish & integrate
+        url: contents/md/publishing.md
         children:
-          - file: contents/md/taskapp.md
-            title: TaskApp
-            icon: contents/svg/icons/taskapp.svg
-          - file: contents/md/gitapp.md
-            title: GitApp
-            icon: contents/svg/icons/gitapp.svg
-          - file: contents/md/chatapp.md
-            title: ChatApp
-            icon: contents/svg/icons/chatapp.svg
-          - file: contents/md/plugin-dev.md
-            title: Write a plugin
-            icon: contents/svg/icons/plugin-dev.svg
-      - file: contents/md/web-mcp.md
-        title: Web MCP & Desktop
-  - file: contents/md/reference.md
-    title: Reference
-    children:
-      - file: contents/md/manifest.md
-        title: dooc.yaml
-        icon: contents/svg/icons/manifest.svg
+          - document:
+              title: Validation pipeline
+              icon: contents/svg/icons/ci.svg
+              url: contents/md/ci.md
+          - document:
+              title: Plugins
+              icon: contents/svg/icons/plugins.svg
+              url: contents/md/plugins.md
+              children:
+                - document:
+                    title: TaskApp
+                    icon: contents/svg/icons/taskapp.svg
+                    url: contents/md/taskapp.md
+                - document:
+                    title: GitApp
+                    icon: contents/svg/icons/gitapp.svg
+                    url: contents/md/gitapp.md
+                - document:
+                    title: ChatApp
+                    icon: contents/svg/icons/chatapp.svg
+                    url: contents/md/chatapp.md
+                - document:
+                    title: Write a plugin
+                    icon: contents/svg/icons/plugin-dev.svg
+                    url: contents/md/plugin-dev.md
+          - document:
+              title: Web MCP & Desktop
+              url: contents/md/web-mcp.md
+    - document:
+        title: Reference
+        url: contents/md/reference.md
         children:
-          - file: contents/md/version.md
-            title: Version
-      - file: contents/md/cli.md
-        title: Commands
-        icon: contents/svg/icons/cli.svg
-      - file: contents/md/runtimes.md
-        title: App runtimes
-      - library: termth
-        title: Terms
-  - file: contents/md/development.md
-    title: Development
-    icon: contents/svg/icons/system.svg
-    children:
-      - file: contents/md/system.md
-        title: Architecture
+          - document:
+              title: dooc.yaml
+              icon: contents/svg/icons/manifest.svg
+              url: contents/md/manifest.md
+              children:
+                - document:
+                    title: Version
+                    url: contents/md/version.md
+          - document:
+              title: Commands
+              icon: contents/svg/icons/cli.svg
+              url: contents/md/cli.md
+          - document:
+              title: App runtimes
+              url: contents/md/runtimes.md
+          - document:
+              library: termth
+              title: Terms
+    - document:
+        title: Development
         icon: contents/svg/icons/system.svg
-      - file: contents/md/release.md
-        title: Release
-      - subformat: feature
-        title: Feature gaps
-      - file: contents/md/license-audit.md
-        title: License audit (2026-11-12)
+        url: contents/md/development.md
+        children:
+          - document:
+              title: Architecture
+              icon: contents/svg/icons/system.svg
+              url: contents/md/system.md
+          - document:
+              title: Release
+              url: contents/md/release.md
+          - document:
+              subformat: feature
+              title: Feature gaps
+          - document:
+              title: License audit (2026-11-12)
+              url: contents/md/license-audit.md
 json_subformats:
   - ext: feature
     format: yaml

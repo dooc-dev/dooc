@@ -28,7 +28,7 @@ A diagram source:
 
 ![](contents/mermaid/review.mermaid)
 
-The site icon takes one file per theme in `left_sidebar.icon`.
+The site icon takes one file per theme in `document.sidebar.icon`.
 
 ![The dooc icon](contents/svg/_site.svg)
 

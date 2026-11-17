@@ -2,7 +2,7 @@
 // bundles. createCompiler caches unchanged files; compileSite performs a one-shot compilation.
 
 import { type Block, type ListItem, type TocEntry, walkBlocks } from "../core/blocks.js";
-import { docIdOfFile, flattenTree } from "../core/content-metadata.js";
+import { docIdOfFile, flattenTree, isContentPage } from "../core/content-metadata.js";
 import type { CompiledDoc, FigureEntry, TermEntry } from "../core/content-types.js";
 import { termMap } from "../core/inline.js";
 import { DEFAULT_LANG, isLangTag } from "../core/language.js";
@@ -27,14 +27,14 @@ import { parseContentSource } from "./code-blocks.js";
 import { collectRefs, type ParsedDoc, parseDoc } from "./dialect.js";
 import { figureName, loadFigures } from "./figures.js";
 import { createFileCache, createSigCache, dirSig, fileSig } from "./file-cache.js";
-import { projectFiles } from "./files.js";
+import { projectFiles, rebaseFileLinks } from "./files.js";
 import { toBlocks } from "./from-mdast.js";
 import { existsSync, join, readdirSync, statSync } from "./host.js";
 import { loadIcons, squareSvg } from "./icons.js";
 import { assertNotIgnored, ignoredFiles } from "./ignored-files.js";
 import { contentLanguageCode, isContentLanguage } from "./language-codes.js";
 import { siteContentLanguages, translationFile } from "./locales.js";
-import { manifestFile, parseManifestText, readManifest } from "./manifest.js";
+import { manifestFile, readManifest } from "./manifest.js";
 import {
     loadSubformat,
     parseSubformatRecord,
@@ -142,6 +142,7 @@ export interface DraftContext {
 }
 
 interface ParsedFile {
+    origin?: string;
     raw: string;
     referencedFiles: string[];
     parsed: ParsedDoc;
@@ -162,12 +163,20 @@ const toBodyLines = (raw: string, body: string, lines: number[]): number[] => {
     return lines.map((l) => Math.max(1, l - before));
 };
 
-const parseFile = (raw: string, previews?: PreviewSettings, file?: string): ParsedFile => {
-    const parsed = parseDoc(raw, previews, file);
+const parseFile = (
+    raw: string,
+    previews?: PreviewSettings,
+    file?: string,
+    origin?: string,
+): ParsedFile => {
+    const source = rebaseFileLinks(raw, origin);
+    const parsed = parseDoc(source, previews, file);
+    parsed.body = raw;
     const { blocks, toc, lines } = toBlocks(parsed.root, parsed.source, previews, file);
     const refs = collectRefs(parsed.root, previews);
     const figureFiles = refs.figures;
     return {
+        origin,
         raw,
         referencedFiles: [...refs.textfiles, ...refs.figures, ...refs.terms],
         parsed,
@@ -176,7 +185,7 @@ const parseFile = (raw: string, previews?: PreviewSettings, file?: string): Pars
         lines: toBodyLines(raw, parsed.body, lines),
         refs: { figures: figureFiles.map(figureName), terms: refs.terms },
         figureFiles,
-        docLinks: collectDocLinks(parsed.body),
+        docLinks: collectDocLinks(source),
     };
 };
 
@@ -308,6 +317,7 @@ const resolveFiles = (
             }
             if (b.embed)
                 throw new Error("Embed parameters require a registered subformat record or schema");
+            if (b.lang === "callouth") source = rebaseFileLinks(source, f.origin);
             const parsed =
                 b.range === undefined && !isRemoteTextfile(b.filename)
                     ? parseContentSource(b.lang ?? "", source, b.filename.replace(/^(\.\/)+/, ""))
@@ -441,14 +451,13 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
     const contentDir = join(root, "content");
     const figuresDir = join(root, "figures");
     let docCache = createFileCache<ParsedFile>();
-    let previewKey = "";
-    const manifestCache = createFileCache<ReturnType<typeof parseManifestText>>();
+    let docCacheKey = "";
     const figuresCache = createSigCache<ReturnType<typeof loadFigures>>();
 
     const compile = (): Compiled => {
         const manifestPath = join(root, manifestFile(root));
         const manifest = existsSync(manifestPath)
-            ? manifestCache.get(manifestPath, (raw) => parseManifestText(raw, manifestFile(root)))
+            ? readManifest(root)
             : { tree: [], errors: [`${manifestFile(root)} is required`] };
         const defaultLang = options.defaultLang ?? manifest.defaultLang ?? DEFAULT_LANG;
         if (
@@ -501,10 +510,13 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                 icon: manifestIcon,
                 errors: manifestErrors,
             } = manifest;
-            const nextPreviewKey = JSON.stringify(previews);
-            if (nextPreviewKey !== previewKey) {
+            const nextCacheKey = JSON.stringify([
+                previews,
+                flattenTree(tree).map(({ id, origin }) => [id, origin]),
+            ]);
+            if (nextCacheKey !== docCacheKey) {
                 docCache = createFileCache<ParsedFile>();
-                previewKey = nextPreviewKey;
+                docCacheKey = nextCacheKey;
             }
             title =
                 manifest.titles?.[options.locale ?? contentLanguageCode(defaultLang)] ??
@@ -561,8 +573,9 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                 onDisk.add(id);
             }
             // Manifest pre-order is the display order.
-            for (const { id, parent, subformat, library, title } of flattenTree(tree)) {
-                if (subformat || library) continue;
+            for (const node of flattenTree(tree)) {
+                if (!isContentPage(node)) continue;
+                const { id, parent, title, origin } = node;
                 const rel = docFile(id, manifest.files);
                 if (rel.startsWith("content/")) {
                     const diskId = docIdOfFile(rel.slice("content/".length));
@@ -582,16 +595,16 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                     );
                     continue;
                 }
-                let parsed = docCache.get(path, (raw) => parseFile(raw, previews, rel));
+                let parsed = docCache.get(path, (raw) => parseFile(raw, previews, rel, origin));
                 let language = defaultLang;
                 if (options.locale && options.locale !== contentLanguageCode(defaultLang)) {
-                    const file = translationFile(rel, options.locale);
+                    const file = translationFile(rel, options.locale, origin);
                     try {
                         const translated = textfilePath(root, file);
                         if (existsSync(translated)) {
                             assertNotIgnored(root, file);
                             parsed = docCache.get(translated, (raw) =>
-                                parseFile(raw, previews, rel),
+                                parseFile(raw, previews, rel, origin),
                             );
                             language = options.locale;
                         }
@@ -617,7 +630,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             new Set([
                 ...files.map((f) => f.doc.id),
                 ...flattenTree(manifest.tree)
-                    .filter((node) => node.subformat || node.library)
+                    .filter((node) => !isContentPage(node))
                     .map((node) => node.id),
             ]),
             iconFile,
@@ -768,6 +781,41 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             });
         }
         const order = flattenTree(manifest.tree).map((node) => node.id);
+        for (const node of pages) {
+            let doc = docs.find((doc) => doc.id === node.id);
+            if (!doc && !isContentPage(node) && !node.subformat && !node.library) {
+                const file = `page:${node.id}`;
+                const pageTitle = node.title ?? (node.root ? title : node.name) ?? "Contents";
+                doc = {
+                    id: node.id,
+                    parent: node.parent,
+                    file,
+                    title: pageTitle,
+                    lang: defaultLang,
+                    icon: icons.get(node.id),
+                    body: "",
+                    blocks: [],
+                    toc: [],
+                    refs: { figures: [], terms: [] },
+                };
+                docs.push(doc);
+                sources.set(file, {
+                    terms: [],
+                    referencedFiles: [],
+                    raw: "",
+                    frontmatter: { title: pageTitle },
+                    lines: [],
+                    errors: [],
+                });
+            }
+            if (doc)
+                Object.assign(doc, {
+                    url: node.url,
+                    root: node.root,
+                    name: node.name,
+                    origin: node.origin,
+                });
+        }
         docs.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
         if (!docs.length) {
             siteErrors.push(`${contentDir}: no docs`);
@@ -806,7 +854,12 @@ export const compileDraft = (
 ): { doc: CompiledDoc; source: DocSource } => {
     const known = ctx.docs.find((d) => d.file === file);
     const previews = ctx.previews;
-    const parsed = resolveFiles(parseFile(raw, previews, file), ctx.root, ctx.textfiles, previews);
+    const parsed = resolveFiles(
+        parseFile(raw, previews, file, known?.origin),
+        ctx.root,
+        ctx.textfiles,
+        previews,
+    );
     const doc = toDoc(
         known?.id ?? "",
         known?.parent,
@@ -815,6 +868,13 @@ export const compileDraft = (
         ctx.defaultLang ?? DEFAULT_LANG,
         known?.title,
     );
+    if (known)
+        Object.assign(doc, {
+            url: known.url,
+            root: known.root,
+            name: known.name,
+            origin: known.origin,
+        });
     return {
         doc,
         source: {

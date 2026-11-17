@@ -5,6 +5,7 @@ import { afterEach, expect, it } from "vitest";
 import { checkSite } from "./check.js";
 import { compileSite } from "./compile.js";
 import { exportEntries } from "./export.js";
+import { readManifest } from "./manifest.js";
 import { loadSubformat, parseSubformatRecord, validateSubformatRecord } from "./subformats.js";
 
 const roots: string[] = [];
@@ -21,6 +22,10 @@ it.each([
     roots.push(temp);
     const root = join(temp, "source");
     cpSync(resolve(import.meta.dirname, "../../../..", source), root, { recursive: true });
+    const manifest = readManifest(root);
+    expect(manifest.format).toBe("document");
+    expect(manifest.tree).toHaveLength(1);
+    expect(manifest.tree[0]?.root).toBe(true);
     const site = compileSite(root);
     expect(site.errors).toEqual([]);
     expect(site.subformats?.map((type) => type.ext)).toEqual(

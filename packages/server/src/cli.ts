@@ -158,7 +158,7 @@ options:
             const target = resolve(positionals[0] ?? ".");
             file = isManifestFile(basename(target)) ? target : join(target, MANIFEST_FILE);
             mkdirSync(dirname(file), { recursive: true });
-            writeFileSync(file, serializeManifest([], { format: "nested" }), { flag: "wx" });
+            writeFileSync(file, serializeManifest([], { format: "document" }), { flag: "wx" });
             console.log(
                 `Created ${file}\nRun dooc editor run node --client --server --project '${file.replaceAll("'", "'\\''")}' to add your first document.`,
             );
@@ -325,7 +325,7 @@ dooc.yaml example:
     default_lang: jpn
     languages: [jpn, eng]
     themes: [light, dark]
-  center_contents: []
+  document: {}
 
 Checks:
   render     uses the reader compiler

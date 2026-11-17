@@ -120,7 +120,7 @@ it("versions manifest and transitive content changes without touching drafts or 
     await git(repository, ["config", "user.name", "Test"]);
     await git(repository, ["config", "user.email", "test@example.com"]);
     const manifest =
-        "version: {major: 1, minor: git, patch: git}\ncenter_contents:\n  - file: guide.md\n";
+        "version: { major: 1, minor: git, patch: git }\ndocument:\n  children:\n    - document:\n        url: guide.md\n";
     writeFileSync(join(root, "dooc.yaml"), manifest);
     writeFileSync(join(root, "guide.md"), "# Guide\n\n![](image.svg)\n");
     writeFileSync(join(root, "original.svg"), '<svg xmlns="http://www.w3.org/2000/svg"/>');
@@ -138,7 +138,7 @@ it("versions manifest and transitive content changes without touching drafts or 
         '<svg xmlns="http://www.w3.org/2000/svg"><circle r="2"/></svg>',
     );
     await commit("Image");
-    writeFileSync(join(root, "dooc.yaml"), `${manifest}    title: New title\n`);
+    writeFileSync(join(root, "dooc.yaml"), `${manifest}        title: New title\n`);
     await commit("Definition");
     writeFileSync(join(repository, "unrelated.txt"), "Not part of this document");
     const head = await commit("Unrelated");

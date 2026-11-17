@@ -3,7 +3,7 @@
 
 import type { ParsedManifest } from "../core/content-metadata.js";
 import { docIconFile, type FileLayout } from "../core/files.js";
-import { existsSync, readdirSync, readFileSync } from "./host.js";
+import { existsSync, join, readdirSync, readFileSync, relative } from "./host.js";
 import { assertNotIgnored, ignoredFiles } from "./ignored-files.js";
 import { readTextfile, textfilePath } from "./textfile.js";
 
@@ -80,7 +80,13 @@ export const loadIcons = (
     let files: string[] = [];
     try {
         const dir = textfilePath(root, ICONS_DIR);
-        files = existsSync(dir) ? readdirSync(dir) : [];
+        files = existsSync(dir)
+            ? readdirSync(dir, { recursive: true, withFileTypes: true })
+                  .filter((entry) => entry.isFile() || entry.isSymbolicLink())
+                  .map((entry) =>
+                      relative(dir, join(entry.parentPath, entry.name)).replaceAll("\\", "/"),
+                  )
+            : [];
     } catch (error) {
         errors.push(`${ICONS_DIR}: ${error}`);
     }
@@ -88,12 +94,15 @@ export const loadIcons = (
         root,
         files.map((file) => `${ICONS_DIR}/${file}`),
     );
+    const defaults = new Map(
+        [...docIds].map((id) => [docIconFile(id, layout && { ...layout, icons: undefined }), id]),
+    );
     for (const f of files) {
         if (ignored.has(`${ICONS_DIR}/${f}`)) continue;
-        if (f.startsWith(".")) {
+        if (f.split("/").some((part) => part.startsWith("."))) {
             continue;
         }
-        const id = f.endsWith(".svg") ? f.slice(0, -4) : "";
+        const id = defaults.get(`${ICONS_DIR}/${f}`) ?? (f.endsWith(".svg") ? f.slice(0, -4) : "");
         if (!docIds.has(id)) {
             if (siteIconFile?.replace(/^\.\//, "") === `${ICONS_DIR}/${f}`) continue;
             if (
@@ -113,11 +122,13 @@ export const loadIcons = (
         }
     }
     for (const id of docIds)
-        if (layout?.icons?.[id]) {
+        if (layout?.icons?.[id] || !icons.has(id)) {
             try {
-                const file = textfilePath(root, docIconFile(id, layout));
-                assertNotIgnored(root, docIconFile(id, layout));
+                const source = docIconFile(id, layout);
+                const file = textfilePath(root, source);
                 if (!existsSync(file)) continue;
+                if (!layout?.icons?.[id] && ignoredFiles(root, [source]).has(source)) continue;
+                assertNotIgnored(root, source);
                 const svg = readFileSync(file, "utf8");
                 if (!ROOT_SVG_RE.test(svg)) throw new Error("not an svg");
                 icons.set(id, svg);

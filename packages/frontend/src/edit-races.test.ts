@@ -29,6 +29,36 @@ const deferred = <T>() => {
     return { promise, resolve };
 };
 
+it.each([
+    false,
+    true,
+])("keeps a local body or explicit title edit after a conflict (rename: %s)", async (rename) => {
+    const boot = {
+        title: rename ? "Local title" : "Old title",
+        ...(rename ? { baseTitle: "Old title" } : {}),
+    };
+    const context = run(
+        `${extract("const handleConflict =", "\nconst render = async")}\nglobalThis.run = handleConflict;`,
+        {
+            boot,
+            baseRaw: "Old body",
+            conflictPending: false,
+            view: { state: { doc: "Local body" } },
+            readFm: () => ({ title: boot.title }),
+            chooseConflict: vi.fn(async () => "local"),
+            applyFm: (fm: { title: string }) => {
+                boot.title = fm.title;
+            },
+        },
+    );
+    await context.run({ raw: "External body", frontmatter: { title: "External title" } });
+    expect(boot.title).toBe(rename ? "Local title" : "External title");
+    expect(boot.baseTitle).toBe(rename ? "External title" : undefined);
+    expect(context.baseRaw).toBe("External body");
+    expect(context.conflictPending).toBe(false);
+    expect(context.chooseConflict.mock.calls[0][2]).toContain("External title");
+});
+
 it("keeps the active version in document, resource and anchor navigation URLs", () => {
     let revision: { version: string } | undefined = { version: "1.0.0" };
     const context = run(

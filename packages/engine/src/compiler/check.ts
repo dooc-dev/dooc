@@ -1,4 +1,4 @@
-import { flattenTree } from "../core/content-metadata.js";
+import { flattenTree, isContentPage } from "../core/content-metadata.js";
 import { docFile, localFile } from "../core/files.js";
 import { DEFAULT_LANG } from "../core/language.js";
 import { contentLinks, embeddedImages, parseMdast } from "../core/markdown.js";
@@ -15,11 +15,12 @@ import {
 import { parseContentSource } from "./code-blocks.js";
 import { compileSite } from "./compile.js";
 import { collectRefs, parseDoc } from "./dialect.js";
+import { rebaseFileLinks } from "./files.js";
 import { checkGithubOutput } from "./github-output.js";
 import { createHash, existsSync, readdirSync, readFileSync, resolve, statSync } from "./host.js";
 import { contentLanguageCode, isContentLanguage } from "./language-codes.js";
 import { siteContentLanguages, translationFile } from "./locales.js";
-import { manifestFile, parseManifestText } from "./manifest.js";
+import { manifestFile, readManifest } from "./manifest.js";
 import { textfilePath } from "./textfile.js";
 import { siteThemes, themeVariants } from "./theme-variants.js";
 
@@ -203,7 +204,7 @@ export const checkSite = (root: string, options: CheckOptions = {}): CheckReport
         if (!data) return finish(report, options);
         const raw = text(manifestFile(root), data, {});
         if (raw === undefined) return finish(report, options);
-        const manifest = parseManifestText(raw, manifestFile(root));
+        const manifest = readManifest(root);
         for (const message of manifest.errors)
             add("MANIFEST_INVALID", "error", manifestFile(root), message);
         if (manifest.errors.length) return finish(report, options);
@@ -263,8 +264,13 @@ export const checkSite = (root: string, options: CheckOptions = {}): CheckReport
         }
         const docs = new Map(
             flattenTree(manifest.tree)
-                .filter((node) => !node.subformat && !node.library)
+                .filter(isContentPage)
                 .map(({ id }) => [docFile(id, manifest.files), id]),
+        );
+        const origins = new Map(
+            flattenTree(manifest.tree)
+                .filter(isContentPage)
+                .map((node) => [docFile(node.id, manifest.files), node.origin]),
         );
         const visited = new Set<string>();
         const checkedThemes = new Set<string>();
@@ -380,7 +386,8 @@ export const checkSite = (root: string, options: CheckOptions = {}): CheckReport
             }
         };
         const checkRefs = (raw: string, context: Context, owner: string): void => {
-            const tree = parseMdast(raw);
+            const origin = origins.get(context.sourceFile ?? owner);
+            const tree = parseMdast(rebaseFileLinks(raw, origin));
             const refs = collectRefs(tree);
             for (const file of [...refs.figures, ...refs.textfiles]) checkAsset(file, context);
             for (const file of refs.terms) checkAsset(file, context, false);
@@ -468,7 +475,9 @@ export const checkSite = (root: string, options: CheckOptions = {}): CheckReport
         for (const [file, id] of docs)
             for (const language of report.languages)
                 checkDocument(
-                    language === sourceLanguage ? file : translationFile(file, language),
+                    language === sourceLanguage
+                        ? file
+                        : translationFile(file, language, origins.get(file)),
                     file,
                     language,
                     id,
@@ -556,7 +565,7 @@ export const checkSite = (root: string, options: CheckOptions = {}): CheckReport
                     for (const [sourceFile, source] of compiled.sources) {
                         const candidate =
                             language !== sourceLanguage && docs.has(sourceFile)
-                                ? translationFile(sourceFile, language)
+                                ? translationFile(sourceFile, language, origins.get(sourceFile))
                                 : sourceFile;
                         const file = cache.get(candidate) ? candidate : sourceFile;
                         for (const message of source.errors)

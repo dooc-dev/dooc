@@ -1,6 +1,14 @@
 import { visit } from "unist-util-visit";
 import { Document, isSeq, parseDocument } from "yaml";
-import { flattenTree, isManifestFile, serializeManifest } from "../core/content-metadata.js";
+import {
+    type DocNode,
+    flattenTree,
+    isContentPage,
+    isManifestFile,
+    type ParsedManifest,
+    pageUrlKind,
+    serializeManifest,
+} from "../core/content-metadata.js";
 import {
     defaultFilePath,
     docFile,
@@ -12,7 +20,7 @@ import {
     MAX_FILE_UPLOAD_BYTES,
     parseFileLayout,
 } from "../core/files.js";
-import { codeBlockAt, parseMdast } from "../core/markdown.js";
+import { codeBlockAt, contentLinks, embeddedImages, parseMdast } from "../core/markdown.js";
 import { docPath } from "../core/routing.js";
 import { termFileUrl } from "../core/term-reference.js";
 import { isRemoteTextfile, parseFileReference } from "../core/textfile.js";
@@ -37,7 +45,7 @@ import {
 } from "./host.js";
 import { ignoredFiles, withinRead } from "./ignored-files.js";
 import { translationFile, translationFiles, translationLanguages } from "./locales.js";
-import { manifestFile, parseManifestText, readManifest } from "./manifest.js";
+import { manifestFile, parseManifestText, readManifest, sourceOrigin } from "./manifest.js";
 import { rewriteSchemaFiles } from "./schema-file-references.js";
 import { textfilePath, writeTextfile } from "./textfile.js";
 import { themeNames, themeVariants } from "./theme-variants.js";
@@ -147,9 +155,7 @@ export const filesSnapshot = (root: string) => {
         layout,
         revision: hash.digest("hex"),
         documents: Object.fromEntries(
-            docs
-                .filter((node) => !node.subformat && !node.library)
-                .map(({ id }) => [docFile(id, layout), docPath(docs, id)]),
+            docs.filter(isContentPage).map(({ id }) => [docFile(id, layout), docPath(docs, id)]),
         ),
     };
 };
@@ -229,6 +235,8 @@ export const rewriteFileLinks = (raw: string, moves: ReadonlyMap<string, string>
         if (isRemoteTextfile(file)) return;
         const next = moves.get(file);
         if (!next) return;
+        if (!localFile(next))
+            throw new Error("Cannot move a referenced file outside its manifest's folder");
         const from = node.position?.start.offset;
         const to = node.position?.end.offset;
         if (from === undefined || to === undefined)
@@ -280,6 +288,49 @@ export const rewriteFileLinks = (raw: string, moves: ReadonlyMap<string, string>
     return raw;
 };
 
+/** Included documents keep references relative to their own manifest, not the selected root. */
+export const rebaseFileLinks = (raw: string, origin?: string): string => {
+    if (!origin?.includes("/")) return raw;
+    const tree = parseMdast(raw);
+    const moves = new Map<string, string>();
+    for (const { url } of [...contentLinks(tree), ...embeddedImages(tree)]) {
+        if (/^(?:[a-z][\w+.-]*:|[/#])/i.test(url)) continue;
+        const file = parseFileReference(url, true).file.replace(/^(\.\/)+/, "");
+        if (localFile(file)) moves.set(file, posix.join(posix.dirname(origin), file));
+    }
+    return rewriteFileLinks(raw, moves);
+};
+
+const rewriteManifestPaths = (
+    manifest: ParsedManifest,
+    moves: ReadonlyMap<string, string>,
+): boolean => {
+    let changed = false;
+    const rewrite = (file: string): string => {
+        const next = moves.get(file) ?? file;
+        if (!localFile(next))
+            throw new Error("Cannot move a referenced file outside its manifest's folder");
+        changed ||= next !== file;
+        return next;
+    };
+    for (const record of [manifest.files?.documents, manifest.files?.icons, manifest.themeIcons])
+        if (record) for (const [id, file] of Object.entries(record)) record[id] = rewrite(file);
+    if (manifest.icon) manifest.icon = rewrite(manifest.icon);
+    if (manifest.licence) manifest.licence = rewrite(manifest.licence);
+    for (const format of manifest.subformats ?? []) {
+        format.schema = rewrite(format.schema);
+        if (format.icon) format.icon = rewrite(format.icon);
+    }
+    const visit = (nodes: DocNode[]) => {
+        for (const node of nodes) {
+            if (node.url && pageUrlKind(node.url) === "manifest") node.url = rewrite(node.url);
+            visit(node.children);
+        }
+    };
+    visit(manifest.tree);
+    return changed;
+};
+
 export const updateFiles = (root: string, input: Record<string, unknown>) => {
     const snapshot = filesSnapshot(root);
     if (input.revision !== snapshot.revision)
@@ -287,6 +338,7 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
     const manifest = readManifest(root);
     const layout = snapshot.layout;
     const paths = snapshot.files.map((file) => file.path);
+    const pages = flattenTree(manifest.tree);
     const moves = new Map<string, string>();
     if (input.action === "layout") {
         if (typeof input.enabled !== "boolean") throw new Error("Invalid layout setting");
@@ -310,7 +362,7 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
             throw new Error("Invalid file name");
         if (
             flattenTree(manifest.tree).some(
-                ({ id, subformat }) => !subformat && docFile(id, layout) === input.file,
+                (node) => isContentPage(node) && docFile(node.id, layout) === input.file,
             ) &&
             !isDocumentFileName(input.name)
         )
@@ -366,11 +418,33 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
             moves.set(file, `themes/${theme}/${target}`);
     }
     const translated = translationFiles(root);
-    for (const language of translationLanguages(root)) {
-        for (const [source, target] of [...moves]) {
-            if (!source.endsWith(".md") || source.startsWith("locales/")) continue;
-            const file = translationFile(source, language);
-            if (translated.includes(file)) moves.set(file, translationFile(target, language));
+    const origins = new Map(
+        pages.filter(isContentPage).map((node) => [docFile(node.id, manifest.files), node.origin]),
+    );
+    for (const [source, target] of [...moves]) {
+        if (!source.endsWith(".md") || translated.includes(source) || source.startsWith("locales/"))
+            continue;
+        const origin = origins.get(source);
+        for (const language of translationLanguages(
+            origin ? join(root, posix.dirname(origin)) : root,
+        )) {
+            const file = translationFile(source, language, origin);
+            if (translated.includes(file))
+                moves.set(
+                    file,
+                    translationFile(
+                        target,
+                        language,
+                        origin ? (moves.get(origin) ?? origin) : undefined,
+                    ),
+                );
+        }
+    }
+    for (const [source, origin] of [...origins]) {
+        if (!origin) continue;
+        for (const language of translationLanguages(join(root, posix.dirname(origin)))) {
+            const file = translationFile(source, language, origin);
+            if (translated.includes(file)) origins.set(file, origin);
         }
     }
     if (new Set(moves.values()).size !== moves.size) throw new Error("Duplicate destination");
@@ -378,8 +452,9 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
         const path = textfilePath(root, target);
         if (existsSync(path)) throw new Error(`File already exists: ${target}`);
     }
-    for (const { id, subformat } of flattenTree(manifest.tree)) {
-        if (subformat) continue;
+    for (const node of pages) {
+        if (!isContentPage(node)) continue;
+        const { id } = node;
         const file = docFile(id, layout);
         const icon = docIconFile(id, layout);
         if (moves.has(file)) layout.documents[id] = moves.get(file) as string;
@@ -409,7 +484,7 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
         subformat.schema = moves.get(subformat.schema) ?? subformat.schema;
         if (subformat.icon) subformat.icon = moves.get(subformat.icon) ?? subformat.icon;
     }
-    if (manifest.format !== "nested") {
+    if (manifest.format === undefined) {
         yaml.set("files", layout);
         if (manifest.icon) yaml.set("icon", manifest.icon);
         if (manifest.subformats) yaml.set("subformats", manifest.subformats);
@@ -418,7 +493,20 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
     }
     const writes: { file: string; data: Buffer; base: Buffer | null; mode?: number }[] = [];
     const links = new Map(moves);
-    for (const file of [...paths, ...translated].filter(
+    const localMoves = (owner?: string): ReadonlyMap<string, string> => {
+        if (!owner) return moves;
+        const before = posix.dirname(owner);
+        const after = posix.dirname(moves.get(owner) ?? owner);
+        return new Map(
+            paths.flatMap((file) => {
+                const from = posix.relative(before, file);
+                if (!localFile(from)) return [];
+                const to = posix.relative(after, moves.get(file) ?? file);
+                return from === to ? [] : [[from, to] as const];
+            }),
+        );
+    };
+    for (const file of [...new Set([...paths, ...translated])].filter(
         (file) => /\.(md|callouth|html|htm|svg|css)$/.test(file) || schemaWrites.has(file),
     )) {
         const base = readFileSync(textfilePath(root, file));
@@ -426,7 +514,12 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
         const next =
             schemaWrites.get(file) ??
             (/\.(md|callouth)$/.test(file)
-                ? rewriteFileLinks(raw, moves)
+                ? rewriteFileLinks(
+                      raw,
+                      localMoves(
+                          origins.has(file) ? origins.get(file) : sourceOrigin(manifest, file),
+                      ),
+                  )
                 : moves.size
                   ? assetReferences(raw, fileExtension(file), (url) => {
                         if (!url || /^(?:[a-z][\w+.-]*:|[/#])/i.test(url)) return url;
@@ -455,8 +548,28 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
             mode: statSync(textfilePath(root, file)).mode,
         });
     }
+    for (const file of manifest.includedManifests ?? []) {
+        const base = readFileSync(textfilePath(root, file));
+        const definition = parseManifestText(base.toString("utf8"), file);
+        if (definition.errors.length) throw new Error(definition.errors.join(" / "));
+        if (!rewriteManifestPaths(definition, localMoves(file))) continue;
+        const content = serializeManifest(definition.tree, definition);
+        const errors = parseManifestText(content, file).errors;
+        if (errors.length) throw new Error(errors.join(" / "));
+        links.delete(file);
+        const target = moves.get(file) ?? file;
+        writes.push({
+            file: target,
+            data: Buffer.from(content),
+            base: target === file ? base : null,
+            mode: statSync(textfilePath(root, file)).mode,
+        });
+    }
+    rewriteManifestPaths(manifest, moves);
     const nextManifest =
-        manifest.format === "nested" ? serializeManifest(manifest.tree, manifest) : yaml.toString();
+        manifest.format !== undefined
+            ? serializeManifest(manifest.tree, manifest)
+            : yaml.toString();
     const errors = parseManifestText(nextManifest, manifestFile(root)).errors;
     if (errors.length) throw new Error(errors.join(" / "));
     writes.push({

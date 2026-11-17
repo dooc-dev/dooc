@@ -29,12 +29,14 @@ export const siteIconResponse = (
         if (theme !== "light" && theme !== "dark")
             throw new Error("Expected a light or dark theme");
         const file =
-            (manifest.format === "nested" ? manifest.themeIcons?.[theme] : manifest.icon) ??
+            (manifest.format !== undefined ? manifest.themeIcons?.[theme] : manifest.icon) ??
             (manifest.files?.defaultLayout !== false
-                ? defaultFilePath(manifest.format === "nested" ? `_site-${theme}.svg` : "_site.svg")
-                : `${ICONS_DIR}/_site${manifest.format === "nested" ? `-${theme}` : ""}.svg`);
+                ? defaultFilePath(
+                      manifest.format !== undefined ? `_site-${theme}.svg` : "_site.svg",
+                  )
+                : `${ICONS_DIR}/_site${manifest.format !== undefined ? `-${theme}` : ""}.svg`);
         const configured =
-            manifest.format === "nested" ? manifest.themeIcons?.[theme] : manifest.icon;
+            manifest.format !== undefined ? manifest.themeIcons?.[theme] : manifest.icon;
         if (!configured && existsSync(textfilePath(root, file)))
             return {
                 status: 409,
@@ -49,7 +51,17 @@ export const siteIconResponse = (
                 isSeq(parsed.contents) || parsed.contents == null
                     ? new Document({ docs: parsed.toJS() ?? [] })
                     : parsed;
-            if (manifest.format === "nested") document.setIn(["left_sidebar", "icon", theme], file);
+            if (manifest.format !== undefined)
+                document.setIn(
+                    [
+                        ...(manifest.format === "document"
+                            ? ["document", "sidebar"]
+                            : ["left_sidebar"]),
+                        "icon",
+                        theme,
+                    ],
+                    file,
+                );
             else document.set("icon", file);
             if (!writeTextfile(root, manifestFile(root), document.toString(), raw))
                 return { status: 409, body: { error: "Manifest changed externally. Try again." } };

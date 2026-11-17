@@ -72,7 +72,7 @@ describe("file preview indicators", () => {
             ].join("\n"),
         );
         const site = siteFrom(compileSite(root), []);
-        const entry = site.entries[0];
+        const entry = site.entries.find((entry) => !entry.root);
         if (!entry) throw new Error("Missing fixture document");
         const previews = filePreviewResults(entry, site);
         expect(previews["ok.txt"]).toEqual([]);
@@ -88,14 +88,14 @@ describe("file preview indicators", () => {
             "![](figures/image.svg#bad)\n\n![](figures/good.html)\n",
         );
         const invalidSite = siteFrom(compileSite(root), []);
-        const invalidEntry = invalidSite.entries[0];
+        const invalidEntry = invalidSite.entries.find((entry) => !entry.root);
         if (!invalidEntry) throw new Error("Missing fixture document");
         const invalid = filePreviewResults(invalidEntry, invalidSite);
         expect(invalid["figures/image.svg"]?.join()).toContain("Use #L10");
         expect(invalid["figures/good.html"]).toEqual([]);
         writeFileSync(join(root, "content/page.md"), ":::callout\n![](figures/good.html)\n:::\n");
         const nestedSite = siteFrom(compileSite(root), []);
-        const nestedEntry = nestedSite.entries[0];
+        const nestedEntry = nestedSite.entries.find((entry) => !entry.root);
         if (!nestedEntry) throw new Error("Missing fixture document");
         expect(nestedEntry.errors.join()).toContain("standalone paragraph");
         expect(filePreviewResults(nestedEntry, nestedSite)["figures/good.html"]).toBeUndefined();

@@ -14,6 +14,12 @@ export const isManifestFile = (name: string): boolean => /^(?:[^/\\]+\.)?dooc\.y
 export interface DocNode {
     id: string;
     file?: string;
+    url?: string;
+    root?: boolean;
+    name?: string;
+    /** Included manifests stay separate when the owning manifest is saved. */
+    resolved?: DocNode;
+    origin?: string;
     subformat?: string;
     /** Library page: a block format (`schemath`), `urls` or `url-previews`. */
     library?: string;
@@ -23,7 +29,7 @@ export interface DocNode {
 
 export interface ParsedManifest {
     version?: VersionConfig;
-    format?: "nested";
+    format?: "nested" | "document";
     titles?: Record<string, string>;
     themeIcons?: Record<string, string>;
     tree: DocNode[];
@@ -38,8 +44,48 @@ export interface ParsedManifest {
     themes?: ("light" | "dark")[];
     subformats?: Subformat[];
     defaultSubformatFolder?: string;
+    includedManifests?: string[];
+    includedAssets?: string[];
+    includedSubformats?: string[];
     errors: string[];
 }
+
+export const pageUrlKind = (
+    url: string,
+): "index" | "content" | "manifest" | "link" | "redirect" => {
+    if (!url) return "index";
+    if (url === "redirect:first") return "redirect";
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: Reject control characters before URL normalization.
+    if (/[\\\u0000-\u001f\u007f]/.test(url)) throw new Error("Invalid document URL");
+    if (/^https?:\/\//i.test(url)) {
+        const target = new URL(url);
+        if (!target.hostname || target.username || target.password)
+            throw new Error("Document links require a host and must not contain credentials");
+        return "link";
+    }
+    if (url.startsWith("/") && !url.startsWith("//")) {
+        const target = new URL(url, "https://dooc.invalid");
+        if (target.pathname !== url.split(/[?#]/)[0])
+            throw new Error("Document links must use a normalized site path");
+        return "link";
+    }
+    if (localFile(url)) {
+        if (url.endsWith(".md")) return "content";
+        if (isManifestFile(url.split("/").at(-1) ?? "")) return "manifest";
+    }
+    throw new Error(
+        "Document URL must be empty, a local .md or dooc.yaml file, an HTTP(S) URL, a site path, or redirect:first",
+    );
+};
+
+export const isContentPage = (node: {
+    url?: string;
+    subformat?: unknown;
+    library?: string;
+}): boolean =>
+    !node.subformat &&
+    !node.library &&
+    (node.url === undefined || pageUrlKind(node.url) === "content");
 
 export const DOC_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -67,7 +113,7 @@ export const parseManifest = (value: unknown): ParsedManifest => {
         value &&
         typeof value === "object" &&
         !Array.isArray(value) &&
-        ["system", "left_sidebar", "center_contents", "json_subformats"].some(
+        ["document", "system", "left_sidebar", "center_contents", "json_subformats"].some(
             (key) => key in (value as object),
         )
     )
@@ -329,9 +375,23 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                 "center_contents",
                 "json_subformats",
                 "default_subformat_folder",
+                "document",
             ],
             MANIFEST_FILE,
         );
+        const documentFormat = Object.hasOwn(root, "document");
+        if (
+            documentFormat &&
+            (root.center_contents !== undefined || root.left_sidebar !== undefined)
+        )
+            throw new Error("document replaces center_contents and left_sidebar");
+        const document = documentFormat
+            ? object(
+                  root.document,
+                  ["title", "url", "icon", "sidebar", "children", "subformat", "library"],
+                  "document",
+              )
+            : undefined;
         const system = object(
             root.system ?? {},
             ["languages", "default_lang", "themes", "licence", "files"],
@@ -340,7 +400,11 @@ const parseNestedManifest = (input: object): ParsedManifest => {
         const licence = system.licence;
         if (licence !== undefined && (!localFile(licence) || !licence.trim()))
             throw new Error("system.licence must be a local file path");
-        const sidebar = object(root.left_sidebar ?? {}, ["title", "icon"], "left_sidebar");
+        const sidebar = object(
+            document?.sidebar ?? root.left_sidebar ?? {},
+            ["title", "icon"],
+            "sidebar",
+        );
         const layout = object(system.files ?? {}, ["default_layout", "order"], "system.files");
         const titles: Record<string, string> = {};
         if (sidebar.title !== undefined) {
@@ -366,15 +430,36 @@ const parseNestedManifest = (input: object): ParsedManifest => {
         }
         const documents: Record<string, string> = {};
         const icons: Record<string, string> = {};
-        const walk = (value: unknown): DocNode[] => {
+        const walk = (value: unknown, position = "root"): DocNode[] => {
             if (!Array.isArray(value))
                 throw new Error("center_contents and children must be lists");
-            return value.map((entry) => {
+            return value.map((entry, index) => {
+                const at = `${position}-${index + 1}`;
+                if (documentFormat) entry = object(entry, ["document"], at).document;
                 const node = object(
                     entry,
-                    ["file", "icon", "children", "subformat", "library", "title"],
-                    "center_contents",
+                    documentFormat
+                        ? [
+                              "url",
+                              "icon",
+                              "children",
+                              "subformat",
+                              "library",
+                              "title",
+                              ...(position === "root" ? ["sidebar"] : []),
+                          ]
+                        : ["file", "icon", "children", "subformat", "library", "title"],
+                    documentFormat ? "document" : "center_contents",
                 );
+                if (documentFormat && node.url != null && typeof node.url !== "string")
+                    throw new Error("Document URL must be a string");
+                const url = documentFormat
+                    ? String(node.url ?? "").replace(/^(\.\/)+/, "")
+                    : undefined;
+                const kind = url === undefined ? "content" : pageUrlKind(url);
+                const location = documentFormat
+                    ? { url, ...(position === "root" ? { root: true } : {}) }
+                    : {};
                 if (
                     node.icon !== undefined &&
                     (!localFile(node.icon) || !node.icon.endsWith(".svg"))
@@ -384,6 +469,7 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                     if (
                         !isLibraryView(node.library) ||
                         node.file !== undefined ||
+                        url ||
                         node.subformat !== undefined ||
                         (node.title !== undefined &&
                             (typeof node.title !== "string" || !node.title.trim()))
@@ -393,9 +479,10 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                     if (typeof node.icon === "string") icons[id] = node.icon;
                     return {
                         id,
+                        ...location,
                         library: node.library,
                         title: typeof node.title === "string" ? node.title.trim() : node.library,
-                        children: node.children === undefined ? [] : walk(node.children),
+                        children: node.children === undefined ? [] : walk(node.children, at),
                     };
                 }
                 if (node.subformat !== undefined) {
@@ -405,6 +492,7 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                     if (
                         !config ||
                         node.file !== undefined ||
+                        url ||
                         (node.title !== undefined &&
                             (typeof node.title !== "string" || !node.title.trim()))
                     )
@@ -415,32 +503,54 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                     if (typeof node.icon === "string") icons[id] = node.icon;
                     return {
                         id,
+                        ...location,
                         subformat: config.ext,
                         title: typeof node.title === "string" ? node.title.trim() : config.ext,
-                        children: node.children === undefined ? [] : walk(node.children),
+                        children: node.children === undefined ? [] : walk(node.children, at),
                     };
                 }
-                if (!localFile(node.file) || !node.file.endsWith(".md"))
+                if (!documentFormat && (!localFile(node.file) || !node.file.endsWith(".md")))
                     throw new Error("Each document requires a local .md file");
                 if (
                     node.title !== undefined &&
                     (typeof node.title !== "string" || !node.title.trim())
                 )
                     throw new Error("Document titles must be non-empty strings");
-                const id = fileDocumentId(node.file);
+                if (kind === "manifest" && node.children !== undefined)
+                    throw new Error("An included manifest owns its children");
+                const file = kind === "content" ? (url ?? (node.file as string)) : undefined;
+                const id = fileDocumentId(
+                    file ?? (kind === "manifest" ? (url as string) : `document:${at}`),
+                );
                 if (Object.hasOwn(documents, id))
                     throw new Error(`Duplicate document: ${node.file}`);
-                documents[id] = node.file;
+                if (file) documents[id] = file;
                 if (typeof node.icon === "string") icons[id] = node.icon;
                 return {
                     id,
-                    file: node.file,
+                    ...location,
+                    ...(file ? { file } : {}),
+                    ...(documentFormat && kind !== "content"
+                        ? {
+                              name:
+                                  kind === "manifest"
+                                      ? (url as string).split("/").at(-1) === MANIFEST_FILE
+                                          ? ((url as string).split("/").at(-2) ?? "index")
+                                          : ((url as string)
+                                                .split("/")
+                                                .at(-1)
+                                                ?.replace(/\.dooc\.yaml$/, "") ?? "index")
+                                      : typeof node.title === "string"
+                                        ? node.title.trim()
+                                        : `page-${index + 1}`,
+                          }
+                        : {}),
                     ...(typeof node.title === "string" ? { title: node.title.trim() } : {}),
-                    children: node.children === undefined ? [] : walk(node.children),
+                    children: node.children === undefined ? [] : walk(node.children, at),
                 };
             });
         };
-        const tree = walk(root.center_contents);
+        const tree = walk(documentFormat ? [{ document }] : root.center_contents);
         const language = system.default_lang ?? DEFAULT_LANG;
         if (typeof language !== "string" || !isLangTag(language))
             throw new Error("system.default_lang must be a language tag");
@@ -471,7 +581,9 @@ const parseNestedManifest = (input: object): ParsedManifest => {
             defaultLang: language,
             ...(system.languages === undefined ? {} : { languages: system.languages }),
             ...(system.themes === undefined ? {} : { themes: system.themes }),
-            ...(titles[source] ? { title: titles[source] } : {}),
+            ...(titles[source] || document?.title
+                ? { title: titles[source] ?? document?.title }
+                : {}),
             ...(themeIcons.light || themeIcons.dark
                 ? { icon: themeIcons.light ?? themeIcons.dark }
                 : {}),
@@ -487,7 +599,7 @@ const parseNestedManifest = (input: object): ParsedManifest => {
         });
         return {
             ...parsed,
-            format: "nested",
+            format: documentFormat ? "document" : "nested",
             tree,
             ...(licence === undefined ? {} : { licence }),
             ...(sidebar.title === undefined ? {} : { titles }),
@@ -519,22 +631,40 @@ export const serializeManifest = (
         themes,
         subformats,
         defaultSubformatFolder,
+        includedSubformats,
     }: Omit<ParsedManifest, "tree" | "errors"> = {},
 ): string => {
-    if (format === "nested") {
+    if (format) {
         const contents = (nodes: readonly DocNode[]): unknown[] =>
-            nodes.map((node) => ({
-                ...(node.library
-                    ? { library: node.library, title: node.title }
-                    : node.subformat
-                      ? { subformat: node.subformat, title: node.title }
-                      : {
-                            file: docFile(node.id, files),
-                            ...(node.title ? { title: node.title } : {}),
-                        }),
-                ...(files?.icons?.[node.id] ? { icon: files.icons[node.id] } : {}),
-                ...(node.children.length ? { children: contents(node.children) } : {}),
-            }));
+            nodes.map((node) => {
+                const page = {
+                    ...(node.library
+                        ? { library: node.library, title: node.title }
+                        : node.subformat
+                          ? { subformat: node.subformat, title: node.title }
+                          : {
+                                ...(format === "document"
+                                    ? {
+                                          url: isContentPage(node)
+                                              ? docFile(node.id, files)
+                                              : (node.url ?? ""),
+                                      }
+                                    : { file: docFile(node.id, files) }),
+                                ...(node.title ? { title: node.title } : {}),
+                            }),
+                    ...(files?.icons?.[node.id] ? { icon: files.icons[node.id] } : {}),
+                    ...(node.children.length ? { children: contents(node.children) } : {}),
+                };
+                return format === "document" ? { document: page } : page;
+            });
+        const sidebar = {
+            ...(titles || (format !== "document" && title)
+                ? { title: titles ?? { [contentLanguageCode(defaultLang ?? DEFAULT_LANG)]: title } }
+                : {}),
+            ...(themeIcons || icon ? { icon: themeIcons ?? { light: icon, dark: icon } } : {}),
+        };
+        const hasSidebar = Object.keys(sidebar).length > 0;
+        const pages = contents(tree);
         return stringify(
             {
                 ...(version === undefined ? {} : { version }),
@@ -551,25 +681,23 @@ export const serializeManifest = (
                           }
                         : {}),
                 },
-                ...(titles || title || themeIcons || icon
+                ...(format === "document"
                     ? {
-                          left_sidebar: {
-                              ...(titles || title
-                                  ? {
-                                        title: titles ?? {
-                                            [contentLanguageCode(defaultLang ?? DEFAULT_LANG)]:
-                                                title,
-                                        },
-                                    }
-                                  : {}),
-                              ...(themeIcons || icon
-                                  ? { icon: themeIcons ?? { light: icon, dark: icon } }
-                                  : {}),
+                          document: {
+                              ...((pages[0] as { document: object } | undefined)?.document ?? {
+                                  url: "",
+                              }),
+                              ...(hasSidebar ? { sidebar } : {}),
                           },
                       }
+                    : { ...(hasSidebar ? { left_sidebar: sidebar } : {}), center_contents: pages }),
+                ...(subformats
+                    ? {
+                          json_subformats: subformats.filter(
+                              ({ ext }) => !includedSubformats?.includes(ext),
+                          ),
+                      }
                     : {}),
-                center_contents: contents(tree),
-                ...(subformats ? { json_subformats: subformats } : {}),
                 ...(defaultSubformatFolder
                     ? { default_subformat_folder: defaultSubformatFolder }
                     : {}),
@@ -640,9 +768,23 @@ export const flattenTree = (
 ): (Omit<DocNode, "children"> & { parent?: string; depth: number })[] => {
     const out: (Omit<DocNode, "children"> & { parent?: string; depth: number })[] = [];
     const walk = (nodes: readonly DocNode[], parent: string | undefined, depth: number): void => {
-        for (const n of nodes) {
+        for (const original of nodes) {
+            const n = original.resolved
+                ? {
+                      ...original.resolved,
+                      id: original.id,
+                      root: original.root,
+                      name: original.name,
+                      ...(original.title ? { title: original.title } : {}),
+                  }
+                : original;
             out.push({
                 id: n.id,
+                ...(original.resolved ? { resolved: original.resolved } : {}),
+                ...(n.url === undefined ? {} : { url: n.url }),
+                ...(n.root ? { root: true } : {}),
+                ...(n.name ? { name: n.name } : {}),
+                ...(n.origin ? { origin: n.origin } : {}),
                 ...(n.file ? { file: n.file } : {}),
                 ...(n.subformat ? { subformat: n.subformat } : {}),
                 ...(n.library ? { library: n.library } : {}),
@@ -689,8 +831,10 @@ const detach = (tree: DocNode[], id: string): DocNode | undefined => {
 };
 
 /** Child list of parent (omitted = top level). undefined if parent doesn't exist. */
-const childList = (tree: DocNode[], parent: string | undefined): DocNode[] | undefined =>
-    parent == null ? tree : findNode(tree, parent)?.children;
+const childList = (tree: DocNode[], parent: string | undefined): DocNode[] | undefined => {
+    const node = parent == null ? (tree[0]?.root ? tree[0] : undefined) : findNode(tree, parent);
+    return node?.resolved ? undefined : node ? node.children : parent == null ? tree : undefined;
+};
 
 /** Append a new doc to the end of parent's children. Duplicate id / missing parent → undefined. */
 export const insertDoc = (
@@ -720,7 +864,11 @@ export const moveDoc = (
     index: number,
 ): DocNode[] | undefined => {
     const node = findNode(tree, id);
-    if (!node || (parent != null && (parent === id || findNode(node.children, parent)))) {
+    if (
+        !node ||
+        node.root ||
+        (parent != null && (parent === id || findNode(node.children, parent)))
+    ) {
         return undefined;
     }
     const next = clone(tree);
@@ -736,7 +884,7 @@ export const moveDoc = (
 /** Remove a doc. Docs with children are not removed (we don't decide where the children go). */
 export const removeDoc = (tree: readonly DocNode[], id: string): DocNode[] | undefined => {
     const node = findNode(tree, id);
-    if (!node || node.children.length > 0) {
+    if (!node || node.root || node.children.length > 0) {
         return undefined;
     }
     const next = clone(tree);

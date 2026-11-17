@@ -1,6 +1,7 @@
 import type { Image } from "mdast";
 import { visit } from "unist-util-visit";
 import { parseFileEmbed } from "../../engine/src/core/file-embed.js";
+import { manifestDirectory } from "../../engine/src/core/files.js";
 import { contentLinks, embeddedImages, parseMdast } from "../../engine/src/core/markdown.js";
 import type { PreviewSettings } from "../../engine/src/core/previewers.js";
 import { parseTermReference } from "../../engine/src/core/term-reference.js";
@@ -12,7 +13,11 @@ export interface FileReference {
 }
 
 /** Use the compiler's Markdown grammar so examples, escapes and URL encodings agree. */
-export const fileReferences = (body: string, settings?: PreviewSettings): FileReference[] => {
+export const fileReferences = (
+    body: string,
+    settings?: PreviewSettings,
+    origin?: string,
+): FileReference[] => {
     const root = parseMdast(body);
     const images = new Set(embeddedImages(root));
     const references: FileReference[] = [];
@@ -39,7 +44,12 @@ export const fileReferences = (body: string, settings?: PreviewSettings): FileRe
             }
         }
     });
-    return references.sort((a, b) => a.line - b.line);
+    return references
+        .map((ref) => ({
+            ...ref,
+            file: manifestDirectory(origin) + ref.file,
+        }))
+        .sort((a, b) => a.line - b.line);
 };
 
 export interface FilePreview {

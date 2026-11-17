@@ -21,6 +21,7 @@ describe("manifest", () => {
             { docs: ["guide"] },
             { docs: [{ library: "termth" }] },
             { center_contents: [{ file: "docs/guide.md" }] },
+            { document: { children: [{ document: { url: "docs/guide.md" } }] } },
         ]) {
             const manifest = parseManifest({
                 ...value,
@@ -141,8 +142,8 @@ describe("manifest", () => {
             );
     });
 
-    it("preserves the default subformat folder in both manifest formats", () => {
-        for (const value of [{ docs: [] }, { center_contents: [] }]) {
+    it("preserves the default subformat folder in current and legacy manifest formats", () => {
+        for (const value of [{ document: {} }, { docs: [] }, { center_contents: [] }]) {
             const manifest = parseManifest({
                 ...value,
                 default_subformat_folder: "records/issues",

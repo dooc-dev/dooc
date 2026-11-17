@@ -509,7 +509,7 @@ describe("mcp", () => {
         expect((await call(tools, "move_doc", { id })).isError).toBe(false);
         expect((await call(tools, "list_docs", {})).docs.at(-1)).toMatchObject({
             id,
-            depth: 0,
+            depth: 1,
         });
         const renamed = await call(tools, "rename_doc", { id: target.id, new_id: "b" });
         expect(renamed.updatedRefs).toBe(1);

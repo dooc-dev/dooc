@@ -6,6 +6,9 @@ export interface FileLayout {
 
 export const MAX_FILE_UPLOAD_BYTES = 64 * 1024 * 1024;
 
+export const manifestDirectory = (origin?: string): string =>
+    origin?.slice(0, origin.lastIndexOf("/") + 1) ?? "";
+
 export const localFile = (value: unknown): value is string =>
     typeof value === "string" &&
     value.length > 0 &&

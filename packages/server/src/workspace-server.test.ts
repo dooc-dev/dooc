@@ -26,6 +26,63 @@ it("requires an exact client origin", () => {
         expect(() => clientOrigin(url)).toThrow();
 });
 
+it.each([
+    ["body save before HMR", "External title", "Original title", undefined, false],
+    ["explicit rename", "Original title", "Local title", "Original title", false],
+    ["concurrent rename", "External title", "Local title", "Original title", true],
+    ["already applied rename", "Local title", "Local title", "Original title", false],
+] as const)("preserves manifest titles during %s", async (_name, external, title, baseTitle, conflict) => {
+    const root = mkdtempSync(join(tmpdir(), "dooc-save-title-"));
+    roots.push(root);
+    mkdirSync(join(root, "contents/md"), { recursive: true });
+    const source = join(root, "contents/md/guide.md");
+    const manifest = join(root, "dooc.yaml");
+    const setTitle = (title: string) =>
+        writeFileSync(
+            manifest,
+            `document:\n  children:\n    - document:\n        url: contents/md/guide.md\n        title: ${title}\n`,
+        );
+    setTitle("Original title");
+    writeFileSync(source, "Original body.\n");
+    const manager = await nodeWorkspaceOperations(manifest);
+    const request = async (url: string, body?: unknown) => {
+        const response = (await manager.ops.http?.(
+            {
+                url,
+                method: body === undefined ? "GET" : "POST",
+                headers: {},
+                body: JSON.stringify(body ?? {}),
+            },
+            { local: true },
+        )) as { status: number; body: string };
+        expect(response.status).toBe(200);
+        return JSON.parse(response.body);
+    };
+    try {
+        const { boot } = await request("/api/page?route=/guide");
+        setTitle(external);
+        const input = {
+            file: boot.file,
+            baseRaw: boot.baseRaw,
+            baseTitle,
+            frontmatter: { title },
+            body: "Edited body.\n",
+        };
+        expect((await request("/api/render", input)).frontmatter.title).toBe(external);
+        const result = await request("/api/save", input);
+        const expected = baseTitle !== undefined && !conflict ? title : external;
+        expect(result).toMatchObject({
+            saved: !conflict,
+            conflict,
+            frontmatter: { title: expected },
+        });
+        expect(readFileSync(manifest, "utf8")).toContain(`title: ${expected}`);
+        expect(readFileSync(source, "utf8")).toBe(conflict ? "Original body.\n" : "Edited body.\n");
+    } finally {
+        manager.close();
+    }
+});
+
 it("keeps shared editors on one branch and credits their snapshots", async () => {
     const root = mkdtempSync(join(tmpdir(), "dooc-shared-application-"));
     roots.push(root);

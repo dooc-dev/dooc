@@ -1,4 +1,47 @@
-`dooc.yaml` lists the pages, record types, and display settings. Every path in it is relative to its own folder. A named manifest, `<name>.dooc.yaml`, works the same way. Unknown keys are errors.
+`dooc.yaml` defines a document and its children, record types, and display settings. Every local path in it is relative to its own folder. A named manifest, `<name>.dooc.yaml`, works the same way. Unknown keys are errors.
+
+## Document tree
+
+Every manifest has one root `document`. Each child wraps another `document` with the same structure. `children` belongs inside its document; there is no separate `center_contents` section.
+
+```yaml
+document:
+  title: Handbook
+  url: ""
+  children:
+    - document:
+        title: Guide
+        url: guide.md
+        children:
+          - document:
+              title: Install
+              url: install.md
+    - document:
+        title: Reference
+        url: reference/dooc.yaml
+    - document:
+        title: Website
+        url: https://example.com
+```
+
+The root owns `/`. Its file name never adds a URL segment to its children. A document with no `url`, an empty string, or an empty YAML value shows an automatically generated table of contents for its immediate children. This also works for an empty workspace. Opening `/` does not implicitly redirect to the first page.
+
+| `document.url` | Behavior |
+| --- | --- |
+| Omitted, `""`, or `null` | Generate a table of contents |
+| `contents/md/guide.md` | Render a local Markdown file |
+| `reference/dooc.yaml` | Include that manifest's root and children |
+| `https://example.com` | Navigate directly to that website; HTTP is also accepted |
+| `/guide/install` | Navigate directly to a page in this site; queries and heading fragments are allowed |
+| `redirect:first` | Redirect to the first immediate child; a child is required |
+
+`url` identifies what to open, not an override for the document's own public path. Local Markdown paths are plain paths, external links have an HTTP(S) scheme, and site links begin with a single `/`. Unsupported schemes, credentials, paths outside the workspace, include cycles, and redirect cycles are errors.
+
+An included manifest keeps its own file. Its relative content paths and Markdown references are resolved from its folder, and its root is mounted at the including document's position. For example, `reference/dooc.yaml` owns `/reference`, and its `install.md` child owns `/reference/install`. A named manifest uses its name instead of the containing folder. Includes cannot also declare inline `children`.
+
+The selected manifest controls workspace settings such as offered languages and themes. Included record types must not conflict with the workspace's existing definitions.
+
+Included Markdown pages remain editable. Change their tree structure in the child manifest; the parent sidebar does not move or delete included pages.
 
 The [Version specification](contents/md/version.md) describes the `version` setting, automatic numbering, and reader publication selectors.
 
@@ -11,9 +54,9 @@ The [Version specification](contents/md/version.md) describes the `version` sett
 | `system.themes`               | Offered themes: `light`, `dark`                            |
 | `system.licence`              | Local licence file, included in source exports             |
 | `system.files.default_layout` | Layout option of the file card                             |
-| `left_sidebar.title`          | Site title per language; must include the default language |
-| `left_sidebar.icon`           | `light` and `dark` SVG files                               |
-| `center_contents`             | Page tree; a list of entries                               |
+| `document`                    | Required root document                                    |
+| `document.sidebar.title`      | Site title per language; must include the default language |
+| `document.sidebar.icon`       | `light` and `dark` SVG files                               |
 | `json_subformats`             | Record types                                               |
 | `default_subformat_folder`    | Folder scanned for records and used by **Create**          |
 
@@ -21,17 +64,17 @@ The [Version specification](contents/md/version.md) describes the `version` sett
 
 | Entry        | Keys                                                |
 | ------------ | --------------------------------------------------- |
-| Page         | `file` (a `.md` path), `title`, `icon`, `children`  |
+| Page         | `url`, `title`, `icon`, `children`                 |
 | Record board | `subformat` (an `ext`), `title`, `icon`, `children` |
 | Library page | `library` (a view), `title`, `icon`, `children`     |
 
-`title` is the page name in the tree and at the top of the page; a page without one shows its file name. `icon` is a local SVG file shown beside the entry in the tree. It is drawn as an image, so give it fixed colours that read on both themes; `currentColor` does not follow the theme. A board without an `icon` uses the icon of its record type.
+Every entry above is the value of a `document` key, including boards and Library pages. `url`, `subformat`, and `library` are alternative content sources. `title` is the page name in the tree and at the top of the page; a Markdown page without one shows its file name. `icon` is a local SVG file shown beside the entry in the tree. It is drawn as an image, so give it fixed colours that read on both themes; `currentColor` does not follow the theme. A board without an `icon` uses the icon of its record type. The root's `sidebar` holds the site's sidebar settings; its title defaults to the root document title.
 
 A Library page lists one kind of content from the whole workspace. Its view is a block label (`callouth`, `graphth`, `schemath`, `termth`, `mermaid`, `csv`, `tsv`), `urls`, or `url-previews`.
 
 ## Page URLs
 
-URLs follow the `center_contents` and `children` hierarchy. Each Markdown page uses its file name without `.md`: a top-level `contents/md/start.md` is `/start`, and the same page under `contents/md/guide.md` is `/guide/start`. Source folders and the `_docs` prefix are not part of the URL. Old `/_docs/...` URLs are unsupported and have no redirect. Changing a display title does not change the URL.
+URLs follow the `document.children` hierarchy. Each Markdown page uses its file name without `.md`: `contents/md/start.md` directly under the root is `/start`, and the same page under `contents/md/guide.md` is `/guide/start`. Source folders and the `_docs` prefix are not part of the URL. Changing a Markdown page's display title does not change its URL. Generated pages and links use their title as the URL segment, or `page-N` when untitled. URL segments are percent-encoded.
 
 Library pages use their `library` value, and record boards use their `subformat` value. For example, `library: termth` under `reference.md` is `/reference/termth`.
 
@@ -55,6 +98,8 @@ Sibling pages must have distinct URL names. Top-level names starting with `_`, p
 ![](dooc.yaml)
 
 The editor rewrites this file when pages are added, moved, or renamed, so hand edits and tree edits are interchangeable.
+
+Older `center_contents` lists and `file` entries remain readable. To migrate, move the list to `document.children`, wrap each entry in `document`, replace `file` with `url`, and move `left_sidebar` to `document.sidebar`. Choose the root's content explicitly, or leave its `url` empty for a table of contents. Moving an existing `index.md` page to the root changes its old `/index` URL and any `/index/...` descendants; update links to those public paths as part of that migration.
 
 ## Files beside it
 

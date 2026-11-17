@@ -153,11 +153,11 @@ it("loads remote schemas with their own relative refs and rechecks domain permis
     writeFileSync(join(root, file), content);
     writeFileSync(
         join(root, "dooc.yaml"),
-        `center_contents: [{ subformat: issue }]\njson_subformats: ${JSON.stringify([config])}\n`,
+        `document: {children: [{document: {subformat: issue}}]}\njson_subformats: ${JSON.stringify([config])}\n`,
     );
     const previews = parsePreviewSettings({ domains: source.domains });
     expect(compileSite(root, { previews }).errors).toEqual([]);
-    expect((await buildBundle(root, { format: "zip", previews })).docs).toBe(1);
+    expect((await buildBundle(root, { format: "zip", previews })).docs).toBe(2);
     expect(compiled.validate({ status: "Done" })).toBe(true);
     expect(compiled.validate({ status: "Bad" })).toBe(false);
     const resolve = schemaResolver(compiled.schema, compiled.context);

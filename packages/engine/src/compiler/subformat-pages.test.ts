@@ -28,7 +28,7 @@ const roots: string[] = [];
 afterEach(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
-const fixture = (nested = true) => {
+const fixture = (document = true) => {
     const root = mkdtempSync(join(tmpdir(), "dooc-subformat-pages-"));
     roots.push(root);
     const write = (file: string, content: string) => {
@@ -46,8 +46,8 @@ const fixture = (nested = true) => {
     write(
         "dooc.yaml",
         stringify(
-            nested
-                ? { system: { default_lang: "eng" }, center_contents: [], json_subformats: formats }
+            document
+                ? { system: { default_lang: "eng" }, document: {}, json_subformats: formats }
                 : { docs: [], subformats: formats },
         ),
     );
@@ -69,8 +69,8 @@ const fixture = (nested = true) => {
 it.each([
     true,
     false,
-])("copies a subformat icon once and keeps page overrides (nested: %s)", (nested) => {
-    const { root, ops, write } = fixture(nested);
+])("copies a subformat icon once and keeps page overrides (document format: %s)", (document) => {
+    const { root, ops, write } = fixture(document);
     const id = subformatPageId("issue");
     const svg = '<svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="6"/></svg>';
     write("files/type.svg", svg);
@@ -86,7 +86,7 @@ it.each([
     ).toBe(200);
     expect(ops.addSubformat("issue", "Issues")).toEqual({ id });
     expect(readManifest(root).files?.icons?.[id]).toBe("files/type.svg");
-    expect(compileSite(root).docs[0]?.icon).toBe(svg);
+    expect(compileSite(root).docs.find((doc) => doc.subformat)?.icon).toBe(svg);
     expect(
         subformatResponse(root, {
             action: "icon",
@@ -110,14 +110,14 @@ it.each([
         }).status,
     ).toBe(200);
     expect(readManifest(root).files?.icons?.[id]).toBe("files/page.svg");
-    expect(compileSite(root).docs[0]?.icon).toBe(svg);
+    expect(compileSite(root).docs.find((doc) => doc.subformat)?.icon).toBe(svg);
 });
 
 it.each([
     true,
     false,
-])("adds, renames, moves and removes display pages without Markdown or record changes (nested: %s)", (nested) => {
-    const { root, ops } = fixture(nested);
+])("adds, renames, moves and removes display pages without Markdown or record changes (document format: %s)", (document) => {
+    const { root, ops } = fixture(document);
     const id = subformatPageId("issue");
     const record = readFileSync(join(root, "files/one.issue"), "utf8");
     expect(ops.addSubformat("missing", "Missing")).toMatchObject({ status: 400 });
@@ -130,11 +130,14 @@ it.each([
     expect(parseManifest(parse(serializeManifest(manifest.tree, manifest)))).toEqual(manifest);
     expect(ops.setTitle(id, "Work items")).toEqual({ id });
     expect(ops.move(id)).toEqual({ id });
-    expect(flattenTree(readManifest(root).tree)[0]).toMatchObject({
+    expect(flattenTree(readManifest(root).tree).find((node) => node.id === id)).toMatchObject({
         subformat: "issue",
         title: "Work items",
     });
-    expect(ops.remove(id)).toEqual({ parent: undefined, danglingRefs: 0 });
+    expect(ops.remove(id)).toEqual({
+        parent: document ? manifest.tree[0]?.id : undefined,
+        danglingRefs: 0,
+    });
     expect(readFileSync(join(root, "files/one.issue"), "utf8")).toBe(record);
     expect(readManifest(root).subformats).toHaveLength(1);
 });
@@ -144,8 +147,10 @@ it("compiles a subformat-only site and publishes its board in the sidebar", () =
     ops.addSubformat("issue", "Issues <board>");
     const compiled = compileSite(root);
     expect(compiled.errors).toEqual([]);
-    expect(compiled.docs[0]?.subformat?.records[0]?.data.title).toBe("First <record>");
-    expect(compiled.docs[0]?.subformat?.layouts).toEqual({
+    expect(compiled.docs.find((doc) => doc.subformat)?.subformat?.records[0]?.data.title).toBe(
+        "First <record>",
+    );
+    expect(compiled.docs.find((doc) => doc.subformat)?.subformat?.layouts).toEqual({
         card_title: "title",
         group_by: "",
         sort_by: "title",
@@ -179,7 +184,7 @@ it("compiles a subformat-only site and publishes its board in the sidebar", () =
         name: "renamed.issue",
         revision: filesSnapshot(root).revision,
     });
-    expect(readManifest(root).tree[0]?.subformat).toBe("issue");
+    expect(readManifest(root).tree[0]?.children[0]?.subformat).toBe("issue");
     write("files/renamed.issue", '{"title":"Broken"}');
     expect(compileSite(root).errors.join("\n")).toContain("status");
 });
@@ -235,8 +240,8 @@ it("keeps sidebar card references in sync with authored document links and embed
 it.each([
     true,
     false,
-])("keeps page identity and records when renaming and changing icons (nested: %s)", (nested) => {
-    const { root, ops, write } = fixture(nested);
+])("keeps page identity and records when renaming and changing icons (document format: %s)", (document) => {
+    const { root, ops, write } = fixture(document);
     const id = subformatPageId("issue");
     const record = readFileSync(join(root, "files/one.issue"), "utf8");
     const defaultIcon = `icons/${id}.svg`;
@@ -244,7 +249,7 @@ it.each([
     expect(ops.addSubformat("issue", "Issues")).toEqual({ id });
     write(defaultIcon, svg);
     expect(compileSite(root).errors).toEqual([]);
-    expect(compileSite(root).docs[0]?.icon).toBe(svg);
+    expect(compileSite(root).docs.find((doc) => doc.subformat)?.icon).toBe(svg);
     expect(exportEntries(root).map((entry) => entry.name)).toContain(defaultIcon);
 
     const manifest = readManifest(root);
@@ -260,7 +265,7 @@ it.each([
     expect(ops.setTitle(id, "Work items")).toEqual({ id });
     const compiled = compileSite(root);
     expect(compiled.errors).toEqual([]);
-    expect(compiled.docs[0]).toMatchObject({
+    expect(compiled.docs.find((doc) => doc.subformat)).toMatchObject({
         id,
         title: "Work items",
         icon: svg,
@@ -284,19 +289,22 @@ it.each([
     expect(exportEntries(root).map((entry) => entry.name)).not.toContain("files/page.svg");
 });
 
-it("validates unknown, duplicate and mixed file/subformat entries", () => {
+it("validates unknown, duplicate and mixed URL/subformat entries", () => {
     const { root } = fixture();
     const manifest = parse(readFileSync(join(root, "dooc.yaml"), "utf8"));
     for (const entries of [
         [{ subformat: "missing" }],
         [{ subformat: "issue" }, { subformat: "issue" }],
-        [{ subformat: "issue", file: "guide.md" }],
+        [{ subformat: "issue", url: "guide.md" }],
         [{ subformat: "issue", title: " " }],
         [{ subformat: "issue", icon: "../outside.svg" }],
         [{ subformat: "issue", icon: "page.png" }],
     ])
         expect(
-            parseManifest({ ...manifest, center_contents: entries }).errors.length,
+            parseManifest({
+                ...manifest,
+                document: { children: entries.map((document) => ({ document })) },
+            }).errors.length,
         ).toBeGreaterThan(0);
 });
 
@@ -306,12 +314,16 @@ it("preserves subformat pages beneath Markdown parents when moving and exporting
     if (!("id" in added)) throw new Error(added.error);
     const id = subformatPageId("issue");
     expect(ops.addSubformat("issue", "Issues", added.id)).toEqual({ id });
-    expect(compileSite(root).docs.map((doc) => doc.id)).toEqual([added.id, id]);
+    expect(
+        compileSite(root)
+            .docs.filter((doc) => !doc.root)
+            .map((doc) => doc.id),
+    ).toEqual([added.id, id]);
     expect(ops.remove(added.id)).toMatchObject({ status: 409 });
     expect(ops.move(id)).toEqual({ id });
     expect(ops.move(added.id, id)).toEqual({ id: added.id });
     const compiled = compileSite(root);
     expect(compiled.errors).toEqual([]);
-    expect(compiled.docs.map((doc) => doc.id)).toEqual([id, added.id]);
+    expect(compiled.docs.filter((doc) => !doc.root).map((doc) => doc.id)).toEqual([id, added.id]);
     expect(exportEntries(root).map((entry) => entry.name)).toContain("files/md/guide.md");
 });

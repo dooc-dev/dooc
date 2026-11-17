@@ -237,6 +237,7 @@ export const buildBundle = async (root: string, options: BuildOptions): Promise<
     const linkable = new Set(filesSnapshot(root).files.map((file) => file.path));
     const site = {
         ...siteFrom(compiled, config.languages, config),
+        root,
         sourceBase,
         fonts: loadProjectFonts(root),
         download: options.download ?? "normal",

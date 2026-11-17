@@ -2,10 +2,23 @@ import { EditorState } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { afterEach, expect, it, vi } from "vitest";
 import { createTextfileEditors, fileValidationState, textfileLines } from "./edit-textfile.js";
+import { fileReferences } from "./file-references.js";
 
 afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+});
+
+it("resolves embedded files from their owning manifest and ignores external embeds", () => {
+    const body = "![](data/example.txt)\n\n![](image.svg)\n\n![](https://example.com/code.txt)";
+    expect(fileReferences(body, undefined, "child/dooc.yaml").map(({ file }) => file)).toEqual([
+        "child/data/example.txt",
+        "child/image.svg",
+    ]);
+    expect(textfileLines(body, undefined, "child/dooc.yaml")[0]?.file).toBe(
+        "child/data/example.txt",
+    );
+    expect(textfileLines(body)[0]?.file).toBe("data/example.txt");
 });
 
 it("only reports validation success when preview generation has also succeeded", () => {

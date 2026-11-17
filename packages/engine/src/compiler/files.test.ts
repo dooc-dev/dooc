@@ -76,11 +76,11 @@ it("keeps shared explicit and implicit icons when a document is deleted", () => 
     expect(readFileSync(join(root, "icons/a.svg"), "utf8")).toBe(svg);
 });
 
-it.each(["nested", "legacy"])("updates subformat icon references when renamed (%s)", (kind) => {
+it.each(["document", "legacy"])("updates subformat icon references when renamed (%s)", (kind) => {
     const root = fixture();
     writeFileSync(
         join(root, "dooc.yaml"),
-        `${kind === "nested" ? "center_contents" : "docs"}:\n  - subformat: issue\n${kind === "nested" ? "json_subformats" : "subformats"}:\n  - ext: issue\n    format: json\n    schema: issue.schema.json\n    icon: figures/picture.svg\n`,
+        `${kind === "document" ? "document:\n  children:\n    - document:\n        subformat: issue" : "docs:\n  - subformat: issue"}\n${kind === "document" ? "json_subformats" : "subformats"}:\n  - ext: issue\n    format: json\n    schema: issue.schema.json\n    icon: figures/picture.svg\n`,
     );
     writeFileSync(join(root, "issue.schema.json"), '{"type":"object"}');
     rmSync(join(root, "content"), { recursive: true });
@@ -110,7 +110,10 @@ it("rejects a legacy figure upload through a directory outside the project", () 
 
 it("retains a nested document's uploaded icon through rename and move", () => {
     const root = fixture();
-    writeFileSync(join(root, "dooc.yaml"), "center_contents: [{ file: content/a.md }]\n");
+    writeFileSync(
+        join(root, "dooc.yaml"),
+        "document:\n  children: [ { document: { url: content/a.md } } ]\n",
+    );
     mkdirSync(join(root, "icons/content"));
     const svg = '<svg viewBox="0 0 1 1"/>';
     writeFileSync(join(root, "icons/content/a.md.svg"), svg);
@@ -181,13 +184,16 @@ it("rewrites local schema dependencies and URI scopes when files are renamed or 
     ).toBe(true);
 });
 
-it.each(["legacy", "nested"])("retires %s file order while preserving document order", (format) => {
+it.each([
+    "legacy",
+    "document",
+])("retires %s file order while preserving document order", (format) => {
     const root = fixture();
     writeFileSync(
         join(root, "dooc.yaml"),
         format === "legacy"
             ? "docs: [b, a]\nfiles:\n  order: [content/b.md, missing.svg, content/a.md]\n"
-            : "system:\n  files:\n    order: [content/b.md, missing.svg, content/a.md]\ncenter_contents:\n  - file: content/b.md\n  - file: content/a.md\n",
+            : "system:\n  files:\n    order: [ content/b.md, missing.svg, content/a.md ]\ndocument:\n  children:\n    - document:\n        url: content/b.md\n    - document:\n        url: content/a.md\n",
     );
     const snapshot = filesSnapshot(root);
     expect(
@@ -197,7 +203,11 @@ it.each(["legacy", "nested"])("retires %s file order while preserving document o
     const manifest = readManifest(root);
     expect(manifest.errors).toEqual([]);
     expect(serializeManifest(manifest.tree, manifest)).not.toMatch(/\border:/);
-    expect(compileSite(root).docs.map((doc) => doc.file)).toEqual(["content/b.md", "content/a.md"]);
+    expect(
+        compileSite(root)
+            .docs.filter((doc) => !doc.root)
+            .map((doc) => doc.file),
+    ).toEqual(["content/b.md", "content/a.md"]);
     updateFiles(root, {
         action: "move",
         paths: ["content/b.md"],

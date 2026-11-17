@@ -44,16 +44,21 @@ import {
     isOpError,
     type OpResult,
 } from "../../engine/src/compiler/ops.js";
-import { subformatResponse, validateSubformatFile } from "../../engine/src/compiler/subformats.js";
-import { textfilePath, writeTextfile } from "../../engine/src/compiler/textfile.js";
+import {
+    compileSubformatSchema,
+    subformatResponse,
+    validateSubformatFile,
+} from "../../engine/src/compiler/subformats.js";
+import { readTextfile, textfilePath, writeTextfile } from "../../engine/src/compiler/textfile.js";
 import { type Block, type TocEntry, walkBlocks } from "../../engine/src/core/blocks.js";
 import { selectCodeGrammars, subformatCodeGrammars } from "../../engine/src/core/code-grammars.js";
-import { docIdOfFile, flattenTree } from "../../engine/src/core/content-metadata.js";
+import { docIdOfFile, flattenTree, isContentPage } from "../../engine/src/core/content-metadata.js";
 import type { CompiledDoc, FigureEntry, TermEntry } from "../../engine/src/core/content-types.js";
 import { figureFrameHtml, mountFigureFrames } from "../../engine/src/core/figure-frame.js";
 import {
     defaultFilePath,
     docIconFile,
+    manifestDirectory,
     parseFileLayout,
     docFile as sourceDocFile,
     suggestDocFileName,
@@ -80,7 +85,14 @@ import {
 } from "../../engine/src/core/language.js";
 import { ja } from "../../engine/src/core/languages/ja.js";
 import { defaultPreviewSettings, type PreviewSettings } from "../../engine/src/core/previewers.js";
-import { ancestorsOf, childrenOf, docPath, resolveDocPath } from "../../engine/src/core/routing.js";
+import {
+    ancestorsOf,
+    childrenOf,
+    docHref,
+    docPath,
+    resolveDocPath,
+    subformatSchemaPath,
+} from "../../engine/src/core/routing.js";
 import {
     CODE_LANGS,
     CODE_TEMPLATES,
@@ -107,6 +119,7 @@ import { type FilePreviewResults, fileReferences } from "./file-references.js";
 import { mountFontPickers } from "./font-picker.js";
 import { createFontSettings } from "./font-settings.js";
 import { translate } from "./i18n.js";
+import { jsonSchemaHtml } from "./json-schema.js";
 import { loadPreviewScript } from "./lazy-preview.js";
 import { focusNavTree } from "./nav-focus.js";
 import { updateNav } from "./nav-update.js";
@@ -140,7 +153,7 @@ export type ServeMode = "preview" | "edit";
  * file is `<id>.md` (= same shape as the save API's file parameter; CompiledDoc.file minus the
  * content/ prefix).
  */
-export interface Entry {
+export interface Entry extends Pick<CompiledDoc, "url" | "root" | "name" | "origin"> {
     id: string;
     subformat?: CompiledDoc["subformat"];
     library?: string;
@@ -179,6 +192,7 @@ export interface Entry {
 }
 
 export interface Site {
+    root?: string;
     sourceBase?: string;
     subformats?: Compiled["subformats"];
     fonts?: readonly ProjectFont[];
@@ -248,6 +262,7 @@ interface Resource {
  * display.
  */
 export interface EditorBoot {
+    origin?: string;
     readOnly?: boolean;
     gitBase: string | null;
     filePreviews: FilePreviewResults;
@@ -311,6 +326,10 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
 
     const toEntry = (doc: CompiledDoc, source: DocSource): Entry => ({
         id: doc.id,
+        url: doc.url,
+        root: doc.root,
+        name: doc.name,
+        origin: doc.origin,
         ...(doc.subformat ? { subformat: doc.subformat } : {}),
         ...(doc.library ? { library: doc.library } : {}),
         ...(doc.parent == null ? {} : { parent: doc.parent }),
@@ -359,6 +378,29 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
         languages: readonly LanguageAdapter[] = DEFAULT_SITE_LANGUAGES.languages,
         code: Pick<SiteLanguages, "codeLanguages" | "codeGrammars"> = {},
     ): Site => {
+        const entries = docs.flatMap((doc) => {
+            const source = sources.get(doc.file);
+            return source ? [toEntry(doc, source)] : [];
+        });
+        if (!entries.some((entry) => entry.root)) {
+            let id = "document-root";
+            while (entries.some((entry) => entry.id === id)) id += "-root";
+            for (const entry of entries) entry.parent ??= id;
+            entries.unshift({
+                id,
+                root: true,
+                url: "",
+                file: "",
+                frontmatter: { title: title ?? "Contents" },
+                lang: defaultLang,
+                body: "",
+                blocks: [],
+                toc: [],
+                blockLines: [],
+                raw: "",
+                errors: [],
+            });
+        }
         return {
             previews,
             subformats,
@@ -374,12 +416,11 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
             ...(title === undefined ? {} : { title }),
             ...(icon === undefined ? {} : { icon }),
             ...(iconVariants === undefined ? {} : { iconVariants }),
-            entries: docs.flatMap((doc) => {
-                const source = sources.get(doc.file);
-                return source ? [toEntry(doc, source)] : [];
-            }),
+            entries,
             ctx: {
-                docLinks: new Map(docs.map((doc) => [doc.file, docPath(docs, doc.id)])),
+                docLinks: new Map(
+                    docs.filter(isContentPage).map((doc) => [doc.file, docHref(docs, doc.id)]),
+                ),
                 figures: new Map(figures.map((f) => [f.name, f])),
                 terms,
                 termLinks: new Map([
@@ -419,12 +460,11 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
     let watchTextfiles: ((files: Iterable<string>) => void) | undefined;
     const watchEntryTextfiles = (entries: readonly Entry[]): void => {
         watchTextfiles?.(
-            entries
-                .filter((entry) => !entry.subformat && !entry.library)
-                .flatMap((entry) => [
-                    entry.sourceFile ?? CONTENT_PREFIX + entry.file,
-                    ...(entry.referencedFiles ?? []),
-                ]),
+            entries.flatMap((entry) => [
+                ...(entry.origin ? [entry.origin] : []),
+                ...(isContentPage(entry) ? [entry.sourceFile ?? CONTENT_PREFIX + entry.file] : []),
+                ...(entry.referencedFiles ?? []),
+            ]),
         );
     };
     const loadSite = (locale?: string): Site =>
@@ -451,9 +491,14 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
                     (language) => language !== sourceLanguage,
                 )) {
                     for (const entry of site.entries) {
+                        if (!isContentPage(entry)) continue;
                         if (
                             translated.has(
-                                translationFile(sourceDocFile(entry.id, manifest.files), language),
+                                translationFile(
+                                    sourceDocFile(entry.id, manifest.files),
+                                    language,
+                                    entry.origin,
+                                ),
                             )
                         )
                             entry.translatedLanguages?.push(language);
@@ -502,15 +547,17 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
     const draftContext = (site: Site): DraftContext => ({
         previews: site.previews,
         root,
-        docs: site.entries
-            .filter((e) => !e.subformat && !e.library)
-            .map((e) => ({
-                id: e.id,
-                ...(e.parent == null ? {} : { parent: e.parent }),
-                file: e.sourceFile ?? CONTENT_PREFIX + e.file,
-                toc: e.toc,
-                ...(e.frontmatter ? { title: e.frontmatter.title } : {}),
-            })),
+        docs: site.entries.filter(isContentPage).map((e) => ({
+            id: e.id,
+            url: e.url,
+            root: e.root,
+            name: e.name,
+            origin: e.origin,
+            ...(e.parent == null ? {} : { parent: e.parent }),
+            file: e.sourceFile ?? CONTENT_PREFIX + e.file,
+            toc: e.toc,
+            ...(e.frontmatter ? { title: e.frontmatter.title } : {}),
+        })),
         figures: site.ctx.figures,
         defaultLang: site.defaultLang,
     });
@@ -520,7 +567,7 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
     const docLinks = (site: Site, html: string): string =>
         html.replace(/href="\/([a-z0-9][a-z0-9-]*)(?=["?#])/g, (whole, id: string) =>
             site.entries.some((entry) => entry.id === id)
-                ? `href="${docPath(site.entries, id)}`
+                ? `href="${escapeHtml(docHref(site.entries, id))}`
                 : whole,
         );
 
@@ -573,7 +620,11 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
         const results = new Map<string, string[]>();
         const bodyOffset =
             entry.raw.slice(0, entry.raw.length - entry.body.length).split("\n").length - 1;
-        for (const { line, file, kind } of fileReferences(entry.body, site.previews)) {
+        for (const { line, file, kind } of fileReferences(
+            entry.body,
+            site.previews,
+            entry.origin,
+        )) {
             const errors = results.get(file) ?? [];
             errors.push(
                 ...entry.errors.filter((error) => error.startsWith(`L${bodyOffset + line}:`)),
@@ -620,6 +671,7 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
         textfiles?: ReadonlyMap<string, string>,
     ): {
         gitBase: string | null;
+        frontmatter: Frontmatter | undefined;
         html: string;
         errors: string[];
         toc: TocEntry[];
@@ -627,11 +679,14 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
         filePreviews: FilePreviewResults;
         previews?: PreviewSettings;
         sourceFile?: string;
+        origin?: string;
     } => {
         const entry = draftEntry(site, file, raw, textfiles);
         return {
             gitBase: entryGitBase(entry, site),
+            frontmatter: entry.frontmatter,
             sourceFile: entry.sourceFile,
+            origin: entry.origin,
             html: renderEntry(site, entry, ""),
             errors: [...site.errors, ...entry.errors],
             toc: entry.toc,
@@ -738,11 +793,13 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
         filePreviews: FilePreviewResults;
         previews?: PreviewSettings;
         sourceFile?: string;
+        origin?: string;
     } => {
         const entry = draftEntry(site, file, raw);
         return {
             gitBase: entryGitBase(entry, site),
             sourceFile: entry.sourceFile,
+            origin: entry.origin,
             raw,
             frontmatter: entry.frontmatter,
             body: entry.body,
@@ -803,7 +860,7 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
         const id = typeof rel === "string" ? docIdOfFile(rel) : undefined;
         if (
             flattenTree(readManifest(root).tree).some(
-                (node) => node.id === id && (node.subformat || node.library),
+                (node) => node.id === id && !isContentPage(node),
             )
         )
             return undefined;
@@ -1208,7 +1265,7 @@ img.doc-icon { flex: none; width: 18px; height: 18px; object-fit: contain; }
 .nav-row > a.cur .doc-icon-frame > img, .nav-doc-row:has(> a.cur) > .nav-doc-icon .doc-icon-frame > img { visibility: hidden; }
 .nav-row > a.cur .doc-icon-frame::after, .nav-doc-row:has(> a.cur) > .nav-doc-icon .doc-icon-frame::after {
   content: ""; position: absolute; inset: 0; background: currentColor; mask: var(--doc-icon) center / contain no-repeat; }
-body.sidebar-closed :is(#sidebar-content, #nav-docs) { scrollbar-width: none; scrollbar-gutter: auto; }
+body.sidebar-closed :is(#sidebar-content, #nav-groups > .nav-root) { scrollbar-width: none; scrollbar-gutter: auto; }
 body.sidebar-closed #nav-groups { --nav-rail: 8px; }
 body.sidebar-closed #nav-groups .nav-label, body.sidebar-closed #nav-status { opacity: 0; pointer-events: none; }
 body.sidebar-closed #nav-groups .nav-placeholder { visibility: hidden; pointer-events: none; }
@@ -1695,6 +1752,9 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .resource-results [data-subformat-change="added"] { color: var(--c-ok); }
 .resource-results [data-subformat-change="modified"] { color: var(--c-accent); }
 .subformat-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; min-width: 0; max-width: 100%; margin-left: auto; }
+.subformat-schema-link { display: inline-flex; align-items: center; min-height: 34px; padding-inline: 8px; color: var(--c-fg); text-underline-offset: 3px; }
+.subformat-schema-link:hover { background: var(--c-raised); }
+.subformat-schema-link:focus-visible { outline: 2px solid var(--c-fg-muted); outline-offset: 2px; }
 .subformat-control { position: relative; min-width: 80px; max-width: 160px; margin-top: 6px; }
 .subformat-control-label { position: absolute; z-index: 1; top: -7px; left: 7px; padding: 0 4px; background: var(--c-bg1); color: var(--c-fg-muted); font: 11px/14px var(--font-sans); white-space: nowrap; pointer-events: none; }
 .subformat-control > button { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 34px; padding-top: 6px; text-align: left; }
@@ -1888,6 +1948,29 @@ body:not(.edit) .subformat-page { padding-top: 64px; }
 .subformat-detail-path { color: var(--c-fg-muted); font: 11px var(--doc-mono); overflow-wrap: anywhere; }
 .subformat-detail dl { display: grid; gap: 14px; margin: 20px 0; }
 .subformat-detail dt { font-size: 12px; }
+.json-schema-page { overflow-wrap: anywhere; }
+body:not(.edit) .json-schema-page { padding-top: 64px; }
+.json-schema-page > p, .json-schema-page > p > a { color: var(--doc-fg); }
+.json-schema { margin-block: 28px; font: 14px/1.6 var(--font-sans); }
+.json-schema-node { min-width: 0; border-top: 1px solid var(--c-line); }
+.json-schema-node > summary { padding-block: 12px; cursor: pointer; }
+.json-schema-node > summary:hover { background: var(--c-raised); }
+.json-schema-node > summary:focus-visible { outline: 2px solid var(--c-fg-muted); outline-offset: 2px; }
+.json-schema-node > summary > code { font-weight: 600; }
+.json-schema-type, .json-schema-required { margin-left: 12px; color: var(--doc-fg); font-size: 12px; }
+.json-schema-required { font-weight: 600; }
+.json-schema-body { min-width: 0; padding: 0 0 12px 18px; }
+.json-schema-body p { margin: 4px 0 12px; white-space: pre-wrap; }
+.json-schema-rules { margin: 12px 0; }
+.json-schema-rules > div { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 3fr); gap: 12px; padding-block: 4px; }
+.json-schema-rules dd { margin: 0; white-space: pre-wrap; }
+.json-schema-keyword { padding-top: 12px; color: var(--doc-fg); }
+.json-schema code { padding: 0; background: none; }
+@media (max-width: 600px) {
+  .subformat-schema-link { min-height: 44px; }
+  .json-schema-body { padding-left: 10px; }
+  .json-schema-rules > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+}
 .resource-item { min-width: 0; margin: 0; padding: 0; border: 0; }
 .resource-item[hidden], .resource-empty[hidden] { display: none; }
 .resource-item > summary { display: flex; align-items: center; gap: 8px; min-width: 0; height: 28px; padding: 0 6px;
@@ -2497,6 +2580,7 @@ body.edit .nav-row { cursor: grab; }
         currentRes?: string,
     ): string => {
         if (historicalReadOnly) mode = "preview";
+        const rootPage = site.entries.find((entry) => entry.root);
         const open = new Set(
             currentId == null
                 ? []
@@ -2516,7 +2600,8 @@ body.edit .nav-row { cursor: grab; }
                             : `<a class="nav-tree-link${cur}" href="/${e.id}" title="${label}">${entryIcon(e, "doc-icon")}<span class="nav-label">${label}</span></a>`;
                     let actions = "";
                     let editableIcon = "";
-                    if (mode === "edit") {
+                    // shortcut: Edit included tree structure in its manifest until cross-manifest transactions are supported.
+                    if (mode === "edit" && !e.origin) {
                         link = `<a class="${depth === 0 ? "nav-link" : "nav-tree-link"}${cur}" href="/${e.id}" title="${label}" aria-keyshortcuts="F2"><span class="nav-doc-name"><span class="nav-label">${label}</span></span></a>`;
                         editableIcon = `<span class="nav-doc-icon" title="icon" data-i18n-title="icon">${entryIcon(e, "doc-icon")}<input type="file" accept=".svg,image/svg+xml" aria-label="icon" data-i18n-aria-label="icon">${e.icon ? '<button class="nav-icon-clear" type="button" title="Remove icon" data-i18n-title="Remove icon" aria-label="Remove icon" data-i18n-aria-label="Remove icon">×</button>' : ""}</span>`;
                         actions = `<button class="new" type="button" data-parent="${escapeHtml(e.id)}" popovertarget="nav-page-menu" aria-haspopup="menu" title="Add doc" data-i18n-title="Add doc" aria-label="Add doc" data-i18n-aria-label="Add doc">${PLUS_ICON}</button><button class="nav-delete" type="button" data-doc-action="delete" title="Delete doc" data-i18n-title="Delete doc" aria-label="Delete doc" data-i18n-aria-label="Delete doc">${DELETE_ICON}</button>`;
@@ -2527,27 +2612,28 @@ body.edit .nav-row { cursor: grab; }
                         : mode === "edit"
                           ? '<span class="nav-tree-spacer" aria-hidden="true"></span>'
                           : "";
-                    return `<div class="nav-item${open.has(e.id) ? " open" : ""}" data-doc-id="${escapeHtml(e.id)}"${e.subformat || e.library ? " data-subformat-nav" : ""}><div class="nav-row${mode === "edit" ? " nav-doc-row" : ""}"${mode === "edit" ? ' draggable="true"' : ""}>${editableIcon}${link}${actions}${toggle}</div>${list(e.id, depth + 1)}</div>`;
+                    return `<div class="nav-item${open.has(e.id) ? " open" : ""}" data-doc-id="${escapeHtml(e.id)}"${!isContentPage(e) ? " data-subformat-nav" : ""}><div class="nav-row${mode === "edit" && !e.origin ? " nav-doc-row" : ""}"${mode === "edit" && !e.origin ? ' draggable="true"' : ""}>${editableIcon}${link}${actions}${toggle}</div>${list(e.id, depth + 1)}</div>`;
                 })
                 .join("");
             const placeholder =
                 mode === "edit" && depth === 0
-                    ? `<div class="nav-item nav-placeholder"><div class="nav-row"><button class="nav-create" type="button" data-parent="" popovertarget="nav-page-menu" aria-haspopup="menu" title="Add doc" data-i18n-title="Add doc" aria-label="Add doc" data-i18n-aria-label="Add doc">${PLUS_ICON}</button></div></div>`
+                    ? `<div class="nav-item nav-placeholder"><div class="nav-row"><button class="nav-create" type="button" data-parent="${rootPage?.file ? escapeHtml(rootPage.id) : ""}" popovertarget="nav-page-menu" aria-haspopup="menu" title="Add doc" data-i18n-title="Add doc" aria-label="Add doc" data-i18n-aria-label="Add doc">${PLUS_ICON}</button></div></div>`
                     : "";
             return depth === 0
-                ? `<div class="nav-list nav-root" data-parent=""${mode === "edit" ? ' id="nav-docs"' : ""}>${items}${placeholder}</div>`
+                ? `<div class="nav-list nav-root" data-parent="${rootPage?.file ? escapeHtml(rootPage.id) : ""}"${mode === "edit" ? ' id="nav-docs"' : ""}>${items}${placeholder}</div>`
                 : `<div class="nav-list nav-tree" data-parent="${escapeHtml(parent ?? "")}" style="--nav-depth:${depth + 1}">${items}${placeholder}</div>`;
         };
         const html =
-            list(undefined, 0) +
+            (rootPage
+                ? `<div class="nav-item" data-doc-id="${escapeHtml(rootPage.id)}"${!isContentPage(rootPage) ? " data-subformat-nav" : ""}><div class="nav-row"><a class="nav-link${rootPage.id === currentId ? " cur" : ""}" href="/${rootPage.id}">${entryIcon(rootPage, "nav-icon doc-icon")}<span class="nav-label">${escapeHtml(docDisplayName(rootPage.frontmatter, rootPage.id))}</span></a></div></div>`
+                : "") +
+            list(rootPage?.id, 0) +
             '<div id="document-versions" hidden></div>' +
             (mode === "edit"
                 ? `<template data-page-libraries>${escapeHtml(JSON.stringify([...Object.keys(CODE_TEMPLATES), "urls", "url-previews"].filter((view) => !site.entries.some((entry) => entry.library === view))))}</template><template data-page-subformats>${escapeHtml(JSON.stringify((site.subformats ?? []).filter((format) => !site.entries.some((entry) => entry.subformat?.ext === format.ext))))}</template>${navFilesHtml(site, currentRes)}`
                 : "");
-        return docLinks(
-            site,
-            site.contentLanguage ? languageLinks(html, site.contentLanguage) : html,
-        );
+        const links = docLinks(site, html);
+        return site.contentLanguage ? languageLinks(links, site.contentLanguage) : links;
     };
 
     // ── Resources (file management in edit mode; linked figures and terms also in preview) ──
@@ -2556,13 +2642,11 @@ body.edit .nav-row { cursor: grab; }
     const RESOURCE_KINDS = ["markdown", "figures", "html", "icons", "terms"] as const;
 
     const siteResources = (site: Site): Resource[] => [
-        ...site.entries
-            .filter((entry) => !entry.subformat && !entry.library)
-            .map((entry) => ({
-                kind: "markdown" as const,
-                file: entry.file,
-                path: entry.sourceFile ?? CONTENT_PREFIX + entry.file,
-            })),
+        ...site.entries.filter(isContentPage).map((entry) => ({
+            kind: "markdown" as const,
+            file: entry.file,
+            path: entry.sourceFile ?? CONTENT_PREFIX + entry.file,
+        })),
         ...site.ctx.terms.map((term) => ({
             kind: "terms" as const,
             file: term.id,
@@ -2723,10 +2807,10 @@ body.edit .nav-row { cursor: grab; }
     };
 
     /** Only files in the project snapshot are readable, which also rejects traversal and dotfiles. */
-    const readProjectFile = (file: string): Buffer | undefined => {
+    const readProjectFile = (file: string, projectRoot = root): Buffer | undefined => {
         try {
-            return filesSnapshot(root).files.some((item) => item.path === file)
-                ? readFileSync(textfilePath(root, file))
+            return filesSnapshot(projectRoot).files.some((item) => item.path === file)
+                ? readFileSync(textfilePath(projectRoot, file))
                 : undefined;
         } catch {
             return undefined;
@@ -2807,6 +2891,31 @@ body.edit .nav-row { cursor: grab; }
         }
         if (!file && (kind === "dictionary" || kind === "code"))
             return resourcesMain(site, "codeblocks");
+        if (kind === "schema" && file) {
+            const config = site.subformats?.find((format) => format.ext === file);
+            if (!config) return undefined;
+            const title = `${config.ext} — JSON Schema`;
+            const schemaRoot = site.root ?? root;
+            let content: string;
+            try {
+                if (!filesSnapshot(schemaRoot).files.some((item) => item.path === config.schema))
+                    throw new Error("Subformat schema is not available in the workspace");
+                const raw = readTextfile(schemaRoot, config.schema);
+                const { schema, context } = compileSubformatSchema(raw, {
+                    root: schemaRoot,
+                    file: config.schema,
+                    domains: site.previews?.domains,
+                });
+                content = jsonSchemaHtml(schema, context);
+                content += `<details><summary data-i18n="JSON text">JSON text</summary>${blocksHtml([{ type: "code", lang: "json", lines: raw.split("\n") }])}</details>`;
+            } catch (error) {
+                content = `<p class="err" role="alert">${escapeHtml(error instanceof Error ? error.message : String(error))}</p>`;
+            }
+            return {
+                title,
+                main: `<article class="res-page json-schema-page"><h1>${escapeHtml(title)}</h1><p><a href="/_files/file/${encodeURIComponent(config.schema)}" data-resource-source="${escapeHtml(config.schema)}">${escapeHtml(config.schema)}</a></p>${content}</article>`,
+            };
+        }
         if (
             !file &&
             (kind === "codeblocks" ||
@@ -2830,7 +2939,7 @@ body.edit .nav-row { cursor: grab; }
             const resource = all.find((item) => item.path === file);
             if (resource)
                 return resourcesMain(site, `${resource.kind}/${encodeURIComponent(resource.file)}`);
-            const content = readProjectFile(file);
+            const content = readProjectFile(file, site.root);
             return content && filePage(site, file, content);
         }
         if (!RESOURCE_KINDS.includes(kind as ResourceKind)) {
@@ -2916,7 +3025,9 @@ body.edit .nav-row { cursor: grab; }
     ): { title: string; main: string } | undefined => {
         const fig = [...site.ctx.figures.values()].find((fig) => fig.file === file);
         if (fig) return figurePage(site, fig);
-        const content = (site.readLinkedFile ?? readProjectFile)(file);
+        const content = site.readLinkedFile
+            ? site.readLinkedFile(file)
+            : readProjectFile(file, site.root);
         if (!content) return undefined;
         // Builds only map exported dependencies, so link-only files are embedded here.
         const page = filePage(
@@ -3364,9 +3475,7 @@ ${
     const target = context();
     closeForm();
     const parent = trigger.dataset.parent || "";
-    const host = parent
-      ? document.querySelector('#nav-groups .nav-item[data-doc-id="' + CSS.escape(parent) + '"] > .nav-list')
-      : document.querySelector("#nav-groups > .nav-list");
+    const host = document.querySelector('#nav-groups .nav-list[data-parent="' + CSS.escape(parent) + '"]');
     if (!host) return;
     if (parent) window.__docsNavOpen(parent, true);
     const item = document.createElement("div");
@@ -3635,6 +3744,12 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
     const p = (path || "").split("?")[0].replace(/^\\/+|\\/+$/g, "");
     const route = pages.has(p) ? p : FIRST;
     const page = pages.get(route);
+    if (!page) return;
+    if (page.dataset.redirect) {
+      const target = page.dataset.redirect;
+      location.replace(target.startsWith("/") ? "#" + target : target);
+      return;
+    }
     const actions = main.querySelector(":scope > .page-actions");
     main.innerHTML = page.innerHTML;
     document.dispatchEvent(new Event("docs:page-shown"));
@@ -3678,12 +3793,22 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
         pluginJs = "",
         subformatJs = "",
     ): string => {
-        const pages = site.entries.map((e) => ({
-            route: docPath(site.entries, e.id).slice(1),
-            title: docDisplayName(e.frontmatter, e.id),
-            main: entryMain(site, e),
-        }));
+        const pages: { route: string; title: string; main: string; redirect?: string }[] =
+            site.entries.map((e) => ({
+                route: docPath(site.entries, e.id).slice(1),
+                title: docDisplayName(e.frontmatter, e.id),
+                main: entryMain(site, e),
+                redirect:
+                    docHref(site.entries, e.id) !== docPath(site.entries, e.id)
+                        ? docHref(site.entries, e.id)
+                        : undefined,
+            }));
         const first = pages[0]?.route ?? "";
+        for (const config of site.subformats ?? []) {
+            const route = subformatSchemaPath(config.ext).slice(1);
+            const schema = resourcesMain(site, route.slice("_files/".length));
+            if (schema) pages.push({ route, ...schema });
+        }
         if (site.ctx.terms.length > 0) {
             const terms = resourcesMain(site, "terms");
             if (terms) pages.push({ route: "_files/terms", ...terms });
@@ -3713,7 +3838,7 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
         const templates = pages
             .map(
                 (p) =>
-                    `<template data-route="${escapeHtml(p.route)}" data-title="${escapeHtml(pageTitle("preview", p.title, title))}">${toHashLinks(p.main, p.route)}</template>`,
+                    `<template data-route="${escapeHtml(p.route)}" data-title="${escapeHtml(pageTitle("preview", p.title, title))}"${p.redirect ? ` data-redirect="${escapeHtml(p.redirect)}"` : ""}>${toHashLinks(p.main, p.route)}</template>`,
             )
             .join("");
         return toHashLinks(
@@ -3749,7 +3874,7 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
         const items = kids
             .map(
                 (k) =>
-                    `<li><a href="${docPath(site.entries, k.id)}">${escapeHtml(docDisplayName(k.frontmatter, k.id))}</a></li>`,
+                    `<li><a href="${escapeHtml(docHref(site.entries, k.id))}">${escapeHtml(docDisplayName(k.frontmatter, k.id))}</a></li>`,
             )
             .join("");
         return html.replace(/<\/article>\s*$/, `<ul class="idx">${items}</ul></article>`);
@@ -3777,13 +3902,19 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
     // (= the client only has to handle one boot shape, initially and after a switch).
     const editorBoot = (entry: Entry, site: Site): EditorBoot => {
         // Completion candidates are files in the figures/ catalog.
-        const figures = [...site.ctx.figures.values()].map((f) => f.file);
+        const directory = manifestDirectory(entry.origin);
+        const figures = [...site.ctx.figures.values()]
+            .map((f) => f.file)
+            .filter((file) => file.startsWith(directory))
+            .map((file) => file.slice(directory.length));
         const docs = site.entries
-            .filter((e) => !e.subformat && !e.library)
+            .filter(isContentPage)
             .map((e) => ({
                 ref: e.sourceFile ?? CONTENT_PREFIX + e.file,
                 title: docDisplayName(e.frontmatter, e.id),
-            }));
+            }))
+            .filter(({ ref }) => ref.startsWith(directory))
+            .map((doc) => ({ ...doc, ref: doc.ref.slice(directory.length) }));
         return {
             ...(historicalReadOnly ? { readOnly: true } : {}),
             gitBase: entryGitBase(entry, site),
@@ -3809,6 +3940,7 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
                 : {}),
             file: entry.file,
             sourceFile: entry.sourceFile,
+            origin: entry.origin,
             docId: entry.id,
             title: entry.frontmatter?.title ?? "",
             path: docPath(site.entries, entry.id),
@@ -3908,7 +4040,10 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
             return { status: 404, body: { error: `${path} is not a doc route` } };
         }
         const html = entryMain(site, doc);
-        if (doc.subformat || doc.library)
+        const href = docHref(site.entries, doc.id);
+        if (href !== docPath(site.entries, doc.id))
+            return { status: 200, body: { redirect: href } };
+        if (!isContentPage(doc))
             return {
                 status: 200,
                 body: {
@@ -4019,13 +4154,18 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
         save: boolean,
         locale: string,
     ): void => {
-        const { file, frontmatter, body, baseRaw, textfiles } = (parsedBody ?? {}) as {
+        const { file, frontmatter, body, baseRaw, baseTitle, textfiles } = (parsedBody ?? {}) as {
             file?: unknown;
             frontmatter?: unknown;
             body?: unknown;
             baseRaw?: unknown;
+            baseTitle?: unknown;
             textfiles?: unknown;
         };
+        if (baseTitle !== undefined && typeof baseTitle !== "string") {
+            sendJson(res, 400, { error: "baseTitle must be a string" });
+            return;
+        }
         let fileDrafts: ReadonlyMap<string, string>;
         try {
             fileDrafts = previewTextfiles(root, textfiles);
@@ -4047,28 +4187,37 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
         // saving. If they differ, skip the write and return the disk content for the client to load
         // into the editor (= the md file wins).
         const site = loadSite(locale);
-        const currentRaw = save
-            ? (site.entries.find((entry) => entry.id === target.id)?.raw ??
-              readFileSync(target.abs, "utf8"))
-            : undefined;
-        if (save && currentRaw !== undefined && isExternallyModified(baseRaw, currentRaw)) {
+        const current = site.entries.find((entry) => entry.id === target.id);
+        const currentTitle = current?.frontmatter?.title ?? "";
+        const fm = sanitizeFrontmatter(frontmatter);
+        const rename = baseTitle !== undefined && fm.title && fm.title !== currentTitle;
+        const currentRaw = save ? (current?.raw ?? readFileSync(target.abs, "utf8")) : undefined;
+        if (
+            save &&
+            currentRaw !== undefined &&
+            (isExternallyModified(baseRaw, currentRaw) || (rename && baseTitle !== currentTitle))
+        ) {
             const { raw: _raw, ...doc } = renderDocFile(site, target.name, currentRaw);
             sendJson(res, 200, { ...doc, saved: false, conflict: true, raw: currentRaw });
             return;
         }
-        const fm = sanitizeFrontmatter(frontmatter);
         const text = typeof body === "string" ? body : "";
         const raw = assembleDoc(text);
         if (save) {
-            // The manifest owns the title; the editor's title field renames it there.
-            const current = site.entries.find((entry) => entry.id === target.id)?.frontmatter
-                ?.title;
-            if (fm.title && fm.title !== current) ops.setTitle(target.id, fm.title);
+            // Only an explicit rename may update the manifest, even before HMR arrives.
+            if (rename) {
+                const result = ops.setTitle(target.id, fm.title);
+                if (isOpError(result)) {
+                    sendOp(res, result);
+                    return;
+                }
+            }
             if (locale === contentLanguageCode(site.defaultLang)) writeFileSync(target.abs, raw);
             else {
                 const file = translationFile(
                     sourceDocFile(target.id, readManifest(root).files),
                     locale,
+                    site.entries.find((entry) => entry.id === target.id)?.origin,
                 );
                 const base = existsSync(textfilePath(root, file)) ? (currentRaw ?? null) : null;
                 if (!writeTextfile(root, file, raw, base)) {
@@ -4151,7 +4300,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
         }
         const requestedId = typeof body?.file === "string" ? docIdOfFile(body.file) : undefined;
         const page = flattenTree(manifest.tree).find(
-            (node) => node.id === requestedId && (node.subformat || node.library),
+            (node) => node.id === requestedId && !isContentPage(node),
         );
         const target = page ? undefined : resolveContentFile(body?.file);
         const id = page?.id ?? (target && existsSync(target.abs) ? target.id : undefined);
@@ -4161,7 +4310,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
         }
         const previous = docIconFile(id, manifest.files);
         let file =
-            manifest.format !== "nested" &&
+            manifest.format === undefined &&
             manifest.files?.defaultLayout !== false &&
             !Object.hasOwn(manifest.files?.icons ?? {}, id) &&
             !existsSync(textfilePath(root, previous))
@@ -4485,11 +4634,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
             if (path === "/api/subformat-page") {
                 const body = await readJson(req);
                 const id = typeof body?.id === "string" ? body.id : "";
-                if (
-                    !loadSite().entries.some(
-                        (entry) => entry.id === id && (entry.subformat || entry.library),
-                    )
-                ) {
+                if (!loadSite().entries.some((entry) => entry.id === id && !isContentPage(entry))) {
                     sendJson(res, 404, { error: "Subformat page not found" });
                     return;
                 }
@@ -4619,28 +4764,6 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
             sendJson(res, status, body);
             return;
         }
-        // "/" redirects to the first doc (the canonical URL follows the manifest hierarchy). In edit with 0
-        // docs, an empty page (the first doc is created via "add doc" at the end of the sidebar).
-        if (path === "/") {
-            const first = site.entries[0];
-            if (first) {
-                res.writeHead(302, {
-                    location: `${docPath(site.entries, first.id)}?lang=${encodeURIComponent(locale)}`,
-                });
-                res.end();
-                return;
-            }
-            if (mode === "edit") {
-                sendPage(res, mode, site, {
-                    title: "docs",
-                    main: "<article></article>",
-                });
-                return;
-            }
-            notFound(res, path);
-            return;
-        }
-
         const linkedFile =
             mode === "preview" && path.startsWith("/_files/file/")
                 ? linkedFilePage(site, path.slice("/_files/file/".length))
@@ -4658,7 +4781,8 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
                     path.startsWith("/_library/") ||
                     path === "/_files" ||
                     path.startsWith("/_files/"))) ||
-            path === "/_files/terms"
+            path === "/_files/terms" ||
+            path.startsWith("/_files/schema/")
         ) {
             const rest = path.startsWith("/_library")
                 ? path.slice(1)
@@ -4677,7 +4801,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
                               !entry.subformat &&
                               !entry.library &&
                               entry.id === requestUrl.searchParams.get("editor"),
-                      ) ?? site.entries.find((entry) => !entry.subformat && !entry.library))
+                      ) ?? site.entries.find(isContentPage))
                     : undefined;
             if (editor) {
                 const { aside, boot } = editorAside(editor, site);
@@ -4708,16 +4832,30 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
             notFound(res, path);
             return;
         }
+        const href = docHref(site.entries, doc.id);
+        if (href !== docPath(site.entries, doc.id)) {
+            const target = new URL(href, "http://localhost");
+            if (href.startsWith("/"))
+                for (const [key, value] of requestUrl.searchParams)
+                    if (!target.searchParams.has(key)) target.searchParams.set(key, value);
+            res.writeHead(302, {
+                location: href.startsWith("/")
+                    ? target.pathname + target.search + target.hash
+                    : href,
+            });
+            res.end();
+            return;
+        }
         const opts: PageOpts = {
             title: docDisplayName(doc.frontmatter, doc.id),
             main: entryMain(site, doc),
             currentId: doc.id,
         };
-        if (mode === "edit" && !doc.subformat && !doc.library) {
+        if (mode === "edit" && isContentPage(doc)) {
             Object.assign(opts, editorAside(doc, site));
         }
-        if (mode === "edit" && (doc.subformat || doc.library)) {
-            const editor = site.entries.find((entry) => !entry.subformat && !entry.library);
+        if (mode === "edit" && !isContentPage(doc)) {
+            const editor = site.entries.find(isContentPage);
             if (editor) {
                 const { aside, boot } = editorAside(editor, site);
                 Object.assign(opts, {

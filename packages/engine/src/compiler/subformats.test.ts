@@ -86,13 +86,13 @@ it("reuses unchanged schema validators and immediately validates schema edits", 
 
 it.each([
     "legacy",
-    "nested",
+    "document",
 ])("saves card layouts in %s manifests without changing records or other settings", (kind) => {
     const { root, config } = fixture();
-    const key = kind === "nested" ? "json_subformats" : "subformats";
+    const key = kind === "document" ? "json_subformats" : "subformats";
     writeFileSync(
         join(root, "dooc.yaml"),
-        `# Keep this comment\n${kind === "nested" ? "center_contents" : "docs"}: []\n${key}:\n  - ext: issue # Keep format comment\n    format: yaml\n    schema: schemas/issue.json\n  - ext: note\n    format: yaml\n    schema: schemas/issue.json\ndefault_subformat_folder: records\n`,
+        `# Keep this comment\n${kind === "document" ? "document: {}" : "docs: []"}\n${key}:\n  - ext: issue # Keep format comment\n    format: yaml\n    schema: schemas/issue.json\n  - ext: note\n    format: yaml\n    schema: schemas/issue.json\ndefault_subformat_folder: records\n`,
     );
     const request = {
         action: "layouts",
@@ -153,12 +153,15 @@ it.each([
     expect(readFileSync(join(root, "one.issue"), "utf8")).toBe(contents.yaml);
 });
 
-it.each(["legacy", "nested"])("registers, changes and clears SVG icons in %s manifests", (kind) => {
+it.each([
+    "legacy",
+    "document",
+])("registers, changes and clears SVG icons in %s manifests", (kind) => {
     const { root, config } = fixture();
-    const section = kind === "nested" ? "json_subformats" : "subformats";
+    const section = kind === "document" ? "json_subformats" : "subformats";
     writeFileSync(
         join(root, "dooc.yaml"),
-        `# Keep icons\n${kind === "nested" ? "center_contents" : "docs"}: []\n${section}: ${JSON.stringify([config])}\n`,
+        `# Keep icons\n${kind === "document" ? "document: {}" : "docs: []"}\n${section}: ${JSON.stringify([config])}\n`,
     );
     const svg = '<svg viewBox="0 0 20 20"><circle cx="10" cy="10" r="6"/></svg>';
     writeFileSync(join(root, "issue.svg"), svg);
@@ -217,13 +220,13 @@ it.each(["legacy", "nested"])("registers, changes and clears SVG icons in %s man
 
 it.each([
     "legacy",
-    "nested",
+    "document",
 ])("deletes only the selected %s subformat registration and sidebar page", (kind) => {
     const { root, config } = fixture();
-    const nested = kind === "nested";
+    const nested = kind === "document";
     writeFileSync(
         join(root, "dooc.yaml"),
-        `# Keep this comment\n${nested ? "center_contents" : "docs"}:\n  - subformat: issue\n    title: Issues\n${nested ? "json_subformats" : "subformats"}:\n  - ext: issue\n    format: yaml\n    schema: schemas/issue.json\n  - ext: note # Keep other format comment\n    format: yaml\n    schema: schemas/issue.json\ndefault_subformat_folder: records\n`,
+        `# Keep this comment\n${nested ? "document:\n  children:\n    - document:\n        subformat: issue\n        title: Issues" : "docs:\n  - subformat: issue\n    title: Issues"}\n${nested ? "json_subformats" : "subformats"}:\n  - ext: issue\n    format: yaml\n    schema: schemas/issue.json\n  - ext: note # Keep other format comment\n    format: yaml\n    schema: schemas/issue.json\ndefault_subformat_folder: records\n`,
     );
     const beforeSchema = readFileSync(join(root, config.schema), "utf8");
     const request = { action: "delete", ext: "issue", base: config };
@@ -237,7 +240,7 @@ it.each([
     expect(subformatResponse(root, request)).toEqual({ status: 200, body: { file: "dooc.yaml" } });
     const manifest = readManifest(root);
     expect(manifest.errors).toEqual([]);
-    expect(manifest.tree).toEqual([]);
+    expect(nested ? manifest.tree[0]?.children : manifest.tree).toEqual([]);
     expect(manifest.subformats).toEqual([{ ...config, ext: "note" }]);
     expect(manifest.defaultSubformatFolder).toBe("records");
     const saved = readFileSync(join(root, "dooc.yaml"), "utf8");
@@ -277,12 +280,12 @@ it("keeps child pages and changed definitions when deleting a subformat", () => 
 
 it.each([
     "legacy",
-    "nested",
+    "document",
 ])("registers a subformat and schema without overwriting %s settings", (kind) => {
     const { root, config } = fixture();
     writeFileSync(
         join(root, "dooc.yaml"),
-        `# Keep this comment\n${kind === "nested" ? "center_contents: []\njson_subformats" : "docs: []\nsubformats"}: ${JSON.stringify([config])}\ndefault_subformat_folder: records\n`,
+        `# Keep this comment\n${kind === "document" ? "document: {}\njson_subformats" : "docs: []\nsubformats"}: ${JSON.stringify([config])}\ndefault_subformat_folder: records\n`,
     );
     const result = subformatResponse(root, { action: "register", ext: "note", format: "json" });
     expect(result.status).toBe(200);

@@ -16,9 +16,11 @@ json_subformats:
       group_by: status
       sort_by: priority
       sort_order: asc
-center_contents:
-  - subformat: feature
-    title: Feature gaps
+document:
+  children:
+    - document:
+        subformat: feature
+        title: Feature gaps
 default_subformat_folder: contents/feature
 ```
 
@@ -35,6 +37,10 @@ Files with a registered extension are collected even when no page links to them.
 The optional SVG path can be entered when registering a type, or changed later with **SVG icon**. When adding the type to **Pages**, dooc copies that path into the new page’s icon setting. Changing the type icon later does not replace existing page icons; each page can override or clear its icon independently.
 
 Open the type selector in **Subformats** to manage an existing type. Its **Edit** button opens the schema; **Delete** removes the registration and its sidebar page after confirmation. The record files and schema file are kept.
+
+Choose **JSON Schema** above a board or embedded collection to read its fields, types, required conditions, descriptions and constraints. Expand nested fields and referenced definitions, or open **JSON text** for the complete source. The page is available in the editor, reader and standalone HTML.
+
+Schema pages use the registered extension in their URL, such as `/_files/schema/feature` (or `#/_files/schema/feature` in standalone HTML). The URL stays the same when the schema file moves and its registration is updated. The file link on the schema page opens its source for editing in the editor.
 
 ## What the schema controls
 

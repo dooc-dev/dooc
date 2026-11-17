@@ -55,21 +55,24 @@ export const schemaResolver = (schema: SchemaObject, context?: SchemaContext) =>
                     resources.set(`${resolved.split("#")[0]}#${node[key]}`, node);
         });
     }
-    /** `onRef` receives the absolute URI of every `$ref` hop followed. */
-    return (definition: unknown, onRef?: (uri: string) => void): SchemaObject => {
+    /** `onRef` receives each reference URI and its original target, before merging siblings. */
+    return (definition: unknown, onRef?: (uri: string, target?: unknown) => void): SchemaObject => {
         let current = schemaObject(definition) ? definition : {};
         let result = current;
         const seen = new Set<SchemaObject>();
         while (typeof current.$ref === "string" && !seen.has(current)) {
             seen.add(current);
             const uri = new URL(current.$ref, bases.get(current) ?? base);
-            onRef?.(uri.href);
+            const href = uri.href;
             let target = resources.get(uri.href);
             if (target === undefined) {
                 const fragment = decodeURIComponent(uri.hash.slice(1));
                 uri.hash = "";
                 target = resources.get(uri.href);
-                if (fragment && !fragment.startsWith("/")) break;
+                if (fragment && !fragment.startsWith("/")) {
+                    onRef?.(href);
+                    break;
+                }
                 for (const key of fragment ? fragment.slice(1).split("/") : []) {
                     const name = key.replaceAll("~1", "/").replaceAll("~0", "~");
                     target =
@@ -78,6 +81,7 @@ export const schemaResolver = (schema: SchemaObject, context?: SchemaContext) =>
                             : undefined;
                 }
             }
+            onRef?.(href, target);
             if (!schemaObject(target)) break;
             const { $ref: _ref, ...siblings } = result;
             result = { ...target, ...siblings };

@@ -1,4 +1,4 @@
-The sidebar chooses what to open and which workspace tools to use. The document tree follows `center_contents` in `dooc.yaml`; its selected page appears in the active preview pane.
+The sidebar chooses what to open and which workspace tools to use. The document tree follows `document.children` in `dooc.yaml`; its selected page appears in the active preview pane.
 
 ![Sidebar](contents/html/ux-sidebar.html)
 

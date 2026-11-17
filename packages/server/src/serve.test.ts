@@ -137,7 +137,7 @@ it("keeps quoted source files, emphasis and references through compilation and p
             "quoted-heading-1",
         ]);
         const site = siteFrom(compiled);
-        const entry = site.entries[0];
+        const entry = site.entries.find((entry) => !entry.root);
         if (!entry) throw new Error("Missing document");
         expect(filePreviewResults(entry, site)).toEqual({
             "source.ts": [],
@@ -176,7 +176,7 @@ it("resolves source-file links and heading fragments in the reader, exported HTM
         const compiled = compileSite(root);
         expect(compiled.errors).toEqual([]);
         const site = siteFrom(compiled);
-        const guide = site.entries[0];
+        const guide = site.entries.find((entry) => !entry.root);
         if (!guide) throw new Error("Missing guide");
         expect(
             renderEntryHtml(site, guide).html.match(/href="\/guide\/child#details"/g),
@@ -207,7 +207,7 @@ it("opens linked SVG files in the reader and standalone HTML, including extracte
         const compiled = compileSite(root);
         expect(compiled.errors).toEqual([]);
         const site = siteFrom(compiled);
-        const guide = site.entries[0];
+        const guide = site.entries.find((entry) => !entry.root);
         if (!guide) throw new Error("Missing guide");
         const route = `_files/file/${encodeURIComponent(file)}`;
         const rendered = renderEntryHtml(site, guide).html;
@@ -540,7 +540,7 @@ describe("navGroupsHtml", () => {
     it("a doc icon replaces the book icon at top level and precedes the label below it (wrapped in an img)", () => {
         const site = fixtureSite();
         const icon = '<svg viewBox="0 0 1 1"/>';
-        site.entries[0] = { ...(site.entries[0] as Entry), icon };
+        site.entries[0] = { ...(site.entries.find((entry) => !entry.root) as Entry), icon };
         site.entries[1] = { ...(site.entries[1] as Entry), icon };
         const html = navGroupsHtml("preview", site);
         expect(html).toContain(
@@ -642,7 +642,7 @@ describe("editorBoot / pageDataResponse (backing `GET /api/page`)", () => {
 
     it("keeps the full workspace label in local editor boot data", () => {
         const site = docSite();
-        const entry = site.entries[0] as Entry;
+        const entry = site.entries.find((entry) => !entry.root) as Entry;
         site.workspace = { protocol: "git", branch: "feature/docs", repo: "project" };
         expect(editorBoot(entry, site).workspaceLabel).toBe("feature/docs/project");
         site.workspace = { protocol: "storage", folder: "Local documents", service: "Browser" };
@@ -651,7 +651,7 @@ describe("editorBoot / pageDataResponse (backing `GET /api/page`)", () => {
 
     it("editorBoot: carries the save key / doc id and completion candidates (figures, docs, terms)", () => {
         const site = docSite();
-        const entry = site.entries[0] as Entry;
+        const entry = site.entries.find((entry) => !entry.root) as Entry;
         expect(editorBoot(entry, site)).toEqual({
             gitBase: null,
             file: "a.md",
@@ -697,7 +697,7 @@ describe("editorBoot / pageDataResponse (backing `GET /api/page`)", () => {
 
     it("editorBoot: spellcheck language comes from the doc language's adapter, else the tag", () => {
         const site = docSite();
-        const entry = site.entries[0] as Entry;
+        const entry = site.entries.find((entry) => !entry.root) as Entry;
         // ja: browsers don't spellcheck Japanese, so the adapter checks the English words.
         expect(editorBoot({ ...entry, lang: "ja-JP" }, site).spellcheckLang).toBe("en");
         expect(editorBoot({ ...entry, lang: "de" }, site).spellcheckLang).toBe("de");
@@ -857,7 +857,7 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
             const compiled = compileSite(root, { defaultLang: "jpn", locale });
             expect(compiled.errors).toEqual([]);
             const localized = siteFrom(compiled);
-            const entry = localized.entries[0];
+            const entry = localized.entries.find((entry) => !entry.root);
             if (!entry) throw new Error("Missing article");
             expect(entry.lang).toBe(locale);
             const rendered = renderDocFile(localized, entry.file, entry.raw);

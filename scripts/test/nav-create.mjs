@@ -152,8 +152,8 @@ window.testNavCreate = async () => {
             added.subformat === "release" &&
                 added.title === "release" &&
                 !("name" in added) &&
-                !("parent" in added),
-            "A single dropdown choice adds a root page using the format name without a Markdown file",
+                added.parent === rootTrigger.dataset.parent,
+            "A single dropdown choice adds a child of the document root using the format name without a Markdown file",
         );
         assert(
             navigation === "/added-page" && !menu.matches(":popover-open"),
@@ -192,7 +192,7 @@ window.testNavCreate = async () => {
             libraryRequest.library === libraryName &&
                 libraryRequest.title === libraryName &&
                 !("subformat" in libraryRequest) &&
-                !("parent" in libraryRequest),
+                libraryRequest.parent === rootTrigger.dataset.parent,
             "Library choices create a root library page with the selected name",
         );
         rootTrigger.click();

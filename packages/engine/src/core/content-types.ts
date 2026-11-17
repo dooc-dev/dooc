@@ -1,5 +1,6 @@
 // In-memory content used by the compiler and renderers (browser-safe).
 import type { Block, TocEntry } from "./blocks.js";
+import type { DocNode } from "./content-metadata.js";
 import type { SubformatCollection } from "./subformats.js";
 import type { Frontmatter } from "./taxonomy.js";
 
@@ -28,24 +29,25 @@ export interface FigureEntry {
 }
 
 // The display name is resolved via docDisplayName (taxonomy.ts).
-export type CompiledDoc = Frontmatter & {
-    id: string;
-    subformat?: SubformatCollection;
-    /** Library view shown by a display page (`schemath`, `urls`, ...). */
-    library?: string;
-    /** Parent doc id (SoT: dooc.yaml). Omitted = top level. docs[] is in pre-order. */
-    parent?: string;
-    /** Project-relative Markdown source path, or subformat:<ext> for a display page. */
-    file: string;
-    /** Resolved language (BCP 47): the translation language, else the site default (language.ts). */
-    lang: string;
-    /** Sidebar icon (full content of icons/<id>.svg, 1:1). Omitted if there is none. */
-    icon?: string;
-    /** Source md. For MCP / copy; rendering uses blocks. */
-    body: string;
-    /** Normalized Block AST (the blocks.ts contract). Consumers just map it to rendering. */
-    blocks: Block[];
-    toc: TocEntry[];
-    /** Referenced figures and terms. */
-    refs: { figures: string[]; terms: string[] };
-};
+export type CompiledDoc = Frontmatter &
+    Pick<DocNode, "url" | "root" | "name" | "origin"> & {
+        id: string;
+        subformat?: SubformatCollection;
+        /** Library view shown by a display page (`schemath`, `urls`, ...). */
+        library?: string;
+        /** Parent doc id (SoT: dooc.yaml). Omitted = top level. docs[] is in pre-order. */
+        parent?: string;
+        /** Project-relative Markdown source path, or subformat:<ext> for a display page. */
+        file: string;
+        /** Resolved language (BCP 47): the translation language, else the site default (language.ts). */
+        lang: string;
+        /** Sidebar icon (full content of icons/<id>.svg, 1:1). Omitted if there is none. */
+        icon?: string;
+        /** Source md. For MCP / copy; rendering uses blocks. */
+        body: string;
+        /** Normalized Block AST (the blocks.ts contract). Consumers just map it to rendering. */
+        blocks: Block[];
+        toc: TocEntry[];
+        /** Referenced figures and terms. */
+        refs: { figures: string[]; terms: string[] };
+    };

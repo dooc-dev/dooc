@@ -55,5 +55,5 @@ test("keeps library pages through a manifest round trip", () => {
         library: "schemath",
         title: "Schemas",
     });
-    expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toContain("- library: schemath");
+    expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toContain("library: schemath");
 });

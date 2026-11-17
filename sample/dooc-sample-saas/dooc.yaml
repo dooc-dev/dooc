@@ -2,46 +2,65 @@ system:
   default_lang: eng
   files:
     default_layout: false
-left_sidebar:
-  title:
-    eng: Field Notes · SaaS operations
-center_contents:
-  - file: contents/md/index.md
-    title: Operations overview
-  - file: contents/md/architecture.md
-    title: System architecture
-    children:
-      - subformat: vpc
-        title: Networks
-      - subformat: loadbalancer
-        title: Traffic
-      - subformat: container
-        title: Services
-      - subformat: worker
-        title: Workers
-      - subformat: datastore
-        title: Datastores
-      - subformat: log
-        title: Logs
-  - file: contents/md/reliability.md
-    title: Reliability & capacity
-    children:
-      - subformat: slo
-        title: Service objectives
-  - file: contents/md/runbooks.md
-    title: Incident response
-    children:
-      - subformat: incident
-        title: Incidents
-  - file: contents/md/releases.md
-    title: Release & recovery
-  - file: contents/md/ci.md
-    title: Record pipeline
-  - file: contents/md/ownership.md
-    title: Ownership
-    children:
-      - subformat: team
-        title: Teams
+document:
+  title: Field Notes · SaaS operations
+  url: ""
+  sidebar:
+    title:
+      eng: Field Notes · SaaS operations
+  children:
+    - document:
+        title: Operations overview
+        url: contents/md/index.md
+    - document:
+        title: System architecture
+        url: contents/md/architecture.md
+        children:
+          - document:
+              subformat: vpc
+              title: Networks
+          - document:
+              subformat: loadbalancer
+              title: Traffic
+          - document:
+              subformat: container
+              title: Services
+          - document:
+              subformat: worker
+              title: Workers
+          - document:
+              subformat: datastore
+              title: Datastores
+          - document:
+              subformat: log
+              title: Logs
+    - document:
+        title: Reliability & capacity
+        url: contents/md/reliability.md
+        children:
+          - document:
+              subformat: slo
+              title: Service objectives
+    - document:
+        title: Incident response
+        url: contents/md/runbooks.md
+        children:
+          - document:
+              subformat: incident
+              title: Incidents
+    - document:
+        title: Release & recovery
+        url: contents/md/releases.md
+    - document:
+        title: Record pipeline
+        url: contents/md/ci.md
+    - document:
+        title: Ownership
+        url: contents/md/ownership.md
+        children:
+          - document:
+              subformat: team
+              title: Teams
 json_subformats:
   - ext: team
     format: toml

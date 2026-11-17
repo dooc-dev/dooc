@@ -171,7 +171,7 @@ it("rejects invalid download modes before building", async () => {
 it.each(["html", "zip"] as const)("builds %s from the selected named manifest", async (format) => {
     write(
         "team.dooc.yaml",
-        "left_sidebar: {title: {eng: Team Bundle}}\ncenter_contents: [{file: guide.md}]\n",
+        "document:\n  children: [ { document: { url: guide.md } } ]\n  sidebar: { title: { eng: Team Bundle } }\n",
     );
     write("guide.md", "Team document.\n");
     const { data } = await buildBundle(projectRoot(join(root, "team.dooc.yaml")), { format });
@@ -237,7 +237,7 @@ it.each([
 ] as const)("includes schemas and visible records with $format/$urlPreview", async (options) => {
     write(
         "dooc.yaml",
-        "default_subformat_folder: private\ncenter_contents:\n  - subformat: issue\njson_subformats:\n  - ext: issue\n    format: json\n    schema: issue.schema.json\n",
+        "default_subformat_folder: private\njson_subformats:\n  - ext: issue\n    format: json\n    schema: issue.schema.json\ndocument:\n  children:\n    - document:\n        subformat: issue\n",
     );
     write("issue.schema.json", '{"type":"object","properties":{"title":{"type":"string"}}}');
     write("records/one.issue", '{"title":"Visible record"}');
@@ -245,9 +245,9 @@ it.each([
     write(".gitignore", "private/\n");
     const compiled = compileSite(root);
     expect(compiled.errors).toEqual([]);
-    expect(compiled.docs[0]?.subformat?.records.map((record) => record.file)).toEqual([
-        "records/one.issue",
-    ]);
+    expect(
+        compiled.docs.find((doc) => doc.subformat)?.subformat?.records.map((record) => record.file),
+    ).toEqual(["records/one.issue"]);
     const { data } = await buildBundle(root, options);
     if (options.format === "html") {
         expect(data).toContain("Visible record");
@@ -257,7 +257,9 @@ it.each([
         const unpacked = join(root, "unpacked");
         execFileSync("unzip", ["-q", join(root, "output.zip"), "-d", unpacked]);
         expect(compileSite(unpacked).errors).toEqual([]);
-        expect(compileSite(unpacked).docs[0]?.subformat?.records).toHaveLength(1);
+        expect(
+            compileSite(unpacked).docs.find((doc) => doc.subformat)?.subformat?.records,
+        ).toHaveLength(1);
     }
 });
 

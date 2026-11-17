@@ -387,10 +387,9 @@ it("lists unreferenced files of a format once it has a library page", () => {
             .codeblocks.filter((item) => item.format === "schemath")
             .map((item) => item.caption);
     };
-    const base = "center_contents:\n  - file: a.md\n";
+    const base = "document:\n  children:\n    - document:\n        url: a.md\n";
     expect(captions(base)).toEqual(["Used"]);
-    expect(captions(`${base}  - library: schemath\n    title: Schemas\n`)).toEqual([
-        "Used",
-        "unused.schemath",
-    ]);
+    expect(
+        captions(`${base}    - document:\n        library: schemath\n        title: Schemas\n`),
+    ).toEqual(["Used", "unused.schemath"]);
 });

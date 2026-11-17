@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 import { chromium } from "playwright";
 import { parseApplicationOptions, runApplication } from "../../dist/server/application.js";
+import { buildBundle } from "../../dist/server/build.js";
 import { createDevWorkspace } from "../dev-workspace.ts";
 import {
     testDocumentVersionDrafts,
@@ -127,6 +128,79 @@ async function blank(page, mode = "editor") {
     await page.goto(url);
 }
 
+browserTest("Document roots, included editors and standalone redirects", async (page) => {
+    const project = join(root, "document-tree");
+    mkdirSync(join(project, "child"), { recursive: true });
+    writeFileSync(
+        join(project, "dooc.yaml"),
+        `document:
+  title: Handbook
+  children:
+    - document:
+        title: Reference
+        url: child/dooc.yaml
+    - document:
+        title: Shortcut
+        url: /child
+    - document:
+        title: Website
+        url: https://example.com/
+`,
+    );
+    writeFileSync(join(project, "child/dooc.yaml"), "document:\n  title: Guide\n  url: guide.md\n");
+    writeFileSync(join(project, "child/guide.md"), "# Child guide\n\n![](example.txt)\n");
+    writeFileSync(join(project, "child/example.txt"), "Child content\n");
+    const url = await start("editor", "node", project);
+    await page.goto(url);
+    await page.locator("#nav-groups").waitFor();
+    assert.equal(
+        await page
+            .locator("#nav-groups a")
+            .filter({ hasText: /^Website$/ })
+            .getAttribute("href"),
+        "https://example.com/",
+    );
+    assert.match(await page.locator("main").textContent(), /Handbook/);
+    await page
+        .locator("#nav-groups a")
+        .filter({ hasText: /^Reference$/ })
+        .click();
+    await page.locator("#cm .cm-content").waitFor();
+    assert.match(await page.locator("#cm .cm-content").textContent(), /example\.txt/);
+    await page.locator('[data-file="child/example.txt"]').first().waitFor();
+    assert.match(await page.locator("main").textContent(), /Child content/);
+    await page
+        .locator("#nav-groups a")
+        .filter({ hasText: /^Handbook$/ })
+        .click();
+    await page.waitForURL((current) => !current.pathname.endsWith("/child"));
+    assert.match(await page.locator("main").textContent(), /Handbook/);
+    for (const redirect of [false, true]) {
+        if (redirect) {
+            const file = join(project, "dooc.yaml");
+            writeFileSync(
+                file,
+                readFileSync(file, "utf8").replace(
+                    "  title: Handbook",
+                    "  title: Handbook\n  url: redirect:first",
+                ),
+            );
+        }
+        const result = await buildBundle(project, { format: "html" });
+        const file = join(root, redirect ? "redirect.html" : "index.html");
+        writeFileSync(file, result.data);
+        await page.goto(pathToFileURL(file).href);
+        await page.locator("main article").waitFor();
+        if (redirect) {
+            await page.waitForURL((current) => current.hash === "#/child");
+            assert.match(await page.locator("main").textContent(), /Child content/);
+        } else {
+            assert.match(await page.locator("main").textContent(), /Handbook/);
+            assert.equal(new URL(page.url()).hash, "");
+        }
+    }
+});
+
 for (const width of [1440, 820, 390]) {
     browserTest(`UI consistency at ${width}px`, async (page) => {
         await page.setViewportSize({ width, height: 1000 });
@@ -190,6 +264,66 @@ for (const width of [1440, 390]) {
     });
 }
 
+for (const mode of ["editor", "reader"]) {
+    browserTest(`Subformat schema page in ${mode}`, async (page) => {
+        await open(page, urls[mode], mode === "editor");
+        const board = await page
+            .locator("#nav-groups a")
+            .filter({ hasText: /^Tasks$/ })
+            .getAttribute("href");
+        assert(board, "The task board has a navigation URL");
+        await page.goto(new URL(board, page.url()).href);
+        await page.getByRole("link", { name: "JSON Schema", exact: true }).click();
+        await page.locator(".json-schema").waitFor();
+        assert(
+            page.url().includes("/_files/schema/task"),
+            "The URL identifies the type, not its file",
+        );
+        await page.reload();
+        await page.locator(".json-schema").waitFor();
+        assert.equal(await page.locator(".json-schema-page .err").count(), 0);
+        assert.match(
+            await page.locator(".json-schema summary").filter({ hasText: /^id\b/ }).textContent(),
+            /string.*Required/,
+        );
+        const review = page.locator(".json-schema summary").filter({ hasText: /^review\b/ });
+        await review.focus();
+        await page.keyboard.press("Enter");
+        assert(
+            await review.evaluate((summary) => summary.parentElement.open),
+            "Nested fields expand with the keyboard",
+        );
+        const reference = page.locator(".json-schema summary").filter({ hasText: /^project\b/ });
+        await reference.click();
+        const definition = reference
+            .locator("..")
+            .locator("summary")
+            .filter({ hasText: /^\$ref\b/ });
+        await definition.click();
+        assert.match(await definition.locator("..").textContent(), /Project-relative path/);
+        for (const width of [1440, 820, 390]) {
+            await page.setViewportSize({ width, height: 1000 });
+            assert(
+                await page
+                    .locator(".json-schema-page")
+                    .evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+                `The schema fits at ${width}px`,
+            );
+        }
+        if (mode === "editor") {
+            await page.setViewportSize({ width: 1440, height: 1000 });
+            await page.locator(".json-schema-page [data-resource-source]").click();
+            await page.waitForSelector("#file-editor .schema-builder");
+            await page.locator(".file-editor-heading .schema-mode-switch").click();
+            await page.waitForSelector("#file-editor .cm-content");
+            assert.match(
+                await page.locator(".file-editor-title").textContent(),
+                /task\.schema\.json/,
+            );
+        }
+    });
+}
+
 browserTest("Sidebar collapse", async (page) => {
     await open(page, urls.reader, false);
     await inject(page, "sidebar-collapse");
@@ -235,3 +369,75 @@ browserTest("Browser extension storage", async (page) => {
         readFileSync(file).toString("base64"),
     );
 });
+
+for (const dirty of [false, true]) {
+    browserTest(
+        `Manifest hot reload preserves ${dirty ? "unsaved" : "saved"} content`,
+        async (page) => {
+            const project = join(root, dirty ? "hmr-dirty" : "hmr-clean");
+            mkdirSync(join(project, "contents/md"), { recursive: true });
+            const manifest = join(project, "dooc.yaml");
+            const source = join(project, "contents/md/guide.md");
+            const writeManifest = (title, extra = false) =>
+                writeFileSync(
+                    manifest,
+                    `system:\n  default_lang: eng\ndocument:\n  sidebar:\n    title: {eng: Test site}\n  children:\n    - document:\n        url: contents/md/guide.md\n        title: ${title}\n${extra ? "    - document:\n        url: contents/md/extra.md\n        title: Extra page\n" : ""}`,
+                );
+            writeManifest("Old title");
+            writeFileSync(source, "Original body.\n");
+            writeFileSync(join(project, "contents/md/extra.md"), "Extra body.\n");
+            const url = await start("editor", "node", project);
+            await open(page, new URL("guide", url).href);
+            await page.evaluate(() => {
+                const autosave = document.getElementById("opt-autosave");
+                autosave.checked = false;
+                autosave.dispatchEvent(new Event("change"));
+                window.hmrDocument = document;
+            });
+            const editor = page.locator("#cm .cm-content");
+            if (dirty) {
+                await editor.focus();
+                await page.keyboard.press("Control+End");
+                await page.keyboard.insertText("\nUnsaved paragraph.");
+                await page.keyboard.press("Shift+Home");
+            }
+            const content = await editor.textContent();
+            const selection = await page.evaluate(() => getSelection().toString());
+            writeManifest("New title", true);
+            await page.waitForFunction(() => document.title === "New title — Test site");
+            await page.waitForFunction(() =>
+                document.querySelector("#nav-docs")?.textContent.includes("Extra page"),
+            );
+            assert.equal(await editor.textContent(), content);
+            assert.equal(await page.evaluate(() => getSelection().toString()), selection);
+            assert.equal(await page.evaluate(() => window.hmrDocument === document), true);
+            assert.equal(
+                await page.locator("#nav-docs a.cur .nav-label").textContent(),
+                "New title",
+            );
+            assert.equal(await page.locator("main h1").first().textContent(), "New title");
+            assert.equal(readFileSync(source, "utf8"), "Original body.\n");
+            if (dirty) {
+                await page.keyboard.press("Control+z");
+                assert(!(await editor.textContent()).includes("Unsaved paragraph."));
+                await page.keyboard.press("Control+Shift+z");
+                assert((await editor.textContent()).includes("Unsaved paragraph."));
+            } else {
+                await editor.focus();
+                await page.keyboard.press("Control+End");
+                await page.keyboard.insertText("\nSaved paragraph.");
+            }
+            await page.locator("#save").click();
+            await page.waitForFunction(
+                () => document.getElementById("save").dataset.state === "saved",
+            );
+            assert(
+                readFileSync(source, "utf8").includes(
+                    dirty ? "Unsaved paragraph." : "Saved paragraph.",
+                ),
+            );
+            assert(readFileSync(manifest, "utf8").includes("title: New title"));
+            assert(!readFileSync(manifest, "utf8").includes("title: Old title"));
+        },
+    );
+}

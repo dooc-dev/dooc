@@ -104,10 +104,10 @@ desc: A screen-like sidebar diagram using the same named callouts and visual lan
   </div>
   <p class="map-hint">Scroll the diagram horizontally to inspect each area.</p>
   <dl>
-    <div><dt>Site icon</dt><dd>The icon from <code>left_sidebar.icon</code>. In edit mode, select it to replace the SVG.</dd></div>
-    <div><dt>Site title</dt><dd>The title from <code>left_sidebar.title</code> in the current language. In edit mode, select it to rename the site.</dd></div>
+    <div><dt>Site icon</dt><dd>The icon from <code>document.sidebar.icon</code>. In edit mode, select it to replace the SVG.</dd></div>
+    <div><dt>Site title</dt><dd>The title from <code>document.sidebar.title</code> in the current language. In edit mode, select it to rename the site.</dd></div>
     <div><dt>Close sidebar</dt><dd>Collapses the sidebar; the same control expands it again.</dd></div>
-    <div><dt>Document tree</dt><dd>Pages, boards and Library pages from <code>center_contents</code>. Tree edits rewrite <code>dooc.yaml</code>.</dd></div>
+    <div><dt>Document tree</dt><dd>Pages, boards and Library pages from <code>document.children</code>. Tree edits rewrite <code>dooc.yaml</code>.</dd></div>
     <div><dt>Page row</dt><dd>The page icon, title and a chevron for children. Select a page to open it; row actions rename, move or change its icon. Renaming updates references.</dd></div>
     <div><dt>Add a page</dt><dd>Creates a Markdown page, a record board or a Library page at that position in the tree. The diagram shows the add control beside the selected row.</dd></div>
     <div><dt>Workspace tools</dt><dd>A foldable group named after the open workspace. The tools below act on that workspace.</dd></div>

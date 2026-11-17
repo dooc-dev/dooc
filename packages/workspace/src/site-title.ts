@@ -33,12 +33,17 @@ export const siteTitleResponse = (root: string, input: Record<string, unknown> |
                 : parsed;
         if (document !== parsed) document.commentBefore = parsed.commentBefore;
         const title = input.title.trim();
-        if (manifest.format === "nested") {
-            const titles = document.toJS().left_sidebar?.title ?? {};
+        if (manifest.format !== undefined) {
+            const prefix =
+                manifest.format === "document" ? ["document", "sidebar"] : ["left_sidebar"];
+            const value = document.toJS();
+            const titles =
+                (manifest.format === "document" ? value.document.sidebar : value.left_sidebar)
+                    ?.title ?? {};
             const key =
                 Object.keys(titles).find((tag) => contentLanguageCode(tag) === language) ??
                 language;
-            document.setIn(["left_sidebar", "title", key], title);
+            document.setIn([...prefix, "title", key], title);
         } else document.set("title", title);
         if (!writeTextfile(root, manifestFile(root), document.toString(), raw))
             return { status: 409, body: { error: "Manifest changed externally. Try again." } };

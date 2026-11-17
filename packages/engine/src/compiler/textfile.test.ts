@@ -36,7 +36,7 @@ it("retains parsed watch references across cached builds and refreshes them for 
     const files = first.sources.get("content/sample.md")?.referencedFiles;
     expect(files).toEqual(["examples/missing.txt", "figures/missing.svg"]);
     expect(compiler.compile().sources.get("content/sample.md")?.referencedFiles).toBe(files);
-    expect(siteFrom(first).entries[0]?.referencedFiles).toBe(files);
+    expect(siteFrom(first).entries.find((entry) => !entry.root)?.referencedFiles).toBe(files);
     const changed = source("![](examples/changed.txt)");
     const draft = compileDraft(
         { root, docs: [], figures: new Map() },

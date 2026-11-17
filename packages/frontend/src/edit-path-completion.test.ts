@@ -9,6 +9,15 @@ afterEach(() => request.mockReset());
 const context = (doc: string) =>
     new CompletionContext(EditorState.create({ doc }), doc.length, false);
 
+it("queries the workspace using the child manifest folder and inserts relative paths", async () => {
+    request.mockResolvedValue(["child/data/example.txt"]);
+    const result = await filePathCompletion(context("![](data/"), [], "child/dooc.yaml");
+    expect(request).toHaveBeenCalledWith("files", { action: "complete", prefix: "child/data/" });
+    expect(result?.options).toEqual([
+        { label: "data/example.txt", displayLabel: "data/example.txt", type: "text" },
+    ]);
+});
+
 it.each(["[Link](", "![Preview]("])("completes actual folders and files in %s", async (start) => {
     request.mockResolvedValue(["contents/guide.md", "contents/images/", "contents/日本語 (1).md"]);
     const result = await filePathCompletion(context(`${start}contents/`), [

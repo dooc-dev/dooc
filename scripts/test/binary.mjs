@@ -39,9 +39,12 @@ try {
     assert.equal(executable.includes(docsContent), false);
     assert.equal(executable.includes(Buffer.from(docsContent.toString("base64"))), false);
     assert.match(run("init"), /Created/);
-    assert.match(readFileSync(join(root, "dooc.yaml"), "utf8"), /center_contents: \[\]/);
+    assert.match(readFileSync(join(root, "dooc.yaml"), "utf8"), /document:\n\s+url: ""/);
     mkdirSync(join(root, "content"));
-    writeFileSync(join(root, "dooc.yaml"), "defaultLang: ja\ndocs:\n  - guide\n");
+    writeFileSync(
+        join(root, "dooc.yaml"),
+        "system:\n  default_lang: jpn\ndocument:\n  children:\n    - document:\n        url: content/guide.md\n",
+    );
     writeFileSync(
         join(root, "content/guide.md"),
         "# Hello\n\n```js\nconst x = 1;\n```\n\n```graphth\n[a]: 書く\n[b]: 共有する\n[a] -> [b]\n```\n\n```mermaid\nflowchart LR\n A --> B\n```\n",
@@ -229,23 +232,24 @@ try {
         return JSON.parse(response.body);
     };
     assert.ok((await request("assets/code-grammars.json")).length > 0);
+    const guide = (await request("api/page?route=/guide")).boot;
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><circle r="4"/></svg>';
-    await request("api/icon", { file: "guide.md", data: Buffer.from(svg).toString("base64") });
-    assert.ok(existsSync(join(root, "files/svg/guide-icon.svg")));
-    assert.match(readFileSync(join(root, "dooc.yaml"), "utf8"), /files\/svg\/guide-icon\.svg/);
+    await request("api/icon", { file: guide.file, data: Buffer.from(svg).toString("base64") });
+    assert.ok(existsSync(join(root, "icons/content/guide.md.svg")));
     assert.match(
         (await request("api/page?route=/guide")).boot.icon,
         /^data:image\/svg\+xml;base64,/,
     );
     const source = readFileSync(join(root, "content/guide.md"), "utf8");
     const translated = join(root, "locales/eng/content/guide.md");
-    await request("api/translation", { file: "guide.md", language: "eng", added: true });
+    await request("api/translation", { file: guide.file, language: "eng", added: true });
     assert.ok(existsSync(translated));
-    const english = await request("api/doc?file=guide.md&lang=eng");
+    const english = await request(`api/doc?file=${encodeURIComponent(guide.file)}&lang=eng`);
     assert.equal(english.raw, readFileSync(translated, "utf8"));
     const change = {
-        file: "guide.md",
+        file: guide.file,
         frontmatter: { title: "English guide" },
+        baseTitle: english.frontmatter.title,
         body: "Translated **content**.\n",
         baseRaw: english.raw,
     };
@@ -259,9 +263,12 @@ try {
     assert.equal(conflict.conflict, true);
     assert.equal(conflict.saved, false);
     assert.equal(readFileSync(translated, "utf8"), external);
-    await request("api/translation", { file: "guide.md", language: "eng", added: false });
+    await request("api/translation", { file: guide.file, language: "eng", added: false });
     assert.equal(existsSync(translated), false);
-    assert.equal((await request("api/doc?file=guide.md&lang=eng")).raw, source);
+    assert.equal(
+        (await request(`api/doc?file=${encodeURIComponent(guide.file)}&lang=eng`)).raw,
+        source,
+    );
     const lint = await request("api/lint", {
         lang: "ja",
         body: "私は彼は好きな食べ物について話した。\n",

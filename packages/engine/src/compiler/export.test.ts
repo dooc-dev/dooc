@@ -20,7 +20,7 @@ const fixture = () => {
     };
     write(
         "dooc.yaml",
-        "system:\n  default_lang: eng\n  languages: [eng, jpn]\n  themes: [light, dark]\ncenter_contents:\n  - file: docs/guide.md\njson_subformats:\n  - ext: issue\n    format: yaml\n    schema: schemas/issue.json\n",
+        "system:\n  default_lang: eng\n  languages: [ eng, jpn ]\n  themes: [ light, dark ]\njson_subformats:\n  - ext: issue\n    format: yaml\n    schema: schemas/issue.json\ndocument:\n  children:\n    - document:\n        url: docs/guide.md\n",
     );
     write(
         "docs/guide.md",
@@ -76,7 +76,7 @@ it("includes standalone library resources and Markdown sources with their depend
     const { root, write } = fixture();
     write(
         "dooc.yaml",
-        "center_contents:\n  - library: csv\n  - library: termth\n  - library: urls\n",
+        "document:\n  children:\n    - document:\n        library: csv\n    - document:\n        library: termth\n    - document:\n        library: urls\n",
     );
     write("assets/revenue.csv", "Product,Revenue\nWidget,100\n");
     write("terms/widget.termth", "name: Widget\ndefinition: A product\n");
@@ -101,7 +101,7 @@ it("keeps subformat icons valid after extracting a source export", () => {
     const { root, write } = fixture();
     write(
         "dooc.yaml",
-        "center_contents:\n  - subformat: issue\njson_subformats:\n  - ext: issue\n    format: yaml\n    schema: schemas/issue.json\n    icon: assets/issue.svg\n",
+        "json_subformats:\n  - ext: issue\n    format: yaml\n    schema: schemas/issue.json\n    icon: assets/issue.svg\ndocument:\n  children:\n    - document:\n        subformat: issue\n",
     );
     write(
         "assets/issue.svg",
@@ -117,7 +117,9 @@ it("keeps subformat icons valid after extracting a source export", () => {
     }
     const compiled = compileSite(extracted);
     expect(compiled.errors).toEqual([]);
-    expect(compiled.docs[0]?.subformat?.iconSvg).toContain('<path d="M0 0h10v10z"/>');
+    expect(compiled.docs.find((doc) => doc.subformat)?.subformat?.iconSvg).toContain(
+        '<path d="M0 0h10v10z"/>',
+    );
 });
 
 it("fails on missing dependencies and paths that escape the project", () => {
@@ -175,7 +177,7 @@ it("omits ignored records and stale display order, but rejects ignored dependenc
     write("assets/private.png", "PRIVATE");
     write(
         "dooc.yaml",
-        "system:\n  files:\n    order: [missing.svg, private/secret.issue]\ncenter_contents:\n  - file: docs/guide.md\njson_subformats:\n  - ext: issue\n    format: yaml\n    schema: schemas/issue.json\n",
+        "system:\n  files:\n    order: [ missing.svg, private/secret.issue ]\njson_subformats:\n  - ext: issue\n    format: yaml\n    schema: schemas/issue.json\ndocument:\n  children:\n    - document:\n        url: docs/guide.md\n",
     );
     expect(exportEntries(root).map((entry) => entry.name)).not.toContain("private/secret.issue");
     write("assets/card.css", "p{background:url(private.png)}");
@@ -200,7 +202,7 @@ describe("source export ZIP", () => {
         writeFileSync(join(root, "dist", "index.html"), "x");
         writeFileSync(
             join(root, "dooc.yaml"),
-            "center_contents:\n  - file: content/guide/日本語.md\n",
+            "document:\n  children:\n    - document:\n        url: content/guide/日本語.md\n",
         );
         writeFileSync(join(root, "content/guide/日本語.md"), "Body\n\n![](figures/a.svg)\n");
         const entries = exportEntries(root);

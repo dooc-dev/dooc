@@ -2,6 +2,7 @@ import { escapeHtml } from "../../engine/src/core/escape-html.js";
 import { defaultFilePath, localFile } from "../../engine/src/core/files.js";
 import { resourceDownloadHtml, subformatTableHtml } from "../../engine/src/core/html.js";
 import { CHECK_ICON } from "../../engine/src/core/icons.js";
+import { subformatSchemaPath } from "../../engine/src/core/routing.js";
 import {
     matchesSubformatRecord,
     SUBFORMAT_FILTER_OPERATORS,
@@ -703,6 +704,13 @@ const render = (
     else root.querySelector(".resource-toolbar")?.append(controls);
     const openSetting = state.openSetting;
     controls.replaceChildren();
+    const schemaLink = document.createElement("a");
+    schemaLink.className = "subformat-schema-link";
+    schemaLink.href = published
+        ? `#${subformatSchemaPath(collection.ext)}`
+        : subformatSchemaPath(collection.ext);
+    schemaLink.textContent = "JSON Schema";
+    controls.append(schemaLink);
     const settings: {
         key: keyof NonNullable<Subformat["layouts"]>;
         fields: { name: string; title: string }[];

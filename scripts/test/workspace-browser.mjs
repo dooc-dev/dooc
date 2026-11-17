@@ -193,6 +193,15 @@ export async function testBrowserWorkspace(page, url) {
     await page.getByRole("button", { name: "Open workspace", exact: true }).click();
     await page.waitForSelector("#cm .cm-content", { timeout: 90_000 });
     await page.waitForFunction(() => !document.querySelector("dialog[open]"));
+    const manifest = await page.evaluate(async () => {
+        const saved = JSON.parse(localStorage.getItem("dooc.browser.workspaces"))[0];
+        const root = await (
+            await (await navigator.storage.getDirectory()).getDirectoryHandle("dooc")
+        ).getDirectoryHandle(saved.id);
+        return (await (await root.getFileHandle("dooc.yaml")).getFile()).text();
+    });
+    assert.match(manifest, /^document:\n/);
+    assert.match(manifest, /url: content\/welcome\.md/);
     await testWorkspaceChooserTheme(page);
     const editor = page.locator("#cm .cm-content");
     await editor.fill("# Browser saved\n\nDurable client-only edit.\n");

@@ -11,7 +11,12 @@ import {
 } from "../../workspace/src/connection.js";
 import { editorCodeHighlight } from "./edit-code-highlight.js";
 import { chooseConflict } from "./edit-conflict.js";
-import { previewSettingsState, setPreviewSettings } from "./edit-file-preview.js";
+import {
+    fileOriginState,
+    previewSettingsState,
+    setFileOrigin,
+    setPreviewSettings,
+} from "./edit-file-preview.js";
 import { createFoldButton } from "./edit-fold.js";
 import { gitBaseState, gitDiffState, gitDiffTheme, setGitBase } from "./edit-git-diff.js";
 import { jsonEditor } from "./edit-json.js";
@@ -24,8 +29,9 @@ import { t } from "./i18n.js";
 export const textfileLines = (
     body: string,
     settings?: PreviewSettings,
+    origin?: string,
 ): { line: number; file: string }[] =>
-    fileReferences(body, settings)
+    fileReferences(body, settings, origin)
         .filter((ref) => ref.kind === "textfile" || ref.kind === "term")
         .map(({ line, file }) => ({ line, file }));
 
@@ -526,23 +532,25 @@ export const createTextfileEditors = (
     }
     const decorations = (state: EditorState): DecorationSet =>
         Decoration.set(
-            textfileLines(state.doc.toString(), state.field(previewSettingsState, false)).flatMap(
-                ({ line, file }) => {
-                    const position = state.doc.line(line).to;
-                    const controls = Decoration.widget({
-                        widget: new FileWidget(file, true),
-                        side: 2,
-                    }).range(position);
-                    return [
-                        controls,
-                        Decoration.widget({
-                            widget: new FileWidget(file, false),
-                            block: true,
-                            side: 3,
-                        }).range(position),
-                    ];
-                },
-            ),
+            textfileLines(
+                state.doc.toString(),
+                state.field(previewSettingsState, false),
+                state.field(fileOriginState, false),
+            ).flatMap(({ line, file }) => {
+                const position = state.doc.line(line).to;
+                const controls = Decoration.widget({
+                    widget: new FileWidget(file, true),
+                    side: 2,
+                }).range(position);
+                return [
+                    controls,
+                    Decoration.widget({
+                        widget: new FileWidget(file, false),
+                        block: true,
+                        side: 3,
+                    }).range(position),
+                ];
+            }),
         );
     return {
         mount: (
@@ -618,7 +626,9 @@ export const createTextfileEditors = (
             create: decorations,
             update: (value, transaction) =>
                 transaction.docChanged ||
-                transaction.effects.some((effect) => effect.is(setPreviewSettings))
+                transaction.effects.some(
+                    (effect) => effect.is(setPreviewSettings) || effect.is(setFileOrigin),
+                )
                     ? decorations(transaction.state)
                     : value,
             provide: (field) => EditorView.decorations.from(field),

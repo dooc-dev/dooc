@@ -14,7 +14,7 @@ it("reads first-parent versions in memory without checking out or changing worki
     await git.init({ fs, dir: root, defaultBranch: "main" });
     fs.writeFileSync(
         `${root}/docs/dooc.yaml`,
-        "version: {major: 1, minor: git, patch: git}\ncenter_contents: [{file: guide.md}]\n",
+        "version: { major: 1, minor: git, patch: git }\ndocument:\n  children: [ { document: { url: guide.md } } ]\n",
     );
     fs.writeFileSync(`${root}/docs/guide.md`, "Original\n");
     const commit = async () => {

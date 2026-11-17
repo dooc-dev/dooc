@@ -78,7 +78,7 @@ it.each([
 });
 
 it.each([
-    "nested",
+    "document",
     "legacy",
 ])("replacing a copied page icon preserves the type SVG (%s)", async (kind) => {
     const root = mkdtempSync(join(tmpdir(), "dooc-subformat-icon-"));
@@ -89,7 +89,7 @@ it.each([
     writeFileSync(join(root, "issue.schema.json"), "{}");
     writeFileSync(
         join(root, "dooc.yaml"),
-        `${kind === "nested" ? "center_contents: []\njson_subformats" : "docs: []\nsubformats"}: [{ext: issue, format: json, schema: issue.schema.json, icon: type.svg}]\n`,
+        `${kind === "document" ? "document: {}\njson_subformats" : "docs: []\nsubformats"}: [{ext: issue, format: json, schema: issue.schema.json, icon: type.svg}]\n`,
     );
     const id = subformatPageId("issue");
     expect(createDocOps(root).addSubformat("issue", "Issues")).toEqual({ id });
@@ -115,5 +115,7 @@ it.each([
     const manifest = readManifest(root);
     expect(manifest.subformats?.[0]?.icon).toBe("type.svg");
     expect(manifest.files?.icons?.[id]).not.toBe("type.svg");
-    expect(compileSite(root).docs[0]?.icon).toContain('<path d="M1 1h10v10z"/>');
+    expect(compileSite(root).docs.find((doc) => doc.subformat)?.icon).toContain(
+        '<path d="M1 1h10v10z"/>',
+    );
 });

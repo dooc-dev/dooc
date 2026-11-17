@@ -5,17 +5,23 @@
 // Page URLs follow the manifest hierarchy, independently of source folders.
 // Body links reference source files, and heading fragments stay separate.
 
-import { isDocId } from "./content-metadata.js";
+import { isDocId, pageUrlKind } from "./content-metadata.js";
 import type { CompiledDoc } from "./content-types.js";
 import { fileDocumentId, localFile } from "./files.js";
 import { parseFileReference } from "./textfile.js";
 
 /** The minimal doc reference routing needs (a shape CompiledDoc satisfies). */
-export type DocRef = Pick<CompiledDoc, "id" | "parent" | "library"> & {
+export type DocRef = Pick<
+    CompiledDoc,
+    "id" | "parent" | "library" | "url" | "root" | "name" | "origin"
+> & {
     file?: string;
     sourceFile?: string;
     subformat?: string | { ext: string };
 };
+
+export const subformatSchemaPath = (ext: string): string =>
+    `/_files/schema/${encodeURIComponent(ext)}`;
 
 /** Parse `<docId>` (leading/trailing `/` are ignored). undefined if the shape differs. */
 export const parseRoutePath = (path: string): string | undefined => {
@@ -79,9 +85,11 @@ export const headingAnchor = (docId: string, slug: string): string => `${docId}_
 export const docPath = (docs: readonly DocRef[], id: string): string => {
     const doc = docs.find((item) => item.id === id);
     return `/${[...ancestorsOf(docs, id), doc ?? { id }]
+        .filter((item) => !item.root)
         .map((item) => {
             const file = item.sourceFile ?? item.file;
             const name =
+                item.name ??
                 item.library ??
                 (typeof item.subformat === "string" ? item.subformat : item.subformat?.ext) ??
                 (file && fileDocumentId(file) === item.id
@@ -90,6 +98,53 @@ export const docPath = (docs: readonly DocRef[], id: string): string => {
             return encodeURIComponent(name);
         })
         .join("/")}`;
+};
+
+/** Navigation targets share routing in the server, editor and standalone reader. */
+const resolveDocHref = (docs: readonly DocRef[], id: string): string => {
+    const seen = new Set<string>();
+    const parameters = new URLSearchParams();
+    let fragment = "";
+    const destination = (path: string): string =>
+        `${path}${parameters.size ? `?${parameters}` : ""}${fragment}`;
+    let target = id;
+    for (;;) {
+        if (seen.has(target))
+            throw new Error(`Circular document redirect: ${docPath(docs, target)}`);
+        seen.add(target);
+        const doc = docs.find((item) => item.id === target);
+        if (doc?.url === "redirect:first") {
+            const child = childrenOf(docs, target)[0];
+            if (!child)
+                throw new Error(`redirect:first requires a child: ${docPath(docs, target)}`);
+            target = child.id;
+            continue;
+        }
+        if (doc?.url && pageUrlKind(doc.url) === "link") {
+            if (doc.url.startsWith("/")) {
+                const url = new URL(doc.url, "https://dooc.invalid");
+                for (const [key, value] of url.searchParams)
+                    if (!parameters.has(key)) parameters.set(key, value);
+                fragment ||= url.hash;
+                const next = resolveDocPath(docs, url.pathname);
+                if (next) {
+                    target = next;
+                    continue;
+                }
+                return destination(url.pathname);
+            }
+            return doc.url;
+        }
+        return destination(docPath(docs, target));
+    }
+};
+
+export const docHref = (docs: readonly DocRef[], id: string): string => {
+    try {
+        return resolveDocHref(docs, id);
+    } catch {
+        return docPath(docs, id);
+    }
 };
 
 /** Reject ambiguous page URLs and roots used by the application's own routes. */
@@ -102,6 +157,11 @@ export const documentPathErrors = (docs: readonly DocRef[]): string[] => {
             errors.push(`Reserved page path: ${path}. Rename the page or place it under a parent.`);
         if (paths.has(path)) errors.push(`Duplicate page path: ${path}`);
         paths.add(path);
+        try {
+            resolveDocHref(docs, doc.id);
+        } catch (error) {
+            errors.push(error instanceof Error ? error.message : String(error));
+        }
     }
     return errors;
 };

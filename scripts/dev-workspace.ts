@@ -34,7 +34,8 @@ export const createDevWorkspace = (root: string): void => {
                 "contents/md/atlas-records.md",
             ),
         );
-        for (const page of atlas.center_contents) if (page.file === file) page.file = destination;
+        for (const { document } of atlas.document.children)
+            if (document.url === file) document.url = destination;
     }
     cpSync(join(repository, "scripts/fixtures/dev-workspace"), root, { recursive: true });
     addProjectFont(root, join(repository, "packages/server/src/fonts/udev-gothic-regular.woff2"));
@@ -43,37 +44,65 @@ export const createDevWorkspace = (root: string): void => {
         join(root, ".dooc/fonts/LICENSE.txt"),
     );
     const reference = parse(readFileSync(join(documentation, "dooc.yaml"), "utf8"));
-    const [introduction, ...chapters] = reference.center_contents;
-    const [overview, ...projectPages] = atlas.center_contents;
+    const [introduction, ...chapters] = reference.document.children;
+    const [overview, ...projectPages] = atlas.document.children;
     const manifest = {
         ...reference,
         version: { major: 1, minor: "git", patch: "git" },
-        left_sidebar: {
-            ...reference.left_sidebar,
-            title: { eng: "dooc playground" },
-        },
-        center_contents: [
-            {
-                file: "contents/md/start.md",
-                title: "Start here",
-                children: [
-                    { file: "contents/md/playground.md", title: "Editing playground" },
-                    {
-                        file: "contents/md/form-controls.md",
-                        title: "Form controls",
-                        children: [{ subformat: "task", title: "Tasks" }],
+        document: {
+            title: "dooc playground",
+            url: "redirect:first",
+            sidebar: { ...reference.document.sidebar, title: { eng: "dooc playground" } },
+            children: [
+                {
+                    document: {
+                        url: "contents/md/start.md",
+                        title: "Start here",
+                        children: [
+                            {
+                                document: {
+                                    url: "contents/md/playground.md",
+                                    title: "Editing playground",
+                                },
+                            },
+                            {
+                                document: {
+                                    url: "contents/md/form-controls.md",
+                                    title: "Form controls",
+                                    children: [{ document: { subformat: "task", title: "Tasks" } }],
+                                },
+                            },
+                            {
+                                document: {
+                                    url: "contents/md/integrations.md",
+                                    title: "Local integrations",
+                                },
+                            },
+                            {
+                                document: {
+                                    url: "contents/md/history.md",
+                                    title: "History playground",
+                                },
+                            },
+                        ],
                     },
-                    { file: "contents/md/integrations.md", title: "Local integrations" },
-                    { file: "contents/md/history.md", title: "History playground" },
-                ],
-            },
-            { ...overview, title: "Project delivery", children: projectPages },
-            {
-                ...introduction,
-                title: "Feature reference",
-                children: [...introduction.children, ...chapters],
-            },
-        ],
+                },
+                {
+                    document: {
+                        ...overview.document,
+                        title: "Project delivery",
+                        children: projectPages,
+                    },
+                },
+                {
+                    document: {
+                        ...introduction.document,
+                        title: "Feature reference",
+                        children: [...introduction.document.children, ...chapters],
+                    },
+                },
+            ],
+        },
         json_subformats: [
             {
                 ext: "task",

@@ -258,7 +258,7 @@ export const subformatResponse = (
             const [next] = parseSubformats([{ ...config, icon }]);
             const iconSvg = subformatIconSvg(root, next as Subformat);
             const document = parseDocument(raw);
-            const section = manifest.format === "nested" ? "json_subformats" : "subformats";
+            const section = manifest.format !== undefined ? "json_subformats" : "subformats";
             if (icon) document.setIn([section, index, "icon"], icon);
             else document.deleteIn([section, index, "icon"]);
             if (!writeTextfile(root, manifestFile(root), document.toString(), raw))
@@ -299,7 +299,7 @@ export const subformatResponse = (
                     throw new Error("Default must reference a compatible schema field");
             }
             const document = parseDocument(raw);
-            const section = manifest.format === "nested" ? "json_subformats" : "subformats";
+            const section = manifest.format !== undefined ? "json_subformats" : "subformats";
             document.setIn([section, index, "layouts", key], input.value);
             if (!writeTextfile(root, manifestFile(root), document.toString(), raw))
                 return { status: 409, body: { error: "Manifest changed externally. Try again." } };
@@ -320,17 +320,26 @@ export const subformatResponse = (
                     body: { error: "Subformat changed externally. Reload and try again." },
                 };
             const id = subformatPageId(input.ext);
+            if (manifest.tree.some((node) => node.root && node.subformat === input.ext))
+                throw new Error("Change the root document before removing its record type");
             if (flattenTree(manifest.tree).some((node) => node.parent === id))
                 throw new Error(
                     "Move or remove this subformat page's child pages before deleting it.",
                 );
             const document = parseDocument(raw);
-            const nested = manifest.format === "nested";
+            const nested = manifest.format !== undefined;
             document.deleteIn([nested ? "json_subformats" : "subformats", index]);
-            const pages = document.get(nested ? "center_contents" : "docs", true);
+            const pages =
+                manifest.format === "document"
+                    ? document.getIn(["document", "children"], true)
+                    : document.get(nested ? "center_contents" : "docs", true);
             if (isSeq(pages))
                 visit(pages, {
                     Map: (_key, node) => {
+                        if (manifest.format === "document" && node.has("document")) {
+                            const page = node.toJSON().document;
+                            if (page?.subformat === input.ext) return visit.REMOVE;
+                        }
                         if (node.get("subformat") === input.ext) return visit.REMOVE;
                     },
                 });
@@ -391,7 +400,7 @@ export const subformatResponse = (
                     ? new Document({ docs: parsed.toJS() ?? [] })
                     : parsed;
             if (document !== parsed) document.commentBefore = parsed.commentBefore;
-            const key = manifest.format === "nested" ? "json_subformats" : "subformats";
+            const key = manifest.format !== undefined ? "json_subformats" : "subformats";
             if (document.has(key)) document.addIn([key], config);
             else document.set(key, [config]);
             if (!writeTextfile(root, manifestFile(root), document.toString(), raw))

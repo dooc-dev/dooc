@@ -1,10 +1,12 @@
 import type { Completion, CompletionContext, CompletionResult } from "@codemirror/autocomplete";
+import { manifestDirectory } from "../../engine/src/core/files.js";
 import { termFileUrl } from "../../engine/src/core/term-reference.js";
 import { pageWorkspace } from "../../workspace/src/client.js";
 
 export const filePathCompletion = (
     ctx: CompletionContext,
     references: Completion[],
+    origin?: string,
 ): Promise<CompletionResult | null> | undefined => {
     const match = ctx.matchBefore(/!?\[[^\]\n]*\]\([^()\n]*/);
     if (!match) return undefined;
@@ -18,14 +20,17 @@ export const filePathCompletion = (
         return Promise.resolve(null);
     }
     return (async () => {
+        const directory = manifestDirectory(origin);
         const options = new Map(references.map((option) => [option.label, option]));
         try {
             // A superseded lookup is dropped below (ctx.aborted); the request itself is cheap.
             const paths = await pageWorkspace().request<string[]>("files", {
                 action: "complete",
-                prefix,
+                prefix: directory + prefix,
             });
-            for (const path of paths) {
+            for (const fullPath of paths) {
+                if (!fullPath.startsWith(directory)) continue;
+                const path = fullPath.slice(directory.length);
                 const label = termFileUrl(path);
                 if (!options.has(label))
                     options.set(label, {

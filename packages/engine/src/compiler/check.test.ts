@@ -149,11 +149,13 @@ describe("consistency report", () => {
             "dooc.yaml",
             JSON.stringify({
                 system: { default_lang: "eng" },
-                center_contents: [
-                    { file: "content/guide.md" },
-                    { subformat: "task" },
-                    { library: "csv" },
-                ],
+                document: {
+                    children: [
+                        { document: { url: "content/guide.md" } },
+                        { document: { subformat: "task" } },
+                        { document: { library: "csv" } },
+                    ],
+                },
                 json_subformats: [{ ext: "task", format: "json", schema: "files/task.json" }],
             }),
         );

@@ -2,34 +2,47 @@ system:
   default_lang: eng
   files:
     default_layout: false
-left_sidebar:
-  title:
-    eng: Atlas · Project delivery
-center_contents:
-  - file: contents/md/index.md
-    title: Delivery overview
-  - file: contents/md/roadmap.md
-    title: Roadmap & milestones
-    children:
-      - subformat: project
-        title: Projects
-      - subformat: milestone
-        title: Milestones
-  - file: contents/md/workflow.md
-    title: Work & acceptance
-    children:
-      - subformat: issue
-        title: Issues
-  - file: contents/md/decisions.md
-    title: Decisions & reviews
-    children:
-      - subformat: note
-        title: Notes
-  - file: contents/md/records.md
-    title: Record model
-    children:
-      - subformat: team
-        title: Teams
+document:
+  title: Atlas · Project delivery
+  url: ""
+  sidebar:
+    title:
+      eng: Atlas · Project delivery
+  children:
+    - document:
+        title: Delivery overview
+        url: contents/md/index.md
+    - document:
+        title: Roadmap & milestones
+        url: contents/md/roadmap.md
+        children:
+          - document:
+              subformat: project
+              title: Projects
+          - document:
+              subformat: milestone
+              title: Milestones
+    - document:
+        title: Work & acceptance
+        url: contents/md/workflow.md
+        children:
+          - document:
+              subformat: issue
+              title: Issues
+    - document:
+        title: Decisions & reviews
+        url: contents/md/decisions.md
+        children:
+          - document:
+              subformat: note
+              title: Notes
+    - document:
+        title: Record model
+        url: contents/md/records.md
+        children:
+          - document:
+              subformat: team
+              title: Teams
 json_subformats:
   - ext: team
     format: toml

@@ -51,6 +51,14 @@ class FilePreviewWidget extends WidgetType {
 }
 
 export const setFilePreviews = StateEffect.define<Record<string, FilePreview>>();
+export const setFileOrigin = StateEffect.define<string | undefined>();
+export const fileOriginState = StateField.define<string | undefined>({
+    create: () => undefined,
+    update: (value, transaction) => {
+        const change = transaction.effects.find((effect) => effect.is(setFileOrigin));
+        return change ? change.value : value;
+    },
+});
 export const setPreviewSettings = StateEffect.define<PreviewSettings | undefined>();
 export const previewSettingsState = StateField.define<PreviewSettings | undefined>({
     create: () => undefined,
@@ -62,7 +70,11 @@ export const previewSettingsState = StateField.define<PreviewSettings | undefine
 
 const decorations = (state: EditorState, previews: Record<string, FilePreview>): DecorationSet =>
     Decoration.set(
-        fileReferences(state.doc.toString(), state.field(previewSettingsState, false))
+        fileReferences(
+            state.doc.toString(),
+            state.field(previewSettingsState, false),
+            state.field(fileOriginState, false),
+        )
             .filter(
                 ({ kind, file }) =>
                     isRemoteTextfile(file) || (kind !== "textfile" && kind !== "term"),
@@ -89,7 +101,9 @@ export const filePreviewState = StateField.define<{
         if (
             !transaction.docChanged &&
             !change &&
-            !transaction.effects.some((effect) => effect.is(setPreviewSettings))
+            !transaction.effects.some(
+                (effect) => effect.is(setPreviewSettings) || effect.is(setFileOrigin),
+            )
         )
             return value;
         const previews = change?.value ?? value.previews;
