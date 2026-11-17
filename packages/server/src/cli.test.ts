@@ -414,7 +414,7 @@ describe("source-based CLI", () => {
         [["export"], "dooc export was removed. Use dooc zip"],
         [["build", "html"], "dooc build no longer takes a format"],
         [["build", "zip"], "dooc build zip was replaced by dooc zip"],
-        [["build", "github"], "dooc build github was replaced by dooc zip --target github"],
+        [["build", "github"], "GitHub output was removed"],
     ])("points the removed command %j to its replacement", async (args, message) => {
         const result = cli(...args);
         await expect(result.run()).rejects.toThrow("CLI exit");
@@ -523,8 +523,9 @@ describe("source-based CLI", () => {
             ["zip", manifest, "--download", "easy"],
             ["zip", manifest, "--reader-plugins", "./plugins.mjs"],
             ["zip", manifest, "--url_preview", "reference"],
-            ["zip", manifest, "--target", "github", "--url_preview", "network"],
-            ["zip", manifest, "--target", "github", "--resources", "reference"],
+            ["zip", manifest, "--target", "github"],
+            ["build", manifest, "--target", "github"],
+            ["build", manifest, "--resources", "reference"],
         ]) {
             const result = cli(...args);
             await expect(result.run()).rejects.toThrow("CLI exit");
@@ -548,12 +549,6 @@ describe("source-based CLI", () => {
             { format: "html", mode: "static", urlPreview: "embed" },
         ],
         ["zip", ["--url_preview=embed"], "bundle.zip", { format: "zip", urlPreview: "embed" }],
-        [
-            "zip",
-            ["--target", "github"],
-            "dist/bundle.github.zip",
-            { format: "zip", target: "github", urlPreview: "embed" },
-        ],
     ] as const)("writes only its own artifact for %s %j", async (command, options, file, expected) => {
         const root = mkdtempSync(join(tmpdir(), "dooc-cli-build-"));
         roots.push(root);
@@ -590,42 +585,6 @@ describe("source-based CLI", () => {
             root,
             expect.objectContaining({ sourceUrl: "https://example.com/source/" }),
         );
-    });
-
-    it("builds GitHub HTML with source references and checks the output through the CLI", async () => {
-        const root = mkdtempSync(join(tmpdir(), "dooc-cli-github-"));
-        roots.push(root);
-        writeFileSync(
-            join(root, "dooc.yaml"),
-            "defaultLang: eng\nlanguages: [eng]\ndocs: [guide]\n",
-        );
-        mkdirSync(join(root, "content"));
-        writeFileSync(join(root, "content/guide.md"), "# Intro\n\n![](example.ts)\n");
-        writeFileSync(join(root, "example.ts"), "const example = 42;\n");
-        await cli(
-            "build",
-            join(root, "dooc.yaml"),
-            "--target",
-            "github",
-            "--resources",
-            "reference",
-        ).run();
-        expect(readFileSync(join(root, "build/bundle.github.html"), "utf8")).toContain(
-            'href="../example.ts"',
-        );
-        const check = cli(
-            "check",
-            join(root, "dooc.yaml"),
-            "--only",
-            "github",
-            "--github-output",
-            "build/bundle.github.html",
-        );
-        await check.run();
-        expect(JSON.parse(check.stdout.mock.calls.at(-1)?.[0] as string)).toMatchObject({
-            checks: ["github"],
-            exitCode: 0,
-        });
     });
 
     it.each([

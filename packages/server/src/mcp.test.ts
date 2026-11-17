@@ -105,10 +105,11 @@ describe("mcp", () => {
             ["build", { format: "html", download: true }],
             ["build", { format: "html", download: "invalid" }],
             ["build", { format: "zip", download: "easy" }],
-            ["build", { format: "html", target: "github", download: "block" }],
+            ["build", { format: "html", target: "github" }],
             ["build", { format: "zip", url_preview: "network" }],
             ["build", { format: "github", url_preview: "network" }],
-            ["build", { format: "zip", target: "github", resources: "reference" }],
+            ["build", { format: "zip", resources: "reference" }],
+            ["check", { github_output: "dist/bundle.github.zip" }],
             ["check", { only: ["invalid"] }],
             ["update_files", { action: "move", revision: "x", paths: [42] }],
         ] as const)
@@ -296,10 +297,6 @@ describe("mcp", () => {
     it.each([
         { format: "zip", url_preview: "embed" },
         { format: "zip" },
-        { format: "github" },
-        { format: "github", url_preview: "embed" },
-        { format: "html", target: "github", resources: "reference", url_preview: "network" },
-        { format: "zip", target: "github" },
         { format: "html", url_preview: "network" },
         { format: "html", url_preview: "embed" },
         { format: "html", url_preview: "embed", download: "easy" },
@@ -312,14 +309,10 @@ describe("mcp", () => {
         vi.mocked(fetchPublicFile).mockResolvedValue(Buffer.from("Captured text"));
         const tools = createTools(root);
         const result = await call(tools, "build", args);
-        const github = args.format === "github" || ("target" in args && args.target === "github");
         expect(result).toMatchObject({
             isError: false,
             docs: 1,
-            file:
-                args.format === "html"
-                    ? `build/${github ? "bundle.github.html" : "index.html"}`
-                    : `dist/bundle.${github ? "github." : ""}zip`,
+            file: args.format === "html" ? "build/index.html" : "dist/bundle.zip",
             url_preview: args.url_preview ?? "embed",
         });
         const data = readFileSync(result.path);
@@ -336,12 +329,6 @@ describe("mcp", () => {
             existsSync(join(root, args.format === "html" ? "dist/bundle.zip" : "build/index.html")),
         ).toBe(false);
         expect(readFileSync(join(root, "content/guide.md"), "utf8")).toBe(source);
-        if (github) {
-            expect(
-                await call(tools, "check", { only: ["github"], github_output: result.file }),
-            ).toMatchObject({ exitCode: 0 });
-            for (const file of result.files ?? []) expect(existsSync(join(root, file))).toBe(true);
-        }
         writeFileSync(join(root, "dooc.yaml"), "docs: [missing]\n");
         expect((await call(tools, "build", args)).isError).toBe(true);
         expect(readFileSync(result.path)).toEqual(data);

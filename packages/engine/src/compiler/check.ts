@@ -16,7 +16,6 @@ import { parseContentSource } from "./code-blocks.js";
 import { compileSite } from "./compile.js";
 import { collectRefs, parseDoc } from "./dialect.js";
 import { rebaseFileLinks } from "./files.js";
-import { checkGithubOutput } from "./github-output.js";
 import { createHash, existsSync, readdirSync, readFileSync, resolve, statSync } from "./host.js";
 import { contentLanguageCode, isContentLanguage } from "./language-codes.js";
 import { siteContentLanguages, translationFile } from "./locales.js";
@@ -91,7 +90,7 @@ export const checkSite = (root: string, options: CheckOptions = {}): CheckReport
     };
     try {
         for (const key of Object.keys(options))
-            if (!["only", "allowSharedSvg", "warningsAsErrors", "githubOutput"].includes(key))
+            if (!["only", "allowSharedSvg", "warningsAsErrors"].includes(key))
                 throw new Error(`Unknown check option: ${key}`);
         if (
             options.only !== undefined &&
@@ -100,17 +99,8 @@ export const checkSite = (root: string, options: CheckOptions = {}): CheckReport
                 options.only.some((check) => !CHECK_KINDS.includes(check)))
         )
             throw new Error(`only must be a non-empty list of: ${CHECK_KINDS.join(", ")}`);
-        if (
-            options.githubOutput !== undefined &&
-            (typeof options.githubOutput !== "string" || !options.githubOutput.trim())
-        )
-            throw new Error("githubOutput must be an artifact path");
-        if (options.only?.includes("github") && !options.githubOutput)
-            throw new Error("The github check requires githubOutput");
-        report.checks = CHECK_KINDS.filter((check) =>
-            check === "github"
-                ? !!options.githubOutput
-                : !options.only || options.only.includes(check),
+        report.checks = CHECK_KINDS.filter(
+            (check) => !options.only || options.only.includes(check),
         );
         for (const key of ["allowSharedSvg", "warningsAsErrors"] as const)
             if (options[key] !== undefined && typeof options[key] !== "boolean")
@@ -120,8 +110,6 @@ export const checkSite = (root: string, options: CheckOptions = {}): CheckReport
         report.exitCode = 2;
         return finish(report, options);
     }
-    if (has("github") && options.githubOutput)
-        report.diagnostics.push(...checkGithubOutput(root, options.githubOutput));
     const cache = new Map<string, Buffer | null>();
     const read = (
         file: string,

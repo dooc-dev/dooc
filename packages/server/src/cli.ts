@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // CLI entry shared by npx and mise. The manifest defaults to ./dooc.yaml; project paths use its parent directory.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { setDownloadProgressListener } from "../../engine/src/compiler/download-progress.js";
 import { projectRoot } from "../../engine/src/compiler/manifest.js";
@@ -38,10 +38,7 @@ commands:
      --auth external                  host supplies live HTML authentication and transport
      --source-url <url>               source directory URL for card copy links
      --download easy|normal|block     HTML download behavior (default: normal)
-     --target github                  GitHub-compatible HTML body with companion assets
-     --resources copy|reference       copy assets or link existing files (GitHub HTML only)
   zip [dooc.yaml] [out-dir]            archive the workspace: <project>/dist/bundle.zip
-     --target github                  Markdown and SVG/assets for GitHub
   build and zip:
      --url_preview network|embed      keep URL references (default) or capture their content
      --reader-plugins <module>         inject an external build plugin module
@@ -304,7 +301,6 @@ Fonts:
                     only: { type: "string", multiple: true },
                     "allow-shared-svg": { type: "boolean" },
                     "warnings-as-errors": { type: "boolean" },
-                    "github-output": { type: "string" },
                     help: { type: "boolean", short: "h" },
                 },
             });
@@ -312,11 +308,10 @@ Fonts:
                 console.log(`usage: dooc check [dooc.yaml] [options]
 
 options:
-  --only render,languages,themes,github  select checks (github requires --github-output)
+  --only render,languages,themes  select checks
                                  manifest validity is always checked
   --allow-shared-svg              allow identical SVG bytes across themes (missing variants still fail)
   --warnings-as-errors            fail on warnings as well as errors
-  --github-output <zip|html>       also verify a GitHub build against its sources (path relative to manifest)
   --help, -h                      show this help
 
 dooc.yaml example:
@@ -330,7 +325,6 @@ Checks:
   render     uses the reader compiler
   languages  checks availability and prose; translations: locales/<ISO 639-3>/<source path>
   themes     checks variants: themes/<theme>/<asset path>
-  github     checks the build manifest, generated files and source fingerprints offline
   Site declarations determine the expected languages and themes, never CLI overrides.
 
 Report:
@@ -356,7 +350,6 @@ Report:
                     : {}),
                 allowSharedSvg: values["allow-shared-svg"],
                 warningsAsErrors: values["warnings-as-errors"],
-                githubOutput: values["github-output"],
             });
         } catch (error) {
             report = {
@@ -394,9 +387,6 @@ Report:
                 allowPositionals: true,
                 options: {
                     url_preview: { type: "string" },
-                    target: { type: "string" },
-                    resources: { type: "string" },
-                    "reference-base": { type: "string" },
                     mode: { type: "string" },
                     auth: { type: "string" },
                     "reader-plugins": { type: "string" },
@@ -423,10 +413,6 @@ options:
                                easy: add resource download buttons; normal: browser defaults
                                block: suppress in-page downloads (not browser policy)
                                default: normal
-  --target github              GitHub-compatible HTML body: bundle.github.html and bundle.github/
-  --resources copy|reference   GitHub HTML: copy files (default) or reference existing sources
-  --reference-base <path>      path from the HTML output directory to the manifest directory
-                               reference mode only; default: relative path from out-dir
   --url_preview network|embed  URL handling (default: network; static HTML: embed)
     network                    preserve URL references without downloading them at build time
     embed                      snapshot URL content and assets into the HTML
@@ -447,7 +433,6 @@ HTML modes:
 
 URL handling:
   network: fetch URLs when the page is opened (text requires CORS). embed: no network when opened.
-  GitHub: export static pages and SVG images; network previews become links, without reader JS.
   Only embedded references such as ![](url) are downloaded; ordinary hyperlinks remain links.
   Snapshots use public HTTPS without credentials or redirects. Static HTML captures the server's
   HTML and declarative assets; it does not execute the source site's JavaScript or perform login.
@@ -459,12 +444,11 @@ Archive the workspace: <project>/dist/bundle.zip.
 A named manifest (<name>.dooc.yaml) writes <project>/dist/<name>/bundle.zip.
 
 options:
-  --url_preview network|embed  URL handling (default: network; GitHub: embed)
+  --url_preview network|embed  URL handling (default: network)
     network                    collect dooc.yaml and its source files as authored
                                configuration and plugins are not executed; nothing is downloaded
     embed                      also capture embedded URL content and rewrite its references
-  --target github              Markdown pages and SVG/assets for GitHub: bundle.github.zip
-  --reader-plugins <module>    inject trusted build plugins (embed and GitHub)
+  --reader-plugins <module>    inject trusted build plugins (embed only)
   --help, -h                   show this help
 
 Output:
@@ -485,30 +469,26 @@ URL handling:
                 throw new Error(
                     rootArg === "html"
                         ? "dooc build no longer takes a format: use dooc build [dooc.yaml] [out-dir]"
-                        : `dooc build ${rootArg} was replaced by dooc zip${rootArg === "github" ? " --target github" : ""}`,
+                        : rootArg === "zip"
+                          ? "dooc build zip was replaced by dooc zip"
+                          : "GitHub output was removed: use dooc build or dooc zip",
                 );
             if (positionals.length > 2)
                 throw new Error(`${command} accepts a dooc.yaml path and an output directory`);
-            if (values.target !== undefined && values.target !== "github")
-                throw new Error("--target must be github");
-            const github = values.target === "github";
             // Remote content is left alone unless the artifact cannot work without a snapshot.
             const urlPreview =
-                values.url_preview ??
-                (values.mode === "static" || (format === "zip" && github) ? "embed" : "network");
+                values.url_preview ?? (values.mode === "static" ? "embed" : "network");
             if (urlPreview !== "embed" && urlPreview !== "network")
                 throw new Error("--url_preview must be network | embed");
             const root = projectRoot(rootArg);
-            const out = outputFile(root, format, github, outArg && resolve(outArg));
-            if (format === "zip" && !github && urlPreview === "network") {
+            const out = outputFile(root, format, outArg && resolve(outArg));
+            if (format === "zip" && urlPreview === "network") {
                 if (
                     Object.entries(values).some(
                         ([name, value]) => name !== "url_preview" && value !== undefined,
                     )
                 )
-                    throw new Error(
-                        "These options need dooc zip --url_preview embed or --target github",
-                    );
+                    throw new Error("These options need dooc zip --url_preview embed");
                 const { exportBundle } = await import("../../engine/src/compiler/export.js");
                 const { prepareDocumentSources } = await import("./remote-manifests.js");
                 await prepareDocumentSources(root);
@@ -519,13 +499,6 @@ URL handling:
             const { buildBundle } = await import("./build.js");
             const bundle = await buildBundle(root, {
                 format,
-                target: values.target as "github" | undefined,
-                resources: values.resources as "copy" | "reference" | undefined,
-                referenceBase:
-                    values["reference-base"] ??
-                    (values.resources === "reference"
-                        ? relative(dirname(out), root).replaceAll("\\", "/") || "."
-                        : undefined),
                 urlPreview,
                 mode: values.mode as "static" | "live" | undefined,
                 auth: values.auth as "external" | undefined,
