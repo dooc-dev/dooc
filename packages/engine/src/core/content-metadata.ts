@@ -194,9 +194,14 @@ export const parseManifest = (value: unknown): ParsedManifest => {
             if (
                 !localFile(folder) ||
                 isManifestFile(folder.split("/")[0] ?? "") ||
-                ["node_modules", "dist", "locales", MANIFEST_FILE, "docs.config.mjs"].includes(
-                    folder.split("/")[0] ?? "",
-                )
+                [
+                    "node_modules",
+                    "build",
+                    "dist",
+                    "locales",
+                    MANIFEST_FILE,
+                    "docs.config.mjs",
+                ].includes(folder.split("/")[0] ?? "")
             )
                 errors.push(
                     `${MANIFEST_FILE}: default_subformat_folder must be a local project folder`,

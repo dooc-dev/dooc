@@ -316,7 +316,10 @@ describe("mcp", () => {
         expect(result).toMatchObject({
             isError: false,
             docs: 1,
-            file: `dist/bundle.${github ? "github." : ""}${args.format === "github" ? "zip" : args.format}`,
+            file:
+                args.format === "html"
+                    ? `build/${github ? "bundle.github.html" : "index.html"}`
+                    : `dist/bundle.${github ? "github." : ""}zip`,
             url_preview: args.url_preview ?? "embed",
         });
         const data = readFileSync(result.path);
@@ -330,7 +333,7 @@ describe("mcp", () => {
         }
         expect(fetchPublicFile).toHaveBeenCalledTimes(args.url_preview === "network" ? 0 : 1);
         expect(
-            existsSync(join(root, `dist/bundle.${args.format === "zip" ? "html" : "zip"}`)),
+            existsSync(join(root, args.format === "html" ? "dist/bundle.zip" : "build/index.html")),
         ).toBe(false);
         expect(readFileSync(join(root, "content/guide.md"), "utf8")).toBe(source);
         if (github) {

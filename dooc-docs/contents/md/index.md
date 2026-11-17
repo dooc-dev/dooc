@@ -22,7 +22,7 @@ dooc turns a folder of Markdown, diagrams, media and structured records into one
 | Author | Pages, records and source assets | `dooc editor run node --client --server` |
 | Review | Your understanding of the current source | `dooc reader run node --client --server` |
 | Check | A report about local consistency | `dooc check` |
-| Share | An HTML document or source bundle | `dooc build html`, `dooc build zip` |
+| Share | An HTML document or source bundle | `dooc build`, `dooc zip` |
 
 Start with one Markdown page. Add diagrams or records when they make the subject easier to understand. [First document](contents/md/quickstart.md) walks through a complete create, edit, check and share cycle.
 

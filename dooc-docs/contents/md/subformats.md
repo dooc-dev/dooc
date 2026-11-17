@@ -150,6 +150,6 @@ summary: Describe the intended behavior.
 
 The copy icon on a card resolves in this order:
 
-1. The URL given to `dooc build html --source-url <url>`.
+1. The URL given to `dooc build --source-url <url>`.
 2. The GitHub `origin` remote and current commit, read from local Git metadata.
 3. A local reference such as `repo/folder/file.feature`.

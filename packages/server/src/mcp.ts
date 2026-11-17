@@ -1,4 +1,5 @@
 // Node adapters for the shared MCP tool catalog and JSON-RPC dispatcher.
+import { dirname, relative } from "node:path";
 import { createInterface } from "node:readline";
 import type { CompileOptions } from "../../engine/src/compiler/compile.js";
 import { addProjectFont } from "../../engine/src/compiler/fonts.js";
@@ -9,7 +10,7 @@ import { parsePerson } from "../../workspace/src/history.js";
 import { type Args, handleRpc } from "../../workspace/src/mcp.js";
 import { createMcpTools } from "../../workspace/src/mcp-tools.js";
 import { buildBundle } from "./build.js";
-import { writeBuildOutput } from "./build-output.js";
+import { outputFile, writeBuildOutput } from "./build-output.js";
 import { createGitHandler, validateGitOrigin } from "./git.js";
 import { folderHistory, gitHistory, workspaceHistory } from "./history.js";
 import { prepareDocumentSources } from "./remote-manifests.js";
@@ -28,8 +29,12 @@ export const createTools = (root: string, options: McpOptions = {}) => {
         ...createMcpOperations(root, options),
         build: async (a) => {
             const github = a.format === "github" || a.target === "github";
-            const file = `dist/bundle.${github ? "github." : ""}${a.format === "github" ? "zip" : a.format}`;
-            textfilePath(root, file);
+            if (a.format !== "html" && a.format !== "zip" && a.format !== "github")
+                throw new Error("build format must be html | zip | github");
+            const file = relative(
+                root,
+                outputFile(root, a.format === "html" ? "html" : "zip", github),
+            ).replaceAll("\\", "/");
             const bundle = await buildBundle(root, {
                 format: a.format as "html" | "zip" | "github",
                 target: a.target as "github" | undefined,
@@ -55,7 +60,9 @@ export const createTools = (root: string, options: McpOptions = {}) => {
                 ...(bundle.version ? { version: bundle.version } : {}),
                 ...(bundle.revision ? { revision: bundle.revision } : {}),
                 ...(bundle.warnings?.length ? { warnings: bundle.warnings } : {}),
-                ...(bundle.files ? { files: bundle.files.map(({ name }) => `dist/${name}`) } : {}),
+                ...(bundle.files
+                    ? { files: bundle.files.map(({ name }) => `${dirname(file)}/${name}`) }
+                    : {}),
                 url_preview: a.url_preview ?? (a.mode === "live" ? "network" : "embed"),
             };
         },

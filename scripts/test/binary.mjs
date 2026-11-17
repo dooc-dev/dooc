@@ -49,9 +49,9 @@ try {
         join(root, "content/guide.md"),
         "# Hello\n\n```js\nconst x = 1;\n```\n\n```graphth\n[a]: 書く\n[b]: 共有する\n[a] -> [b]\n```\n\n```mermaid\nflowchart LR\n A --> B\n```\n",
     );
-    run("build", "html", "--url_preview=embed");
+    run("build", "--url_preview=embed");
     assert.ok(!existsSync(join(root, "dist/bundle.zip")));
-    const html = readFileSync(join(root, "dist/bundle.html"), "utf8");
+    const html = readFileSync(join(root, "build/index.html"), "utf8");
     run("reader", "build", "web", "--client", "--server", "--out", "reader-web");
     assert.ok(existsSync(join(root, "reader-web/assets/workspace-worker.js")));
     assert.ok(!existsSync(join(root, "reader-web/assets/edit.js")));
@@ -88,8 +88,8 @@ try {
     assert.match(html, /data:font\/woff2;base64,/);
     assert.match(html, /Hello/);
     assert.match(html, /data-mermaid="pending"/);
-    run("build", "zip");
-    assert.equal(readFileSync(join(root, "dist/bundle.html"), "utf8"), html);
+    run("zip");
+    assert.equal(readFileSync(join(root, "build/index.html"), "utf8"), html);
     assert.ok(readFileSync(join(root, "dist/bundle.zip")).subarray(0, 2).equals(Buffer.from("PK")));
     const rpc = execFileSync(
         binary,

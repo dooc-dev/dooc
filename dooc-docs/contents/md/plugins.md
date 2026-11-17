@@ -69,9 +69,9 @@ Try it with the sign-in demo: choose **Sign in** on **Sample plugin (sign-in dem
 
 | Build                                         | Cards                                                        |
 | --------------------------------------------- | ------------------------------------------------------------ |
-| `dooc build html` (`--mode static`)           | Fetched once with your build-time sign-in and embedded       |
-| `dooc build html --mode live --auth external` | Fetched when opened; the hosting page supplies the transport |
-| `dooc export`                                 | Not fetched; the URLs stay in the source                     |
+| `dooc build --mode static`                    | Fetched once with your build-time sign-in and embedded       |
+| `dooc build --mode live --auth external`      | Fetched when opened; the hosting page supplies the transport |
+| `dooc zip`                                    | Not fetched; the URLs stay in the source                     |
 
 ## A URL without a plugin
 

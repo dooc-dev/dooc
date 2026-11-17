@@ -46,7 +46,7 @@ From a file:
 
 [draft] -> [check]: dooc check
 [check] -> [build]
-[build] --> [reader]: bundle.html
+[build] --> [reader]: index.html
 [draft] -- [reader]
 ```
 

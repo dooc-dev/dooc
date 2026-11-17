@@ -70,5 +70,5 @@ Look up syntax and configuration here, then follow the linked guide for behavior
 | Edit and view     | `dooc editor run node --client --server`, `dooc reader run node --client --server`                             | [Commands](contents/md/cli.md)       |
 | Edit together     | `dooc editor run node --client --server --shared <branch>`                        | [Editor](contents/md/editor.md)      |
 | Validate          | `dooc check`                                         | [Commands](contents/md/cli.md)       |
-| Share             | `dooc build html`, `dooc build zip`, `dooc export`   | [Commands](contents/md/cli.md)       |
+| Share             | `dooc build`, `dooc zip`                             | [Commands](contents/md/cli.md)       |
 | Agents            | `dooc editor/reader run node --mcp`                   | [Commands](contents/md/cli.md)       |

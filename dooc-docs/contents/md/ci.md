@@ -8,14 +8,14 @@ Run these commands from the folder containing `dooc.yaml`:
 
 ```sh
 dooc check dooc.yaml
-dooc build html dooc.yaml dist --url_preview network
-dooc build zip dooc.yaml dist
+dooc build dooc.yaml
+dooc zip dooc.yaml
 ```
 
 | Stage | Input | Output | Failure means |
 | --- | --- | --- | --- |
 | Check | Pages, manifests, schemas and local assets | A JSON diagnostic report | Source content needs correction |
-| HTML build | Checked source and selected URL mode | `dist/bundle.html` | The document could not be compiled or packaged |
+| HTML build | Checked source and selected URL mode | `build/index.html` | The document could not be compiled or packaged |
 | ZIP build | Source workspace | `dist/bundle.zip` | Editable source could not be collected |
 | Review | The built artifacts | A release decision | A reviewer has not accepted the output |
 

@@ -9,7 +9,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { terminal } from "./terminal.js";
 
@@ -353,15 +353,17 @@ describe("source-based CLI", () => {
         expect(help).not.toMatch(/(?:^|\n)\s+mcp\b/);
         expect(help).not.toMatch(/(?:^|\n)\s+(?:preview|code-language|doc ls|figure ls)\b/);
         expect(help).not.toMatch(/[│├└─]/);
-        expect(help).toMatch(/\n {2}build[^\n]*\n {5}html \[dooc.yaml\] \[out-dir\]/);
-        expect(help).toContain("\n     zip [dooc.yaml] [out-dir]");
+        expect(help).toContain("\n  build [dooc.yaml] [out-dir]");
+        expect(help).toContain("\n  zip [dooc.yaml] [out-dir]");
+        expect(help).toContain("<project>/build/index.html");
+        expect(help).toContain("<project>/dist/bundle.zip");
         expect(help).toMatch(/\n {2}plugin[^\n]*\n {5}pack <built-dir> \[zip\]/);
         expect(help).toMatch(/\n {2}font[^\n]*\n {5}add <file> \[dooc.yaml\]/);
         expect(help).toContain("\n     --reader-plugins <module>");
-        expect(help).toContain("\n        --source-url <url>");
-        expect(help).toContain("--url_preview embed|network");
+        expect(help).toContain("\n     --source-url <url>");
+        expect(help).toContain("--url_preview network|embed");
         expect(help).toContain("--mode static|live");
-        expect(help).toContain("export [dooc.yaml] [out-dir]");
+        expect(help).not.toMatch(/\n {2}export\b/);
         expect(help).not.toMatch(/export json|json-schema/);
         expect(result.stderr).not.toHaveBeenCalled();
         expect(result.exit).not.toHaveBeenCalled();
@@ -392,17 +394,33 @@ describe("source-based CLI", () => {
         expect(result.stderr).toHaveBeenCalledWith(expect.stringContaining("unknown command"));
     });
 
-    it.each(["--help", "-h"])("shows export %s without a workspace or output", async (flag) => {
-        const root = mkdtempSync(join(tmpdir(), "dooc-cli-export-help-"));
+    it.each([
+        ["build", "usage: dooc build [dooc.yaml] [out-dir] [options]"],
+        ["zip", "usage: dooc zip [dooc.yaml] [out-dir] [options]"],
+    ])("shows %s --help without a workspace or output", async (command, usage) => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-build-help-"));
         roots.push(root);
-        const result = cli("export", flag);
-        await result.run();
-        expect(result.stdout).toHaveBeenCalledWith(
-            expect.stringContaining("usage: dooc export [dooc.yaml] [out-dir]"),
-        );
-        expect(result.stderr).not.toHaveBeenCalled();
-        expect(result.exit).not.toHaveBeenCalled();
+        for (const flag of ["--help", "-h"]) {
+            const result = cli(command, flag);
+            await result.run();
+            expect(result.stdout).toHaveBeenCalledWith(expect.stringContaining(usage));
+            expect(result.stderr).not.toHaveBeenCalled();
+            expect(result.exit).not.toHaveBeenCalled();
+        }
         expect(readdirSync(root)).toEqual([]);
+    });
+
+    it.each([
+        [["export"], "dooc export was removed. Use dooc zip"],
+        [["build", "html"], "dooc build no longer takes a format"],
+        [["build", "zip"], "dooc build zip was replaced by dooc zip"],
+        [["build", "github"], "dooc build github was replaced by dooc zip --target github"],
+    ])("points the removed command %j to its replacement", async (args, message) => {
+        const result = cli(...args);
+        await expect(result.run()).rejects.toThrow("CLI exit");
+        expect(result.exit).toHaveBeenCalledWith(1);
+        expect(result.stdout).not.toHaveBeenCalled();
+        expect(result.stderr).toHaveBeenCalledWith(expect.stringContaining(message));
     });
 
     it("shows a valid current manifest in check help", async () => {
@@ -425,8 +443,8 @@ describe("source-based CLI", () => {
     it.each([
         false,
         true,
-    ])("exports sources without executing configuration or plugins (custom output=%s)", async (custom) => {
-        const root = mkdtempSync(join(tmpdir(), "dooc-cli-export-"));
+    ])("zips sources without executing configuration or plugins (custom output=%s)", async (custom) => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-zip-"));
         roots.push(root);
         mkdirSync(join(root, "docs"));
         writeFileSync(
@@ -436,30 +454,47 @@ describe("source-based CLI", () => {
         writeFileSync(join(root, "docs/guide.md"), "![](https://private.example/item)\n");
         writeFileSync(join(root, "docs.config.mjs"), 'throw new Error("Do not execute");');
         const out = join(root, custom ? "custom" : "dist");
-        const result = cli("export", join(root, "dooc.yaml"), ...(custom ? [out] : []));
+        const result = cli("zip", join(root, "dooc.yaml"), ...(custom ? [out] : []));
         await result.run();
         expect(result.exit).not.toHaveBeenCalled();
         expect(readFileSync(join(out, "bundle.zip")).subarray(0, 2).toString()).toBe("PK");
         expect(result.stdout).toHaveBeenCalledWith(join(out, "bundle.zip"));
     });
 
+    it("gives a named manifest its own output folders", async () => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-named-"));
+        roots.push(root);
+        writeFileSync(join(root, "guide.dooc.yaml"), "docs: []\n");
+        const buildBundle = vi.fn().mockResolvedValue({ data: "Built artifact", docs: 0 });
+        vi.doMock("./build.js", () => ({ buildBundle }));
+        await cli("build", join(root, "guide.dooc.yaml")).run();
+        await cli("zip", join(root, "guide.dooc.yaml")).run();
+        expect(readFileSync(join(root, "build/guide/index.html"), "utf8")).toBe("Built artifact");
+        expect(readFileSync(join(root, "dist/guide/bundle.zip")).subarray(0, 2).toString()).toBe(
+            "PK",
+        );
+        // An explicit output directory is used as it is.
+        await cli("build", join(root, "guide.dooc.yaml"), join(root, "site")).run();
+        expect(readFileSync(join(root, "site/index.html"), "utf8")).toBe("Built artifact");
+    });
+
     it.each([
         "extra",
         "--unknown",
-    ])("rejects invalid export argument %s before replacing output", async (argument) => {
-        const root = mkdtempSync(join(tmpdir(), "dooc-cli-export-invalid-"));
+    ])("rejects invalid zip argument %s before replacing output", async (argument) => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-zip-invalid-"));
         roots.push(root);
         writeFileSync(join(root, "dooc.yaml"), "document: {}\n");
         const out = join(root, "dist");
         mkdirSync(out);
         writeFileSync(join(out, "bundle.zip"), "Previous bundle");
-        const result = cli("export", join(root, "dooc.yaml"), out, argument);
+        const result = cli("zip", join(root, "dooc.yaml"), out, argument);
         await expect(result.run()).rejects.toThrow("CLI exit");
         expect(result.exit).toHaveBeenCalledWith(1);
         expect(result.stderr).toHaveBeenCalledWith(
             expect.stringContaining(
                 argument === "extra"
-                    ? "export accepts a dooc.yaml path and an output directory"
+                    ? "zip accepts a dooc.yaml path and an output directory"
                     : "Unknown option",
             ),
         );
@@ -467,72 +502,75 @@ describe("source-based CLI", () => {
         expect(readFileSync(join(out, "bundle.zip"), "utf8")).toBe("Previous bundle");
     });
 
-    it("rejects unsupported URL preview options without writing output", async () => {
+    it("rejects unsupported build and zip options without writing output", async () => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-options-"));
+        roots.push(root);
+        const manifest = join(root, "dooc.yaml");
+        writeFileSync(manifest, "docs: []\n");
         for (const args of [
-            [],
-            ["pdf"],
-            ["html", "--lang", "eng"],
-            ["html", "--html", "static"],
-            ["zip", "--zip", "embed"],
-            ["html", "--mode", "embed"],
-            ["zip", "--mode", "static"],
-            ["zip", "--download", "easy"],
-            ["html", "--download", "invalid"],
-            ["html", "--download"],
-            ["html", "--easy-download"],
-            ["html", "--url_preview", "static"],
-            ["html", "--url_preview", "invalid"],
-            ["zip", "--url_preview", "reference"],
-            ["zip", "--url_preview", "invalid"],
-            ["zip", "--url_preview", "network"],
-            ["github", "--url_preview", "network"],
-            ["zip", "--target", "github", "--resources", "reference"],
+            ["build", "pdf"],
+            ["build", manifest, "--lang", "eng"],
+            ["build", manifest, "--html", "static"],
+            ["build", manifest, "--mode", "embed"],
+            ["build", manifest, "--mode", "static", "--url_preview", "network"],
+            ["build", manifest, "--download", "invalid"],
+            ["build", manifest, "--download"],
+            ["build", manifest, "--easy-download"],
+            ["build", manifest, "--url_preview", "static"],
+            ["build", manifest, "--target", "pages"],
+            ["zip", manifest, "--zip", "embed"],
+            ["zip", manifest, "--mode", "static"],
+            ["zip", manifest, "--download", "easy"],
+            ["zip", manifest, "--reader-plugins", "./plugins.mjs"],
+            ["zip", manifest, "--url_preview", "reference"],
+            ["zip", manifest, "--target", "github", "--url_preview", "network"],
+            ["zip", manifest, "--target", "github", "--resources", "reference"],
         ]) {
-            const result = cli("build", ...args);
+            const result = cli(...args);
             await expect(result.run()).rejects.toThrow("CLI exit");
             expect(result.exit).toHaveBeenCalledWith(1);
         }
+        expect(readdirSync(root)).toEqual(["dooc.yaml"]);
     });
 
     it.each([
-        ["html", undefined, "embed"],
-        ["html", "network", "network"],
-        ["zip", undefined, "embed"],
-        ["zip", "embed", "embed"],
-        ["github", undefined, "embed"],
-        ["github", "embed", "embed"],
-    ] as const)("writes only the selected artifact for build %s --url_preview %s", async (format, preview, expectedPreview) => {
+        ["build", [], "build/index.html", { format: "html", urlPreview: "network" }],
+        [
+            "build",
+            ["--url_preview", "embed"],
+            "index.html",
+            { format: "html", urlPreview: "embed" },
+        ],
+        [
+            "build",
+            ["--mode", "static"],
+            "build/index.html",
+            { format: "html", mode: "static", urlPreview: "embed" },
+        ],
+        ["zip", ["--url_preview=embed"], "bundle.zip", { format: "zip", urlPreview: "embed" }],
+        [
+            "zip",
+            ["--target", "github"],
+            "dist/bundle.github.zip",
+            { format: "zip", target: "github", urlPreview: "embed" },
+        ],
+    ] as const)("writes only its own artifact for %s %j", async (command, options, file, expected) => {
         const root = mkdtempSync(join(tmpdir(), "dooc-cli-build-"));
         roots.push(root);
         writeFileSync(join(root, "dooc.yaml"), "docs: []\n");
-        const out = join(root, preview ? "custom" : "dist");
+        const custom = !file.includes("/");
+        const out = join(root, custom ? "custom" : dirname(file));
         mkdirSync(out);
-        const other = join(out, format === "html" ? "bundle.zip" : "bundle.html");
-        writeFileSync(other, "Keep existing artifact");
+        const other = join(out, "keep.txt");
+        writeFileSync(other, "Keep existing file");
         const buildBundle = vi.fn().mockResolvedValue({ data: "Built artifact", docs: 1 });
         vi.doMock("./build.js", () => ({ buildBundle }));
-        const result = cli(
-            "build",
-            format,
-            join(root, "dooc.yaml"),
-            ...(preview
-                ? [
-                      out,
-                      ...(format === "html"
-                          ? ["--url_preview", preview]
-                          : [`--url_preview=${preview}`]),
-                  ]
-                : []),
-        );
+        const result = cli(command, join(root, "dooc.yaml"), ...(custom ? [out] : []), ...options);
         await result.run();
-        expect(buildBundle).toHaveBeenCalledWith(root, { format, urlPreview: expectedPreview });
-        expect(
-            readFileSync(
-                join(out, `bundle.${format === "github" ? "github.zip" : format}`),
-                "utf8",
-            ),
-        ).toBe("Built artifact");
-        expect(readFileSync(other, "utf8")).toBe("Keep existing artifact");
+        expect(buildBundle).toHaveBeenCalledWith(root, expected);
+        expect(readFileSync(join(out, basename(file)), "utf8")).toBe("Built artifact");
+        expect(readFileSync(other, "utf8")).toBe("Keep existing file");
+        expect(readdirSync(root).sort()).toEqual([custom ? "custom" : dirname(file), "dooc.yaml"]);
         expect(result.stdout).toHaveBeenCalledTimes(1);
     });
 
@@ -544,7 +582,6 @@ describe("source-based CLI", () => {
         vi.doMock("./build.js", () => ({ buildBundle }));
         await cli(
             "build",
-            "html",
             join(root, "dooc.yaml"),
             "--source-url",
             "https://example.com/source/",
@@ -567,16 +604,13 @@ describe("source-based CLI", () => {
         writeFileSync(join(root, "example.ts"), "const example = 42;\n");
         await cli(
             "build",
-            "html",
             join(root, "dooc.yaml"),
             "--target",
             "github",
             "--resources",
             "reference",
-            "--url_preview",
-            "network",
         ).run();
-        expect(readFileSync(join(root, "dist/bundle.github.html"), "utf8")).toContain(
+        expect(readFileSync(join(root, "build/bundle.github.html"), "utf8")).toContain(
             'href="../example.ts"',
         );
         const check = cli(
@@ -585,7 +619,7 @@ describe("source-based CLI", () => {
             "--only",
             "github",
             "--github-output",
-            "dist/bundle.github.html",
+            "build/bundle.github.html",
         );
         await check.run();
         expect(JSON.parse(check.stdout.mock.calls.at(-1)?.[0] as string)).toMatchObject({
@@ -604,28 +638,25 @@ describe("source-based CLI", () => {
         writeFileSync(join(root, "dooc.yaml"), "docs: []\n");
         const buildBundle = vi.fn().mockResolvedValue({ data: "Built artifact", docs: 0 });
         vi.doMock("./build.js", () => ({ buildBundle }));
-        await cli("build", "html", join(root, "dooc.yaml"), "--download", download).run();
+        await cli("build", join(root, "dooc.yaml"), "--download", download).run();
         expect(buildBundle).toHaveBeenCalledWith(root, expect.objectContaining({ download }));
     });
 
     it.each([
-        "html",
-        "zip",
-    ])("preserves existing artifacts when build %s validation fails", async (format) => {
+        ["build", [], "build/index.html"],
+        ["zip", ["--url_preview", "embed"], "dist/bundle.zip"],
+    ] as const)("preserves the existing artifact when %s validation fails", async (command, options, file) => {
         const root = mkdtempSync(join(tmpdir(), "dooc-cli-"));
         roots.push(root);
-        writeFileSync(join(root, "dooc.yaml"), "docs: []\n");
         mkdirSync(join(root, "content"));
-        mkdirSync(join(root, "dist"));
+        mkdirSync(join(root, dirname(file)));
         writeFileSync(join(root, "dooc.yaml"), "docs: [guide]\n");
         writeFileSync(join(root, "content/guide.md"), "---\ntitle: Guide\n---\n");
-        for (const file of ["bundle.html", "bundle.zip"])
-            writeFileSync(join(root, "dist", file), "Previous bundle");
-        const result = cli("build", format, join(root, "dooc.yaml"));
+        writeFileSync(join(root, file), "Previous bundle");
+        const result = cli(command, join(root, "dooc.yaml"), ...options);
         await expect(result.run()).rejects.toThrow("CLI exit");
         expect(result.stderr).toHaveBeenCalledWith(expect.stringContaining("validation failed"));
-        for (const file of ["bundle.html", "bundle.zip"])
-            expect(readFileSync(join(root, "dist", file), "utf8")).toBe("Previous bundle");
+        expect(readFileSync(join(root, file), "utf8")).toBe("Previous bundle");
     });
 });
 

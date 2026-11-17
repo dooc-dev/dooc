@@ -45,10 +45,10 @@ Save the page and stop the editor with **Ctrl+C**, or open a second terminal in 
 
 ```sh
 dooc check
-dooc build html
+dooc build
 ```
 
-Fix reported errors before building. Open `dist/bundle.html` to review the result. It is a document snapshot; further source edits require another build.
+Fix reported errors before building. Open `build/index.html` to review the result. It is a document snapshot; further source edits require another build.
 
 ## Choose the next step
 

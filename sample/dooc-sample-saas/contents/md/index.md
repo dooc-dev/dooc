@@ -28,7 +28,7 @@ From the repository root:
 ```sh
 dooc editor run node --client --server --project sample/dooc-sample-saas/dooc.yaml
 dooc check sample/dooc-sample-saas/dooc.yaml
-dooc build html sample/dooc-sample-saas/dooc.yaml build/saas
+dooc build sample/dooc-sample-saas/dooc.yaml build/saas
 ```
 
 You can copy this entire directory into a separate repository. It includes all local schemas, records and figures; run `dooc editor run node --client --server` from the copied folder. The pipeline script is optional and its dependencies are listed in [Record pipeline](contents/md/ci.md).

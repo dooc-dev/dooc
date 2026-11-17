@@ -77,4 +77,4 @@ JSON, YAML, TOML, and XML use the code previewer.
 
 Use a public HTTPS file URL, such as a Git host's raw file URL. Git repository references such as `https://host/repo.git#ref:path` are not supported as embeds. To open a whole Git workspace, use [the CLI's `--repo` option](contents/md/cli.md#git-repositories).
 
-URLs with credentials are rejected. `dooc build` stores fetched content in the bundle by default. `--url_preview network` keeps URL references instead; live HTML selects network mode automatically. See [Build output](contents/md/cli.md#build-output) for mode constraints and snapshot limits.
+URLs with credentials are rejected. `dooc build` keeps URL references by default, so the page fetches them when it is opened. `--url_preview embed` stores the fetched content in the file instead; static HTML selects embed mode automatically. See [Build output](contents/md/cli.md#build-output) for mode constraints and snapshot limits.
