@@ -805,11 +805,11 @@ describe("publishHtml (a single HTML file with everything embedded)", () => {
         expect(html).not.toContain('class="font-select"');
     });
 
-    it("uses the compiled manifest title for the site header and browser tab", () => {
+    it("uses the compiled manifest title and root URL for the site header and browser tab", () => {
         expect(site.title).toBe("dooc documentation");
         expect(html).toContain("<title>dooc documentation</title>");
         expect(html).toContain(
-            'class="site-title" href="#/" title="dooc documentation">dooc documentation</a>',
+            'class="site-title" href="#/" data-jump-url="https://dooc.dev" title="dooc documentation">dooc documentation</a>',
         );
     });
 
