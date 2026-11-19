@@ -3219,7 +3219,9 @@ $("split-preview").addEventListener("click", () => {
                     document.documentElement.dataset.theme ??
                     "auto";
                 element.tabIndex = 0;
-                element.append(paneActions.cloneNode(true));
+                const actions = paneActions.cloneNode(true) as HTMLElement;
+                actions.querySelector(".page-controls")?.remove();
+                element.append(actions);
                 const content = document.createElement("div");
                 content.className = "preview-content";
                 element.append(content);
@@ -3356,9 +3358,9 @@ const scrollToAnchor = (hash: string): void => {
     } catch {
         return;
     }
-    (resourceView?.element ?? mainEl)
-        .querySelector(`#${CSS.escape(id)}`)
-        ?.scrollIntoView({ block: "start" });
+    const target = (resourceView?.element ?? mainEl).querySelector(`#${CSS.escape(id)}`);
+    target?.dispatchEvent(new Event("docs:reveal-section", { bubbles: true }));
+    target?.scrollIntoView({ block: "start" });
 };
 
 const isResourcePath = (path: string): boolean =>

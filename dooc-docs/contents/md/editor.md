@@ -48,6 +48,8 @@ Tree edits rewrite `dooc.yaml`; hand edits to the manifest appear in the tree. R
 
 Use **Preview theme** in a preview pane to choose Auto, Light or Dark for that pane. **Reader font** changes the reading font; **Editor font** in the editor header's settings changes the source font. Font choices stay with the browser tab.
 
+The page download and outline share the top row with these preview controls. The outline stays compact in narrow and split panes. Use the arrow beside a heading to fold its section, including lower-level headings and their content, up to the next heading at the same or a higher level. Source-editor heading arrows use the same hierarchy. Selecting a folded heading in the outline reveals it.
+
 The [editor header](contents/md/ux-header.md) also controls split view, line wrapping, source mapping and Git change markers. Record pages offer a form or their YAML, JSON or TOML source; schemas offer a field builder or JSON source.
 
 ## Keep changes safe

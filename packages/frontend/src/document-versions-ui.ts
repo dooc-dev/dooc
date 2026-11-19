@@ -35,6 +35,8 @@ export const mountDocumentVersions = () => {
     footer.append(status);
     let sequence = 0;
     let basePath = "";
+    let currentWorkspace: string | undefined;
+    let currentManifest: string | undefined;
     const section = (): string | undefined =>
         (document.body.dataset.documentManifest ??
             JSON.parse(document.getElementById("boot")?.textContent || "{}").origin) ||
@@ -47,9 +49,13 @@ export const mountDocumentVersions = () => {
         const request = ++sequence;
         const id = workspaceId();
         const manifest = section();
-        versions.select.disabled = true;
+        if (id !== currentWorkspace || manifest !== currentManifest)
+            versions.select.disabled = true;
+        currentWorkspace = id;
+        currentManifest = manifest;
         try {
             const hello = await pageWorkspace(id).request<{ ops: string[] }>("hello");
+            if (request !== sequence || id !== workspaceId() || manifest !== section()) return;
             if (!hello.ops.includes("versions")) {
                 versions.box.hidden = true;
                 return;
@@ -60,32 +66,40 @@ export const mountDocumentVersions = () => {
             });
             if (request !== sequence || id !== workspaceId() || manifest !== section()) return;
             basePath = data.basePath ?? "";
-            versions.select.replaceChildren(
-                ...data.versions.map((row, index) => {
-                    const option = new Option(
-                        index === 0 ? `${row.version} latest` : row.version,
-                        row.version,
-                    );
-                    option.dataset.status = index === 0 ? "latest" : "";
-                    return option;
-                }),
-            );
-            versions.select.value = data.selected ?? "";
+            const options = [...versions.select.options];
+            if (
+                versions.select.value !== (data.selected ?? "") ||
+                options.length !== data.versions.length ||
+                options.some((option, index) => option.value !== data.versions[index]?.version)
+            ) {
+                versions.select.replaceChildren(
+                    ...data.versions.map((row, index) => {
+                        const option = new Option(
+                            index === 0 ? `${row.version} latest` : row.version,
+                            row.version,
+                        );
+                        option.dataset.status = index === 0 ? "latest" : "";
+                        return option;
+                    }),
+                );
+                versions.select.value = data.selected ?? "";
+            }
             versions.box.hidden = !data.showSelector;
             status.hidden = true;
             footer.dataset.readOnly = String(!!workspaceConnection(id)?.readOnly);
         } catch (error) {
-            if (request !== sequence || id !== workspaceId()) return;
+            if (request !== sequence || id !== workspaceId() || manifest !== section()) return;
             status.textContent = error instanceof Error ? error.message : String(error);
             status.hidden = false;
         } finally {
             if (request === sequence) {
-                versions.select.disabled = false;
+                if (versions.select.disabled) versions.select.disabled = false;
                 visibility();
             }
         }
     };
     versions.select.addEventListener("change", () => {
+        sequence++;
         const from = workspaceId();
         const version = versions.select.value;
         versions.select.disabled = true;
@@ -121,12 +135,15 @@ export const mountDocumentVersions = () => {
                 versions.select.disabled = false;
             });
     });
+    const refreshDocument = () => {
+        if (workspaceId() !== currentWorkspace || section() !== currentManifest) void refresh();
+    };
     const watch = () => {
         unsubscribe?.();
         unsubscribe = pageWorkspace().on("change", () => void refresh());
-        void refresh();
+        refreshDocument();
     };
     document.addEventListener("dooc:workspace-changed", watch);
-    document.addEventListener("dooc:document-changed", () => void refresh());
+    document.addEventListener("dooc:document-changed", refreshDocument);
     watch();
 };

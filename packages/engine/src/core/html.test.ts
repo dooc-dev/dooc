@@ -212,6 +212,8 @@ describe("blocksHtml", () => {
             'data-section-url="/guide/api?lang=jpn&amp;value=&quot;quoted&quot;#first-1"',
         );
         expect(output.match(/class="section-copy"/g)).toHaveLength(2);
+        expect(output.match(/class="section-fold"/g)).toHaveLength(2);
+        expect(output).toContain('aria-expanded="true" title="Collapse section"');
     });
 
     it("resolves file links to the published route via routing", () => {

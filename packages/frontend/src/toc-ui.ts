@@ -1,5 +1,7 @@
 /** Self-contained so live previews and standalone HTML share the same navigation. */
 export function mountToc(doc: Document): () => void {
+    const owner = doc as Document & { __docsTocDispose?: () => void };
+    owner.__docsTocDispose?.();
     const controller = new AbortController();
     const mounted = new Map<
         HTMLElement,
@@ -16,27 +18,46 @@ export function mountToc(doc: Document): () => void {
     };
     const resize = new ResizeObserver(schedule);
     const initialize = (): void => {
-        for (const [nav, { article, dispose }] of mounted)
-            if (!nav.isConnected || !article.isConnected) {
+        for (const [toolbar, { article, dispose }] of mounted)
+            if (!toolbar.isConnected || !article.isConnected) {
                 dispose();
                 resize.unobserve(article);
-                mounted.delete(nav);
-                nav.remove();
+                mounted.delete(toolbar);
             }
-        for (const nav of doc.querySelectorAll<HTMLElement>(".in-toc")) {
-            if (mounted.has(nav)) continue;
-            const article = nav.closest("article");
-            const button = nav.querySelector<HTMLButtonElement>(".toc-current");
-            const list = nav.querySelector("ul");
-            if (!article || !button || !list) continue;
-            const pane = nav.closest<HTMLElement>(".preview-pane");
-            const scroller = pane ?? nav.closest("main") ?? doc.scrollingElement;
-            if (!scroller) continue;
+        for (const toolbar of doc.querySelectorAll<HTMLElement>("article > .doc-title")) {
+            if (mounted.has(toolbar)) continue;
+            const article = toolbar.closest("article");
+            if (!article) continue;
+            const pane = toolbar.closest<HTMLElement>(".preview-pane");
+            const scroller = pane ?? toolbar.closest("main") ?? doc.scrollingElement;
             const header = (pane ?? article.parentElement)?.querySelector<HTMLElement>(
                 ":scope > .pane-actions, :scope > .page-actions",
             );
             const listeners = new AbortController();
             const options = { signal: listeners.signal };
+            const controls = header ? doc.createElement("div") : toolbar;
+            if (header) {
+                controls.className = "page-controls";
+                controls.append(...toolbar.childNodes);
+                header.prepend(controls);
+            }
+            // The empty toolbar stays with the article so live updates can retire its controls.
+            const state = {
+                article,
+                update: () => {},
+                dispose: () => {
+                    listeners.abort();
+                    if (controls !== toolbar) {
+                        toolbar.append(...controls.childNodes);
+                        controls.remove();
+                    }
+                },
+            };
+            mounted.set(toolbar, state);
+            const nav = controls.querySelector<HTMLElement>(".in-toc");
+            const button = nav?.querySelector<HTMLButtonElement>(".toc-current");
+            const list = nav?.querySelector("ul");
+            if (!nav || !button || !list || !scroller) continue;
             list.id = `toc-options-${++sequence}`;
             button.setAttribute("aria-controls", list.id);
             const sections = [...nav.querySelectorAll<HTMLAnchorElement>("[data-toc-target]")]
@@ -48,33 +69,25 @@ export function mountToc(doc: Document): () => void {
                 }))
                 .filter((section) => section.heading !== null);
             let active: HTMLAnchorElement | undefined;
-            let card = false;
             const update = (): void => {
-                const narrow = article.clientWidth < 520;
-                if (card !== narrow) {
-                    card = narrow;
-                    const focused = nav.contains(doc.activeElement);
-                    list.popover = card ? null : "auto";
-                    list.removeAttribute("style");
-                    nav.classList.toggle("toc-card", card);
-                    if (focused)
-                        (card ? (active ?? sections[0]?.link) : button)?.focus({
-                            preventScroll: true,
-                        });
-                }
                 const top =
                     (header?.getBoundingClientRect().bottom ??
                         pane?.getBoundingClientRect().top ??
                         0) + 20;
                 let current = sections[0];
                 for (const section of sections)
-                    if ((section.heading?.getBoundingClientRect().top ?? Infinity) <= top)
+                    if (
+                        !section.heading?.closest("[data-section-hidden]") &&
+                        (section.heading?.getBoundingClientRect().top ?? Infinity) <= top
+                    )
                         current = section;
                 if (
                     scroller.scrollTop > 0 &&
                     scroller.scrollTop >= scroller.scrollHeight - scroller.clientHeight - 1
                 )
-                    current = sections.at(-1);
+                    current = sections.findLast(
+                        (section) => !section.heading?.closest("[data-section-hidden]"),
+                    );
                 if (current?.link === active) return;
                 active?.removeAttribute("aria-current");
                 active = current?.link;
@@ -111,7 +124,6 @@ export function mountToc(doc: Document): () => void {
             list.addEventListener(
                 "keydown",
                 (event) => {
-                    if (card) return;
                     const index = sections.findIndex(({ link }) => link === doc.activeElement);
                     if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
                         event.preventDefault();
@@ -143,10 +155,9 @@ export function mountToc(doc: Document): () => void {
                     const link = (event.target as Element).closest("[data-toc-target]");
                     const heading = sections.find((section) => section.link === link)?.heading;
                     if (!heading) return;
-                    if (!card) {
-                        list.hidePopover();
-                        button.focus({ preventScroll: true });
-                    }
+                    list.hidePopover();
+                    button.focus({ preventScroll: true });
+                    heading.dispatchEvent(new Event("docs:reveal-section", { bubbles: true }));
                     if (pane) {
                         // Pane activation is asynchronous, so resolve the clicked pane directly.
                         event.preventDefault();
@@ -155,7 +166,7 @@ export function mountToc(doc: Document): () => void {
                 },
                 options,
             );
-            mounted.set(nav, { article, update, dispose: () => listeners.abort() });
+            state.update = update;
             resize.observe(article);
         }
         schedule();
@@ -171,7 +182,7 @@ export function mountToc(doc: Document): () => void {
     doc.addEventListener("docs:font-change", schedule, { signal: controller.signal });
     window.addEventListener("resize", schedule, { signal: controller.signal });
     initialize();
-    return () => {
+    const dispose = () => {
         controller.abort();
         observer.disconnect();
         resize.disconnect();
@@ -179,4 +190,6 @@ export function mountToc(doc: Document): () => void {
         for (const { dispose } of mounted.values()) dispose();
         mounted.clear();
     };
+    owner.__docsTocDispose = dispose;
+    return dispose;
 }

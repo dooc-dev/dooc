@@ -24,6 +24,25 @@ const buttons = (state: EditorState) => {
 };
 
 describe("inline fold buttons", () => {
+    it("folds a heading through its descendants without crossing a peer or parent heading", () => {
+        const doc =
+            "# Parent\nIntro\n## Child\nChild body\n### Grandchild\nDeep body\n```md\n# Code, not a heading\n```\n## Sibling\nSibling body\n# Next\nNext body";
+        const state = parsed(EditorState.create({ doc, extensions: [markdown(), editorSetup] }));
+        for (const [heading, last] of [
+            ["# Parent", "Sibling body"],
+            ["## Child", "```\n## Sibling"],
+            ["### Grandchild", "```\n## Sibling"],
+            ["## Sibling", "Sibling body"],
+        ] as const) {
+            const line = state.doc.lineAt(doc.indexOf(heading));
+            const range = foldable(state, line.from, line.to);
+            const end = last.startsWith("```")
+                ? doc.indexOf(last) + 3
+                : doc.indexOf(last) + last.length;
+            expect(range).toEqual({ from: line.to, to: end });
+        }
+    });
+
     it("places controls at heading and fence line ends and updates on folding", () => {
         let state = parsed(
             EditorState.create({

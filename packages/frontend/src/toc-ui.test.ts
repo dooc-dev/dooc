@@ -81,11 +81,14 @@ const pane = (container = ".preview-pane") => {
         heading: {
             getBoundingClientRect: () => ({ top: top - scroller.scrollTop }),
             scrollIntoView: vi.fn(),
+            closest: () => null,
+            dispatchEvent: vi.fn(),
         },
     }));
     const article = {
         isConnected: true,
         clientWidth: 860,
+        parentElement: scroller,
         querySelector: (selector: string) =>
             links.find((link) => selector === `#${link.dataset.tocTarget}`)?.heading,
     };
@@ -118,27 +121,47 @@ const pane = (container = ".preview-pane") => {
         classList: { toggle: vi.fn() },
         remove: vi.fn(),
         offsetHeight: 59,
+        matches: (selector: string) => selector === ".in-toc",
         closest: (selector: string) =>
             selector === "article" ? article : selector === container ? scroller : null,
         querySelector: (selector: string) => (selector === ".toc-current" ? button : list),
         querySelectorAll: () => links,
     };
-    return { nav, scroller, links, article, list, header, button };
+    const toolbar = {
+        isConnected: true,
+        childNodes: [nav] as { matches: (selector: string) => boolean }[],
+        closest: nav.closest,
+        append: vi.fn(),
+    };
+    return { nav, toolbar, scroller, links, article, list, header, button };
 };
 const documentFor = (panes: ReturnType<typeof pane>[]) =>
     Object.assign(new EventTarget(), {
         documentElement: {},
-        querySelectorAll: () => panes.map((pane) => pane.nav),
+        querySelectorAll: () => panes.map((pane) => pane.toolbar),
+        createElement: () => ({
+            className: "",
+            childNodes: [] as { matches: (selector: string) => boolean }[],
+            append(...nodes: { matches: (selector: string) => boolean }[]) {
+                this.childNodes.push(...nodes);
+            },
+            querySelector(selector: string) {
+                return this.childNodes.find((node) => node.matches(selector));
+            },
+            remove: vi.fn(),
+        }),
     }) as unknown as Document;
 
-it("keeps the outline beside the title and tracks each pane independently", () => {
+it("places the outline in the header and tracks each pane independently", () => {
     const first = pane();
     const second = pane();
     const doc = documentFor([first, second]);
     const dispose = mountToc(doc);
     flush();
-    expect(first.header.prepend).not.toHaveBeenCalled();
-    expect(second.header.prepend).not.toHaveBeenCalled();
+    expect(first.header.prepend).toHaveBeenCalledWith(
+        expect.objectContaining({ className: "page-controls", childNodes: [first.nav] }),
+    );
+    expect(second.header.prepend).toHaveBeenCalledOnce();
     expect(first.links[0]?.attrs.get("aria-current")).toBe("location");
     first.scroller.scrollTop = 398;
     doc.dispatchEvent(new Event("scroll"));
@@ -185,7 +208,7 @@ it("handles replaced documents and keeps the first heading active when the page 
     changed();
     flush();
     expect(unobserve).toHaveBeenCalledWith(previous.article);
-    expect(previous.nav.remove).toHaveBeenCalled();
+    expect(previous.header.prepend.mock.calls[0]?.[0].remove).toHaveBeenCalled();
     expect(next.links[0]?.attrs.get("aria-current")).toBe("location");
     dispose();
 });
@@ -220,7 +243,7 @@ it("opens the outline within the viewport and supports keyboard navigation", () 
     dispose();
 });
 
-it("switches each narrow pane to an inline card and restores the dropdown on resize", () => {
+it("keeps narrow panes compact and keyboard accessible on resize", () => {
     const current = pane();
     const wide = pane();
     const doc = documentFor([current, wide]);
@@ -230,10 +253,8 @@ it("switches each narrow pane to an inline card and restores the dropdown on res
     current.article.clientWidth = 400;
     resized();
     flush();
-    expect(current.list.popover).toBeNull();
-    expect(current.list.removeAttribute).toHaveBeenCalledWith("style");
-    expect(current.nav.classList.toggle).toHaveBeenLastCalledWith("toc-card", true);
-    expect(current.links[0]?.focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(current.list.popover).toBe("auto");
+    expect(current.nav.classList.toggle).not.toHaveBeenCalled();
     expect(wide.list.popover).toBe("auto");
 
     const click = new Event("click", { cancelable: true });
@@ -242,19 +263,46 @@ it("switches each narrow pane to an inline card and restores the dropdown on res
     current.list.dispatchEvent(click);
     expect(click.defaultPrevented).toBe(true);
     expect(current.links[1]?.heading.scrollIntoView).toHaveBeenCalledWith({ block: "start" });
-    expect(current.button.focus).not.toHaveBeenCalled();
+    expect(current.button.focus).toHaveBeenCalledWith({ preventScroll: true });
     const key = Object.assign(new Event("keydown", { cancelable: true }), { key: "End" });
     current.list.dispatchEvent(key);
-    expect(key.defaultPrevented).toBe(false);
+    expect(key.defaultPrevented).toBe(true);
 
     Object.defineProperty(doc, "activeElement", { value: current.links[1] });
     current.article.clientWidth = 860;
     resized();
     flush();
     expect(current.list.popover).toBe("auto");
-    expect(current.nav.classList.toggle).toHaveBeenLastCalledWith("toc-card", false);
+    expect(current.nav.classList.toggle).not.toHaveBeenCalled();
     expect(current.button.focus).toHaveBeenCalledWith({ preventScroll: true });
     current.button.dispatchEvent(new Event("click"));
     expect(current.list.matches()).toBe(true);
+    dispose();
+});
+
+it("moves download-only controls and removes them when their live toolbar is replaced", () => {
+    const current = pane();
+    const download = { matches: () => false };
+    current.toolbar.childNodes = [download];
+    const panes = [current];
+    const dispose = mountToc(documentFor(panes));
+    expect(current.header.prepend).toHaveBeenCalledOnce();
+    expect(current.header.prepend).toHaveBeenCalledWith(
+        expect.objectContaining({ childNodes: [download] }),
+    );
+    current.toolbar.isConnected = false;
+    panes.length = 0;
+    changed();
+    expect(current.header.prepend.mock.calls[0]?.[0].remove).toHaveBeenCalledOnce();
+    dispose();
+});
+
+it("disposes the previous mount when the reader rewrites the document", () => {
+    const current = pane();
+    const doc = documentFor([current]);
+    mountToc(doc);
+    const dispose = mountToc(doc);
+    expect(disconnect).toHaveBeenCalledTimes(2);
+    expect(current.header.prepend.mock.calls[0]?.[0].remove).toHaveBeenCalledOnce();
     dispose();
 });

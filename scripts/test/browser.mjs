@@ -534,6 +534,187 @@ for (const width of [1440, 820, 390]) {
     });
 }
 
+for (const product of ["editor", "reader", "static"]) {
+    browserTest(`Heading hierarchy and header controls (${product})`, async (page) => {
+        const project = join(root, `headings-${product}`);
+        mkdirSync(project);
+        writeFileSync(
+            join(project, "dooc.yaml"),
+            "system:\n  default_lang: eng\ndocument:\n  title: Guide\n  url: guide.md\n  children:\n    - document: { title: Plain, url: plain.md }\n",
+        );
+        const source = join(project, "guide.md");
+        const markdown =
+            "# Parent\n\nParent body.\n\n## Child\n\nChild body.\n\n### Grandchild\n\nGrandchild body.\n\n## Sibling\n\nSibling body.\n\n# Next\n\n[Jump to grandchild](#grandchild)\n";
+        writeFileSync(source, markdown);
+        writeFileSync(join(project, "plain.md"), "Plain body.\n");
+        if (product === "static") {
+            const file = join(root, "headings.html");
+            writeFileSync(
+                file,
+                (await buildBundle(project, { format: "html", download: "easy" })).data,
+            );
+            await open(page, pathToFileURL(file).href, false);
+        } else await open(page, await start(product, "node", project), product === "editor");
+        const header = page.locator(product === "editor" ? ".pane-actions" : ".page-actions");
+        const article = page.locator("main article");
+        const fold = (id) => article.locator(`#${id} > .section-fold`);
+        await header.locator(".toc-current").waitFor();
+        if (product !== "reader") {
+            const downloading = page.waitForEvent("download");
+            await header.locator(".resource-download").click();
+            const download = await downloading;
+            assert.equal(download.suggestedFilename(), "guide.md");
+            assert.equal(readFileSync(await download.path(), "utf8"), markdown);
+        }
+        for (const width of [1440, 820, 390]) {
+            await page.setViewportSize({ width, height: 1000 });
+            await page.evaluate(() => document.body.classList.add("sidebar-closed"));
+            assert.equal(
+                await header.evaluate((element) => {
+                    const rect = element.getBoundingClientRect();
+                    return [...element.querySelectorAll(".resource-download, .toc-current, .pbtn")]
+                        .filter((control) => control.getClientRects().length)
+                        .every((control) => {
+                            const box = control.getBoundingClientRect();
+                            return (
+                                box.top >= rect.top &&
+                                box.bottom <= rect.bottom + 1 &&
+                                box.left >= rect.left &&
+                                box.right <= rect.right + 1
+                            );
+                        });
+                }),
+                true,
+                `Header controls share one row at ${width}px`,
+            );
+            await header.locator(".toc-current").click();
+            await header.locator(".toc-options:popover-open").waitFor();
+            await page.keyboard.press("End");
+            assert.equal(await page.locator(":focus").getAttribute("data-toc-target"), "next");
+            await page.keyboard.press("Escape");
+        }
+        await page.setViewportSize({ width: 1440, height: 1000 });
+        assert.deepEqual(
+            await article.evaluate((element) =>
+                ["next", "sibling", "grandchild"].map((id) => {
+                    const style = getComputedStyle(element.querySelector(`#${id}`));
+                    return [style.marginTop, style.borderLeftWidth];
+                }),
+            ),
+            [
+                ["40px", "3px"],
+                ["32px", "0px"],
+                ["24px", "0px"],
+            ],
+        );
+        await fold("child").click();
+        assert.equal(await article.locator("#grandchild").isVisible(), false);
+        assert.equal(await article.locator("#sibling").isVisible(), true);
+        await fold("parent").click();
+        assert.equal(await article.locator("#sibling").isVisible(), false);
+        assert.equal(await article.locator("#next").isVisible(), true);
+        await fold("parent").click();
+        assert.equal(await article.locator("#grandchild").isVisible(), false);
+        assert.equal(await article.locator("#sibling").isVisible(), true);
+        await fold("parent").click();
+        await header.locator(".toc-current").click();
+        await header.locator('[data-toc-target="grandchild"]').click();
+        assert.equal(await fold("parent").getAttribute("aria-expanded"), "true");
+        assert.equal(await fold("child").getAttribute("aria-expanded"), "true");
+        assert.equal(await article.locator("#grandchild").isVisible(), true);
+        await fold("parent").click();
+        await article.getByRole("link", { name: "Jump to grandchild" }).click();
+        await article.locator("#grandchild").waitFor();
+        if (product === "editor") {
+            const line = page.locator("#cm .cm-line").filter({ hasText: /^# Parent$/ });
+            await line.locator(".cm-inline-fold").click();
+            assert.equal(
+                await page
+                    .locator("#cm .cm-line")
+                    .filter({ hasText: /^## Child$/ })
+                    .count(),
+                0,
+            );
+            assert.equal(
+                await page
+                    .locator("#cm .cm-line")
+                    .filter({ hasText: /^## Sibling$/ })
+                    .count(),
+                0,
+            );
+            assert.equal(
+                await page
+                    .locator("#cm .cm-line")
+                    .filter({ hasText: /^# Next$/ })
+                    .count(),
+                1,
+            );
+            await line.locator(".cm-inline-fold").click();
+            await page
+                .locator("#cm .cm-line")
+                .filter({ hasText: /^### Grandchild$/ })
+                .waitFor();
+            await fold("parent").click();
+            const editor = page.locator("#cm .cm-content");
+            await editor.focus();
+            await page.keyboard.press("Control+Home");
+            await page.keyboard.press("ArrowDown");
+            await page.keyboard.press("ArrowDown");
+            await page.keyboard.insertText("Updated ");
+            await page.waitForFunction(() =>
+                document
+                    .querySelector("main article")
+                    ?.textContent.includes("Updated Parent body."),
+            );
+            assert.equal(await fold("parent").getAttribute("aria-expanded"), "false");
+            assert.equal(
+                await article.getByText("Updated Parent body.", { exact: true }).isVisible(),
+                false,
+            );
+            await page.keyboard.press("Control+End");
+            await page.keyboard.insertText("\n## Added\n\nAdded body.\n");
+            await header.locator('[data-toc-target="added"]').waitFor({ state: "attached" });
+            assert.equal(await header.locator(".page-controls").count(), 1);
+            await page.locator("#save").click();
+            await page.waitForFunction(
+                () => document.getElementById("save").dataset.state === "saved",
+            );
+            await page.locator("#split-preview").click();
+            await page.waitForFunction(
+                () => document.querySelectorAll(".pane-actions .page-controls").length === 2,
+            );
+            assert.equal(await page.locator(".pane-actions .toc-current").count(), 2);
+            const panes = page.locator(".preview-pane");
+            assert.equal(
+                await panes.nth(0).locator("#parent .section-fold").getAttribute("aria-expanded"),
+                "false",
+            );
+            assert.equal(
+                await panes.nth(1).locator("#parent .section-fold").getAttribute("aria-expanded"),
+                "true",
+            );
+            await page.locator("#split-preview").click();
+        } else assert.equal(readFileSync(source, "utf8"), markdown);
+        await page
+            .locator("#nav-groups a")
+            .filter({ hasText: /^Plain$/ })
+            .click();
+        await article.getByText("Plain body.", { exact: true }).waitFor();
+        assert.equal(await header.locator(".toc-current").count(), 0);
+        assert.equal(
+            await header.locator(".resource-download").count(),
+            product === "reader" ? 0 : 1,
+        );
+        await page.locator("#site-title").click();
+        await header.locator(".toc-current").waitFor();
+        assert.equal(await header.locator(".page-controls").count(), 1);
+        assert.equal(
+            await header.locator(".resource-download").count(),
+            product === "reader" ? 0 : 1,
+        );
+    });
+}
+
 for (const [file, name] of [
     ["line-wrapping", "testLineWrapping"],
     ["nav-create", "testNavCreate"],
@@ -552,6 +733,109 @@ for (const check of [testDocumentVersionLayout, testDocumentVersionDrafts]) {
         await check(page);
     });
 }
+
+browserTest(
+    "Document versions stay stable during autosave and update after a commit",
+    async (page) => {
+        const project = join(root, "version-refresh");
+        mkdirSync(project);
+        writeFileSync(
+            join(project, "dooc.yaml"),
+            "version: { major: 1, minor: git, patch: git }\ndocument: { title: Guide, url: guide.md }\n",
+        );
+        const source = join(project, "guide.md");
+        writeFileSync(source, "# Guide\n\nFirst version.\n");
+        const git = (...args) => execFileSync("git", ["-C", project, ...args], { stdio: "pipe" });
+        git("init", "-b", "main");
+        git("config", "user.name", "Test");
+        git("config", "user.email", "test@example.com");
+        git("add", ".");
+        git("commit", "-m", "First version");
+        writeFileSync(source, "# Guide\n\nSecond version.\n");
+        git("add", ".");
+        git("commit", "-m", "Second version");
+        await open(page, await start("editor", "node", project));
+        await page.waitForFunction(() => {
+            const select = document.getElementById("document-version-select");
+            return select?.value === "1.0.1" && !select.disabled;
+        });
+        await page.evaluate(() => {
+            const select = document.getElementById("document-version-select");
+            const connection = __doocConnections.items.get(__doocConnections.active);
+            const original = connection.client.request;
+            const probe = {
+                options: [...select.options],
+                hold: true,
+                requests: 0,
+                completed: 0,
+                mutations: 0,
+            };
+            window.versionRefreshProbe = probe;
+            const observer = new MutationObserver((records) => (probe.mutations += records.length));
+            observer.observe(select, {
+                childList: true,
+                attributes: true,
+                attributeFilter: ["disabled"],
+            });
+            connection.client.request = async (...args) => {
+                const listing = args[0] === "versions" && args[1]?.action === "list";
+                if (listing || args[0] === "hello") probe.requests++;
+                const data = await original(...args);
+                if (listing) {
+                    if (probe.hold)
+                        await new Promise((resolve) => {
+                            probe.release = resolve;
+                        });
+                    probe.completed++;
+                }
+                return data;
+            };
+        });
+        await page.locator("#cm .cm-content").focus();
+        await page.keyboard.press("Control+End");
+        await page.keyboard.insertText("\nAutosaved paragraph.\n");
+        await page.waitForFunction(() => !!window.versionRefreshProbe.release);
+        assert.equal(
+            await page.locator("#document-version-select").isEnabled(),
+            true,
+            "Background checks must keep the current version usable",
+        );
+        await page.evaluate(() => {
+            window.versionRefreshProbe.hold = false;
+            window.versionRefreshProbe.release();
+        });
+        await page.waitForFunction(() => window.versionRefreshProbe.completed > 0);
+        assert.equal(
+            await page.evaluate(() => {
+                const select = document.getElementById("document-version-select");
+                const probe = window.versionRefreshProbe;
+                return (
+                    probe.mutations === 0 &&
+                    probe.options.every((option, index) => select.options[index] === option)
+                );
+            }),
+            true,
+            "Unchanged versions must preserve their options without disabling or replacing them",
+        );
+        assert.equal(
+            await page.evaluate(() => {
+                const probe = window.versionRefreshProbe;
+                const before = probe.requests;
+                for (let i = 0; i < 3; i++)
+                    document.dispatchEvent(new Event("dooc:document-changed"));
+                return probe.requests === before;
+            }),
+            true,
+        );
+        assert.match(readFileSync(source, "utf8"), /Autosaved paragraph/);
+        git("add", ".");
+        git("commit", "-m", "Commit the saved paragraph");
+        await page.waitForFunction(
+            () => document.getElementById("document-version-select")?.value === "1.0.2",
+        );
+    },
+);
+
 for (const latest of [false, true]) {
     browserTest(`Reader versions (${latest ? "latest" : "all"})`, async (page) => {
         await open(page, latest ? urls.latest : urls.reader, false);

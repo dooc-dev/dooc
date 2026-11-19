@@ -516,7 +516,7 @@ const blockContentHtml = (b: Block, ctx: RenderCtx, seg: Segmenter): string => {
         }
         case "h":
             // id = slug (a single-doc page, so no namespace is needed).
-            return `<h${b.level} id="${escapeHtml(b.slug)}">${segmentsHtml(b.text, ctx, seg)}${ctx.sectionUrl === undefined ? "" : `<button class="section-copy" type="button" data-section-url="${escapeHtml(ctx.sectionUrl)}#${encodeURIComponent(b.slug)}" title="Copy section URL" aria-label="Copy section URL" data-i18n-title="Copy section URL" data-i18n-aria-label="Copy section URL"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m8 12 4-4m-5 2-2 2a3 3 0 0 0 4 4l2-2m-2-8 2-2a3 3 0 0 1 4 4l-2 2"/></svg>${CHECK_ICON}</button>`}</h${b.level}>`;
+            return `<h${b.level} id="${escapeHtml(b.slug)}">${segmentsHtml(b.text, ctx, seg)}${ctx.sectionUrl === undefined ? "" : `<button class="section-fold" type="button" aria-expanded="true" title="Collapse section" aria-label="Collapse section" data-i18n-title="Collapse section" data-i18n-aria-label="Collapse section"><svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><button class="section-copy" type="button" data-section-url="${escapeHtml(ctx.sectionUrl)}#${encodeURIComponent(b.slug)}" title="Copy section URL" aria-label="Copy section URL" data-i18n-title="Copy section URL" data-i18n-aria-label="Copy section URL"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="m8 12 4-4m-5 2-2 2a3 3 0 0 0 4 4l2-2m-2-8 2-2a3 3 0 0 1 4 4l-2 2"/></svg>${CHECK_ICON}</button>`}</h${b.level}>`;
         case "p":
             return `<p>${segmentsHtml(b.text, ctx, seg)}</p>`;
         case "quote":
@@ -636,6 +636,6 @@ export const docHtml = (
             ? `<div class="errors">${errors.map((e) => `<div>${escapeHtml(e)}</div>`).join("")}</div>`
             : "";
     const lang = ctx.lang ? ` lang="${escapeHtml(ctx.lang)}"` : "";
-    const controls = `${ctx.pageDownload ? resourceDownloadHtml(ctx.pageDownload.file, ctx.pageDownload.href) : ""}${inPageTocHtml(toc, ctx.tocTitle)}`;
+    const controls = `${inPageTocHtml(toc, ctx.tocTitle)}${ctx.pageDownload ? resourceDownloadHtml(ctx.pageDownload.file, ctx.pageDownload.href) : ""}`;
     return `<article${lang}>${errBox}${controls ? `<header class="doc-title">${controls}</header>` : ""}${blocksHtml(blocks, ctx)}</article>`;
 };

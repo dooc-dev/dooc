@@ -4,6 +4,34 @@ This disposable workspace contains working examples of every built-in preview, l
 
 With `mise run dev`, open `http://localhost:2000/client/` to edit and `http://localhost:2001/client/` to preview the same working files. Each runs in its own process on the port printed by the development task. Saved edits update both views automatically.
 
+## Level 2 heading
+
+Compare the heading sizes and spacing. Fold this section to hide levels 3 through 6 together.
+
+### Level 3 heading
+
+This subsection belongs to the level 2 heading above.
+
+#### Level 4 heading
+
+Smaller headings have less space above them.
+
+##### Level 5 heading
+
+The link button copies this section's URL; the arrow folds its content.
+
+###### Level 6 heading
+
+This is the deepest heading level. Try folding the same hierarchy in the source editor.
+
+## Another level 2 heading
+
+This sibling stays visible when the previous level 2 section is folded.
+
+# Explore the playground
+
+This new top-level heading has its own vertical bar and stays visible when the first top-level section is folded.
+
 ## Choose something to try
 
 | Feature | Open | Try |

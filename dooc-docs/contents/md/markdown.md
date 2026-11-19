@@ -15,6 +15,8 @@ A page has no front matter: a leading `---` block is an error. Its title and its
 
 ## Text
 
+Larger headings have more space above them, and top-level (`#`) headings have a vertical bar. Each heading's arrow folds or expands its section, including its lower-level headings; the link button copies the section URL. Folding changes only the view, not the Markdown source.
+
 Paragraphs take **bold**, *emphasis*, `inline code`, and [links](contents/md/index.md).
 
 > A quote keeps its own block, including **inline** formatting.
