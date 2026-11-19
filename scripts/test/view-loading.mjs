@@ -61,11 +61,14 @@ window.testViewLoading = async () => {
     );
     connect(null);
     const figure = { name: "large", file: "large.svg", kind: "svg", markup: "x".repeat(100_001) };
-    document.querySelector("main").innerHTML = deferredFigureHtml(figure);
+    document.querySelector("main").innerHTML =
+        `<div style="height:2000px"></div>${deferredFigureHtml(figure)}`;
+    document.querySelector("main").dataset.workspace = "preview-workspace";
     document.querySelector("main").scrollTop = 0;
     const originalFetch = window.fetch;
     let requests = 0;
-    window.fetch = async () => {
+    window.fetch = async (_url, _init, workspace) => {
+        assert(workspace === "preview-workspace", "Preview used the wrong workspace");
         requests++;
         if (requests === 1) return new Response("unavailable", { status: 503 });
         await new Promise((resolve) => {
@@ -76,9 +79,13 @@ window.testViewLoading = async () => {
     try {
         mountFigurePreviews();
         const button = document.querySelector("[data-figure-preview] > button");
-        assert(requests === 0, "Heavy preview fetched before activation");
-        button.click();
-        await wait(() => button.textContent === "Retry");
+        assert(button.hidden, "A healthy preview must not require a load button");
+        await pause();
+        assert(requests === 0, "Offscreen preview fetched eagerly");
+        button.parentElement.scrollIntoView();
+        await wait(() => !button.hidden);
+        await pause();
+        assert(requests === 1, "A failed preview must not retry in a loop");
         assert(!button.disabled, "Failed preview cannot be retried");
         assert(document.querySelector('[role="status"]').textContent, "Missing preview error");
         button.focus();
@@ -96,9 +103,17 @@ window.testViewLoading = async () => {
             document.activeElement?.contains(document.querySelector("iframe")),
             "Keyboard focus left the loaded preview",
         );
+        release = undefined;
         document.querySelector("main").innerHTML = deferredFigureHtml(figure);
-        document.querySelector("button").click();
-        await pause();
+        await wait(() => release);
+        assert(
+            document.querySelector("button").hidden,
+            "Inserted previews must load automatically",
+        );
+        assert(
+            document.querySelector('[aria-busy="true"]'),
+            "Inserted preview lacks loading state",
+        );
         document.querySelector("main").innerHTML = "Next page";
         release();
         await pause();
@@ -112,6 +127,6 @@ window.testViewLoading = async () => {
     return {
         pluginRequests: calls.length,
         previewRequests: requests,
-        checks: "visible loading, slow response, removal, retry, navigation",
+        checks: "automatic visible loading, workspace ownership, slow response, removal, retry, navigation",
     };
 };

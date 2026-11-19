@@ -6,22 +6,19 @@ export const deferredFigureHtml = (fig: FigureEntry, cls = "fig-frame", label?: 
     if (fig.markup.length <= 100_000) return figureFrameHtml(fig, cls, label);
     if (cls.includes("figpop-frame")) return escapeHtml(fig.title ?? fig.file);
     const url = `/api/figure-preview?file=${encodeURIComponent(fig.file)}${label === undefined ? "" : `&label=${encodeURIComponent(label)}`}`;
-    return `<div class="figure-placeholder" data-figure-preview="${escapeHtml(url)}"><span>${escapeHtml(label || fig.title || fig.file)}</span><button type="button" data-i18n="Load preview">Load preview</button><span role="status"></span></div>`;
+    return `<div class="figure-placeholder" data-figure-preview="${escapeHtml(url)}"><span>${escapeHtml(label || fig.title || fig.file)}</span><button type="button" data-i18n="Retry" hidden>Retry</button><span role="status"></span></div>`;
 };
 
-/** Delegated so previews inserted by navigation or HMR use the same loading state. */
+/** Load visible figures automatically, including previews inserted by navigation or HMR. */
 export function mountFigurePreviews(
     request: (url: string, init?: RequestInit, workspace?: string) => Promise<Response> = fetch,
 ): void {
-    document.addEventListener("click", async (event) => {
-        const button =
-            event.target instanceof Element
-                ? event.target.closest<HTMLButtonElement>("[data-figure-preview] > button")
-                : null;
-        const host = button?.parentElement;
-        const url = host?.dataset.figurePreview;
-        const status = host?.querySelector<HTMLElement>('[role="status"]');
-        if (!button || !host || !url || !status) return;
+    const root = document.querySelector("main") ?? document.body;
+    const load = async (host: HTMLElement): Promise<void> => {
+        const button = host.querySelector<HTMLButtonElement>(":scope > button");
+        const url = host.dataset.figurePreview;
+        const status = host.querySelector<HTMLElement>('[role="status"]');
+        if (!button || button.disabled || !url || !status) return;
         const translate = (key: string) =>
             (window as Window & { __docsTranslate?: (key: string) => string }).__docsTranslate?.(
                 key,
@@ -49,11 +46,43 @@ export function mountFigurePreviews(
         } catch (error) {
             if (!host.isConnected) return;
             status.textContent = error instanceof Error ? error.message : String(error);
+            button.hidden = false;
             button.textContent = translate("Retry");
-            button.dataset.i18n = "Retry";
         } finally {
             button.disabled = false;
             host.removeAttribute("aria-busy");
         }
+    };
+    document.addEventListener("click", (event) => {
+        const button =
+            event.target instanceof Element
+                ? event.target.closest<HTMLButtonElement>("[data-figure-preview] > button")
+                : null;
+        if (button?.parentElement) void load(button.parentElement);
     });
+    const watched = new Set<HTMLElement>();
+    const visibility = new IntersectionObserver(
+        (entries) => {
+            for (const entry of entries) {
+                if (!entry.isIntersecting || !root.contains(entry.target)) continue;
+                visibility.unobserve(entry.target);
+                void load(entry.target as HTMLElement);
+            }
+        },
+        { rootMargin: "200px" },
+    );
+    const watch = () => {
+        for (const host of watched)
+            if (!root.contains(host) || !host.dataset.figurePreview) {
+                visibility.unobserve(host);
+                watched.delete(host);
+            }
+        for (const host of root.querySelectorAll<HTMLElement>("[data-figure-preview]"))
+            if (!watched.has(host)) {
+                watched.add(host);
+                visibility.observe(host);
+            }
+    };
+    new MutationObserver(watch).observe(root, { childList: true, subtree: true });
+    watch();
 }

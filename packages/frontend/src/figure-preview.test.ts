@@ -17,6 +17,8 @@ it("defers large local figures without embedding bytes, preserving offline expor
     );
     expect(local).toContain("&lt;Demo&gt; &quot;PDF&quot;");
     expect(local).toContain('role="status"');
+    expect(local).toContain('data-i18n="Retry" hidden');
+    expect(local).not.toContain("Load preview");
     expect(local).not.toContain(figure.markup);
     expect(local.length).toBeLessThan(600);
     expect(blocksHtml(blocks, ctx)).toContain(figure.markup);

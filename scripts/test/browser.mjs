@@ -319,6 +319,35 @@ browserTest("Save messages appear only on failure and clear after retry", async 
     assert.match(readFileSync(join(project, "guide.md"), "utf8"), /Kept after failure/);
 });
 
+browserTest("Uploaded SVG previews load automatically in the editor and reader", async (page) => {
+    const project = join(root, "uploaded-preview");
+    mkdirSync(project);
+    writeFileSync(join(project, "dooc.yaml"), "document:\n  title: Uploads\n  url: guide.md\n");
+    writeFileSync(join(project, "guide.md"), "![Uploaded SVG](files/svg/uploaded.svg)\n");
+    await open(page, await start("editor", "node", project));
+    await page.evaluate(() => {
+        window.uploadDocument = document;
+    });
+    await page.locator("#nav-files").evaluate((target) => {
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 240"><!--${"x".repeat(100_001)}--><rect id="uploaded-shape" width="400" height="240" fill="#356cab"/></svg>`;
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(new File([svg], "uploaded.svg", { type: "image/svg+xml" }));
+        target.dispatchEvent(
+            new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer }),
+        );
+    });
+    const frame = page.frameLocator('iframe[data-doc-figure-frame="svg"]:visible');
+    await frame.locator("#uploaded-shape").waitFor();
+    assert.equal(await page.evaluate(() => window.uploadDocument === document), true);
+    assert.equal(await page.locator("[data-figure-preview] > button:visible").count(), 0);
+    assert(
+        readFileSync(join(project, "files/svg/uploaded.svg"), "utf8").includes("uploaded-shape"),
+    );
+    await open(page, await start("reader", "node", project), false);
+    await frame.locator("#uploaded-shape").waitFor();
+    assert.equal(await page.locator("[data-figure-preview] > button:visible").count(), 0);
+});
+
 browserTest("Document link titles, gestures and external confirmations", async (page) => {
     const project = join(root, "document-links");
     mkdirSync(join(project, "child"), { recursive: true });

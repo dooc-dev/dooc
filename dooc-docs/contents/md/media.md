@@ -1,5 +1,7 @@
 Visual files render in place. The alt text becomes the caption.
 
+Uploaded SVGs and other visual files preview automatically when they enter the visible area. Large previews load separately to keep the page responsive; a **Retry** button appears only if loading fails.
+
 Where a file offers a download button, the **Expand** button to its left opens the file in a near full-screen view. Scroll the wheel to zoom around the pointer; at any zoom other than 100%, drag with the wheel button (middle click) to move the view. **Esc** or the close button returns to the page.
 
 ## Images
