@@ -5,13 +5,7 @@ import { connectServer } from "../../workspace/src/socket-connection.js";
 import { t } from "./i18n.js";
 import { mountSelectPickers } from "./language-picker.js";
 
-export interface DraftLocation {
-    workspace: string;
-    file: string;
-    pane?: number;
-}
-
-export const mountDocumentVersions = (drafts: () => DraftLocation[] = () => []) => {
+export const mountDocumentVersions = () => {
     const sidebar = document.getElementById("sidebar");
     const footer = document.getElementById("document-versions");
     if (!sidebar || !footer || footer.childElementCount) return;
@@ -34,7 +28,6 @@ export const mountDocumentVersions = (drafts: () => DraftLocation[] = () => []) 
         return { box, select };
     };
     const versions = control("document-version-select", "version");
-    const pending = control("document-draft-select", "Unsaved drafts");
     const status = document.createElement("p");
     status.setAttribute("role", "status");
     status.setAttribute("aria-live", "polite");
@@ -48,19 +41,7 @@ export const mountDocumentVersions = (drafts: () => DraftLocation[] = () => []) 
         undefined;
     let unsubscribe: (() => void) | undefined;
     const visibility = () => {
-        footer.hidden = versions.box.hidden && pending.box.hidden && status.hidden;
-    };
-    const refreshDrafts = () => {
-        const locations = [
-            ...new Map(drafts().map((draft) => [JSON.stringify(draft), draft])).values(),
-        ];
-        pending.select.replaceChildren(new Option(t("Choose an unsaved draft"), ""));
-        for (const draft of locations) {
-            const label = workspaceConnection(draft.workspace)?.label ?? draft.workspace;
-            pending.select.add(new Option(`${label} — ${draft.file}`, JSON.stringify(draft)));
-        }
-        pending.box.hidden = !locations.length;
-        visibility();
+        footer.hidden = versions.box.hidden && status.hidden;
     };
     const refresh = async () => {
         const request = ++sequence;
@@ -100,7 +81,7 @@ export const mountDocumentVersions = (drafts: () => DraftLocation[] = () => []) 
         } finally {
             if (request === sequence) {
                 versions.select.disabled = false;
-                refreshDrafts();
+                visibility();
             }
         }
     };
@@ -140,11 +121,6 @@ export const mountDocumentVersions = (drafts: () => DraftLocation[] = () => []) 
                 versions.select.disabled = false;
             });
     });
-    pending.select.addEventListener("change", () => {
-        if (!pending.select.value) return;
-        const draft = JSON.parse(pending.select.value) as DraftLocation;
-        document.dispatchEvent(new CustomEvent("dooc:select-draft", { detail: draft }));
-    });
     const watch = () => {
         unsubscribe?.();
         unsubscribe = pageWorkspace().on("change", () => void refresh());
@@ -152,7 +128,5 @@ export const mountDocumentVersions = (drafts: () => DraftLocation[] = () => []) 
     };
     document.addEventListener("dooc:workspace-changed", watch);
     document.addEventListener("dooc:document-changed", () => void refresh());
-    document.addEventListener("dooc:drafts-changed", refreshDrafts);
-    document.addEventListener("docs:ui-language", refreshDrafts);
     watch();
 };

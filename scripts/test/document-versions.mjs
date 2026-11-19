@@ -5,7 +5,7 @@ async function choose(page, id, value) {
     await page.locator(`#${id}`).locator("..").locator("input").click();
     await page.locator(`#${id}-picker button`).evaluateAll((buttons, value) => {
         const option = buttons.find((button) => button.dataset.value === value);
-        if (!option) throw new Error(`Missing version option: ${value}`);
+        if (!option) throw new Error(`Missing picker option: ${value}`);
         option.click();
     }, value);
 }
@@ -89,6 +89,9 @@ export async function testDocumentVersionDrafts(page) {
     const source = () => page.evaluate(() => window.testEditorDocument());
     const versions = page.locator("#document-version-select");
     await versions.locator("option").nth(1).waitFor({ state: "attached" });
+    const workspace = await page
+        .locator('select[data-workspace-pane][data-active="true"]')
+        .evaluate((select) => ({ id: select.id, value: select.value }));
     const previous = await versions.locator("option").last().getAttribute("value");
     const autosave = await page.locator("#opt-autosave").isChecked();
     await page.locator("#opt-autosave").evaluate((input) => {
@@ -100,7 +103,7 @@ export async function testDocumentVersionDrafts(page) {
     await page.keyboard.press("Control+End");
     await page.keyboard.insertText("UNSAVED VERSION TEST");
     const draft = await source();
-    await page.locator("#document-draft-select option").nth(1).waitFor({ state: "attached" });
+    assert.equal(await page.locator("#document-draft-select").count(), 0);
     await choose(page, "document-version-select", previous);
     await page.waitForFunction(() => document.body.dataset.versionReadOnly === "true");
     const old = await source();
@@ -108,11 +111,8 @@ export async function testDocumentVersionDrafts(page) {
     await editor.click();
     await page.keyboard.insertText("FORBIDDEN");
     assert.equal(await source(), old);
-    const location = await page
-        .locator("#document-draft-select option")
-        .nth(1)
-        .getAttribute("value");
-    await choose(page, "document-draft-select", location);
+    assert.equal(await page.locator("#document-draft-select").count(), 0);
+    await choose(page, workspace.id, workspace.value);
     await page.waitForFunction(() => document.body.dataset.versionReadOnly === "false");
     assert.equal(await source(), draft);
     await editor.click();

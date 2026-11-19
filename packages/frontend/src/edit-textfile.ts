@@ -575,10 +575,6 @@ export const createTextfileEditors = (
             };
         },
         content: (file: string): string | undefined => drafts.get(file)?.state?.sliceDoc(),
-        unsavedFiles: () =>
-            [...drafts]
-                .filter(([, draft]) => dirty(draft) || hasSubformatFormDraft(draft.state))
-                .map(([file]) => file),
         hasUnsavedChanges: () =>
             [...drafts.values()].some(
                 (draft) =>

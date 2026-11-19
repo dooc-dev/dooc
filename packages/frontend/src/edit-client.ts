@@ -52,7 +52,7 @@ import {
     workspaceFetch,
     workspaceId,
 } from "../../workspace/src/connection.js";
-import { type DraftLocation, mountDocumentVersions } from "./document-versions-ui.js";
+import { mountDocumentVersions } from "./document-versions-ui.js";
 import { codeFileButtons } from "./edit-code-file.js";
 import { editorCodeHighlight } from "./edit-code-highlight.js";
 import { chooseConflict } from "./edit-conflict.js";
@@ -431,7 +431,6 @@ const setDirty = (v: boolean): void => {
                 ),
             ),
     );
-    document.dispatchEvent(new Event("dooc:drafts-changed"));
 };
 let corrOn = false;
 let ranges: Corr[] = [];
@@ -2427,7 +2426,6 @@ const syncPane = (): void => {
     for (const pane of panes)
         if (!workspaceOptions.has(pane.workspace)) void refreshWorkspaceOptions(pane);
     updateLanguageControls();
-    document.dispatchEvent(new Event("dooc:drafts-changed"));
 };
 const restorePane = (pane: PreviewPane): void => {
     const draft = pane.draft;
@@ -3088,16 +3086,6 @@ document.addEventListener("dooc:select-workspace", (event) => {
     }
     void changeWorkspace(id, pane, path);
 });
-document.addEventListener("dooc:select-draft", (event) => {
-    const draft = (event as CustomEvent<DraftLocation>).detail;
-    const pane = panes.find((pane) => pane.id === draft.pane) ?? activePane;
-    void (async () => {
-        if (pane !== activePane) await activatePane(pane);
-        await changeWorkspace(draft.workspace, pane);
-        if (pane === activePane && pane.workspace === draft.workspace && draft.file !== boot.file)
-            await openFileEditor(draft.file);
-    })().catch((error) => setStatus(String(error), true));
-});
 for (const event of ["pointerdown", "focusin"]) {
     paneHost.addEventListener(event, (ev) => {
         if ((ev.target as Element).closest(".pane-language, .in-toc")) return;
@@ -3548,32 +3536,7 @@ window.addEventListener("popstate", () => {
 });
 
 syncPane();
-mountDocumentVersions(() => {
-    const locations: DraftLocation[] = [];
-    if (dirty || hasSubformatFormDraft(view.state))
-        locations.push({ workspace: activePane.workspace, file: boot.file, pane: activePane.id });
-    if (fileEditor?.element.dataset.dirty === "true")
-        locations.push({
-            workspace: activePane.workspace,
-            file: fileEditor.file || boot.file,
-            pane: activePane.id,
-        });
-    for (const pane of panes)
-        for (const [workspace, draft] of pane.drafts) {
-            if (pane === activePane && workspace === activePane.workspace) continue;
-            if (draft.dirty || hasSubformatFormDraft(draft.state))
-                locations.push({ workspace, file: draft.boot.file, pane: pane.id });
-            if (draft.fileEditor?.element.dataset.dirty === "true")
-                locations.push({
-                    workspace,
-                    file: draft.fileEditor.file || draft.boot.file,
-                    pane: pane.id,
-                });
-        }
-    for (const [workspace, files] of textfileWorkspaces)
-        for (const file of files.unsavedFiles()) locations.push({ workspace, file });
-    return locations;
-});
+mountDocumentVersions();
 if (initialResource) showResource(initialResource);
 if (location.hash) requestAnimationFrame(() => scrollToAnchor(location.hash));
 

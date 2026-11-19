@@ -163,7 +163,7 @@ Only the current Git workspace version is editable. This means the selected bran
 
 Keep drafts attached to their original workspace, version context, and file. Switching versions must retain unsaved text, file and form drafts, and undo history; returning to the editable workspace restores them. Neither switching nor copying historical text implicitly saves, discards, or moves a draft.
 
-Preserve the ability to locate pending work. The editor must identify which workspace or version context and files contain unsaved drafts, including drafts outside the currently displayed version, and allow returning to their owner. Historical views must retain access to this draft navigation even though the historical content itself is read-only. Reader publication filters must not hide the editable workspace or its pending drafts from the editor.
+Use the workspace selectors to return to the editable workspace and its pending drafts. The sidebar footer contains the version selector without a separate unsaved-draft selector. Reader publication filters must not hide the editable workspace from the editor.
 
 Git history supplies historical source files without adding version tracking files to the repository. Hash mode retains source snapshots after successful `dooc build` or `dooc zip --url_preview embed` artifact delivery. The programmatic `buildBundle` API returns `version`, `revision` when available, and an optional `commitVersion()` callback; call that callback only after successfully writing the artifact. HTML artifacts include `dooc-version` metadata. Git builds with relevant working changes report `+dirty` without advancing the committed number.
 
