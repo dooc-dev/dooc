@@ -165,7 +165,8 @@ it("compiles a subformat-only site and publishes its board in the sidebar", asyn
     });
     const html = publishHtml(site, "", undefined, "", "static", "", "/* subformat runtime */");
     expect(html).toContain('data-subformat-page="issue"');
-    expect(html).toContain('class="subformat-page-title">Issues &lt;board&gt;</h1>');
+    expect(html).not.toContain('class="subformat-page-title"');
+    expect(html).toContain('<div class="resource-toolbar"></div>');
     expect(html).toContain("First &lt;record&gt;");
     expect(html).toContain("&quot;sort_order&quot;:&quot;desc&quot;");
     expect(html).toContain("/* subformat runtime */");

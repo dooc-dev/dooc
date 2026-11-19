@@ -16,7 +16,9 @@ describe("editor UI catalogs", () => {
         expect(resolveUiLanguage("fr")).toBe("eng");
         expect(translate("jpn", "Save")).toBe("保存");
         expect(translate("zho", "Save")).toBe("保存");
-        expect(translate("eng", "Saved {time}", { time: "10:00" })).toBe("Saved 10:00");
+        expect(translate("eng", "Failed to save: {error}", { error: "Disk full" })).toBe(
+            "Failed to save: Disk full",
+        );
         expect(translate("jpn", "Unknown diagnostic")).toBe("Unknown diagnostic");
     });
 });

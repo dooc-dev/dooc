@@ -404,11 +404,12 @@ export const resourceLibraryHtml = (
     const selectedChange = index.subformats[0] && subformatChange(index.subformats[0]);
     const filter =
         pageTitle !== undefined
-            ? `<h1 class="subformat-page-title">${escapeHtml(pageTitle)}</h1>`
+            ? ""
             : subformatsOnly
               ? `<div class="subformat-picker">${selector}<button type="button" data-subformat-trigger aria-haspopup="menu" aria-expanded="false"${selectedChange ? ` data-subformat-change="${selectedChange}"` : ""}>${escapeHtml(filterGroups[0] ?? "Subformats")}</button><div class="subformat-picker-menu" data-subformat-options popover="auto" role="menu" aria-label="Subformats" data-i18n-aria-label="Subformats"></div></div>`
               : selector;
     const search = `<label class="resource-search"><svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="${SEARCH_ICON_PATH}"/></svg><input type="search" data-resource-search placeholder="Search resources" aria-label="Search resources" data-i18n-placeholder="Search resources" data-i18n-aria-label="Search resources"></label>`;
+    const toolbar = `<div class="resource-toolbar">${subformatsOnly ? (filter ? `<div class="resource-query">${filter}</div>` : "") : `${page ? "" : '<span data-i18n="Name">Name</span>'}${search}${filter}`}${subformatsOnly ? "" : `<span class="resource-count" data-resource-count role="status" aria-live="polite">${items.length}</span>`}</div>`;
     const subformats =
         subformatsOnly || (view === "codeblocks" && index.subformats.length)
             ? `<template data-subformats>${escapeHtml(JSON.stringify(index.subformats))}</template><div data-subformat-board role="region" hidden></div>${relations ? `<div data-subformat-relations hidden>${blocksHtml([{ type: "schemaGraph", graph: relations }])}</div>` : ""}`
@@ -417,25 +418,21 @@ export const resourceLibraryHtml = (
         subformatsOnly && !index.subformats.length
             ? "No subformats configured. Add subformats to dooc.yaml."
             : "No matching resources";
-    return `<section class="resource-results" data-resource-results${page ? " data-resource-page" : ""}${pageTitle !== undefined ? ` data-subformat-page="${escapeHtml(index.subformats[0]?.ext ?? "")}"` : ""}><div class="resource-toolbar">${subformatsOnly ? `<div class="resource-query">${filter}</div>` : `${page ? "" : '<span data-i18n="Name">Name</span>'}${search}${filter}`}${subformatsOnly ? "" : `<span class="resource-count" data-resource-count role="status" aria-live="polite">${items.length}</span>`}</div>${subformats}${index.errors.length && !page ? `<details class="resource-errors"><summary><span data-i18n="Files with errors">Files with errors</span> (${index.errors.length})</summary><ul>${index.errors.map((error) => `<li>${escapeHtml(error)}</li>`).join("")}</ul></details>` : ""}<div class="resource-items resource-${view}">${items.join("")}</div><p class="resource-empty" data-resource-empty${items.length ? " hidden" : ""} data-i18n="${emptyMessage}">${emptyMessage}</p></section>`;
+    return `<section class="resource-results" data-resource-results${page ? " data-resource-page" : ""}${pageTitle !== undefined ? ` data-subformat-page="${escapeHtml(index.subformats[0]?.ext ?? "")}"` : ""}>${toolbar}${subformats}${index.errors.length && !page ? `<details class="resource-errors"><summary><span data-i18n="Files with errors">Files with errors</span> (${index.errors.length})</summary><ul>${index.errors.map((error) => `<li>${escapeHtml(error)}</li>`).join("")}</ul></details>` : ""}<div class="resource-items resource-${view}">${items.join("")}</div><p class="resource-empty" data-resource-empty${items.length ? " hidden" : ""} data-i18n="${emptyMessage}">${emptyMessage}</p></section>`;
 };
 
 /** A Library view shown as a site page: one block format, `urls` or `url-previews`. */
-export const libraryPageHtml = (index: ResourceIndex, view: string, title: string): string => {
-    const heading = `<h1 class="subformat-page-title">${escapeHtml(title)}</h1>`;
+export const libraryPageHtml = (index: ResourceIndex, view: string, _title: string): string => {
     if (view === "urls" || view === "url-previews")
-        return heading + resourceLibraryHtml({ ...index, subformats: [] }, view, undefined, true);
-    return (
-        heading +
-        resourceLibraryHtml(
-            {
-                ...index,
-                subformats: [],
-                codeblocks: index.codeblocks.filter((item) => item.format === view),
-            },
-            "codeblocks",
-            undefined,
-            true,
-        )
+        return resourceLibraryHtml({ ...index, subformats: [] }, view, undefined, true);
+    return resourceLibraryHtml(
+        {
+            ...index,
+            subformats: [],
+            codeblocks: index.codeblocks.filter((item) => item.format === view),
+        },
+        "codeblocks",
+        undefined,
+        true,
     );
 };

@@ -75,7 +75,7 @@ export const readWorkspaceOptions = async (
             opened.add(branch);
             options.push({
                 id: JSON.stringify(["branch", family ?? workspace, branch]),
-                label: `${branch}/${state.repo}`,
+                label: branch,
                 branch,
                 workspace: id,
                 ...(missingManifest ? { missingManifest } : {}),

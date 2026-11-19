@@ -187,14 +187,9 @@ export const nodeWorkspaceOperations = async (
         const description: WorkspaceDescription = {
             id,
             ...(section ? { manifest: section } : {}),
-            label:
-                source.protocol === "git"
-                    ? `${source.branch}/${source.repo ?? basename(root)}`
-                    : basename(root),
+            label: source.protocol === "git" ? source.branch : basename(root),
             ...(source.protocol === "git" ? { branch: source.branch } : {}),
-            ...(revision
-                ? { revision, readOnly: true, label: `${revision.version}/${basename(primary)}` }
-                : {}),
+            ...(revision ? { revision, readOnly: true, label: revision.version } : {}),
         };
         const catalog =
             catalogOverride ?? entries.get(owner)?.versions ?? createDocumentVersions(root);

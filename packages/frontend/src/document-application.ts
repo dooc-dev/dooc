@@ -586,7 +586,7 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
             return `${isLinkedEntry(entry) ? "data-document-link " : ""}${/^https?:\/\//i.test(jump) ? `data-jump-url="${escapeHtml(jump)}" ` : ""}href="${escapeHtml(docHref(site.entries, id, true))}`;
         });
 
-    /** Easy download offers the page's own Markdown beside its title. */
+    /** Easy download offers the page's own Markdown above its content. */
     const pageDownload = (site: Site, entry: Entry): Pick<RenderCtx, "pageDownload"> => {
         const file = entry.sourceFile ?? CONTENT_PREFIX + entry.file;
         const href = site.ctx.downloads?.get(file);
@@ -1341,7 +1341,6 @@ article { max-width: 860px; margin: 0 auto; font-family: var(--reader-font, syst
 .codeblk-head .resource-download { width: 16px; height: 16px; border-radius: 6px; color: var(--doc-fg-3); }
 .codeblk-head .resource-download svg { width: 14px; height: 14px; }
 .doc-title > .resource-download { align-self: center; }
-.doc-title:has(.toc-card) > h1 { display: inline-block; vertical-align: middle; }
 .resource-download { display: inline-flex; flex: none; align-items: center; justify-content: center; box-sizing: border-box; width: 24px; height: 24px; border-radius: 4px; color: var(--doc-fg-2); text-decoration: none; }
 .resource-download:hover { background: var(--doc-panel); color: var(--doc-accent); }
 .resource-download:focus-visible { outline: 2px solid var(--doc-accent); outline-offset: 2px; }
@@ -1568,7 +1567,6 @@ article a { color: var(--doc-accent); }
 .errors { border: 1px solid var(--doc-danger); border-radius: 8px; padding: 10px 16px;
   margin-bottom: 16px; color: var(--doc-danger); font-size: 13px; }
 .doc-title { display: flex; align-items: baseline; gap: 12px; max-width: calc(100% - 100px); padding-top: 8px; margin-bottom: 2px; }
-.doc-title > h1 { min-width: 0; margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .in-toc { min-width: 28px; max-width: 100%; }
 .toc-current { position: relative; display: block; max-width: min(240px, 100%); padding: 4px 20px 4px 6px;
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis; border: 0; border-radius: 4px;
@@ -1588,7 +1586,6 @@ article a { color: var(--doc-accent); }
 .in-toc .lvl6 a { padding-left: 60px; }
 .in-toc a:hover, .in-toc a[aria-current] { color: var(--doc-accent); background: color-mix(in srgb, var(--doc-accent) 8%, transparent); }
 .doc-title:has(.toc-card) { display: block; max-width: none; }
-.doc-title:has(.toc-card) > h1 { max-width: calc(100% - 100px); }
 .toc-card { margin: 10px 0 14px; padding: 10px; border: 1px solid var(--doc-border); border-radius: 6px; }
 .toc-card::before { content: attr(aria-label); display: block; margin: 0 10px 6px; color: var(--doc-fg-3); font: 12px/1.5 var(--font-sans); }
 .toc-card .toc-current { display: none; }
@@ -1964,7 +1961,6 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .history-dialog li span { flex: 1; overflow-wrap: anywhere; }
 .subformat-page-name { display: block; box-sizing: border-box; width: 100%; margin: 8px 0 20px; padding: 8px; color: var(--c-fg); background: var(--c-bg0); border: 1px solid var(--c-line); border-radius: 4px; font: inherit; }
 .subformat-page .resource-query { flex-wrap: wrap; max-width: none; }
-.subformat-page-title { flex: 1 1 100%; margin: 0 0 12px; color: var(--c-fg); font: 500 24px/1.3 var(--font-sans); overflow-wrap: anywhere; }
 .subformat-page .resource-toolbar { align-items: flex-end; }
 .subformat-page .subformat-columns { padding-top: 20px; }
 body:not(.edit) .subformat-page { padding-top: 64px; }
@@ -3897,12 +3893,12 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
     const entryMain = (site: Site, e: Entry): string => {
         if (e.url && /^https?:\/\//i.test(e.url)) {
             const title = docDisplayName(e.frontmatter, e.id);
-            return `<article><h1>${escapeHtml(title)}</h1><section class="document-web" data-web-url="${escapeHtml(e.url)}" data-title="${escapeHtml(title)}"><div class="document-web-tools"><span>${escapeHtml(e.url)}</span><a href="${escapeHtml(e.url)}" data-web-open data-i18n="Open externally">Open externally</a></div><p data-web-status role="status" data-i18n="Loading website…">Loading website…</p></section></article>`;
+            return `<article><section class="document-web" data-web-url="${escapeHtml(e.url)}" data-title="${escapeHtml(title)}"><div class="document-web-tools"><span>${escapeHtml(e.url)}</span><a href="${escapeHtml(e.url)}" data-web-open data-i18n="Open externally">Open externally</a></div><p data-web-status role="status" data-i18n="Loading website…">Loading website…</p></section></article>`;
         }
         if (e.url && pageUrlKind(e.url) === "file")
             return (
                 linkedFilePage(site, e.url)?.main ??
-                `<article><h1>${escapeHtml(docDisplayName(e.frontmatter, e.id))}</h1><p role="alert">File not found: ${escapeHtml(e.url)}</p></article>`
+                `<article><p role="alert">File not found: ${escapeHtml(e.url)}</p></article>`
             );
         const html = renderEntryHtml(site, e).html;
         const kids = childrenOf(site.entries, e.id);
@@ -3968,7 +3964,7 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
                 ? {
                       workspaceLabel:
                           site.workspace.protocol === "git"
-                              ? `${site.workspace.branch}/${site.workspace.repo ?? "repo"}`
+                              ? site.workspace.branch
                               : site.workspace.folder,
                   }
                 : {}),

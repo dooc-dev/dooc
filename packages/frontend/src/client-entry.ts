@@ -135,7 +135,7 @@ async function openBrowser(
         item.branch = result.source.branch;
         const connection: WorkspaceConnection = {
             id: item.id,
-            label: item.branch ? `${item.branch}/${item.name}` : item.name,
+            label: item.branch || item.name,
             family: item.family,
             branch: item.branch,
             readOnly: settings.readOnly,
@@ -221,7 +221,7 @@ async function openBrowser(
             const historical: WorkspaceConnection = {
                 id,
                 family: item.family,
-                label: `${revision.version}/${item.name}`,
+                label: revision.version,
                 readOnly: true,
                 revision,
                 manifest: revision.manifest,

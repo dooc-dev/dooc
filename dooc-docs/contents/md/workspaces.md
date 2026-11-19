@@ -10,7 +10,7 @@ A workspace is the folder selected by its manifest. Choose a local Node workspac
 
 ## Workspaces and branches
 
-Open the branch selector to visit another branch or choose **Create branch**. Labels use `branch/workspace`; long labels shorten with `...`, and hovering shows the full name. The active pane's label is underlined. Git changes determine the text color: added or untracked files are green, modifications orange, and deletions red.
+Open the branch selector to visit another branch or choose **Create branch**. Labels show only the branch name; long labels shorten with `...`, and hovering shows the full name. Historical workspaces show their version number. The active pane's label is underlined. Git changes determine the text color: added or untracked files are green, modifications orange, and deletions red.
 
 A branch must contain the selected manifest at the same repository path. Unavailable branches remain visible in red with an information icon; hover or keyboard focus explains why they cannot be selected. **Create branch** is disabled until the manifest is committed in `HEAD`. Enter a valid Git branch name in its dialog to create a branch from the latest commit. Unsaved edits stay in the original workspace.
 

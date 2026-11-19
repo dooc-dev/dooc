@@ -444,11 +444,7 @@ export const createTextfileEditors = (
                     saveStatus.dataset.state = current.error ? "error" : "pending";
                     saveStatus.textContent = current.error
                         ? t(current.errorAction === "save" ? "Auto-save paused" : "Reload failed")
-                        : current.operation === "save"
-                          ? t("Saving")
-                          : dirty(current)
-                            ? t("Waiting for auto-save")
-                            : "";
+                        : "";
                     saveStatus.hidden = !saveStatus.textContent;
                     saveStatus.title = current.error || saveStatus.textContent;
                     retry.textContent = t("Retry");

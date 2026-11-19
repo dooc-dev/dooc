@@ -157,17 +157,30 @@ describe("blocksHtml", () => {
         expect(output).toContain(MODEL_FIG.desc);
     });
 
-    it("places the localized outline beside the title without a seek bar", () => {
+    it("keeps the localized outline without a generated document title", () => {
         const output = docHtml({ title: "Guide" }, [], [], { ...CTX, tocTitle: '<Contents "&">' }, [
             { depth: 2, text: "Section", slug: "section" },
         ]);
         expect(output).toContain('aria-label="&lt;Contents &quot;&amp;&quot;&gt;"');
-        expect(output).toContain('<header class="doc-title"><h1>Guide</h1><nav class="in-toc"');
+        expect(output).toContain('<header class="doc-title"><nav class="in-toc"');
+        expect(output).not.toContain("Guide");
         expect(output).not.toContain('class="in-toc-title"');
         expect(output).toContain('href="#section" data-toc-target="section"');
         expect(output).toContain('title="Section">Section</a>');
         expect(output).not.toContain('type="range"');
-        expect(docHtml({ title: "No headings" }, [], [])).not.toContain('class="in-toc"');
+        expect(docHtml({ title: "No headings" }, [], [])).toBe("<article></article>");
+    });
+
+    it("preserves content headings and downloads without repeating the manifest title", () => {
+        const source = "# Authored heading";
+        const blocks = toBlocks(parseDoc(source).root, source).blocks;
+        const output = docHtml({ title: "Manifest title" }, blocks, [], {
+            ...CTX,
+            pageDownload: { file: "guide.md", href: "data:text/plain,Guide" },
+        });
+        expect(output).toContain('<h1 id="authored-heading">Authored heading</h1>');
+        expect(output).toContain('download="guide.md"');
+        expect(output).not.toContain("Manifest title");
     });
 
     it("renders headings (ASCII slug ids) / paragraphs / inline (code, link, unescaping)", () => {

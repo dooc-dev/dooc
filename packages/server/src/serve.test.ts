@@ -640,11 +640,11 @@ describe("editorBoot / pageDataResponse (backing `GET /api/page`)", () => {
         defaultLang: "en",
     });
 
-    it("keeps the full workspace label in local editor boot data", () => {
+    it("uses the branch name or local folder name in editor boot data", () => {
         const site = docSite();
         const entry = site.entries.find((entry) => !entry.root) as Entry;
         site.workspace = { protocol: "git", branch: "feature/docs", repo: "project" };
-        expect(editorBoot(entry, site).workspaceLabel).toBe("feature/docs/project");
+        expect(editorBoot(entry, site).workspaceLabel).toBe("feature/docs");
         site.workspace = { protocol: "storage", folder: "Local documents", service: "Browser" };
         expect(editorBoot(entry, site).workspaceLabel).toBe("Local documents");
     });

@@ -294,7 +294,8 @@ it("shows one block format as a drawn library page", () => {
         "a.md": "```schemath Users\nuser:\n  id: pk\n```\n\n```html\n<b>x</b>\n```",
     });
     const page = libraryPageHtml(resourceIndex(root, files), "schemath", "Schemas <1>");
-    expect(page).toContain("Schemas &lt;1&gt;</h1>");
+    expect(page).not.toContain("<h1");
+    expect(page).not.toContain("Schemas &lt;1&gt;");
     expect(page).toContain("<svg");
     expect(page).toContain('resource-code" open');
     expect(page).not.toContain('data-resource-group="html"');

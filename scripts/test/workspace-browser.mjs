@@ -348,9 +348,9 @@ export async function testBrowserWorkspace(page, url) {
             .evaluate((element) => getComputedStyle(element).borderBottomWidth),
         "0px",
     );
-    assert.match(await selector.locator("option:checked").innerText(), /main/);
-    assert.match(await leftSelector.locator("option:checked").innerText(), /main/);
-    assert.match(await rightSelector.locator("option:checked").innerText(), /feature/);
+    assert.equal(await selector.locator("option:checked").innerText(), "main");
+    assert.equal(await leftSelector.locator("option:checked").innerText(), "main");
+    assert.equal(await rightSelector.locator("option:checked").innerText(), "feature");
     assert.match(
         await page
             .locator(
@@ -360,7 +360,7 @@ export async function testBrowserWorkspace(page, url) {
         /feature/,
     );
     const originalLabel = await pickerInput.getAttribute("title");
-    const longLabel = `main/${"documentation-workspace-".repeat(6)}`;
+    const longLabel = `feature/${"long-branch-name-".repeat(6)}`;
     await page.evaluate((label) => {
         const state = window.__doocConnections;
         state.items.get(state.active).label = label;

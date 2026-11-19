@@ -168,7 +168,8 @@ browserTest("Document roots, included editors and standalone redirects", async (
             .getAttribute("data-jump-url"),
         "https://example.com/",
     );
-    assert.match(await page.locator("main").textContent(), /Handbook/);
+    assert.match(await page.locator("main").textContent(), /Reference/);
+    assert.deepEqual(await page.locator("main h1:visible").allTextContents(), []);
     await page
         .locator("#nav-groups a")
         .filter({ hasText: /^Reference$/ })
@@ -182,7 +183,7 @@ browserTest("Document roots, included editors and standalone redirects", async (
     await page.waitForURL((current) => !current.pathname.endsWith("/child"));
     await page.locator('#site-title.cur[aria-current="page"]').waitFor();
     assert.equal(await page.locator("#nav-groups a.cur").count(), 0);
-    assert.match(await page.locator("main").textContent(), /Handbook/);
+    assert.match(await page.locator("main").textContent(), /Reference/);
     for (const redirect of [false, true]) {
         if (redirect) {
             const file = join(project, "dooc.yaml");
@@ -206,7 +207,8 @@ browserTest("Document roots, included editors and standalone redirects", async (
             await page.locator("#site-title").click();
             await page.waitForURL((current) => current.hash === "#/child");
         } else {
-            assert.match(await page.locator("main").textContent(), /Handbook/);
+            assert.match(await page.locator("main").textContent(), /Reference/);
+            assert.deepEqual(await page.locator("main h1:visible").allTextContents(), []);
             assert.equal(new URL(page.url()).hash, "");
             await page.locator('#site-title.cur[aria-current="page"]').waitFor();
             await page
@@ -228,11 +230,12 @@ browserTest("Root document header navigation and title editing", async (page) =>
         join(project, "dooc.yaml"),
         "document:\n  title: Handbook\n  url: cover.md\n  children:\n    - document:\n        title: Guide\n        url: guide.md\n",
     );
-    writeFileSync(join(project, "cover.md"), "Welcome to the handbook.\n");
+    writeFileSync(join(project, "cover.md"), "# Authored heading\n\nWelcome to the handbook.\n");
     writeFileSync(join(project, "guide.md"), "Read the guide.\n");
     for (const product of ["editor", "reader"]) {
         const url = await start(product, "node", project);
         await open(page, `${url}?lang=eng`, product === "editor");
+        assert.deepEqual(await page.locator("main h1").allTextContents(), ["Authored heading"]);
         await page.locator('#site-title.cur[aria-current="page"]').waitFor();
         assert.equal(
             new URL(await page.locator("#site-title").getAttribute("href"), url).pathname,
@@ -273,6 +276,47 @@ browserTest("Root document header navigation and title editing", async (page) =>
         await input.press("Escape");
         await page.locator('#site-title.cur[aria-current="page"]').waitFor();
     }
+});
+
+browserTest("Save messages appear only on failure and clear after retry", async (page) => {
+    const project = join(root, "save-feedback");
+    mkdirSync(project);
+    writeFileSync(join(project, "dooc.yaml"), "document:\n  title: Guide\n  url: guide.md\n");
+    writeFileSync(join(project, "guide.md"), "Original body.\n");
+    await open(page, `${await start("editor", "node", project)}?lang=eng`);
+    await page.locator("#opt-autosave").evaluate((input) => {
+        input.checked = false;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const editor = page.locator("#cm .cm-content");
+    await editor.focus();
+    await page.keyboard.press("Control+End");
+    await page.keyboard.insertText("\nEdited body.");
+    assert.equal(await page.locator("#status").textContent(), "");
+    await page.evaluate(() => {
+        const connection = window.__doocConnections.items.get(window.__doocConnections.active);
+        const fetch = connection.fetch;
+        connection.fetch = (input, init) =>
+            new URL(input, location.href).pathname.endsWith("/api/save")
+                ? Promise.resolve(Response.json({ error: "Disk full" }, { status: 503 }))
+                : fetch(input, init);
+        window.restoreSaveFetch = () => {
+            connection.fetch = fetch;
+        };
+    });
+    await page.locator("#save").click();
+    await page.locator("#status.err").filter({ hasText: "Disk full" }).waitFor();
+    assert.equal(readFileSync(join(project, "guide.md"), "utf8"), "Original body.\n");
+    await editor.focus();
+    await page.keyboard.press("Control+End");
+    await page.keyboard.insertText("\nKept after failure.");
+    assert.match(await page.locator("#status.err").textContent(), /Disk full/);
+    await page.evaluate(() => window.restoreSaveFetch());
+    await page.locator("#save").click();
+    await page.waitForFunction(() => document.getElementById("save").dataset.state === "saved");
+    assert.equal(await page.locator("#status").textContent(), "");
+    assert.equal(await page.locator("#status.err").count(), 0);
+    assert.match(readFileSync(join(project, "guide.md"), "utf8"), /Kept after failure/);
 });
 
 browserTest("Document link titles, gestures and external confirmations", async (page) => {
@@ -570,6 +614,8 @@ for (const mode of ["editor", "reader"]) {
             .getAttribute("href");
         assert(board, "The task board has a navigation URL");
         await page.goto(new URL(board, page.url()).href);
+        await page.getByRole("link", { name: "JSON Schema", exact: true }).waitFor();
+        assert.deepEqual(await page.locator("main h1:visible").allTextContents(), []);
         await page.getByRole("link", { name: "JSON Schema", exact: true }).click();
         await page.locator(".json-schema").waitFor();
         assert(
@@ -778,7 +824,7 @@ for (const dirty of [false, true]) {
                 await page.locator("#nav-docs a.cur .nav-label").textContent(),
                 "New title",
             );
-            assert.equal(await page.locator("main h1").first().textContent(), "New title");
+            assert.equal(await page.locator("main h1").count(), 0);
             assert.equal(readFileSync(source, "utf8"), "Original body.\n");
             if (dirty) {
                 await page.keyboard.press("Control+z");

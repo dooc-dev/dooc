@@ -114,7 +114,7 @@ Implementation is tracked as **Manifest step-up authorization** in **Development
 | Record board | `subformat` (an `ext`), `title`, `icon`, `children` |
 | Library page | `library` (a view), `title`, `icon`, `children`     |
 
-Every entry above is the value of a `document` key, including boards and Library pages. `url`, `subformat`, and `library` are alternative content sources. `title` is the page name in the tree and at the top of the page; a Markdown page without one shows its file name. `icon` is a local SVG file shown beside the entry in the tree. It is drawn as an image, so give it fixed colours that read on both themes; `currentColor` does not follow the theme. A board without an `icon` uses the icon of its record type. The root's `sidebar` holds the site's sidebar settings; its title defaults to the root document title.
+Every entry above is the value of a `document` key, including boards and Library pages. `url`, `subformat`, and `library` are alternative content sources. `title` is the page name in navigation and browser tabs; a Markdown page without one uses its file name. It is not added to the page body: write headings in the content itself. `icon` is a local SVG file shown beside the entry in the tree. It is drawn as an image, so give it fixed colours that read on both themes; `currentColor` does not follow the theme. A board without an `icon` uses the icon of its record type. The root's `sidebar` holds the site's sidebar settings; its title defaults to the root document title.
 
 A Library page lists one kind of content from the whole workspace. Its view is a block label (`callouth`, `graphth`, `schemath`, `termth`, `mermaid`, `csv`, `tsv`), `urls`, or `url-previews`.
 

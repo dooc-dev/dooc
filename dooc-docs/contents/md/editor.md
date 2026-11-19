@@ -22,6 +22,8 @@ The editor header sits above the source editor. Its language control is on the l
 
 Errors never block saving a page. **Auto save** starts on and **Auto validate** starts off; both retain your choice. Validation checks a draft, saving writes source files, and [publishing](contents/md/publishing.md) creates an output artifact.
 
+Routine edits and successful saves do not show status messages. The save button indicates the current state; failed writes show an error so you can retry. Embedded file editors also show save notifications only when a write fails.
+
 | Save state | Meaning | Action |
 | --- | --- | --- |
 | Saved · green | The write succeeded | Continue working |

@@ -1502,12 +1502,7 @@ const saveCurrent = async (): Promise<void> => {
         updateLanguageControls();
         setDirty(false);
         conflictPending = false;
-        setStatus(
-            r.errors.length > 0
-                ? t("Saved (validation errors: {count})", { count: r.errors.length })
-                : t("Saved {time}", { time: new Date().toLocaleTimeString() }),
-            r.errors.length > 0,
-        );
+        setStatus("");
     } catch (e) {
         if (boot === savingBoot) {
             setSaveState("error");
@@ -1538,7 +1533,6 @@ const validateSoon = debounce(600, () => {
 const onChange = (): void => {
     markValidationPending();
     setDirty(true);
-    setStatus(autosaveEl.checked ? "Modified (waiting for auto-save)" : "Unsaved changes");
     schedulePreview();
     autosave();
     if (!applyingValidation) validateSoon();
@@ -2464,7 +2458,7 @@ const restorePane = (pane: PreviewPane): void => {
     applySpellcheckLang();
     rebuildCompletions();
     setDirty(draft.dirty);
-    setStatus(dirty ? "Unsaved changes" : "");
+    setStatus("");
     tagCorrespondence(draft.blockLines);
     syncPane();
     markValidationPending();

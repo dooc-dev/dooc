@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import { createWorkspaceClient } from "../../workspace/src/client.js";
@@ -379,14 +379,14 @@ it("serves only the socket, rejects foreign origins, isolates branches, and acce
             closed: (handler) => socket.on("close", handler),
         });
         expect(await client.request("workspaces", { action: "list" })).toEqual([
-            { id: "main", label: `main/${basename(root)}`, branch: "main" },
+            { id: "main", label: "main", branch: "main" },
         ]);
         const next = await client.request<{ id: string; label: string }>("workspaces", {
             action: "branch",
             branch: "feature",
         });
         expect(next.id).not.toBe("main");
-        expect(next.label).toBe(`feature/${basename(root)}`);
+        expect(next.label).toBe("feature");
         const response = await client.request<{ status: number; body: string }>("http", {
             workspace: next.id,
             url: "/api/save",

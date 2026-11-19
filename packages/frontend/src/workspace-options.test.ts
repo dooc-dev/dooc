@@ -66,13 +66,13 @@ it("unions branch refs within the active family and opens them from a worker tha
     expect(options.filter((option) => option.branch)).toEqual([
         {
             id: JSON.stringify(["branch", "repo-a", "shared"]),
-            label: "shared/docs",
+            label: "shared",
             branch: "shared",
             workspace: "main",
         },
         {
             id: JSON.stringify(["branch", "repo-a", "feature/new"]),
-            label: "feature/new/docs",
+            label: "feature/new",
             branch: "feature/new",
             workspace: "feature",
         },
@@ -92,7 +92,7 @@ it("retains an attached local workspace and reads only its branch family", async
         { id: "remote", label: "Full remote label" },
         {
             id: JSON.stringify(["branch", "local", "local-only"]),
-            label: "local-only/docs",
+            label: "local-only",
             branch: "local-only",
             workspace: "local",
         },
@@ -121,7 +121,7 @@ it("lists saved sibling workspaces even when their refs are absent from the open
         { id: "main", label: "Full main label" },
         {
             id: JSON.stringify(["branch", "repo-a", "saved/feature"]),
-            label: "saved/feature/docs",
+            label: "saved/feature",
             branch: "saved/feature",
             workspace: "main",
         },

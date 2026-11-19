@@ -28,7 +28,7 @@ import {
     schemaGraphUid,
 } from "./schema-graph.js";
 import type { SubformatCollection } from "./subformats.js";
-import { docDisplayName, type Frontmatter } from "./taxonomy.js";
+import type { Frontmatter } from "./taxonomy.js";
 import { termAnchor } from "./term-reference.js";
 import { parseFileReference, textfileName } from "./textfile.js";
 
@@ -610,7 +610,7 @@ export const blocksHtml = (blocks: Block[], ctx: RenderCtx = emptyCtx): string =
         .join("\n");
 };
 
-// Keep the document outline beside its title in every reader.
+// Keep the document outline above its content in every reader.
 const inPageTocHtml = (toc: TocEntry[], title = "Contents"): string => {
     if (toc.length === 0) {
         return "";
@@ -625,7 +625,7 @@ const inPageTocHtml = (toc: TocEntry[], title = "Contents"): string => {
 };
 
 export const docHtml = (
-    fm: Frontmatter,
+    _fm: Frontmatter,
     blocks: Block[],
     errors: string[],
     ctx: RenderCtx = emptyCtx,
@@ -636,5 +636,6 @@ export const docHtml = (
             ? `<div class="errors">${errors.map((e) => `<div>${escapeHtml(e)}</div>`).join("")}</div>`
             : "";
     const lang = ctx.lang ? ` lang="${escapeHtml(ctx.lang)}"` : "";
-    return `<article${lang}>${errBox}<header class="doc-title"><h1>${escapeHtml(docDisplayName(fm, ""))}</h1>${ctx.pageDownload ? resourceDownloadHtml(ctx.pageDownload.file, ctx.pageDownload.href) : ""}${inPageTocHtml(toc, ctx.tocTitle)}</header>${blocksHtml(blocks, ctx)}</article>`;
+    const controls = `${ctx.pageDownload ? resourceDownloadHtml(ctx.pageDownload.file, ctx.pageDownload.href) : ""}${inPageTocHtml(toc, ctx.tocTitle)}`;
+    return `<article${lang}>${errBox}${controls ? `<header class="doc-title">${controls}</header>` : ""}${blocksHtml(blocks, ctx)}</article>`;
 };
