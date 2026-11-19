@@ -1,28 +1,28 @@
 class Dooc < Formula
   desc "Compile, preview, and edit documentation"
   homepage "https://github.com/dooc-dev/dooc"
-  version "0.0.18"
+  version "0.0.19"
   version_scheme 1
 
   on_macos do
     on_arm do
-      url "https://github.com/dooc-dev/dooc/releases/download/dooc-v0.0.18/dooc-darwin-arm64.tar.gz"
-      sha256 "f23957c9a755d602c3a9f27b89f35f7f612eff85c66f7cc0322e9606fd72311f"
+      url "https://github.com/dooc-dev/dooc/releases/download/dooc-v0.0.19/dooc-darwin-arm64.tar.gz"
+      sha256 "7d5c6aad3a5e390de613d40041a2474334853c34a90f55ad4bb14fb88f0d06cf"
     end
     on_intel do
-      url "https://github.com/dooc-dev/dooc/releases/download/dooc-v0.0.18/dooc-darwin-x64.tar.gz"
-      sha256 "5178aee52cb58aaf3809a03fb3cb9ca45c1a29c3f65fa90ecba589f066ab4a15"
+      url "https://github.com/dooc-dev/dooc/releases/download/dooc-v0.0.19/dooc-darwin-x64.tar.gz"
+      sha256 "417cde6e1d8c2b2070594087c13b307d6b6ec549ab9e2716592e921822e9438e"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/dooc-dev/dooc/releases/download/dooc-v0.0.18/dooc-linux-arm64.tar.gz"
-      sha256 "d982a625385ff027278425cb81e313b99d804e8ec108a191e62309d711aa2f13"
+      url "https://github.com/dooc-dev/dooc/releases/download/dooc-v0.0.19/dooc-linux-arm64.tar.gz"
+      sha256 "d817198583c8912565dee7de4dc87ff3ddb08bcb6e1bc9e62993e0204f4df04b"
     end
     on_intel do
-      url "https://github.com/dooc-dev/dooc/releases/download/dooc-v0.0.18/dooc-linux-x64.tar.gz"
-      sha256 "3aefa223cdd9a26f403cdfc63ad0e20c455890b20d27e81c13a87ef1db7f5660"
+      url "https://github.com/dooc-dev/dooc/releases/download/dooc-v0.0.19/dooc-linux-x64.tar.gz"
+      sha256 "41468b3107730eeb3de33282d5c3f3a9cfe0d5d43678303c74574fd5cce8a9c4"
     end
   end
 
