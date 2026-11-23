@@ -448,6 +448,7 @@
     "Open this website in a new tab?": "在新标签页中打开此网站？",
     "Open this website externally to view it.": "请在外部打开此网站。",
     "This website could not be displayed here. Open it externally?": "无法在此显示该网站。在外部打开？",
-    "This website has not loaded. Open it externally?": "此网站尚未加载。在外部打开？",
+    "This website has not loaded.": "此网站尚未加载。",
+    "This website could not be loaded.": "无法加载此网站。",
     "Loading website…": "正在加载网站…"
 }

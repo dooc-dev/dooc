@@ -448,6 +448,7 @@
     "Open this website in a new tab?": "Open this website in a new tab?",
     "Open this website externally to view it.": "Open this website externally to view it.",
     "This website could not be displayed here. Open it externally?": "This website could not be displayed here. Open it externally?",
-    "This website has not loaded. Open it externally?": "This website has not loaded. Open it externally?",
+    "This website has not loaded.": "This website has not loaded.",
+    "This website could not be loaded.": "This website could not be loaded.",
     "Loading website…": "Loading website…"
 }

@@ -393,14 +393,53 @@ browserTest("Document link titles, gestures and external confirmations", async (
         join(project, "web.svg"),
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/></svg>',
     );
-    await page.context().route("https://example.test/**", (route) =>
-        route.fulfill({
+    let frameReady = Promise.resolve();
+    await page.context().route("https://example.test/**", async (route) => {
+        await frameReady;
+        await route.fulfill({
             contentType: "text/html",
-            body: "<h1>External website</h1>",
-        }),
-    );
+            body: readFileSync(new URL("../fixtures/iframe.html", import.meta.url), "utf8"),
+        });
+    });
     const website = () => page.locator("#nav-groups a").filter({ hasText: /^Website$/ });
     const confirm = () => page.getByRole("dialog", { name: "Open externally?" });
+    const embedded = async () => {
+        await page
+            .frameLocator("main iframe.document-web-frame")
+            .getByRole("heading", { name: "Iframe test page" })
+            .waitFor();
+        assert.equal(await confirm().count(), 0);
+        assert.equal(await page.locator(".document-web-notice:visible").count(), 0);
+        assert.equal(await page.locator("[data-web-open]:visible").count(), 0);
+        assert.equal(await page.locator("#sidebar").isVisible(), true);
+        assert.equal(
+            await page.locator("main .page-actions:visible, main .pane-actions:visible").count(),
+            0,
+        );
+        const bounds = await page.locator("main iframe.document-web-frame").evaluate((frame) => {
+            const pane = frame.closest(".preview-pane, main");
+            const sidebar = document.querySelector("#sidebar");
+            const sidebarRect = sidebar.getBoundingClientRect();
+            return {
+                frame: frame.getBoundingClientRect().toJSON(),
+                pane: pane.getBoundingClientRect().toJSON(),
+                sidebarVisible: sidebar.contains(
+                    document.elementFromPoint(sidebarRect.left + sidebarRect.width / 2, 18),
+                ),
+                border: getComputedStyle(frame).borderWidth,
+                overflow:
+                    pane.scrollWidth > pane.clientWidth || pane.scrollHeight > pane.clientHeight,
+            };
+        });
+        for (const edge of ["left", "top", "right", "bottom"])
+            assert.ok(
+                Math.abs(bounds.frame[edge] - bounds.pane[edge]) < 1,
+                `Iframe fills the pane at ${edge}`,
+            );
+        assert.equal(bounds.border, "0px");
+        assert.equal(bounds.sidebarVisible, true, "The iframe does not cover the sidebar");
+        assert.equal(bounds.overflow, false, "The embedding pane adds no scrolling area");
+    };
     const jump = async (action) => {
         const popup = page.context().waitForEvent("page");
         await action();
@@ -449,11 +488,38 @@ browserTest("Document link titles, gestures and external confirmations", async (
         await jump(() => website().click({ modifiers: ["Control"] }));
         await jump(() => website().click({ modifiers: ["Meta"] }));
         assert.equal(page.url(), address);
+        await page.evaluate(() => {
+            const state = globalThis.__doocConnections;
+            const connection = state.items.get(state.active);
+            const fetch = connection.fetch;
+            connection.fetch = (input, init) => {
+                if (new URL(input, location.href).pathname !== "/api/frame-policy")
+                    return fetch(input, init);
+                return new Promise((resolve) => {
+                    window.denyFrame = () => {
+                        connection.fetch = fetch;
+                        resolve(Response.json({ blocked: true }));
+                    };
+                });
+            };
+        });
+        let releaseFrame;
+        frameReady = new Promise((resolve) => {
+            releaseFrame = resolve;
+        });
+        await page.clock.install();
         await website().click();
-        await page
-            .frameLocator("iframe.document-web-frame")
-            .getByRole("heading", { name: "External website" })
-            .waitFor();
+        await page.locator(".document-web-frame").waitFor();
+        assert.equal(await page.locator("[data-web-open]:visible").count(), 0);
+        assert.equal(await confirm().count(), 0);
+        await page.clock.fastForward(12_001);
+        await page.getByText("This website has not loaded.", { exact: true }).waitFor();
+        assert.equal(await page.locator("[data-web-open]:visible").count(), 0);
+        assert.equal(await confirm().count(), 0);
+        releaseFrame();
+        frameReady = Promise.resolve();
+        await embedded();
+        if (product === "editor") assert.equal(await page.locator("#panel").isVisible(), true);
         assert.match(new URL(page.url()).pathname, /\/Website$/);
         const iconRow = website().locator("..");
         const customIcon = iconRow.locator(".doc-icon-frame img");
@@ -468,6 +534,10 @@ browserTest("Document link titles, gestures and external confirmations", async (
             "allow-scripts allow-forms allow-popups",
         );
         await page.locator(".document-web-frame").dispatchEvent("error");
+        await page.getByText("This website could not be loaded.", { exact: true }).waitFor();
+        assert.equal(await page.locator("[data-web-open]:visible").count(), 0);
+        assert.equal(await confirm().count(), 0);
+        await page.evaluate(() => window.denyFrame());
         await confirm().waitFor();
         await confirm().getByRole("button", { name: "Cancel", exact: true }).click();
         assert.match(new URL(page.url()).pathname, /\/Website$/);
@@ -485,18 +555,12 @@ browserTest("Document link titles, gestures and external confirmations", async (
         await page.locator("#site-title").click();
         await page.waitForURL((current) => current.pathname === new URL(url).pathname);
         await page.setViewportSize({ width: 390, height: 844 });
-        await page.evaluate(() => document.body.classList.remove("sidebar-closed"));
-        const mobileAddress = page.url();
+        await page.locator("#sidebar-toggle").click();
         await website().click();
-        await confirm().waitFor();
-        assert.equal(await page.locator(".document-web-frame").count(), 0);
-        await confirm().getByRole("button", { name: "Cancel", exact: true }).click();
-        assert.equal(page.url(), mobileAddress);
-        await website().click();
-        await jump(() =>
-            confirm().getByRole("button", { name: "Open externally", exact: true }).click(),
-        );
-        assert.equal(page.url(), mobileAddress);
+        await embedded();
+        assert.match(new URL(page.url()).pathname, /\/Website$/);
+        await page.reload();
+        await embedded();
         await page.setViewportSize({ width: 1440, height: 1000 });
     }
     for (const mode of ["static", "network"]) {
@@ -515,12 +579,13 @@ browserTest("Document link titles, gestures and external confirmations", async (
                 confirm().getByRole("button", { name: "Open externally", exact: true }).click(),
             );
         } else {
-            await page
-                .frameLocator("iframe.document-web-frame")
-                .getByRole("heading", { name: "External website" })
-                .waitFor();
+            await embedded();
             assert.equal(new URL(page.url()).hash, "#/Website");
             await jump(() => website().click({ button: "middle" }));
+            await page.setViewportSize({ width: 390, height: 844 });
+            await embedded();
+            await page.reload();
+            await embedded();
         }
     }
 });

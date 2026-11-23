@@ -448,6 +448,7 @@
     "Open this website in a new tab?": "このWebサイトを新しいタブで開きますか？",
     "Open this website externally to view it.": "このWebサイトは外部で開いて表示できます。",
     "This website could not be displayed here. Open it externally?": "ここではWebサイトを表示できませんでした。外部で開きますか？",
-    "This website has not loaded. Open it externally?": "Webサイトの読み込みが完了していません。外部で開きますか？",
+    "This website has not loaded.": "Webサイトの読み込みが完了していません。",
+    "This website could not be loaded.": "Webサイトを読み込めませんでした。",
     "Loading website…": "Webサイトを読み込み中…"
 }

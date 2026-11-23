@@ -56,10 +56,9 @@ Each section uses the version configuration and history of the manifest that pro
 
 The reader chooses how to open an entry. There is no author-defined `mode` setting.
 
-- A regular click opens the content inside dooc: Markdown as a page, a local file in its previewer, an included document as its section, and a Web URL in an iframe.
+- A regular click opens the content inside dooc: Markdown as a page, a local file in its previewer, an included document as its section, and a Web URL in an iframe. On desktop and mobile, the iframe fills the central pane without surrounding margins, borders, a URL bar or document controls.
 - A middle click or Ctrl/Cmd-click opens a new tab. For Web URLs, that tab opens the original website directly.
-- On phones, a regular click on a Web URL asks **Open externally?**. **Open externally** opens the website in a new tab; **Cancel** stays on the current page.
-- A detected iframe failure shows the same confirmation. Node workspaces also check public HTTPS response headers for explicit framing denials. Browsers can hide cross-origin framing failures, and header checks cannot resolve every policy or redirect, so the Web page also has an **Open externally** action that shows this confirmation. A loading timeout offers the same action without claiming the website refused embedding.
+- A confirmed framing refusal asks **Open externally?**. **Open externally** opens the website in a new tab; **Cancel** keeps the preview and its external-opening action. Node workspaces also check public HTTPS response headers for explicit framing denials. Loading, timeouts and network errors do not show the external-opening action. Browsers can hide cross-origin framing failures, and header checks cannot resolve every policy or redirect; middle-click or Ctrl/Cmd-click the sidebar entry to open the original website in that case.
 
 Sidebar rows and generated contents cards identify links through the title: entries that open an included document, an HTTP(S) website, another site page, or `redirect:first` use an underlined title in the link color. Ordinary Markdown, local files and generated contents keep their normal title styling. There are no destination badges, auxiliary icons, or type/extension labels. Existing page artwork remains unchanged. A Git-hosted `dooc.yaml` opens as an included document, not a Web preview.
 

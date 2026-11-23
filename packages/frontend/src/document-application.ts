@@ -1610,9 +1610,12 @@ ul.idx a > .nav-icon { width: 18px; height: 18px; }
 #sidebar:has(.nav-root[data-document-link]) .site-title,
 ul.idx a[data-document-link] .document-card-label {
   color: color-mix(in srgb, var(--doc-accent-2) 85%, var(--doc-fg)); text-decoration: underline; text-underline-offset: 2px; }
-.document-web-tools { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
-.document-web-tools span { min-width: 0; overflow-wrap: anywhere; color: var(--doc-fg-2); }
-.document-web-frame { display: block; width: 100%; height: 70vh; min-height: 320px; border: 1px solid var(--doc-border); background: #fff; }
+main:has(> article > .document-web) { position: relative; padding: 0; overflow: hidden; }
+main:has(> article > .document-web) > .page-actions { display: none; }
+.document-web { position: absolute; inset: 0; }
+.document-web-notice { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; background: var(--doc-bg); text-align: center; }
+.document-web-notice[hidden] { display: none; }
+.document-web-frame { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
 details summary { cursor: pointer; opacity: .8; }
 /* Figure and term file links show previews on hover. */
 .figref, .dictref { color: var(--doc-accent-2); text-decoration: none;
@@ -2363,6 +2366,8 @@ main.editor-workspace { padding: 0; height: 100vh; display: flex; flex-direction
 #preview-panes.split .pane-actions { top: -16px; margin: -16px -16px 16px; padding-inline: 10px; }
 #preview-panes.split .preview-pane + .preview-pane { border-left: 1px solid var(--c-line); }
 #preview-panes.split .preview-pane.active { border-top-color: var(--c-accent); }
+#preview-panes .preview-pane:has(> .pane-resource .document-web, > .preview-content:not([hidden]) .document-web) { position: relative; padding: 0; border: 0; overflow: hidden; }
+.preview-pane:has(> .preview-content:not([hidden]) .document-web) > .pane-actions { display: none; }
 .preview-pane:focus-visible { outline: 2px solid var(--c-accent); outline-offset: -2px; }
 @media (max-width: 820px) {
   body.edit:has(#panel) { display: grid; grid-template-columns: 52px minmax(0, 1fr); grid-template-rows: 50dvh 50dvh; height: 100dvh; min-height: 0; overflow: hidden; }
@@ -3898,7 +3903,7 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
     const entryMain = (site: Site, e: Entry): string => {
         if (e.url && /^https?:\/\//i.test(e.url)) {
             const title = docDisplayName(e.frontmatter, e.id);
-            return `<article><section class="document-web" data-web-url="${escapeHtml(e.url)}" data-title="${escapeHtml(title)}"><div class="document-web-tools"><span>${escapeHtml(e.url)}</span><a href="${escapeHtml(e.url)}" data-web-open data-i18n="Open externally">Open externally</a></div><p data-web-status role="status" data-i18n="Loading website…">Loading website…</p></section></article>`;
+            return `<article><section class="document-web" data-web-url="${escapeHtml(e.url)}" data-title="${escapeHtml(title)}"><div class="document-web-notice"><p data-web-status role="status" data-i18n="Loading website…">Loading website…</p><a href="${escapeHtml(e.url)}" data-web-open data-i18n="Open externally" hidden>Open externally</a></div></section></article>`;
         }
         if (e.url && pageUrlKind(e.url) === "file")
             return (
