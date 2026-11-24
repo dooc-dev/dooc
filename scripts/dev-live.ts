@@ -1,5 +1,8 @@
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { createRequire } from "node:module";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createDevWorkspace, watchDevWorkspace } from "./dev-workspace.js";
@@ -28,8 +31,18 @@ if (new Set(applications.map(({ port }) => Number(port))).size !== applications.
 const root = fileURLToPath(
     new URL(`../build/dev/${product === "all" ? "workspace" : product}/`, import.meta.url),
 );
-createDevWorkspace(root);
-const watcher = watchDevWorkspace(root);
+const testPage = readFileSync(new URL("./fixtures/iframe.html", import.meta.url));
+const testServer = createServer((_req, res) => {
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+    res.end(testPage);
+});
+await new Promise<void>((resolve, reject) => {
+    testServer.once("error", reject).listen(0, "127.0.0.1", resolve);
+});
+testServer.unref();
+const testPageUrl = `http://127.0.0.1:${(testServer.address() as AddressInfo).port}/`;
+createDevWorkspace(root, testPageUrl);
+const watcher = watchDevWorkspace(root, testPageUrl);
 const servers = applications.map(({ product, port }) =>
     spawn(
         process.execPath,
@@ -55,6 +68,7 @@ const servers = applications.map(({ product, port }) =>
 );
 const stop = (signal: NodeJS.Signals = "SIGTERM") => {
     watcher.close();
+    testServer.close();
     for (const server of servers) server.kill(signal);
 };
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => stop(signal));

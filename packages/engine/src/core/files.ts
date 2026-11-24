@@ -16,6 +16,11 @@ export const localFile = (value: unknown): value is string =>
     [...value].every((char) => char.charCodeAt(0) >= 32) &&
     value.split("/").every((part) => !!part && !part.startsWith("."));
 
+export const isSkillFile = (value: unknown): value is string =>
+    typeof value === "string" &&
+    value.endsWith("/SKILL.md") &&
+    localFile(value.replace(/(^|\/)\.agents\//g, "$1agents/"));
+
 export const isDocumentFileName = (value: unknown): value is string =>
     localFile(value) && !value.includes("/") && value.endsWith(".md");
 

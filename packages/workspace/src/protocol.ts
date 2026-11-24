@@ -11,6 +11,10 @@ export interface WorkspaceRequest {
     args?: Record<string, unknown>;
 }
 
+export interface WorkspaceCancel {
+    cancel: number;
+}
+
 export type WorkspaceResponse = { id: number; value: unknown } | { id: number; error: string };
 
 export interface WorkspaceEvent {

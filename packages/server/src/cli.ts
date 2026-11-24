@@ -431,6 +431,11 @@ Report:
                     "reader-plugins": { type: "string" },
                     "source-url": { type: "string" },
                     download: { type: "string" },
+                    split: { type: "boolean" },
+                    compress: { type: "boolean" },
+                    "max-file-size": { type: "string" },
+                    "max-build-size": { type: "string" },
+                    "warnings-as-errors": { type: "boolean" },
                     help: { type: "boolean", short: "h" },
                 },
             });
@@ -457,10 +462,18 @@ options:
     network                    preserve URL references without downloading them at build time
     embed                      snapshot URL content and assets into the HTML
   --reader-plugins <module>    inject trusted build plugins
+  --split                     separate pages, JS, CSS and resources; serve over HTTP(S)
+  --compress                  optimize image/video previews using FFmpeg; implies --split
+                               PNG: lossless WebP; JPEG/WebP/video: lossy; sources stay intact
+  --max-file-size <size>       per-output-file byte limit, e.g. 25MiB; implies --split
+  --max-build-size <size>      total unique output bytes, e.g. 100MiB; implies --split
+                               no limits by default; includes HTML, JS, CSS and resources
+  --warnings-as-errors        stop if a requested compressor is unsupported or unavailable
   --help, -h                   show this help
 
 Output:
-  Only the HTML entry point is replaced; other files in the output folder are left alone.
+  Assets go in dooc-assets/ before the HTML entry point is replaced.
+  Older assets and unrelated files are preserved; use a fresh output folder for deployment.
   Source files are never rewritten.
 
 HTML modes:
@@ -549,12 +562,17 @@ URL handling:
                 pluginModule: values["reader-plugins"],
                 sourceUrl: values["source-url"],
                 download: values.download as "easy" | "normal" | "block" | undefined,
+                split: values.split,
+                compress: values.compress,
+                maxFileSize: values["max-file-size"],
+                maxBuildSize: values["max-build-size"],
+                warningsAsErrors: values["warnings-as-errors"],
             });
             writeBuildOutput(out, bundle);
             bundle.commitVersion?.();
             for (const warning of bundle.warnings ?? []) console.warn(`Warning: ${warning}`);
             console.log(
-                `${out} — ${bundle.docs} docs${bundle.version ? `, version ${bundle.version}` : ""} (url_preview=${urlPreview})`,
+                `${out} — ${bundle.docs} docs${bundle.version ? `, version ${bundle.version}` : ""}${bundle.files ? `, ${bundle.files.size + 1} files, ${bundle.bytes} bytes` : ""} (url_preview=${urlPreview})`,
             );
         } catch (error) {
             fail(error instanceof Error ? error.message : String(error));

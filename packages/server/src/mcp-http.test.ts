@@ -73,6 +73,25 @@ it("uses /mcp POST, negotiates HTTP versions, and accepts notifications without 
     expect((await fetch(`${url}/other`, { method: "POST", headers, body: "{}" })).status).toBe(404);
 });
 
+it("exposes project skills over reader HTTP and refreshes the configured list", async () => {
+    mkdirSync(join(root, ".agents/skills/review-docs"), { recursive: true });
+    writeFileSync(
+        join(root, "dooc.yaml"),
+        "system:\n  skills: [.agents/skills/review-docs/SKILL.md]\ndocument: {}\n",
+    );
+    const source =
+        "---\nname: review-docs\ndescription: Apply the project checklist.\n---\nUse read_file to read the project checklist.\n";
+    writeFileSync(join(root, ".agents/skills/review-docs/SKILL.md"), source);
+    expect(await (await rpc("skills/list")).json()).toMatchObject({
+        result: { skills: [{ uri: "skill://review-docs/SKILL.md" }] },
+    });
+    expect(
+        await (await rpc("resources/read", { uri: "skill://review-docs/SKILL.md" })).json(),
+    ).toMatchObject({ result: { contents: [{ text: source }] } });
+    writeFileSync(join(root, "dooc.yaml"), "document: {}\n");
+    expect(await (await rpc("skills/list")).json()).toMatchObject({ result: { skills: [] } });
+});
+
 it("lists only read tools and rejects guessed mutation names without changing documents", async () => {
     const listed = (await (await rpc("tools/list")).json()) as {
         result: { tools: { name: string }[] };

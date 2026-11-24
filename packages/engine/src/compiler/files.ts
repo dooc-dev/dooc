@@ -50,7 +50,7 @@ import { translationFile, translationFiles, translationLanguages } from "./local
 import { manifestFile, parseManifestText, readManifest, sourceOrigin } from "./manifest.js";
 import { isRemoteSourceFile } from "./remote-manifests.js";
 import { rewriteSchemaFiles } from "./schema-file-references.js";
-import { textfilePath, writeTextfile } from "./textfile.js";
+import { readTextfile, textfilePath, writeTextfile } from "./textfile.js";
 import { themeNames, themeVariants } from "./theme-variants.js";
 
 // Project settings and translations have their own layout, outside file restructuring.
@@ -320,6 +320,7 @@ const rewriteManifestPaths = (
         if (record) for (const [id, file] of Object.entries(record)) record[id] = rewrite(file);
     if (manifest.icon) manifest.icon = rewrite(manifest.icon);
     if (manifest.licence) manifest.licence = rewrite(manifest.licence);
+    if (manifest.libraryFiles) manifest.libraryFiles = manifest.libraryFiles.map(rewrite);
     for (const format of manifest.subformats ?? []) {
         format.schema = rewrite(format.schema);
         if (format.icon) format.icon = rewrite(format.icon);
@@ -342,6 +343,19 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
     const manifest = readManifest(root);
     const layout = snapshot.layout;
     const paths = snapshot.files.map((file) => file.path);
+    const skillManifests = new Map([
+        [manifestFile(root), manifest.skills ?? []],
+        ...(manifest.includedManifests ?? []).map(
+            (file) =>
+                [file, parseManifestText(readTextfile(root, file), file).skills ?? []] as const,
+        ),
+    ]);
+    const skillDirectories = [...skillManifests].flatMap(([file, skills]) =>
+        skills.map((skill) => `${posix.join(posix.dirname(file), posix.dirname(skill))}/`),
+    );
+    const skillFile = (file: string) =>
+        !!skillManifests.get(file)?.length ||
+        skillDirectories.some((directory) => file.startsWith(directory));
     const pages = flattenTree(manifest.tree);
     const moves = new Map<string, string>();
     if (input.action === "layout") {
@@ -350,7 +364,7 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
     } else if (input.action === "restructure") {
         const taken = new Set(paths);
         for (const file of paths) {
-            if (file.startsWith("themes/") || isRemoteSourceFile(file)) continue;
+            if (file.startsWith("themes/") || isRemoteSourceFile(file) || skillFile(file)) continue;
             let target = defaultFilePath(file);
             if (target === file) continue;
             const ext = posix.extname(target);
@@ -417,6 +431,10 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
             }
         }
     } else throw new Error("Unknown file action");
+    if ([...moves].some(([source, target]) => skillFile(source) || skillFile(target)))
+        throw new Error(
+            "Keep configured skill directories intact; edit system.skills to relocate a skill",
+        );
     if (
         [...moves].some(
             ([source, target]) => isRemoteSourceFile(source) || isRemoteSourceFile(target),

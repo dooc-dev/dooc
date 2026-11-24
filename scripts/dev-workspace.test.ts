@@ -62,15 +62,17 @@ it("syncs generated changes without overwriting local edits, deletions or redire
 it("generates a complete feature playground and resets only the selected workspace", async () => {
     const parent = mkdtempSync(join(tmpdir(), "dooc-dev-workspace-"));
     const root = join(parent, "editor");
+    const testPageUrl = "http://127.0.0.1:2002/";
     try {
         writeFileSync(join(parent, "keep.txt"), "Keep this\n");
-        createDevWorkspace(root);
+        createDevWorkspace(root, testPageUrl);
         const before = readFileSync(join(root, "contents/md/start.md"), "utf8");
         const report = checkSite(root, { only: ["render"] });
         expect(report.diagnostics.filter((item) => item.severity === "error")).toEqual([]);
         expect(report.languages).toEqual(expect.arrayContaining(["eng", "jpn", "zho"]));
         const site = compileSite(root);
         expect(site.errors).toEqual([]);
+        expect(site.docs.find((doc) => doc.url === testPageUrl)?.title).toBe("Iframe test page");
         expect(new Set(site.subformats?.map((format) => format.format))).toEqual(
             new Set(["json", "yaml", "toml"]),
         );
@@ -134,7 +136,7 @@ it("generates a complete feature playground and resets only the selected workspa
         ).toBe(root);
         writeFileSync(join(root, "extra.txt"), "Disposable edit\n");
         writeFileSync(join(root, "contents/md/start.md"), "Changed\n");
-        createDevWorkspace(root);
+        createDevWorkspace(root, testPageUrl);
         expect(readFileSync(join(root, "contents/md/start.md"), "utf8")).toBe(before);
         expect(existsSync(join(root, "extra.txt"))).toBe(false);
         expect(readFileSync(join(parent, "keep.txt"), "utf8")).toBe("Keep this\n");

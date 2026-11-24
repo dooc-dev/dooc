@@ -442,6 +442,10 @@ describe("navGroupsHtml", () => {
         expect(card).toContain('<summary class="workspace-location"');
         expect(card).toContain('id="nav-storage"');
         expect(card).toContain('id="nav-library"');
+        expect(card.indexOf('id="nav-manifest"')).toBeLessThan(card.indexOf('id="nav-files"'));
+        expect(card).toContain('href="/_manifest"');
+        expect(resourcesMain(site, "_manifest")?.main).toContain('id="manifest-manager"');
+        expect(pageDataResponse(site, "/_manifest").status).toBe(200);
         expect(card.indexOf('id="nav-storage"')).toBeLessThan(card.indexOf('id="nav-files"'));
         expect(resourcesMain(site, "")?.main).toContain('id="files-manager"');
     });
@@ -714,7 +718,7 @@ describe("editorBoot / pageDataResponse (backing `GET /api/page`)", () => {
         expect(html).toContain(
             '<a id="site-title" class="site-title" href="#/" title="資料 &amp; &quot;API&quot; &lt;guide&gt;">資料 &amp; &quot;API&quot; &lt;guide&gt;</a>',
         );
-        expect(html).toContain('data-title="A — 資料 &amp; &quot;API&quot; &lt;guide&gt;"');
+        expect(html).toContain('data-title="資料 &amp; &quot;API&quot; &lt;guide&gt;"');
         expect(html).not.toContain("crumb-");
         expect(publishHtml(docSite(), "")).toContain(
             'class="site-title" href="#/" title="dooc">dooc</a>',
@@ -794,6 +798,31 @@ describe("createBundleCache (client bundle + ETag)", () => {
 describe("publishHtml (a single HTML file with everything embedded)", () => {
     const site = siteFrom(compileSite(new URL("../../../dooc-docs", import.meta.url).pathname));
     const html = publishHtml(site, "window.graph = '</script>';");
+
+    it("emits scripts, styles and pages directly through the publication asset sink", () => {
+        const assets = new Map<string, string>();
+        const graph = "window.graph = '</script>';";
+        const output = publishHtml(site, graph, undefined, "", "static", "", "", {
+            asset: (source, extension) => {
+                const url = `./assets/${assets.size}.${extension}`;
+                assets.set(url, source);
+                return url;
+            },
+        });
+        for (const url of assets.keys()) expect(output).toContain(`"${url}"`);
+        expect([...assets.values()]).toContain(graph);
+        expect(
+            [...assets].some(
+                ([url, source]) => url.endsWith(".html") && source.includes("<article"),
+            ),
+        ).toBe(true);
+        expect([...assets.keys()].some((url) => url.endsWith(".css"))).toBe(true);
+        expect(output).not.toContain("window.graph");
+        expect(output).toContain('data-src="./assets/');
+        expect(output).toContain("script-src 'self' 'unsafe-inline'");
+        expect(html).toContain("script-src 'unsafe-inline'");
+        expect(html).toContain("connect-src 'none'");
+    });
 
     it("includes font selection without font registration in standalone readers", () => {
         expect(html).toContain('data-font-picker="reader"');

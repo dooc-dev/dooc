@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +17,10 @@ import {
     testDocumentVersionLayout,
     testDocumentVersionReader,
 } from "./document-versions.mjs";
+import { testEmptyManifestSettings, testManifestSettings } from "./manifest-settings.mjs";
+import { testPageJump } from "./page-jump.mjs";
+import { testSplitBuild } from "./split-build.mjs";
+import { testSidebarReorder, testUxNavigation } from "./ux-navigation.mjs";
 import {
     testBrowserWorkspace,
     testSocketWorkspace,
@@ -116,6 +121,69 @@ async function inject(page, file) {
     });
     await page.addScriptTag({ content: result.outputFiles[0].text });
 }
+
+browserTest("Split publications preserve navigation, media, fonts and diagram chunks", (page) =>
+    testSplitBuild(page, root),
+);
+
+browserTest(
+    "Navigation preserves the latest click, history entry and external update",
+    async (page) => {
+        const project = join(root, "ux-navigation");
+        mkdirSync(project);
+        writeFileSync(
+            join(project, "dooc.yaml"),
+            "document:\n  title: Handbook\n  url: home.md\n  children:\n    - document: { title: Alpha, url: alpha.md }\n    - document: { title: Beta, url: beta.md }\n    - document: { title: Gamma, url: gamma.md }\n",
+        );
+        for (const name of ["Home", "Alpha", "Beta", "Gamma"])
+            writeFileSync(
+                join(project, `${name.toLowerCase()}.md`),
+                `# ${name}\n\n${name} body.\n`,
+            );
+        const url = await start("editor", "node", project);
+        await testUxNavigation(page, url);
+        await testSidebarReorder(page, url);
+    },
+);
+
+for (const mode of ["editor", "reader", "standalone"])
+    browserTest(
+        `Space + arrow page jumps preserve focus, hierarchy and the latest request (${mode})`,
+        async (page) => {
+            const project = join(root, `page-jump-${mode}`);
+            mkdirSync(project);
+            writeFileSync(
+                join(project, "dooc.yaml"),
+                `document:
+  title: Handbook
+  url: home.md
+  children:
+    - document:
+        title: Alpha
+        url: alpha.md
+        children:
+          - document:
+              title: Alpha One
+              url: alpha-one.md
+              children:
+                - document: { title: Deep, url: deep.md }
+          - document: { title: Alpha Two, url: alpha-two.md }
+    - document: { title: Beta, url: beta.md }
+    - document: { title: Gamma, url: gamma.md }
+`,
+            );
+            for (const name of ["Home", "Alpha", "Alpha One", "Alpha Two", "Deep", "Beta", "Gamma"])
+                writeFileSync(
+                    join(project, `${name.toLowerCase().replaceAll(" ", "-")}.md`),
+                    `# ${name}\n\n${`${name} body.\n\n`.repeat(40)}`,
+                );
+            if (mode === "standalone") {
+                const output = join(root, "page-jump.html");
+                writeFileSync(output, (await buildBundle(project, { format: "html" })).data);
+                await testPageJump(page, pathToFileURL(output).href, false, false);
+            } else await testPageJump(page, await start(mode, "node", project), mode === "editor");
+        },
+    );
 
 async function blank(page, mode = "editor") {
     const url = new URL("__browser-test", urls[mode]).href;
@@ -348,6 +416,76 @@ browserTest("Uploaded SVG previews load automatically in the editor and reader",
     assert.equal(await page.locator("[data-figure-preview] > button:visible").count(), 0);
 });
 
+browserTest("Website iframe text remains readable across light and dark themes", async (page) => {
+    const html = readFileSync(new URL("../fixtures/iframe.html", import.meta.url));
+    const website = createHttpServer((_req, res) => {
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(html);
+    });
+    await new Promise((resolve, reject) => {
+        website.once("error", reject);
+        website.listen(0, "127.0.0.1", resolve);
+    });
+    applications.push({ close: () => new Promise((resolve) => website.close(resolve)) });
+    const project = join(root, "iframe-themes");
+    mkdirSync(project);
+    writeFileSync(
+        join(project, "dooc.yaml"),
+        `document:
+  title: Handbook
+  children:
+    - document: { title: Website, url: "http://127.0.0.1:${website.address().port}/" }
+`,
+    );
+    const luminance = (color) => {
+        const channels = color
+            .match(/[\d.]+/g)
+            .slice(0, 3)
+            .map((value) => {
+                const channel = Number(value) / 255;
+                return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+            });
+        return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+    };
+    for (const product of ["editor", "reader"]) {
+        await page.setViewportSize({ width: 1440, height: 1000 });
+        await page.goto(await start(product, "node", project));
+        await page
+            .locator("#nav-groups a")
+            .filter({ hasText: /^Website$/ })
+            .click();
+        const iframe = page.locator("main iframe.document-web-frame");
+        const frame = await (await iframe.elementHandle()).contentFrame();
+        await frame.getByRole("heading", { name: "Iframe test page" }).waitFor();
+        for (const width of [1440, 390]) {
+            await page.setViewportSize({ width, height: 1000 });
+            for (const colorScheme of ["light", "dark", "light"]) {
+                await page.emulateMedia({ colorScheme });
+                await frame.waitForFunction(
+                    (scheme) => matchMedia(`(prefers-color-scheme: ${scheme})`).matches,
+                    colorScheme,
+                );
+                const colors = await frame.evaluate(() => ({
+                    text: getComputedStyle(document.querySelector("p")).color,
+                    background: getComputedStyle(document.documentElement).backgroundColor,
+                }));
+                assert.equal(colors.background, "rgba(0, 0, 0, 0)");
+                const foreground = luminance(colors.text);
+                const background = luminance(
+                    await iframe.evaluate((element) => getComputedStyle(element).backgroundColor),
+                );
+                const contrast =
+                    (Math.max(foreground, background) + 0.05) /
+                    (Math.min(foreground, background) + 0.05);
+                assert(
+                    contrast >= 4.5,
+                    `${product} at ${width}px in ${colorScheme}: iframe text contrast ${contrast.toFixed(2)}`,
+                );
+            }
+        }
+    }
+});
+
 browserTest("Document link titles, gestures and external confirmations", async (page) => {
     const project = join(root, "document-links");
     mkdirSync(join(project, "child"), { recursive: true });
@@ -393,14 +531,53 @@ browserTest("Document link titles, gestures and external confirmations", async (
         join(project, "web.svg"),
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/></svg>',
     );
-    await page.context().route("https://example.test/**", (route) =>
-        route.fulfill({
+    let frameReady = Promise.resolve();
+    await page.context().route("https://example.test/**", async (route) => {
+        await frameReady;
+        await route.fulfill({
             contentType: "text/html",
-            body: "<h1>External website</h1>",
-        }),
-    );
+            body: readFileSync(new URL("../fixtures/iframe.html", import.meta.url), "utf8"),
+        });
+    });
     const website = () => page.locator("#nav-groups a").filter({ hasText: /^Website$/ });
     const confirm = () => page.getByRole("dialog", { name: "Open externally?" });
+    const embedded = async () => {
+        await page
+            .frameLocator("main iframe.document-web-frame")
+            .getByRole("heading", { name: "Iframe test page" })
+            .waitFor();
+        assert.equal(await confirm().count(), 0);
+        assert.equal(await page.locator(".document-web-notice:visible").count(), 0);
+        assert.equal(await page.locator("[data-web-open]:visible").count(), 0);
+        assert.equal(await page.locator("#sidebar").isVisible(), true);
+        assert.equal(
+            await page.locator("main .page-actions:visible, main .pane-actions:visible").count(),
+            0,
+        );
+        const bounds = await page.locator("main iframe.document-web-frame").evaluate((frame) => {
+            const pane = frame.closest(".preview-pane, main");
+            const sidebar = document.querySelector("#sidebar");
+            const sidebarRect = sidebar.getBoundingClientRect();
+            return {
+                frame: frame.getBoundingClientRect().toJSON(),
+                pane: pane.getBoundingClientRect().toJSON(),
+                sidebarVisible: sidebar.contains(
+                    document.elementFromPoint(sidebarRect.left + sidebarRect.width / 2, 18),
+                ),
+                border: getComputedStyle(frame).borderWidth,
+                overflow:
+                    pane.scrollWidth > pane.clientWidth || pane.scrollHeight > pane.clientHeight,
+            };
+        });
+        for (const edge of ["left", "top", "right", "bottom"])
+            assert.ok(
+                Math.abs(bounds.frame[edge] - bounds.pane[edge]) < 1,
+                `Iframe fills the pane at ${edge}`,
+            );
+        assert.equal(bounds.border, "0px");
+        assert.equal(bounds.sidebarVisible, true, "The iframe does not cover the sidebar");
+        assert.equal(bounds.overflow, false, "The embedding pane adds no scrolling area");
+    };
     const jump = async (action) => {
         const popup = page.context().waitForEvent("page");
         await action();
@@ -449,11 +626,38 @@ browserTest("Document link titles, gestures and external confirmations", async (
         await jump(() => website().click({ modifiers: ["Control"] }));
         await jump(() => website().click({ modifiers: ["Meta"] }));
         assert.equal(page.url(), address);
+        await page.evaluate(() => {
+            const state = globalThis.__doocConnections;
+            const connection = state.items.get(state.active);
+            const fetch = connection.fetch;
+            connection.fetch = (input, init) => {
+                if (new URL(input, location.href).pathname !== "/api/frame-policy")
+                    return fetch(input, init);
+                return new Promise((resolve) => {
+                    window.denyFrame = () => {
+                        connection.fetch = fetch;
+                        resolve(Response.json({ blocked: true }));
+                    };
+                });
+            };
+        });
+        let releaseFrame;
+        frameReady = new Promise((resolve) => {
+            releaseFrame = resolve;
+        });
+        await page.clock.install();
         await website().click();
-        await page
-            .frameLocator("iframe.document-web-frame")
-            .getByRole("heading", { name: "External website" })
-            .waitFor();
+        await page.locator(".document-web-frame").waitFor();
+        assert.equal(await page.locator("[data-web-open]:visible").count(), 0);
+        assert.equal(await confirm().count(), 0);
+        await page.clock.fastForward(12_001);
+        await page.getByText("This website has not loaded.", { exact: true }).waitFor();
+        assert.equal(await page.locator("[data-web-open]:visible").count(), 0);
+        assert.equal(await confirm().count(), 0);
+        releaseFrame();
+        frameReady = Promise.resolve();
+        await embedded();
+        if (product === "editor") assert.equal(await page.locator("#panel").isVisible(), true);
         assert.match(new URL(page.url()).pathname, /\/Website$/);
         const iconRow = website().locator("..");
         const customIcon = iconRow.locator(".doc-icon-frame img");
@@ -468,6 +672,10 @@ browserTest("Document link titles, gestures and external confirmations", async (
             "allow-scripts allow-forms allow-popups",
         );
         await page.locator(".document-web-frame").dispatchEvent("error");
+        await page.getByText("This website could not be loaded.", { exact: true }).waitFor();
+        assert.equal(await page.locator("[data-web-open]:visible").count(), 0);
+        assert.equal(await confirm().count(), 0);
+        await page.evaluate(() => window.denyFrame());
         await confirm().waitFor();
         await confirm().getByRole("button", { name: "Cancel", exact: true }).click();
         assert.match(new URL(page.url()).pathname, /\/Website$/);
@@ -485,18 +693,12 @@ browserTest("Document link titles, gestures and external confirmations", async (
         await page.locator("#site-title").click();
         await page.waitForURL((current) => current.pathname === new URL(url).pathname);
         await page.setViewportSize({ width: 390, height: 844 });
-        await page.evaluate(() => document.body.classList.remove("sidebar-closed"));
-        const mobileAddress = page.url();
+        await page.locator("#sidebar-toggle").click();
         await website().click();
-        await confirm().waitFor();
-        assert.equal(await page.locator(".document-web-frame").count(), 0);
-        await confirm().getByRole("button", { name: "Cancel", exact: true }).click();
-        assert.equal(page.url(), mobileAddress);
-        await website().click();
-        await jump(() =>
-            confirm().getByRole("button", { name: "Open externally", exact: true }).click(),
-        );
-        assert.equal(page.url(), mobileAddress);
+        await embedded();
+        assert.match(new URL(page.url()).pathname, /\/Website$/);
+        await page.reload();
+        await embedded();
         await page.setViewportSize({ width: 1440, height: 1000 });
     }
     for (const mode of ["static", "network"]) {
@@ -515,12 +717,13 @@ browserTest("Document link titles, gestures and external confirmations", async (
                 confirm().getByRole("button", { name: "Open externally", exact: true }).click(),
             );
         } else {
-            await page
-                .frameLocator("iframe.document-web-frame")
-                .getByRole("heading", { name: "External website" })
-                .waitFor();
+            await embedded();
             assert.equal(new URL(page.url()).hash, "#/Website");
             await jump(() => website().click({ button: "middle" }));
+            await page.setViewportSize({ width: 390, height: 844 });
+            await embedded();
+            await page.reload();
+            await embedded();
         }
     }
 });
@@ -896,8 +1099,9 @@ for (const [file, names] of [
     ["subformat-embeds", ["testSubformatEmbeds", "testSubformatEmbedEditor"]],
     ["schema-builder", ["testSchemaBuilder", "testSchemaDraftSaving", "testSchemaParameters"]],
     ["nav-update", ["testNavUpdate"]],
+    ["ux-state", ["testFilesFocusAndLanguage", "testSearchRefreshAndTheme", "testGitLiveRefresh"]],
     ["plugin-editing", ["testPluginEditing"]],
-    ["resource-download", ["testResourceDownloads", "testDownloadBlock"]],
+    ["resource-download", ["testResourceDownloads", "testDownloadBlock", "testResourceExpand"]],
     ["view-loading", ["testViewLoading"]],
 ]) {
     for (const name of names) {
@@ -984,6 +1188,70 @@ browserTest("Sidebar collapse", async (page) => {
     await open(page, urls.reader, false);
     await inject(page, "sidebar-collapse");
     await page.evaluate(() => window.testSidebarCollapse());
+    await page.evaluate(() => window.testSidebarMotion());
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.evaluate(() => window.testSidebarMotion());
+});
+
+browserTest("Sidebar stays responsive while document content loads", async (page) => {
+    const project = join(root, "sidebar-loading");
+    mkdirSync(project);
+    writeFileSync(
+        join(project, "dooc.yaml"),
+        "document:\n  title: Navigation\n  url: home.md\n  children:\n    - document:\n        title: Slow\n        url: slow.md\n        children:\n          - document: { title: Nested, url: nested.md }\n    - document: { title: Fast, url: fast.md }\n",
+    );
+    for (const name of ["home", "slow", "nested", "fast"])
+        writeFileSync(join(project, `${name}.md`), `${name} document content.\n`);
+    for (const product of ["editor", "reader"]) {
+        await page.goto(await start(product, "node", project));
+        await page.getByText("home document content.", { exact: true }).last().waitFor();
+        await page.evaluate(() => {
+            window.retainedSidebar = document.getElementById("sidebar");
+            const state = globalThis.__doocConnections;
+            const connection = state.items.get(state.active);
+            const fetch = connection.fetch;
+            connection.fetch = async (...args) => {
+                const response = await fetch(...args);
+                const url = new URL(args[0], location.href);
+                if (url.searchParams.get("route") === "/slow" || url.pathname.endsWith("/slow")) {
+                    await new Promise((resolve) => {
+                        window.releaseSlowPage = resolve;
+                    });
+                    window.slowPageReturned = true;
+                }
+                return response;
+            };
+        });
+        const slow = page.locator("#nav-groups a").filter({ hasText: /^Slow$/ });
+        await slow.click();
+        await page.waitForFunction(() => !!window.releaseSlowPage);
+        assert.equal(await slow.getAttribute("aria-current"), "page");
+        const toggle = slow.locator("..").locator(".nav-tree-toggle");
+        await toggle.click();
+        assert.equal(await toggle.getAttribute("aria-expanded"), "true");
+        await page
+            .locator("#nav-groups a")
+            .filter({ hasText: /^Fast$/ })
+            .click();
+        await page.getByText("fast document content.", { exact: true }).last().waitFor();
+        await page.evaluate(() => window.releaseSlowPage());
+        await page.waitForFunction(() => window.slowPageReturned);
+        await page.evaluate(
+            () =>
+                new Promise((resolve) =>
+                    requestAnimationFrame(() => requestAnimationFrame(resolve)),
+                ),
+        );
+        assert.equal(
+            await page.evaluate(
+                () => document.getElementById("sidebar") === window.retainedSidebar,
+            ),
+            true,
+        );
+        assert.equal(await page.locator("#nav-groups a.cur").innerText(), "Fast");
+        assert.match(await page.locator("main").innerText(), /fast document content/);
+        assert.equal(await page.locator("main").getAttribute("aria-busy"), null);
+    }
 });
 
 browserTest("Browser workspace persistence, themes and branches", async (page) => {
@@ -1038,6 +1306,7 @@ browserTest(
 document:
   title: Development
   url: guide.md
+  icon: {light: icon.svg, dark: dark.svg}
   children:
     - document:
         title: Details
@@ -1045,6 +1314,9 @@ document:
 `,
         );
         const source = join(project, "guide.md");
+        const icon = join(project, "icon.svg");
+        writeFileSync(icon, '<svg viewBox="0 0 8 8"><circle r="1"/></svg>');
+        writeFileSync(join(project, "dark.svg"), '<svg viewBox="0 0 8 8"><circle r="3"/></svg>');
         writeFileSync(source, "Shared development document.\n");
         writeFileSync(join(project, "details.md"), "Development details.\n");
         const editorUrl = await start("editor", "node", project, ["--mcp"], true);
@@ -1057,6 +1329,11 @@ document:
         await open(page, editorUrl);
         await open(reader, readerUrl, false);
         assert.equal(await reader.locator("#cm").count(), 0);
+        assert.equal(await reader.title(), "Development");
+        const favicon = await reader
+            .locator('head link[data-document-icon="light"]')
+            .getAttribute("href");
+        assert.match(Buffer.from(favicon.split(",")[1], "base64").toString(), /<circle r="1"\/>/);
         const editor = page.locator("#cm .cm-content");
         await editor.focus();
         await page.keyboard.press("Control+End");
@@ -1072,6 +1349,11 @@ document:
             document.querySelector("main article")?.textContent.includes("Development details."),
         );
         assert.equal(new URL(reader.url()).pathname, "/client/details");
+        assert.equal(await reader.title(), "Development");
+        assert.equal(
+            await reader.locator('head link[data-document-icon="light"]').getAttribute("href"),
+            favicon,
+        );
         await reader.locator("#site-title").click();
         await reader.waitForURL((url) => url.pathname === "/client/");
         await reader.locator('#site-title[aria-current="page"]').waitFor();
@@ -1085,6 +1367,20 @@ document:
         assert(
             (await editor.textContent()).includes("Updated from the shared development source."),
         );
+        writeFileSync(icon, '<svg viewBox="0 0 8 8"><circle r="2"/></svg>');
+        await reader.waitForFunction(() =>
+            atob(
+                document.querySelector('head link[data-document-icon="light"]').href.split(",")[1],
+            ).includes('<circle r="2"/>'),
+        );
+        writeFileSync(join(project, "dark.svg"), '<svg viewBox="0 0 8 8"><circle r="4"/></svg>');
+        await reader.waitForFunction(() =>
+            [
+                document.querySelector('head link[data-document-icon="dark"]')?.href,
+                document.querySelector('#site-icon-slot img[data-theme-variant="dark"]')?.src,
+            ].every((source) => source && atob(source.split(",")[1]).includes('<circle r="4"/>')),
+        );
+        assert.equal(await reader.title(), "Development");
         assert.deepEqual(errors, []);
         await reader.close();
         await readerApplication.close();
@@ -1163,3 +1459,22 @@ for (const dirty of [false, true]) {
         },
     );
 }
+
+browserTest(
+    "manifest settings complete paths, preserve drafts, and reject conflicting saves",
+    async (page) => {
+        await testManifestSettings(page, urls.editor, join(root, "workspace"));
+    },
+);
+
+browserTest(
+    "manifest settings work without Markdown pages and preserve named manifests",
+    async (page) => {
+        const project = join(root, "empty-manifest");
+        mkdirSync(project);
+        const file = join(project, "team.dooc.yaml");
+        writeFileSync(file, "document: {title: Empty workspace}\n");
+        await testEmptyManifestSettings(page, await start("editor", "node", file), file);
+        assert.equal(existsSync(join(project, "dooc.yaml")), false);
+    },
+);

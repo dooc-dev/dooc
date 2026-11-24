@@ -10,8 +10,6 @@ export const mountDocumentLinks = (
         (window as Window & { __docsTranslate?: (text: string) => string }).__docsTranslate?.(
             text,
         ) ?? text;
-    const mobile = () =>
-        matchMedia("(max-width: 600px), (hover: none) and (pointer: coarse)").matches;
     const webUrl = (value: string | undefined): string | undefined => {
         if (!value) return;
         try {
@@ -52,7 +50,7 @@ export const mountDocumentLinks = (
         if (event.button === 1 || event.ctrlKey || event.metaKey) {
             event.preventDefault();
             window.open(url, "_blank", "noopener,noreferrer");
-        } else if (link.hasAttribute("data-web-open") || mobile() || !network) {
+        } else if (link.hasAttribute("data-web-open") || !network) {
             event.preventDefault();
             void confirm(url);
         }
@@ -62,14 +60,17 @@ export const mountDocumentLinks = (
     const mounted = new WeakSet<HTMLElement>();
     const mount = () => {
         for (const host of document.querySelectorAll<HTMLElement>(".document-web[data-web-url]")) {
-            if (mounted.has(host)) continue;
+            if (mounted.has(host) || host.querySelector(".document-web-frame")) continue;
             mounted.add(host);
             const url = webUrl(host.dataset.webUrl);
+            const notice = host.querySelector<HTMLElement>(".document-web-notice");
             const status = host.querySelector<HTMLElement>("[data-web-status]");
-            if (!url || !status) continue;
-            if (mobile() || !network) {
+            const external = host.querySelector<HTMLAnchorElement>("[data-web-open]");
+            if (!url || !notice || !status || !external) continue;
+            if (!network) {
                 status.dataset.i18n = "Open this website externally to view it.";
                 status.textContent = t(status.dataset.i18n);
+                external.hidden = false;
                 void confirm(url);
                 continue;
             }
@@ -78,33 +79,36 @@ export const mountDocumentLinks = (
             frame.title = host.dataset.title || url;
             frame.referrerPolicy = "no-referrer";
             frame.sandbox.add("allow-scripts", "allow-forms", "allow-popups");
-            let failed = false;
-            const fail = (
-                message = "This website could not be displayed here. Open it externally?",
-            ) => {
-                if (failed) return;
-                failed = true;
-                clearTimeout(timer);
-                document.removeEventListener("securitypolicyviolation", violation);
-                if (!host.isConnected) return;
-                status.hidden = false;
+            let blocked = false;
+            const showStatus = (message: string) => {
+                if (blocked || !host.isConnected) return;
+                notice.hidden = false;
                 status.dataset.i18n = message;
                 status.textContent = t(message);
+            };
+            const denied = () => {
+                if (blocked || !host.isConnected) return;
+                const message = "This website could not be displayed here. Open it externally?";
+                showStatus(message);
+                blocked = true;
+                clearTimeout(timer);
+                document.removeEventListener("securitypolicyviolation", violation);
+                external.hidden = false;
                 void confirm(url, message);
             };
-            const timer = setTimeout(
-                () => fail("This website has not loaded. Open it externally?"),
-                12000,
-            );
-            frame.onerror = () => fail();
+            const timer = setTimeout(() => showStatus("This website has not loaded."), 12000);
+            frame.onerror = () => {
+                clearTimeout(timer);
+                showStatus("This website could not be loaded.");
+            };
             frame.onload = () => {
                 clearTimeout(timer);
                 document.removeEventListener("securitypolicyviolation", violation);
-                if (!failed) status.hidden = true;
+                if (!blocked) notice.hidden = true;
             };
-            // shortcut: Browsers hide some cross-origin frame denials; retain the explicit external action.
+            // shortcut: Browsers hide some cross-origin frame denials; retain new-tab navigation as a fallback.
             const violation = (event: SecurityPolicyViolationEvent) => {
-                if (event.effectiveDirective === "frame-src" && event.blockedURI === url) fail();
+                if (event.effectiveDirective === "frame-src" && event.blockedURI === url) denied();
             };
             document.addEventListener("securitypolicyviolation", violation);
             frame.src = url;
@@ -114,7 +118,7 @@ export const mountDocumentLinks = (
                     `/api/frame-policy?url=${encodeURIComponent(host.dataset.webUrl ?? url)}&parent=${encodeURIComponent(location.origin)}`,
                 )
                     .then(async (response) => {
-                        if (response.ok && (await response.json()).blocked === true) fail();
+                        if (response.ok && (await response.json()).blocked === true) denied();
                     })
                     .catch(() => {});
         }

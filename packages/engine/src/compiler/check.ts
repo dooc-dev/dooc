@@ -20,6 +20,7 @@ import { createHash, existsSync, readdirSync, readFileSync, resolve, statSync } 
 import { contentLanguageCode, isContentLanguage } from "./language-codes.js";
 import { siteContentLanguages, translationFile } from "./locales.js";
 import { manifestFile, readManifest } from "./manifest.js";
+import { readProjectSkills } from "./skills.js";
 import { textfilePath } from "./textfile.js";
 import { siteThemes, themeVariants } from "./theme-variants.js";
 
@@ -197,6 +198,20 @@ export const checkSite = (root: string, options: CheckOptions = {}): CheckReport
             add("MANIFEST_INVALID", "error", manifestFile(root), message);
         if (manifest.errors.length) return finish(report, options);
         if (manifest.licence) read(manifest.licence, { sourceFile: manifestFile(root) });
+        for (const file of [
+            ...(manifest.libraryFiles ?? []),
+            ...(manifest.includedLibraryFiles ?? []),
+        ]) {
+            const data = read(file, { sourceFile: manifestFile(root) });
+            if (data) text(file, data, { sourceFile: manifestFile(root) });
+        }
+        for (const file of [manifestFile(root), ...(manifest.includedManifests ?? [])]) {
+            try {
+                readProjectSkills(root, file);
+            } catch (error) {
+                add("MANIFEST_INVALID", "error", file, messageOf(error));
+            }
+        }
         let sourceLanguage: string;
         try {
             sourceLanguage = contentLanguageCode(manifest.defaultLang ?? DEFAULT_LANG);

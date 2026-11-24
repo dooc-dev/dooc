@@ -2,6 +2,8 @@ The editor header sits above the source editor and acts on the active pane. Use 
 
 ![Editor header](contents/html/ux-header.html)
 
+The upper-right **View settings** menu includes **space+矢印 page jump**, enabled by default. It enables or disables Space-plus-arrow page navigation while the active preview has focus; the source editor keeps its normal typing and cursor controls. The setting is saved in this browser. See [Space + arrow page jump](contents/md/ux-sidebar.md#space-arrow-page-jump) for the navigation rules.
+
 ## Follow an action
 
 | Action | Guide |

@@ -5,7 +5,11 @@ import { workspaceConnection } from "./connection.js";
 import { WORKSPACE_PATH, type WorkspacePort } from "./protocol.js";
 
 export interface WorkspaceClient {
-    request<T = unknown>(op: string, args?: Record<string, unknown>): Promise<T>;
+    request<T = unknown>(
+        op: string,
+        args?: Record<string, unknown>,
+        signal?: AbortSignal,
+    ): Promise<T>;
     /** Returns the function that stops listening. */
     on(event: string, handler: (data: unknown) => void): () => void;
     /** Runs on every (re)connection; right away on a channel that is always connected. */
@@ -16,7 +20,7 @@ export const createWorkspaceClient = (port: WorkspacePort): WorkspaceClient => {
     let next = 0;
     const pending = new Map<
         number,
-        { resolve: (v: unknown) => void; reject: (e: Error) => void }
+        { resolve: (v: unknown) => void; reject: (e: Error) => void; cleanup: () => void }
     >();
     const listeners = new Map<string, Set<(data: unknown) => void>>();
     port.receive((message) => {
@@ -29,23 +33,40 @@ export const createWorkspaceClient = (port: WorkspacePort): WorkspaceClient => {
         const request = typeof id === "number" ? pending.get(id) : undefined;
         if (!request) return;
         pending.delete(id as number);
+        request.cleanup();
         if (typeof error === "string") request.reject(new Error(error));
         else request.resolve(value);
     });
     port.closed?.(() => {
-        for (const request of pending.values())
+        for (const request of pending.values()) {
+            request.cleanup();
             request.reject(new Error("Workspace connection closed"));
+        }
         pending.clear();
     });
     return {
-        request: <T>(op: string, args?: Record<string, unknown>) =>
+        request: <T>(op: string, args?: Record<string, unknown>, signal?: AbortSignal) =>
             new Promise<T>((resolve, reject) => {
+                if (signal?.aborted) return reject(signal.reason);
                 const id = ++next;
-                pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
+                const cleanup = () => signal?.removeEventListener("abort", abort);
+                const abort = () => {
+                    pending.delete(id);
+                    cleanup();
+                    reject(signal?.reason);
+                    try {
+                        port.send({ cancel: id });
+                    } catch {
+                        // A closed connection has already discarded the request.
+                    }
+                };
+                pending.set(id, { resolve: resolve as (v: unknown) => void, reject, cleanup });
+                signal?.addEventListener("abort", abort, { once: true });
                 try {
                     port.send({ id, op, args });
                 } catch (error) {
                     pending.delete(id);
+                    cleanup();
                     reject(error instanceof Error ? error : new Error(String(error)));
                 }
             }),

@@ -1,9 +1,16 @@
 // dooc.yaml owns document hierarchy and display settings. Nested manifests identify documents
 // by complete source paths; legacy manifests retain their authored IDs during migration.
 
-import { stringify } from "yaml";
+import { type Document, stringify } from "yaml";
 import { parseVersionConfig, type VersionConfig } from "./document-version.js";
-import { docFile, type FileLayout, fileDocumentId, localFile, parseFileLayout } from "./files.js";
+import {
+    docFile,
+    type FileLayout,
+    fileDocumentId,
+    isSkillFile,
+    localFile,
+    parseFileLayout,
+} from "./files.js";
 import { contentLanguageCode, DEFAULT_LANG, isLangTag } from "./language.js";
 import { isRemoteManifest, remoteManifestSource } from "./remote-manifest.js";
 import { parseSubformats, type Subformat } from "./subformats.js";
@@ -38,6 +45,9 @@ export interface ParsedManifest {
     icon?: string;
     defaultLang?: string;
     licence?: string;
+    skills?: string[];
+    libraryFiles?: string[];
+    includedLibraryFiles?: string[];
     files?: FileLayout;
     /** Content languages offered by the site, including defaultLang; normalized to ISO 639-3. */
     languages?: string[];
@@ -405,12 +415,33 @@ const parseNestedManifest = (input: object): ParsedManifest => {
             : undefined;
         const system = object(
             root.system ?? {},
-            ["languages", "default_lang", "themes", "licence", "files"],
+            ["languages", "default_lang", "themes", "licence", "skills", "files", "library"],
             "system",
         );
+        const library = object(system.library ?? {}, ["files"], "system.library");
+        const libraryFiles = library.files;
+        if (
+            libraryFiles !== undefined &&
+            (!Array.isArray(libraryFiles) ||
+                libraryFiles.some(
+                    (file) => !localFile(file) || !file.trim() || file.includes("*"),
+                ) ||
+                new Set(libraryFiles).size !== libraryFiles.length)
+        )
+            throw new Error("system.library.files must be a list of unique local file paths");
         const licence = system.licence;
         if (licence !== undefined && (!localFile(licence) || !licence.trim()))
             throw new Error("system.licence must be a local file path");
+        const skills = system.skills;
+        if (
+            skills !== undefined &&
+            (!Array.isArray(skills) ||
+                skills.some((file) => !isSkillFile(file)) ||
+                new Set(skills).size !== skills.length)
+        )
+            throw new Error(
+                "system.skills must be a list of unique project-relative SKILL.md paths",
+            );
         const sidebar = object(
             document?.sidebar ?? root.left_sidebar ?? {},
             ["title", "icon"],
@@ -430,15 +461,24 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                 titles[code] = title.trim();
             }
         }
+        if (document?.icon !== undefined && sidebar.icon !== undefined)
+            throw new Error("Use document.icon only; remove document.sidebar.icon");
+        const rootIcon = document?.icon !== undefined ? document.icon : sidebar.icon;
+        const scalarIcon = documentFormat && typeof rootIcon === "string" ? rootIcon : undefined;
         const themeIcons: Record<string, string> = {};
-        if (sidebar.icon !== undefined) {
-            const icons = object(sidebar.icon, ["light", "dark"], "left_sidebar.icon");
+        if (rootIcon !== undefined && scalarIcon === undefined) {
+            const icons = object(
+                rootIcon,
+                ["light", "dark"],
+                documentFormat ? "document.icon" : "left_sidebar.icon",
+            );
             for (const [theme, file] of Object.entries(icons)) {
                 if (!localFile(file) || !file.endsWith(".svg"))
                     throw new Error("Site icons must be local SVG files");
                 themeIcons[theme] = file;
             }
         }
+        const icon = scalarIcon ?? themeIcons.light ?? themeIcons.dark;
         const documents: Record<string, string> = {};
         const icons: Record<string, string> = {};
         const walk = (value: unknown, position = "root"): DocNode[] => {
@@ -471,10 +511,8 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                 const location = documentFormat
                     ? { url, ...(position === "root" ? { root: true } : {}) }
                     : {};
-                if (
-                    node.icon !== undefined &&
-                    (!localFile(node.icon) || !node.icon.endsWith(".svg"))
-                )
+                const nodeIcon = documentFormat && position === "root" ? icon : node.icon;
+                if (nodeIcon !== undefined && (!localFile(nodeIcon) || !nodeIcon.endsWith(".svg")))
                     throw new Error("Document icons must be local SVG files");
                 if (node.library !== undefined) {
                     if (
@@ -487,7 +525,7 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                     )
                         throw new Error("Library pages require a view and a non-empty title");
                     const id = libraryPageId(node.library);
-                    if (typeof node.icon === "string") icons[id] = node.icon;
+                    if (typeof nodeIcon === "string") icons[id] = nodeIcon;
                     return {
                         id,
                         ...location,
@@ -511,7 +549,7 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                             "Subformat pages require a registered subformat and a non-empty title",
                         );
                     const id = subformatPageId(config.ext);
-                    if (typeof node.icon === "string") icons[id] = node.icon;
+                    if (typeof nodeIcon === "string") icons[id] = nodeIcon;
                     return {
                         id,
                         ...location,
@@ -536,7 +574,7 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                 if (Object.hasOwn(documents, id))
                     throw new Error(`Duplicate document: ${node.file}`);
                 if (file) documents[id] = file;
-                if (typeof node.icon === "string") icons[id] = node.icon;
+                if (typeof nodeIcon === "string") icons[id] = nodeIcon;
                 const remote = url && isRemoteManifest(url) ? remoteManifestSource(url) : undefined;
                 const manifestPath = remote?.path ?? url;
                 return {
@@ -605,9 +643,7 @@ const parseNestedManifest = (input: object): ParsedManifest => {
             ...(titles[source] || document?.title
                 ? { title: titles[source] ?? document?.title }
                 : {}),
-            ...(themeIcons.light || themeIcons.dark
-                ? { icon: themeIcons.light ?? themeIcons.dark }
-                : {}),
+            ...(icon === undefined ? {} : { icon }),
             files: {
                 defaultLayout: layout.default_layout,
                 documents,
@@ -623,8 +659,10 @@ const parseNestedManifest = (input: object): ParsedManifest => {
             format: documentFormat ? "document" : "nested",
             tree,
             ...(licence === undefined ? {} : { licence }),
+            ...(skills === undefined ? {} : { skills: skills as string[] }),
+            ...(libraryFiles === undefined ? {} : { libraryFiles: libraryFiles as string[] }),
             ...(sidebar.title === undefined ? {} : { titles }),
-            ...(sidebar.icon === undefined ? {} : { themeIcons }),
+            ...(rootIcon !== undefined && scalarIcon === undefined ? { themeIcons } : {}),
         };
     } catch (error) {
         return {
@@ -633,6 +671,17 @@ const parseNestedManifest = (input: object): ParsedManifest => {
             errors: [`${MANIFEST_FILE}: ${error instanceof Error ? error.message : error}`],
         };
     }
+};
+
+/** Move the former sidebar icon without discarding YAML comments or choosing between duplicates. */
+export const migrateDocumentIcon = (document: Document): boolean => {
+    const previous = ["document", "sidebar", "icon"];
+    if (!document.hasIn(previous)) return false;
+    if (document.hasIn(["document", "icon"]))
+        throw new Error("Use document.icon only; remove document.sidebar.icon");
+    document.setIn(["document", "icon"], document.getIn(previous, true));
+    document.deleteIn(previous);
+    return true;
 };
 
 /** Serialize the authored format; legacy manifests remain readable during migration. */
@@ -647,6 +696,8 @@ export const serializeManifest = (
         icon,
         defaultLang,
         licence,
+        skills,
+        libraryFiles,
         files,
         languages,
         themes,
@@ -682,7 +733,9 @@ export const serializeManifest = (
             ...(titles || (format !== "document" && title)
                 ? { title: titles ?? { [contentLanguageCode(defaultLang ?? DEFAULT_LANG)]: title } }
                 : {}),
-            ...(themeIcons || icon ? { icon: themeIcons ?? { light: icon, dark: icon } } : {}),
+            ...(format !== "document" && (themeIcons || icon)
+                ? { icon: themeIcons ?? { light: icon, dark: icon } }
+                : {}),
         };
         const hasSidebar = Object.keys(sidebar).length > 0;
         const pages = contents(tree);
@@ -693,6 +746,8 @@ export const serializeManifest = (
                     ...(languages ? { languages } : {}),
                     default_lang: defaultLang ?? DEFAULT_LANG,
                     ...(licence === undefined ? {} : { licence }),
+                    ...(skills === undefined ? {} : { skills }),
+                    ...(libraryFiles === undefined ? {} : { library: { files: libraryFiles } }),
                     ...(themes ? { themes } : {}),
                     ...(files
                         ? {
@@ -708,6 +763,7 @@ export const serializeManifest = (
                               ...((pages[0] as { document: object } | undefined)?.document ?? {
                                   url: "",
                               }),
+                              ...(themeIcons || icon ? { icon: themeIcons ?? icon } : {}),
                               ...(hasSidebar ? { sidebar } : {}),
                           },
                       }

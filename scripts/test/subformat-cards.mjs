@@ -252,6 +252,12 @@ window.testSubformatCards = async () => {
             "Lists omit grouping headings and controls",
         );
         assert(
+            !card().querySelector(".subformat-card-tools .subformat-card-file") &&
+                details().querySelector(".subformat-card-file").textContent ===
+                    collection.records[0].file,
+            "List filenames remain available in expandable details",
+        );
+        assert(
             [...card().querySelectorAll(".subformat-card-meta dt")]
                 .map((field) => field.textContent)
                 .join(",") === "Status,Due date,Metadata,Points,Tags",

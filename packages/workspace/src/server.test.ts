@@ -54,3 +54,33 @@ it("rejects requests in flight when the channel drops", async () => {
     drop();
     await expect(request).rejects.toThrow("Workspace connection closed");
 });
+
+it("cancels only the requested operation and ignores its late response", async () => {
+    let release!: () => void;
+    let runningSignal: AbortSignal | undefined;
+    const waiting = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+    const operation = vi.fn(async (_args, _session, signal) => {
+        runningSignal = signal;
+        await waiting;
+        return "late";
+    });
+    const server = createWorkspaceServer({ wait: operation, echo: () => "current" });
+    const [near, far] = portPair();
+    const detach = server.connect(far, {});
+    const client = createWorkspaceClient(near);
+    const controller = new AbortController();
+    const request = client.request("wait", {}, controller.signal);
+    await vi.waitFor(() => expect(operation).toHaveBeenCalledOnce());
+    controller.abort();
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
+    expect(runningSignal?.aborted).toBe(true);
+    expect(await client.request("echo")).toBe("current");
+    release();
+    await expect(client.request("wait", {}, controller.signal)).rejects.toMatchObject({
+        name: "AbortError",
+    });
+    expect(operation).toHaveBeenCalledOnce();
+    detach();
+});

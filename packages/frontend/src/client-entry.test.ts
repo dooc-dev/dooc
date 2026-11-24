@@ -61,7 +61,9 @@ it.each([
         open.mock.invocationCallOrder[0] ?? 0,
     );
     expect(connectServer).toHaveBeenCalledWith(server, false, readOnly);
-    expect(connection.fetch).toHaveBeenCalledWith("http://localhost:3000/client/");
+    expect(connection.fetch).toHaveBeenCalledWith("http://localhost:3000/client/", {
+        signal: expect.any(AbortSignal),
+    });
     expect(write.mock.calls[0]?.[0]).toContain("Opened document");
     expect(write.mock.calls[0]?.[0].includes('data-dooc-reader="true"')).toBe(readOnly);
 });

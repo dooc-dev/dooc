@@ -56,14 +56,16 @@ Each section uses the version configuration and history of the manifest that pro
 
 The reader chooses how to open an entry. There is no author-defined `mode` setting.
 
-- A regular click opens the content inside dooc: Markdown as a page, a local file in its previewer, an included document as its section, and a Web URL in an iframe.
+- A regular click opens the content inside dooc: Markdown as a page, a local file in its previewer, an included document as its section, and a Web URL in an iframe. On desktop and mobile, the iframe fills the central pane without surrounding margins, borders, a URL bar or document controls.
+- Web previews use the browser's canvas color for the pane's color scheme. A transparent embedded page must remain readable when it uses the browser's default text colors, including after a light/dark theme change. A website's own background and color-scheme declarations remain in control of its content.
 - A middle click or Ctrl/Cmd-click opens a new tab. For Web URLs, that tab opens the original website directly.
-- On phones, a regular click on a Web URL asks **Open externally?**. **Open externally** opens the website in a new tab; **Cancel** stays on the current page.
-- A detected iframe failure shows the same confirmation. Node workspaces also check public HTTPS response headers for explicit framing denials. Browsers can hide cross-origin framing failures, and header checks cannot resolve every policy or redirect, so the Web page also has an **Open externally** action that shows this confirmation. A loading timeout offers the same action without claiming the website refused embedding.
+- A confirmed framing refusal asks **Open externally?**. **Open externally** opens the website in a new tab; **Cancel** keeps the preview and its external-opening action. Node workspaces also check public HTTPS response headers for explicit framing denials. Loading, timeouts and network errors do not show the external-opening action. Browsers can hide cross-origin framing failures, and header checks cannot resolve every policy or redirect; middle-click or Ctrl/Cmd-click the sidebar entry to open the original website in that case.
 
 Sidebar rows and generated contents cards identify links through the title: entries that open an included document, an HTTP(S) website, another site page, or `redirect:first` use an underlined title in the link color. Ordinary Markdown, local files and generated contents keep their normal title styling. There are no destination badges, auxiliary icons, or type/extension labels. Existing page artwork remains unchanged. A Git-hosted `dooc.yaml` opens as an included document, not a Web preview.
 
 Static HTML exports remain offline: Web pages ask before opening the website externally. Network-enabled HTML exports can show Web pages in iframes.
+
+Iframe regression checks use a real local HTTP page with a transparent background. They verify text contrast in light and dark themes, live theme changes, reader/editor navigation, and desktop/mobile layouts; loading the document alone does not prove that its text is visible.
 
 The [Version specification](contents/md/version.md) describes the `version` setting, automatic numbering, and reader publication selectors.
 
@@ -99,10 +101,12 @@ Implementation is tracked as **Manifest step-up authorization** in **Development
 | `system.languages`            | Offered languages; must include the default                |
 | `system.themes`               | Offered themes: `light`, `dark`                            |
 | `system.licence`              | Local licence file, included in source exports             |
+| `system.skills`               | Project-authored `SKILL.md` paths published over [MCP](contents/md/web-mcp.md#project-skills) |
+| `system.library.files`        | Additional local text file paths to load into Library |
 | `system.files.default_layout` | Layout option of the file card                             |
 | `document`                    | Required root document                                    |
 | `document.sidebar.title`      | Site title per language; must include the default language |
-| `document.sidebar.icon`       | `light` and `dark` SVG files                               |
+| `document.icon`               | Local SVG path, or `light` and `dark` SVG paths for the root |
 | `json_subformats`             | Record types                                               |
 | `default_subformat_folder`    | Folder scanned for records and used by **Create**          |
 
@@ -114,9 +118,29 @@ Implementation is tracked as **Manifest step-up authorization** in **Development
 | Record board | `subformat` (an `ext`), `title`, `icon`, `children` |
 | Library page | `library` (a view), `title`, `icon`, `children`     |
 
-Every entry above is the value of a `document` key, including boards and Library pages. `url`, `subformat`, and `library` are alternative content sources. `title` is the page name in navigation and browser tabs; a Markdown page without one uses its file name. It is not added to the page body: write headings in the content itself. `icon` is a local SVG file shown beside the entry in the tree. It is drawn as an image, so give it fixed colours that read on both themes; `currentColor` does not follow the theme. A board without an `icon` uses the icon of its record type. The root's `sidebar` holds the site's sidebar settings; its title defaults to the root document title.
+Every entry above is the value of a `document` key, including boards and Library pages. `url`, `subformat`, and `library` are alternative content sources. `title` is the page name in navigation and editor tabs; a Markdown page without one uses its file name. Reader and published HTML tabs keep the root document title across page navigation. It is not added to the page body: write headings in the content itself. `icon` is a local SVG file shown beside the entry in the tree. It is drawn as an image, so give it fixed colours that read on both themes; `currentColor` does not follow the theme. A board without an `icon` uses the icon of its record type. The root's `sidebar` holds its localized title, which defaults to the root document title.
+
+### Document icon
+
+The root `document.icon` is the single source for the sidebar header and the reader's [browser tab icon](contents/md/publishing.md#browser-tab-identity). Use one SVG path for a shared icon, or a map for explicit theme variants:
+
+```yaml
+document:
+  title: Handbook
+  icon:
+    light: contents/svg/logo.svg
+    dark: themes/dark/contents/svg/logo.svg
+```
+
+The sidebar follows the document pane's theme; the browser tab follows the browser's light or dark appearance. Child page icons remain local SVG paths and do not replace the root icon. File moves, source exports, icon uploads, and HTML builds use the same root setting.
+
+Older `document.sidebar.icon` values remain readable for migration. Settings, YAML saves, icon uploads, and manifest serialization move that value to `document.icon`, preserving both theme paths. Defining both fields is an error; remove the old field instead of relying on an implicit priority. Legacy `left_sidebar` and flat manifests retain their existing formats.
 
 A Library page lists one kind of content from the whole workspace. Its view is a block label (`callouth`, `graphth`, `schemath`, `termth`, `mermaid`, `csv`, `tsv`), `urls`, or `url-previews`.
+
+Open **dooc.yaml** at the top of the editor's workspace tools card to edit settings. The Settings tab includes Library file paths with completion; YAML exposes the complete manifest. Both tabs share one draft, and Save validates the manifest before writing. See [Manifest editor](contents/md/manifest-editor.md).
+
+`system.library.files` adds explicitly listed text files to Library, including code and CSV files that are not embedded in a page. Paths are relative to this manifest, use exact file names, and are included in source exports. Existing Markdown, term, and record discovery continues; files already indexed are not duplicated. Missing, ignored, or binary files appear as Library errors.
 
 ## Page URLs
 

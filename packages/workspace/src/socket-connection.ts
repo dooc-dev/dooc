@@ -72,7 +72,8 @@ export async function connectServer(
         const found = workspaceConnections().find((item) => item.id === id);
         if (found) return found;
         const scoped: WorkspaceClient = {
-            request: (op, args) => shared.request(op, { ...args, workspace: info.id }),
+            request: (op, args, signal) =>
+                shared.request(op, { ...args, workspace: info.id }, signal),
             on: (event, handler) =>
                 shared.on(event, (data) => {
                     if (

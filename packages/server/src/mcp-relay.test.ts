@@ -89,6 +89,58 @@ it("discovers tools while offline and keeps reader credentials read-only", async
     expect((await rpc(credentials.mcp.replace(".r.m.", ".w.m."), "ping")).status).toBe(401);
 });
 
+it("routes native skill discovery and resource reads through the paired reader workspace", async () => {
+    const credentials = await pair(true);
+    const other = await pair(true);
+    const instance = randomUUID();
+    await browser("poll", { instance }, credentials.browser);
+    const uri = "skill://review-docs/SKILL.md";
+    for (const [method, params, action, value] of [
+        [
+            "skills/list",
+            {},
+            "list",
+            {
+                resultType: "complete",
+                skills: [
+                    {
+                        uri,
+                        frontmatter: {
+                            name: "review-docs",
+                            description: "Apply the project checklist.",
+                        },
+                        resources: [],
+                    },
+                ],
+            },
+        ],
+        [
+            "resources/read",
+            { uri },
+            "read",
+            {
+                contents: [
+                    {
+                        uri,
+                        mimeType: "text/markdown",
+                        text: "Use read_file to load the project checklist.",
+                    },
+                ],
+            },
+        ],
+    ] as const) {
+        const poll = browser("poll", { instance }, credentials.browser);
+        const response = rpc(credentials.mcp, method, params);
+        const job = (await (await poll).json()) as RelayCall;
+        expect(job).toMatchObject({ name: "skills", args: { action, ...params } });
+        await browser("result", { instance, id: job.id, value }, credentials.browser);
+        expect(await (await response).json()).toMatchObject({ result: value });
+    }
+    expect(await (await rpc(other.mcp, "skills/list")).json()).toMatchObject({
+        error: { code: -32603, message: expect.stringContaining("offline") },
+    });
+});
+
 it("routes calls and results only to their paired workspace and executing tab", async () => {
     const first = await pair(),
         second = await pair();

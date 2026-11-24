@@ -63,7 +63,17 @@ export const mountThemePickers = (
         button.dataset.themePicker === "editor"
             ? (root.dataset.editorTheme ?? "auto")
             : (target(button).dataset.theme ?? "auto");
+    const previewThemes = new WeakMap<HTMLElement, string>();
     const sync = (): void => {
+        for (const pane of document.querySelectorAll<HTMLElement>(".preview-pane")) {
+            if (pane.classList.contains("resources-pane")) {
+                if (!previewThemes.has(pane))
+                    previewThemes.set(pane, pane.dataset.theme ?? documentDefault);
+            } else if (previewThemes.has(pane)) {
+                pane.dataset.theme = previewThemes.get(pane);
+                previewThemes.delete(pane);
+            }
+        }
         for (const pane of document.querySelectorAll<HTMLElement>(
             ".resources-pane, #sidebar, #panel",
         ))

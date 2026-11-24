@@ -85,11 +85,59 @@ export const handleRpc = async (
                 protocolVersion: versions.includes(String(params.protocolVersion))
                     ? params.protocolVersion
                     : "2025-11-25",
-                capabilities: { tools: {} },
+                capabilities: {
+                    tools: {},
+                    ...(Object.hasOwn(tools, "skills")
+                        ? { resources: {}, extensions: { "io.modelcontextprotocol/skills": {} } }
+                        : {}),
+                },
                 serverInfo: { name: "dooc", version: "0" },
             });
         case "ping":
             return reply({});
+        case "skills/list":
+        case "skills/get":
+        case "resources/list":
+        case "resources/templates/list":
+        case "resources/read": {
+            if (!Object.hasOwn(tools, "skills")) return error(-32601, "method not found");
+            if (params.cursor !== undefined) return error(-32602, "unknown cursor");
+            if (msg.method === "resources/templates/list") return reply({ resourceTemplates: [] });
+            const action =
+                msg.method === "skills/get"
+                    ? "get"
+                    : msg.method === "resources/read"
+                      ? "read"
+                      : "list";
+            if (action !== "list" && (typeof params.uri !== "string" || !params.uri))
+                return error(-32602, "a resource URI is required");
+            try {
+                const result = await callMcpTool(tools, "skills", {
+                    action,
+                    ...(action === "list" ? {} : { uri: params.uri }),
+                });
+                if (!record(result)) return error(-32603, "invalid skill response");
+                if (typeof result.error === "string")
+                    return error(result.status === 404 ? -32602 : -32603, result.error);
+                if (msg.method === "resources/list") {
+                    const skills = result.skills as {
+                        uri: string;
+                        frontmatter: { name: string; description: string };
+                    }[];
+                    return reply({
+                        resources: skills.map((skill) => ({
+                            uri: skill.uri,
+                            name: skill.frontmatter.name,
+                            description: skill.frontmatter.description,
+                            mimeType: "text/markdown",
+                        })),
+                    });
+                }
+                return reply(result);
+            } catch (e) {
+                return error(-32603, e instanceof Error ? e.message : String(e));
+            }
+        }
         case "tools/list":
             return reply({
                 tools: Object.entries(tools).map(([name, t]) => ({

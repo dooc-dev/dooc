@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 
 export const prebuilt = import.meta.url.endsWith(".js");
 export const standalone = false;
@@ -25,4 +25,11 @@ export const readReaderAsset = (name: string): Buffer =>
                 : `${prebuilt ? ".." : "../../../dist"}/${name}`,
             import.meta.url,
         ),
+    );
+
+export const readGraphAssets = (): Map<string, Buffer> =>
+    new Map(
+        readdirSync(new URL(`${prebuilt ? ".." : "../../../dist"}/graph/`, import.meta.url))
+            .filter((name) => name.endsWith(".js"))
+            .map((name) => [name, readReaderAsset(`graph/${name}`)]),
     );

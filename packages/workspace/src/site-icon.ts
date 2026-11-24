@@ -3,6 +3,7 @@ import { existsSync } from "../../engine/src/compiler/host.js";
 import { ICONS_DIR, squareSvg } from "../../engine/src/compiler/icons.js";
 import { manifestFile, parseManifestText } from "../../engine/src/compiler/manifest.js";
 import { readTextfile, textfilePath, writeTextfile } from "../../engine/src/compiler/textfile.js";
+import { migrateDocumentIcon } from "../../engine/src/core/content-metadata.js";
 import { defaultFilePath } from "../../engine/src/core/files.js";
 
 export const siteIconResponse = (
@@ -28,15 +29,20 @@ export const siteIconResponse = (
         const theme = input?.theme ?? "light";
         if (theme !== "light" && theme !== "dark")
             throw new Error("Expected a light or dark theme");
+        const configured =
+            manifest.format !== undefined
+                ? (manifest.themeIcons?.[theme] ??
+                  (manifest.format === "document" && !manifest.themeIcons
+                      ? manifest.icon
+                      : undefined))
+                : manifest.icon;
         const file =
-            (manifest.format !== undefined ? manifest.themeIcons?.[theme] : manifest.icon) ??
+            configured ??
             (manifest.files?.defaultLayout !== false
                 ? defaultFilePath(
                       manifest.format !== undefined ? `_site-${theme}.svg` : "_site.svg",
                   )
                 : `${ICONS_DIR}/_site${manifest.format !== undefined ? `-${theme}` : ""}.svg`);
-        const configured =
-            manifest.format !== undefined ? manifest.themeIcons?.[theme] : manifest.icon;
         if (!configured && existsSync(textfilePath(root, file)))
             return {
                 status: 409,
@@ -45,24 +51,23 @@ export const siteIconResponse = (
         const base = existsSync(textfilePath(root, file)) ? readTextfile(root, file) : null;
         if (!writeTextfile(root, file, svg, base))
             return { status: 409, body: { error: "Icon changed externally. Try again." } };
-        if (!configured) {
-            const parsed = parseDocument(raw ?? "docs: []\n");
-            const document =
-                isSeq(parsed.contents) || parsed.contents == null
-                    ? new Document({ docs: parsed.toJS() ?? [] })
-                    : parsed;
-            if (manifest.format !== undefined)
+        const parsed = parseDocument(raw ?? "docs: []\n");
+        const document =
+            isSeq(parsed.contents) || parsed.contents == null
+                ? new Document({ docs: parsed.toJS() ?? [] })
+                : parsed;
+        const migrated = migrateDocumentIcon(document);
+        if (!configured || migrated) {
+            if (!configured && manifest.format !== undefined)
                 document.setIn(
                     [
-                        ...(manifest.format === "document"
-                            ? ["document", "sidebar"]
-                            : ["left_sidebar"]),
+                        ...(manifest.format === "document" ? ["document"] : ["left_sidebar"]),
                         "icon",
                         theme,
                     ],
                     file,
                 );
-            else document.set("icon", file);
+            else if (!configured) document.set("icon", file);
             if (!writeTextfile(root, manifestFile(root), document.toString(), raw))
                 return { status: 409, body: { error: "Manifest changed externally. Try again." } };
         }

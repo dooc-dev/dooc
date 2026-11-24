@@ -52,6 +52,30 @@ try {
     run("build", "--url_preview=embed");
     assert.ok(!existsSync(join(root, "dist/bundle.zip")));
     const html = readFileSync(join(root, "build/index.html"), "utf8");
+    run(
+        "build",
+        "dooc.yaml",
+        "split-output",
+        "--split",
+        "--max-file-size",
+        "25MiB",
+        "--max-build-size",
+        "100MiB",
+    );
+    const splitHtml = readFileSync(join(root, "split-output/index.html"), "utf8");
+    assert.match(splitHtml, /<script type="module" src="\.\/dooc-assets\//);
+    assert.match(splitHtml, /<template[^>]+data-src="\.\/dooc-assets\//);
+    assert.doesNotMatch(splitHtml, /data:font\/woff2;base64,/);
+    for (const [, file] of splitHtml.matchAll(/(?:src|href|data-src)="\.\/(dooc-assets\/[^"#]+)"/g))
+        assert.ok(
+            existsSync(join(root, "split-output", file)),
+            `Missing publication asset: ${file}`,
+        );
+    assert.throws(
+        () => run("build", "dooc.yaml", "split-output", "--max-file-size", "1KiB"),
+        /--max-file-size/,
+    );
+    assert.equal(readFileSync(join(root, "split-output/index.html"), "utf8"), splitHtml);
     run("reader", "build", "web", "--client", "--server", "--out", "reader-web");
     assert.ok(existsSync(join(root, "reader-web/assets/workspace-worker.js")));
     assert.ok(!existsSync(join(root, "reader-web/assets/edit.js")));

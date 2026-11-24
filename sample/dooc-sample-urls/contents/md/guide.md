@@ -22,10 +22,9 @@ The local handbook uses version **2.1.0**, the named reference uses **3.0.0**, a
 
 ## Click behavior
 
-- Click normally to open a document or file inside dooc. Desktop Web entries use an iframe.
+- Click normally to open a document or file inside dooc. Web entries fill the central pane with a borderless iframe on desktop and mobile, without surrounding margins or a URL bar.
 - Middle-click or Ctrl/Cmd-click a Web entry to open the original website in a new tab.
-- On a phone, a Web entry asks before opening externally. Cancel keeps the current page.
-- If an iframe is refused, confirm **Open externally** or cancel. Browser restrictions can hide some failures; the Web preview always includes an explicit external-opening action.
+- If an iframe is refused, confirm **Open externally** or cancel; the failure message keeps an external-opening action. Browser restrictions can hide some failures; middle-click or Ctrl/Cmd-click the sidebar entry to open the original website in that case.
 - The custom SVG icon keeps its original artwork and colors. No auxiliary destination icon is added.
 
 ## GitHub raw URL variant

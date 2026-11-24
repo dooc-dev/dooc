@@ -40,6 +40,11 @@ export const createTools = (root: string, options: McpOptions = {}) => {
                 auth: a.auth as "external" | undefined,
                 sourceUrl: a.source_url as string | undefined,
                 download: a.download as "easy" | "normal" | "block" | undefined,
+                split: a.split as boolean | undefined,
+                compress: a.compress as boolean | undefined,
+                maxFileSize: a.max_file_size as string | number | undefined,
+                maxBuildSize: a.max_build_size as string | number | undefined,
+                warningsAsErrors: a.warnings_as_errors as boolean | undefined,
                 previews: options.previews,
             });
             const path = textfilePath(root, file);
@@ -48,7 +53,15 @@ export const createTools = (root: string, options: McpOptions = {}) => {
             return {
                 file,
                 path,
-                bytes: Buffer.byteLength(bundle.data),
+                bytes: bundle.bytes ?? Buffer.byteLength(bundle.data),
+                ...(bundle.files
+                    ? {
+                          files: [...bundle.files].map(([file, data]) => ({
+                              file,
+                              bytes: data.length,
+                          })),
+                      }
+                    : {}),
                 docs: bundle.docs,
                 ...(bundle.version ? { version: bundle.version } : {}),
                 ...(bundle.revision ? { revision: bundle.revision } : {}),

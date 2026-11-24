@@ -10,7 +10,7 @@ import { exportEntries } from "../../engine/src/compiler/export.js";
 import { projectRoot } from "../../engine/src/compiler/manifest.js";
 import { fetchPublicFile } from "../../engine/src/compiler/public-file.js";
 import { storedDocumentVersions } from "../../engine/src/compiler/stored-versions.js";
-import { buildBundle } from "./build.js";
+import { buildBundle, writeBuildOutput } from "./build.js";
 import { bundleClient } from "./serve.js";
 
 vi.mock("../../engine/src/compiler/public-file.js", () => ({ fetchPublicFile: vi.fn() }));
@@ -30,6 +30,89 @@ beforeEach(() => {
     vi.mocked(bundleClient).mockClear();
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+it.each([
+    false,
+    true,
+])("keeps the root title and icon in published tabs (split: %s)", async (split) => {
+    write(
+        "dooc.yaml",
+        `document:
+  title: 'Handbook & "Notes"'
+  url: home.md
+  icon: root.svg
+  sidebar:
+    title: { eng: Navigation }
+  children:
+    - document: { title: Guide, url: guide.md, icon: child.svg }
+`,
+    );
+    write("home.md", "Home.\n");
+    write("guide.md", "Guide.\n");
+    for (const [name, radius] of [
+        ["root", 1],
+        ["child", 3],
+    ] as const)
+        write(`${name}.svg`, `<svg viewBox="0 0 8 8"><circle r="${radius}"/></svg>`);
+    const bundle = await buildBundle(root, { format: "html", split });
+    const data = bundle.data.toString();
+    expect(data).toContain("<title>Handbook &amp; &quot;Notes&quot;</title>");
+    const titles = [...data.matchAll(/<template data-route="[^"]*" data-title="([^"]*)"/g)];
+    expect(titles.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(titles.map((match) => match[1]))).toEqual(
+        new Set(["Handbook &amp; &quot;Notes&quot;"]),
+    );
+    const icons = [...data.matchAll(/<link data-document-icon="[^"]*"[^>]*href="([^"]*)"/g)];
+    expect(icons).toHaveLength(1);
+    const svg = Buffer.from(icons[0]?.[1]?.split(",")[1] ?? "", "base64").toString();
+    expect(svg).toContain('xmlns="http://www.w3.org/2000/svg"');
+    expect(svg).toContain('<circle r="1"');
+});
+
+it("publishes split files and checks their actual total bytes before replacing a previous build", async () => {
+    write("content/guide.md", "# 日本語\n\nA split document.\n");
+    const bundle = await buildBundle(root, { format: "html", split: true });
+    expect(bundle.files?.size).toBeGreaterThan(3);
+    expect(bundle.data).toContain("script-src 'self' 'unsafe-inline'");
+    expect(bundle.data).toContain("connect-src 'self'");
+    expect(bundle.data).not.toContain("A split document.");
+    expect(
+        [...(bundle.files ?? [])].some(
+            ([file, data]) => file.endsWith(".html") && data.includes("A split document."),
+        ),
+    ).toBe(true);
+    expect(bundle.bytes).toBe(
+        Buffer.byteLength(bundle.data) +
+            [...(bundle.files?.values() ?? [])].reduce((sum, data) => sum + data.length, 0),
+    );
+    const path = join(root, "build/index.html");
+    writeBuildOutput(path, bundle);
+    await expect(buildBundle(root, { format: "html", maxBuildSize: 100 })).rejects.toThrow(
+        "--max-build-size",
+    );
+    await expect(buildBundle(root, { format: "html", maxFileSize: "1KiB" })).rejects.toThrow(
+        "--max-file-size",
+    );
+    expect(readFileSync(path, "utf8")).toBe(bundle.data);
+    expect((await buildBundle(root, { format: "html" })).files).toBeUndefined();
+});
+
+it("reports unsupported compression and can make those warnings fatal", async () => {
+    write("content/guide.md", "![Animation](figures/animation.gif)\n");
+    write("figures/animation.gif", Buffer.from("GIF89a"));
+    const options = { format: "html" as const, compress: true };
+    const result = await buildBundle(root, options);
+    expect(
+        result.warnings?.some((warning) => warning.includes("No preview compressor for image/gif")),
+    ).toBe(true);
+    await expect(buildBundle(root, { ...options, warningsAsErrors: true })).rejects.toThrow(
+        "Build warnings treated as errors",
+    );
+    await expect(buildBundle(root, { format: "zip", split: true })).rejects.toThrow("HTML only");
+    await expect(buildBundle(root, { format: "html", maxFileSize: "invalid" })).rejects.toThrow(
+        "--max-file-size must",
+    );
+});
 
 it("records hash versions after artifact delivery and leaves failed builds unnumbered", async () => {
     write("dooc.yaml", "version: {major: 1, minor: hash, patch: hash}\ndocs: [guide]\n");

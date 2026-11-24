@@ -342,8 +342,9 @@ const server = createWorkspaceServer(
     Object.fromEntries(
         Object.entries(operations).map(([name, op]) => [
             name,
-            (input: Record<string, unknown>) => {
+            (input: Record<string, unknown>, _session: unknown, signal?: AbortSignal) => {
                 const checkDeadline = () => {
+                    signal?.throwIfAborted();
                     if (
                         name === "mcp" &&
                         input.deadline !== undefined &&
@@ -354,6 +355,7 @@ const server = createWorkspaceServer(
                         throw new Error("MCP request expired before execution");
                 };
                 const run = async (): Promise<unknown> => {
+                    signal?.throwIfAborted();
                     if (name === "initialize") return initialize(input);
                     if (!app) throw new Error("Open a workspace first");
                     checkDeadline();
@@ -445,6 +447,7 @@ const server = createWorkspaceServer(
                     navigator.locks
                         ? navigator.locks.request(
                               `dooc-storage:${directory?.name ?? String(input.label)}`,
+                              { signal },
                               run,
                           )
                         : run();

@@ -119,3 +119,88 @@ window.testSidebarCollapse = async () => {
         await settle();
     }
 };
+
+window.testSidebarMotion = async () => {
+    const assert = (value, message) => {
+        if (!value) throw new Error(message);
+    };
+    const settle = async (element) => {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        await Promise.all(
+            element
+                .getAnimations({ subtree: true })
+                .map((animation) => animation.finished.catch(() => {})),
+        );
+    };
+    const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const sidebar = document.getElementById("sidebar");
+    const sidebarToggle = document.getElementById("sidebar-toggle");
+    if (document.body.classList.contains("sidebar-closed")) sidebarToggle.click();
+    await settle(sidebar);
+    const width = sidebar.getBoundingClientRect().width;
+    sidebarToggle.click();
+    const resize = sidebar
+        .getAnimations()
+        .find((animation) => animation.transitionProperty === "width");
+    if (reduced) assert(!resize, "Reduced motion skips the sidebar slide");
+    else {
+        assert(resize, "Sidebar width animates");
+        await resize.ready;
+        resize.pause();
+        resize.currentTime = resize.effect.getTiming().duration / 2;
+        const current = sidebar.getBoundingClientRect().width;
+        assert(current > 52 && current < width, "Sidebar passes through an intermediate width");
+    }
+    sidebarToggle.click();
+    await settle(sidebar);
+    assert(
+        Math.abs(sidebar.getBoundingClientRect().width - width) < 1,
+        "Reversing restores the sidebar width",
+    );
+    const toggle = [...sidebar.querySelectorAll(".nav-tree-toggle")].find((button) =>
+        button.checkVisibility(),
+    );
+    assert(toggle, "Fixture contains an expandable branch");
+    const item = toggle.closest(".nav-item");
+    const list = item.querySelector(":scope > .nav-list");
+    if (!item.classList.contains("open")) toggle.click();
+    await settle(sidebar);
+    const height = list.getBoundingClientRect().height;
+    assert(height > 0, "Expanded children are visible");
+    toggle.click();
+    const fold = item
+        .getAnimations()
+        .find((animation) => animation.transitionProperty === "grid-template-rows");
+    assert(
+        list.inert && toggle.getAttribute("aria-expanded") === "false",
+        "Collapsed children immediately leave keyboard navigation",
+    );
+    if (reduced) assert(!fold, "Reduced motion skips branch movement");
+    else {
+        assert(fold, "Branch height animates");
+        await fold.ready;
+        fold.pause();
+        fold.currentTime = fold.effect.getTiming().duration / 2;
+        const current = list.getBoundingClientRect().height;
+        assert(current > 0 && current < height, "Branch passes through an intermediate height");
+    }
+    toggle.click();
+    await settle(sidebar);
+    assert(
+        !list.inert && Math.abs(list.getBoundingClientRect().height - height) < 1,
+        "Repeated clicks reverse the branch smoothly",
+    );
+    toggle.click();
+    await settle(sidebar);
+    assert(list.getBoundingClientRect().height === 0, "Closed branches leave no blank space");
+    const handle = document.getElementById("sidebar-resize");
+    handle.focus();
+    handle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", cancelable: true }));
+    assert(
+        sidebar.getBoundingClientRect().width === width + 20 &&
+            Number(localStorage.getItem("docs:sidebar-width")) === width + 20,
+        "Keyboard resizing applies and saves its final width immediately",
+    );
+    handle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", cancelable: true }));
+    handle.blur();
+};

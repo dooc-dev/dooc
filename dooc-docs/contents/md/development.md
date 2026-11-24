@@ -1,5 +1,7 @@
 Work from a source checkout to change dooc itself. Project authoring starts with [First document](contents/md/quickstart.md), and installation is covered in [Install](contents/md/install.md); plugin authors can start with [Write a plugin](contents/md/plugin-dev.md).
 
+[Development progress](contents/md/progress.md) reconciles implemented work, open feature gaps and the current patch release checks.
+
 ## Set up and run
 
 ```sh
@@ -33,7 +35,13 @@ The combined task first generates one shared disposable workspace under `build/d
 
 While the task runs, changes in `dooc-docs`, `sample/dooc-sample-project`, and `scripts/fixtures/dev-workspace` update their generated copies and trigger document hot reload. A file changed locally in the playground is kept; the terminal lists any conflicting source update. Git history, runtime settings and unrelated local files remain in place. Other sample workspaces, including the URL gallery, are opened explicitly with `--project` and watch their own files directly.
 
-The development task loads the local demo plugins into the generated workspace. It copies the documentation into that playground. Use the regular CLI to edit real documents, including this documentation:
+The development task loads the local demo plugins into the generated workspace. It copies the documentation into that playground.
+
+**Start here → Iframe test page** opens a local page that permits embedding. The development task serves it on an available loopback port and stops it with the task. Use it to check that reader and editor retain the sidebar while displaying a website. **dooc.dev** remains available to check framing refusal.
+
+Check the iframe page in both light and dark themes. It intentionally uses a transparent background and browser-default text colors, so it catches a white iframe background hiding white text in dark mode. Confirm that the heading and body are visible, not just that the frame request succeeds.
+
+Use the regular CLI to edit real documents, including this documentation:
 
 ```sh
 mise run dooc --help

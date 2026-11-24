@@ -26,6 +26,7 @@ const assets = [
     "workspace-mcp-worker.global.js",
     "workspace-reader-mcp-worker.global.js",
     "edit.global.js",
+    "manifest.global.js",
     "ui.global.js",
     "code.global.js",
     "code-worker.global.js",
@@ -69,6 +70,7 @@ export const prebuilt = true;
 export const standalone = true;
 export const packageVersion = ${JSON.stringify(JSON.parse(readFileSync("package.json", "utf8")).version)};
 export const readReaderAsset = (name) => readFileSync(assets[name]);
+export const readGraphAssets = () => new Map(Object.keys(assets).filter((name) => name.startsWith("graph/")).map((name) => [name.slice(6), readReaderAsset(name)]));
 export const readInstaller = () => readFileSync(asset${installerIndex});
 `,
                 }));

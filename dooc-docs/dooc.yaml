@@ -5,12 +5,12 @@ system:
 document:
   title: dooc documentation
   url: https://dooc.dev
+  icon:
+    light: contents/svg/_site.svg
+    dark: themes/dark/contents/svg/_site.svg
   sidebar:
     title:
       eng: dooc documentation
-    icon:
-      light: contents/svg/_site.svg
-      dark: themes/dark/contents/svg/_site.svg
   children:
     - document:
         title: Getting started
@@ -80,6 +80,9 @@ document:
               title: Workspaces & branches
               url: contents/md/workspaces.md
           - document:
+              title: Manifest editor
+              url: contents/md/manifest-editor.md
+          - document:
               title: Code tools
               url: contents/md/code-tools.md
     - document:
@@ -141,6 +144,9 @@ document:
         icon: contents/svg/icons/system.svg
         url: contents/md/development.md
         children:
+          - document:
+              title: Development progress
+              url: contents/md/progress.md
           - document:
               title: Architecture
               icon: contents/svg/icons/system.svg

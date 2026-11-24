@@ -3,7 +3,7 @@ import type { GitState } from "../../workspace/src/git-types.js";
 
 const workspaces = vi.hoisted(() => ({
     active: "a",
-    clients: new Map<string, { request: ReturnType<typeof vi.fn> }>(),
+    clients: new Map<string, { request: ReturnType<typeof vi.fn>; on: () => () => void }>(),
     updateLocation: vi.fn(),
     openBranch: vi.fn(),
 }));
@@ -58,6 +58,9 @@ class Node extends EventTarget {
     }
     all(): Node[] {
         return this.children.flatMap((node) => [node, ...node.all()]);
+    }
+    contains(node: Node): boolean {
+        return node === this || this.all().includes(node);
     }
     matches(selector: string): boolean {
         if (selector.startsWith("#")) return this.id === selector.slice(1);
@@ -116,7 +119,7 @@ const provider = (id: string, value = state()) => {
     const request = vi.fn(async (_op: string, input: Record<string, unknown>) =>
         input.action === "read" ? value : { ok: true },
     );
-    workspaces.clients.set(id, { request });
+    workspaces.clients.set(id, { request, on: () => () => {} });
     return { request, state: value };
 };
 const button = (label: string): Node => {
@@ -151,6 +154,7 @@ beforeEach(() => {
     workspaces.openBranch.mockReset();
     vi.stubGlobal("window", new EventTarget());
     vi.stubGlobal("HTMLTextAreaElement", Textarea);
+    vi.stubGlobal("HTMLInputElement", Node);
     vi.stubGlobal(
         "document",
         Object.assign(new EventTarget(), {

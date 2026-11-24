@@ -1,6 +1,7 @@
 import {
     mountDownloadBlock,
     mountResourceDownloads,
+    mountResourceExpand,
 } from "../../packages/frontend/src/resource-download.ts";
 
 // Bundle with esbuild and run testResourceDownloads() in a browser without the download runtime.
@@ -84,6 +85,130 @@ window.testResourceDownloads = async () => {
     } finally {
         window.fetch = originalFetch;
         document.removeEventListener("click", capture, true);
+        host.remove();
+    }
+};
+
+window.testResourceExpand = async () => {
+    const assert = (value, message) => {
+        if (!value) throw new Error(message);
+    };
+    const host = document.createElement("div");
+    host.className = "downloadable-resource";
+    host.style.width = "400px";
+    host.innerHTML =
+        '<svg width="400" height="240"><rect width="400" height="240" fill="teal"/></svg><div class="resource-download-tools"><button data-resource-expand>Expand</button></div>';
+    document.body.append(host);
+    mountResourceExpand();
+    host.querySelector("button").click();
+    const dialog = host.querySelector("dialog");
+    const surface = dialog.querySelector(".resource-surface");
+    const stage = dialog.querySelector(".resource-stage");
+    let captured;
+    surface.setPointerCapture = (id) => {
+        captured = id;
+    };
+    surface.hasPointerCapture = (id) => captured === id;
+    surface.releasePointerCapture = () => {
+        captured = undefined;
+    };
+    const pointer = (type, buttons = 4, id = 1, x = 100) =>
+        surface.dispatchEvent(
+            new PointerEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                pointerId: id,
+                button: 1,
+                buttons,
+                clientX: x,
+                clientY: x,
+            }),
+        );
+    try {
+        surface.dispatchEvent(new WheelEvent("wheel", { deltaY: -100, cancelable: true }));
+        for (const type of ["mousedown", "auxclick"])
+            assert(
+                !surface.dispatchEvent(new MouseEvent(type, { button: 1, cancelable: true })),
+                `Suppress native middle-button behavior on ${type}`,
+            );
+        for (const ending of [
+            "pointerup",
+            "pointercancel",
+            "lostpointercapture",
+            "blur",
+            "mouseup",
+            "released",
+            "left-only",
+        ]) {
+            pointer("pointerdown");
+            const before = stage.style.transform;
+            pointer("pointermove", 4, 2, 130);
+            assert(stage.style.transform === before, "Another pointer cannot move the preview");
+            pointer("pointermove", 4, 1, 120);
+            assert(stage.style.transform !== before, "Middle-button dragging pans the preview");
+            assert(surface.style.cursor === "grabbing", "Dragging has an active cursor");
+            if (ending === "blur") window.dispatchEvent(new Event("blur"));
+            else if (ending === "mouseup")
+                surface.dispatchEvent(new MouseEvent("mouseup", { button: 1 }));
+            else if (ending === "released" || ending === "left-only")
+                pointer("pointermove", ending === "released" ? 0 : 1);
+            else pointer(ending, 0);
+            const stopped = stage.style.transform;
+            pointer("pointermove", 4, 1, 200);
+            assert(stage.style.transform === stopped, `${ending} ends panning`);
+            assert(
+                captured === undefined && surface.style.cursor === "grab",
+                `${ending} releases capture and the cursor`,
+            );
+        }
+        const zoom = () => dialog.querySelector("output").textContent;
+        dialog.querySelector('[data-zoom="reset"]').click();
+        assert(zoom() === "100%", "Reset returns to fit size");
+        surface.dispatchEvent(
+            new KeyboardEvent("keydown", { key: "+", bubbles: true, cancelable: true }),
+        );
+        assert(zoom() === "125%", "Keyboard zoom works without a wheel");
+        const beforeArrow = stage.style.transform;
+        surface.dispatchEvent(
+            new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }),
+        );
+        assert(stage.style.transform !== beforeArrow, "Arrow keys pan the preview");
+        dialog.querySelector('[data-zoom="out"]').click();
+        assert(zoom() === "100%", "Zoom buttons work without a keyboard");
+        const touch = (type, id, x) =>
+            surface.dispatchEvent(
+                new PointerEvent(type, {
+                    bubbles: true,
+                    cancelable: true,
+                    pointerType: "touch",
+                    pointerId: id,
+                    button: 0,
+                    buttons: type === "pointerup" ? 0 : 1,
+                    clientX: x,
+                    clientY: 100,
+                }),
+            );
+        touch("pointerdown", 10, 100);
+        touch("pointerdown", 11, 200);
+        touch("pointermove", 11, 300);
+        assert(zoom() === "200%", "Two touch points pinch to zoom");
+        touch("pointerup", 11, 300);
+        const beforeTouchPan = stage.style.transform;
+        touch("pointermove", 10, 140);
+        assert(stage.style.transform !== beforeTouchPan, "The remaining touch point can pan");
+        touch("pointercancel", 10, 140);
+        const afterCancel = stage.style.transform;
+        touch("pointermove", 10, 180);
+        assert(
+            stage.style.transform === afterCancel && surface.style.cursor === "grab",
+            "Touch cancellation ends the gesture",
+        );
+        pointer("pointerdown");
+        dialog.close();
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        assert(!dialog.isConnected && captured === undefined, "Closing releases an active drag");
+    } finally {
+        if (dialog.open) dialog.close();
         host.remove();
     }
 };

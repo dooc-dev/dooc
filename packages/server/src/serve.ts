@@ -28,7 +28,7 @@ import {
 import { createHistoryOp, type Person, parsePerson } from "../../workspace/src/history.js";
 import { WORKSPACE_PATH } from "../../workspace/src/protocol.js";
 import { createWorkspaceServer, type WorkspaceOps } from "../../workspace/src/server.js";
-import { readReaderAsset, prebuilt as usePrebuiltAssets } from "./assets.js";
+import { readGraphAssets, readReaderAsset, prebuilt as usePrebuiltAssets } from "./assets.js";
 import {
     isLocalHost,
     isLocalToolRequest,
@@ -137,6 +137,7 @@ export const createBundleCache = (): BundleCache => {
 const PREBUILT: Record<string, string> = {
     "schema-graph-global.tsx": "flow.global.js",
     "edit-client.ts": "edit.global.js",
+    "manifest-client.ts": "manifest.global.js",
     "client-entry.ts": "client.global.js",
     "workspace-worker.ts": "workspace-worker.global.js",
     "ui-client.ts": "ui.global.js",
@@ -168,6 +169,25 @@ export const bundleClient = async (entry: string): Promise<string> => {
         minify: true,
     });
     return out.outputFiles?.[0]?.text ?? "";
+};
+
+/** Shared ESM diagram chunks for local readers and split publications. */
+export const bundleGraph = async (): Promise<Map<string, Buffer>> => {
+    if (usePrebuiltAssets) return readGraphAssets();
+    const esbuild = await import("esbuild");
+    const output = await esbuild.build({
+        entryPoints: [join(frontendRoot, "schema-graph-global.tsx")],
+        bundle: true,
+        splitting: true,
+        format: "esm",
+        target: "es2022",
+        outdir: join(pkgRoot, "dist/graph"),
+        write: false,
+        minify: true,
+    });
+    return new Map(
+        output.outputFiles.map((file) => [basename(file.path), Buffer.from(file.contents)]),
+    );
 };
 
 export const startServer = async (
@@ -281,30 +301,16 @@ export const startServer = async (
     // invalidate explicitly on the watcher's "client" notification (changes to edit-client.ts /
     // the schema graph interaction layer's src/*.tsx).
     const bundleCache = createBundleCache();
-    let graphChunks: Promise<Map<string, string>> | undefined;
+    let graphChunks: Promise<Map<string, Buffer>> | undefined;
     const graphAsset = async (name: string): Promise<string> => {
         if (usePrebuiltAssets) return readReaderAsset(`graph/${name}`).toString("utf8");
-        graphChunks ??= import("esbuild")
-            .then(async (esbuild) => {
-                const output = await esbuild.build({
-                    entryPoints: [join(frontendRoot, "schema-graph-global.tsx")],
-                    bundle: true,
-                    splitting: true,
-                    format: "esm",
-                    target: "es2022",
-                    outdir: join(pkgRoot, "dist/graph"),
-                    write: false,
-                    minify: true,
-                });
-                return new Map(output.outputFiles.map((file) => [basename(file.path), file.text]));
-            })
-            .catch((error) => {
-                graphChunks = undefined;
-                throw error;
-            });
+        graphChunks ??= bundleGraph().catch((error) => {
+            graphChunks = undefined;
+            throw error;
+        });
         const js = (await graphChunks).get(name);
         if (js === undefined) throw new Error("Diagram asset not found");
-        return js;
+        return js.toString("utf8");
     };
 
     const reader: ReaderRuntime = {
@@ -413,9 +419,11 @@ export const startServer = async (
                       ? "code-worker.ts"
                       : mode === "edit" && path === "/assets/edit.js"
                         ? "edit-client.ts"
-                        : path === "/assets/ui.js"
-                          ? "ui-client.ts"
-                          : undefined;
+                        : mode === "edit" && path === "/assets/manifest.js"
+                          ? "manifest-client.ts"
+                          : path === "/assets/ui.js"
+                            ? "ui-client.ts"
+                            : undefined;
         const graphName =
             path === "/assets/graph.js"
                 ? "schema-graph-global.js"

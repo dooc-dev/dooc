@@ -131,13 +131,14 @@ The CLI first resolves Git-hosted child manifests, which can require Git and net
 
 `dooc build` publishes the document; `dooc editor build` and `dooc reader build` produce application assets without copying documents. `dooc zip` collects authored dependencies such as child manifests, local pages, schemas, translations, theme variants, fonts and editor-tool definitions. Add `--url_preview embed` to capture supported remote embeds in the ZIP.
 
-`build` writes `<project>/build/index.html` and `zip` writes `<project>/dist/bundle.zip`. A named manifest (`<name>.dooc.yaml`) uses `build/<name>/` and `dist/<name>/`; an explicit output directory is used as it is. Only the artifact itself is replaced. The HTML folder can be served as it is: archives are written to a different folder, so serving it does not publish them. `build/` and `dist/` are not treated as project content.
+`build` writes `<project>/build/index.html` and `zip` writes `<project>/dist/bundle.zip`. A named manifest (`<name>.dooc.yaml`) uses `build/<name>/` and `dist/<name>/`; an explicit output directory is used as it is. The entry point is replaced atomically. Split builds also write content-addressed files under `dooc-assets/`. The HTML folder can be served as it is: archives are written to a different folder, so serving it does not publish them. `build/` and `dist/` are not treated as project content.
 
 | Build                              | Opens                 | URL embeds                                 |
 | ---------------------------------- | --------------------- | ------------------------------------------ |
 | `build`                            | As one file           | Fetched when opened                        |
 | `build --url_preview embed`        | Offline, as one file  | Stored in the file                         |
 | `build --mode live`                | With host integration | Fetched when opened                        |
+| `build --split`                    | From an HTTP(S) host  | Selected by `--url_preview`                |
 | `zip`                              | As a source workspace | Kept as URLs; embeds are not captured      |
 | `zip --url_preview embed`          | After unpacking       | Saved in the ZIP; references are rewritten |
 
@@ -147,7 +148,21 @@ Reader HTML also accepts `--download easy|normal|block` (MCP: `download`). The d
 
 Only embeds are captured; ordinary links stay links. Snapshots require public HTTPS without credentials or redirects. HTML snapshots capture the server's HTML and declarative assets without executing the source site's JavaScript or signing in. HTML network mode fetches content when opened; remote text requires CORS permission from its server. `zip` without `--url_preview embed` does not execute configuration or plugins, and does not capture remote embeds. Git-hosted child manifests are resolved before `build`, `zip` and `check`, including network-mode builds; this can require Git and network access. Their referenced source files are copied under `dooc-imports/` and included in source ZIPs. Authored manifest URLs are retained.
 
-A remote file is limited to 2 MiB, and a build to 64 MiB and 256 remote assets. A failed download stops the build before the previous output is replaced.
+Remote snapshot downloads are limited to 2 MiB per file and 64 MiB / 256 remote assets per build. These download limits do not impose a hosting quota on local source files or generated artifacts. Local builds do not apply dooc.page's per-file hosting limit; deployment limits belong to the destination. A failed download stops the build before the previous output is replaced.
+
+Reader application assets and document resources can be deployed separately: `dooc reader build web --client --server` builds the reader without copying documents, and a host integration supplies its workspace at runtime. `dooc build` defaults to one standalone HTML file. Use `--split` for a publication with separate pages, scripts, styles and deduplicated resource files. Pages load on navigation while the sidebar stays in place. JavaScript reuses the existing esbuild bundles and ESM diagram chunks; page HTML and styles are emitted as external files during rendering. Serve the complete output directory over HTTP(S), including when using `--mode static`. Opening a split publication with `file://` is not supported.
+
+```sh
+dooc build dooc.yaml ./publish --split --compress \
+  --max-file-size 25MiB --max-build-size 100MiB \
+  --warnings-as-errors
+```
+
+`--max-file-size` checks each generated file and `--max-build-size` checks their combined bytes after resource optimization and deduplication, including the entry point, page HTML, JS, CSS, fonts and original downloads. Both limits are optional and imply `--split`; there is no default hosting quota. Values accept bytes or `KB`, `MB`, `GB` (decimal) and `KiB`, `MiB`, `GiB` (binary). Files are not arbitrarily sliced into byte chunks. If one document or resource still exceeds a limit, the build reports its output path and actual bytes and stops before replacing the previous entry point. `dooc check` continues to validate document sources rather than deployment budgets.
+
+`--compress` also implies `--split` and uses locally installed `ffmpeg` and `ffprobe`. PNG previews use lossless WebP; JPEG/WebP previews use WebP quality 80, and videos use H.264 CRF 23 with AAC audio. Lossy compression affects published previews only: source files and `--download easy` downloads retain their bytes. An already compatible smaller original is kept. Unsupported media, animations, high bit depth, HDR, video alpha, extra tracks, or unavailable encoders produce warnings and preserve the original. `--warnings-as-errors` makes these warnings fatal. Font files are preserved, and active HTML/SVG data URLs retain their isolated context. Authored non-base64 data URLs and unknown embedded MIME types stay inline. Compression cannot guarantee any requested size; exceeding a budget always fails.
+
+Additional assets are written before the entry point is switched. Unrelated files and older content-addressed assets are retained so previous pages remain readable; use a fresh output directory for deployment. Budgets cover the current build's output, not unrelated files or retained files from older builds. The build API returns those additional files in `files` and the total in `bytes`; MCP exposes the same options as `split`, `compress`, `max_file_size`, `max_build_size` and `warnings_as_errors`.
 
 ## MCP server
 

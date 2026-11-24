@@ -1,6 +1,30 @@
 /** In narrow trees, show the current level beneath its compact ancestor chain. */
-export const focusNavTree = (root: HTMLElement | null): void => {
+export const focusNavTree = (root: HTMLElement | null, href?: string): void => {
     if (!root) return;
+    if (href !== undefined) {
+        const target = new URL(href, location.href);
+        for (const link of document.querySelectorAll<HTMLAnchorElement>(
+            "#site-title, #nav-groups .nav-row > a[href]",
+        )) {
+            const url = new URL(link.href, location.href);
+            const current =
+                url.origin === target.origin &&
+                url.pathname === target.pathname &&
+                (!target.hash.startsWith("#/") ||
+                    url.hash.split("#")[1]?.split("?")[0] ===
+                        target.hash.split("#")[1]?.split("?")[0]);
+            link.classList.toggle("cur", current);
+            if (current) link.setAttribute("aria-current", "page");
+            else link.removeAttribute("aria-current");
+            if (current)
+                for (
+                    let item = link.closest(".nav-item")?.parentElement?.closest(".nav-item");
+                    item;
+                    item = item.parentElement?.closest(".nav-item")
+                )
+                    item.classList.add("open");
+        }
+    }
     const current = root.querySelector(".nav-row > a.cur")?.closest<HTMLElement>("[data-doc-id]");
     const path: HTMLElement[] = [];
     for (
@@ -70,9 +94,12 @@ export const focusNavTree = (root: HTMLElement | null): void => {
         for (const item of ancestors) item.classList.add("open");
         current?.querySelector(":scope > .nav-row")?.scrollIntoView({ block: "nearest" });
     }
-    for (const item of items)
+    for (const item of items) {
+        const list = item.querySelector<HTMLElement>(":scope > .nav-list");
+        if (list) list.inert = !item.classList.contains("open");
         item.querySelector(":scope > .nav-row > .nav-tree-toggle")?.setAttribute(
             "aria-expanded",
             String(item.classList.contains("open")),
         );
+    }
 };

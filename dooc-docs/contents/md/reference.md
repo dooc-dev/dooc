@@ -41,7 +41,7 @@ Look up syntax and configuration here, then follow the linked guide for behavior
 | ------------- | ------------------------------------ | ------------------------------------ |
 | Theme variant | `themes/<theme>/<same path>`         | [Variants](contents/md/variants.md)  |
 | Translation   | `locales/<ISO 639-3>/<same path>.md` | [Variants](contents/md/variants.md)  |
-| Site icon     | `document.sidebar.icon.light` / `.dark`  | [dooc.yaml](contents/md/manifest.md) |
+| Site icon     | `document.icon.light` / `.dark`  | [dooc.yaml](contents/md/manifest.md#document-icon) |
 | Page icon     | `icon` on a `document` entry  | [dooc.yaml](contents/md/manifest.md) |
 
 ## Records

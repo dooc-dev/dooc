@@ -290,6 +290,7 @@ export const mountSelectPickers = (
                 open();
             } else if (event.key === "Escape" && isOpen()) {
                 event.preventDefault();
+                event.stopPropagation();
                 popup.hidePopover();
                 if (!workspace) input.select();
             }

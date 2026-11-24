@@ -7,6 +7,18 @@ const bool = { type: "boolean" } as const;
 const strings = { type: "array", items: str } as const;
 
 const definitions: Record<string, Omit<Tool, "run">> = {
+    skills: {
+        description:
+            "Discover project-authored workflows for applying dooc content as checklists, development conventions or other guidance. list returns skill metadata and file URIs; get returns one skill's metadata; read retrieves its instructions or supporting files. Use document tools to read the project information those instructions reference. Skill files are returned as content, never executed.",
+        props: {
+            action: { ...str, enum: ["list", "get", "read"] },
+            uri: {
+                ...str,
+                description: "Exact skill:// URI from list; required for get and read.",
+            },
+        },
+        required: ["action"],
+    },
     export: {
         description:
             "Collect dooc.yaml and its source dependencies into dist/bundle.zip, without executing plugins or fetching remote data.",
@@ -31,6 +43,30 @@ const definitions: Record<string, Omit<Tool, "run">> = {
                 ...str,
                 description:
                     "Public source directory URL for card copy links in HTML, relative to dooc.yaml.",
+            },
+            split: {
+                ...bool,
+                description:
+                    "HTML only: emit separate pages, JS, CSS and resources; serve over HTTP(S).",
+            },
+            compress: {
+                ...bool,
+                description:
+                    "HTML only: optimize previews with FFmpeg (lossy JPEG/WebP/video); implies split. Original source downloads are preserved.",
+            },
+            max_file_size: {
+                ...str,
+                description:
+                    "Maximum bytes per output file, e.g. 25MiB; implies split. No limit by default.",
+            },
+            max_build_size: {
+                ...str,
+                description:
+                    "Maximum total output bytes, e.g. 100MiB; implies split. No limit by default.",
+            },
+            warnings_as_errors: {
+                ...bool,
+                description: "Fail when requested compression is unsupported or unavailable.",
             },
         },
         required: ["format"],
@@ -244,6 +280,7 @@ const definitions: Record<string, Omit<Tool, "run">> = {
     },
 };
 const readTools = new Set([
+    "skills",
     "list_docs",
     "search_docs",
     "read_doc",

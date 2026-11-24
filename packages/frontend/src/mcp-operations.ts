@@ -5,6 +5,7 @@ import { exportBundle } from "../../engine/src/compiler/export.js";
 import { filesSnapshot, updateFiles, uploadFile } from "../../engine/src/compiler/files.js";
 import { listProjectFonts, removeProjectFont } from "../../engine/src/compiler/fonts.js";
 import {
+    createHash,
     dirname,
     join,
     mkdirSync,
@@ -18,6 +19,7 @@ import {
 } from "../../engine/src/compiler/host.js";
 import { manifestFile } from "../../engine/src/compiler/manifest.js";
 import { createDocOps, isOpError } from "../../engine/src/compiler/ops.js";
+import { readProjectSkills } from "../../engine/src/compiler/skills.js";
 import { validateSubformatFile } from "../../engine/src/compiler/subformats.js";
 import { readTextfile, textfilePath, writeTextfile } from "../../engine/src/compiler/textfile.js";
 import { localFile } from "../../engine/src/core/files.js";
@@ -50,6 +52,58 @@ export const createMcpOperations = (
     };
 
     return {
+        skills: (a) => {
+            const skills = readProjectSkills(root);
+            const uri = (name: string, file: string) =>
+                `skill://${name}/${file.split("/").map(encodeURIComponent).join("/")}`;
+            const entry = (skill: (typeof skills)[number]) => ({
+                uri: uri(skill.frontmatter.name, "SKILL.md"),
+                frontmatter: skill.frontmatter,
+                resources: [...skill.files].map(([file, data]) => ({
+                    uri: uri(skill.frontmatter.name, file),
+                    digest: `sha256:${createHash("sha256").update(data).digest("hex")}`,
+                    size: data.length,
+                })),
+            });
+            if (a.action === "list") return { resultType: "complete", skills: skills.map(entry) };
+            if (typeof a.uri !== "string") throw new Error("A skill resource URI is required");
+            for (const skill of skills) {
+                if (a.action === "get" && a.uri === uri(skill.frontmatter.name, "SKILL.md"))
+                    return { resultType: "complete", skill: entry(skill) };
+                if (a.action !== "read") continue;
+                for (const [file, data] of skill.files) {
+                    if (a.uri !== uri(skill.frontmatter.name, file)) continue;
+                    let text: string | undefined;
+                    try {
+                        text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+                            data,
+                        );
+                        if (text.includes("\0")) text = undefined;
+                    } catch {
+                        text = undefined;
+                    }
+                    return {
+                        contents: [
+                            {
+                                uri: a.uri,
+                                ...(text === undefined
+                                    ? {
+                                          mimeType: "application/octet-stream",
+                                          blob: data.toString("base64"),
+                                      }
+                                    : {
+                                          mimeType: file.endsWith(".md")
+                                              ? "text/markdown"
+                                              : "text/plain",
+                                          text,
+                                      }),
+                            },
+                        ],
+                    };
+                }
+            }
+            return { error: "Unknown project skill or resource", status: 404 };
+        },
         export: () => {
             const file = "dist/bundle.zip";
             const data = exportBundle(root);

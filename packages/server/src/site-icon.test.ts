@@ -75,6 +75,48 @@ it("keeps the explicit choice to disable format placement", () => {
     expect(compileSite(root).errors).toEqual([]);
 });
 
+it.each([
+    "document",
+    "sidebar",
+])("updates and migrates %s theme icons through the header", (owner) => {
+    const raw = `# Keep the document\ndocument:\n  url: content/one.md\n${owner === "sidebar" ? "  sidebar:\n    icon: # Theme icons\n      light: light.svg\n      dark: dark.svg\n" : "  icon: # Theme icons\n    light: light.svg\n    dark: dark.svg\n"}`;
+    const root = fixture(raw);
+    const light = '<svg viewBox="0 0 8 8"><circle r="1"/></svg>';
+    writeFileSync(join(root, "light.svg"), light);
+    writeFileSync(join(root, "dark.svg"), light);
+    expect(siteIconResponse(root, { theme: "dark", data }).status).toBe(200);
+    expect(readFileSync(join(root, "light.svg"), "utf8")).toBe(light);
+    const saved = readFileSync(join(root, "dooc.yaml"), "utf8");
+    expect(saved).toContain("# Keep the document");
+    expect(saved).toContain("# Theme icons");
+    expect(parse(saved).document).toMatchObject({
+        url: "content/one.md",
+        icon: { light: "light.svg", dark: "dark.svg" },
+    });
+    expect(parse(saved).document.sidebar?.icon).toBeUndefined();
+    const compiled = compileSite(root);
+    expect(compiled.errors).toEqual([]);
+    const html = publishHtml(siteFrom(compiled), "");
+    expect(html).toContain('data-document-icon="light"');
+    expect(html).toContain('data-document-icon="dark"');
+    expect(html).toContain('media="(prefers-color-scheme: dark)"');
+});
+
+it("keeps shared SVG paths and writes new theme icons directly on the root", () => {
+    const root = fixture("document: {url: content/one.md, icon: shared.svg}\n");
+    writeFileSync(join(root, "shared.svg"), '<svg viewBox="0 0 8 8"/>');
+    expect(siteIconResponse(root, { theme: "dark", data }).status).toBe(200);
+    expect(parse(readFileSync(join(root, "dooc.yaml"), "utf8")).document.icon).toBe("shared.svg");
+    expect(readFileSync(join(root, "shared.svg"), "utf8")).toContain('viewBox="0 -5 20 20"');
+    const empty = fixture("document: {url: content/one.md}\n");
+    expect(siteIconResponse(empty, { theme: "dark", data }).status).toBe(200);
+    expect(parse(readFileSync(join(empty, "dooc.yaml"), "utf8")).document).toEqual({
+        url: "content/one.md",
+        icon: { dark: "files/svg/_site-dark.svg" },
+    });
+    expect(compileSite(empty).errors).toEqual([]);
+});
+
 it("renders theme variants of the site icon next to the base icon", () => {
     const root = fixture("icon: icons/logo.svg\ndocs: [one]\n");
     mkdirSync(join(root, "icons"));
@@ -90,6 +132,17 @@ it("renders theme variants of the site icon next to the base icon", () => {
     const html = publishHtml(siteFrom(compiled), "");
     expect(html).toContain('<span data-theme-variant=""><img id="site-icon"');
     expect(html).toContain('<img data-theme-variant="dark" alt="" src="data:image/svg+xml');
+    const icons = [
+        ...html.matchAll(/<link data-document-icon="([^"]*)"[^>]*href="([^"]*)"([^>]*)>/g),
+    ];
+    expect(icons.map((match) => match[1])).toEqual(["", "dark"]);
+    expect(Buffer.from(icons[0]?.[2]?.split(",")[1] ?? "", "base64").toString()).toContain(
+        '<circle r="1"/>',
+    );
+    expect(Buffer.from(icons[1]?.[2]?.split(",")[1] ?? "", "base64").toString()).toContain(
+        '<circle r="2"/>',
+    );
+    expect(icons[1]?.[3]).toBe(' media="(prefers-color-scheme: dark)"');
 });
 
 it("rejects invalid uploads and broken manifests without changing files", () => {

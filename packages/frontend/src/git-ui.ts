@@ -25,6 +25,7 @@ const actionIcon: Record<string, string> = {
 const actionButton = (label: string) => {
     const node = element("button", `pbtn${actionIcon[label] ? "" : " git-text-button"}`);
     node.type = "button";
+    node.dataset.gitFocus = label;
     node.title = t(label);
     node.setAttribute("aria-label", t(label));
     if (actionIcon[label])
@@ -78,6 +79,7 @@ export const mountGit = (
     let state: GitState | undefined;
     let busy = false;
     let disposed = false;
+    let refreshPending = false;
     const notice = element("p", "git-notice");
     notice.setAttribute("role", "status");
     const controls = element("fieldset", "git-controls");
@@ -94,7 +96,8 @@ export const mountGit = (
     };
     const perform = async (input?: Record<string, unknown>, saved?: () => void) => {
         if (busy || disposed) return;
-        busy = controls.disabled = true;
+        busy = true;
+        controls.disabled = !!input;
         notice.textContent = t("Working…");
         let completed = false;
         try {
@@ -113,6 +116,7 @@ export const mountGit = (
                 : detail;
         } finally {
             busy = controls.disabled = false;
+            if (refreshPending) refresh();
         }
     };
     const openBranch = async (branch: string, create = false, saved?: () => void) => {
@@ -132,6 +136,7 @@ export const mountGit = (
             notice.textContent = error instanceof Error ? error.message : String(error);
         } finally {
             busy = controls.disabled = false;
+            if (refreshPending) refresh();
         }
     };
     const button = (label: string, click: () => void, disabled = false) => {
@@ -152,6 +157,7 @@ export const mountGit = (
     ) => {
         const wrapper = element("label", "git-field", t(label));
         const field = multiline ? element("textarea") : element("input");
+        field.dataset.gitFocus = label;
         field.value = value;
         field.required = !multiline;
         field.maxLength = multiline ? 65_536 : 256;
@@ -163,6 +169,7 @@ export const mountGit = (
     const details = (key: string) => {
         const { opened } = draftsFor(workspace, state?.branch || state?.head || "");
         const node = element("details", "resource-item");
+        node.dataset.gitKey = key;
         node.open = opened.has(key);
         node.addEventListener("toggle", () => (node.open ? opened.add(key) : opened.delete(key)));
         return node;
@@ -328,279 +335,344 @@ export const mountGit = (
     const render = () => {
         const current = state;
         if (!current || disposed) return;
-        const drafts = draftsFor(workspace, current.branch || current.head);
-        const act = (input?: Record<string, unknown>, saved?: () => void) =>
-            perform(input ? { version: current.version, ...input } : undefined, saved);
-        const changesPanel = element("section");
-        changesPanel.id = `${viewId}-changes`;
-        changesPanel.setAttribute("aria-label", t("Changes"));
-        const pullRequestsPanel = element("section");
-        pullRequestsPanel.id = `${viewId}-pull-requests`;
-        pullRequestsPanel.setAttribute("aria-label", t("Pull requests"));
-        changesPanel.hidden = drafts.view !== "changes";
-        pullRequestsPanel.hidden = drafts.view !== "pull-requests";
-        const synchronization = element("section");
-        synchronization.setAttribute("aria-label", t("Synchronization"));
-        controls.replaceChildren();
-        const toolbar = element("div", "git-toolbar");
-        toolbar.append(
-            element("strong", "resource-name", current.repo),
-            element("span", "resource-source", current.branch || current.head.slice(0, 7)),
-            button("Reload", () => void act()),
-        );
-        if (current.origin?.capabilities.includes("createPr"))
+        const active = controls.contains(document.activeElement)
+            ? (document.activeElement as HTMLElement)
+            : null;
+        const key = active?.dataset.gitFocus;
+        const scope = active?.closest<HTMLElement>("[data-git-key]")?.dataset.gitKey;
+        const selection =
+            active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement
+                ? ([active.selectionStart, active.selectionEnd, active.selectionDirection] as const)
+                : undefined;
+        const scrollTop = host.parentElement?.scrollTop;
+        try {
+            const drafts = draftsFor(workspace, current.branch || current.head);
+            const act = (input?: Record<string, unknown>, saved?: () => void) =>
+                perform(input ? { version: current.version, ...input } : undefined, saved);
+            const changesPanel = element("section");
+            changesPanel.id = `${viewId}-changes`;
+            changesPanel.setAttribute("aria-label", t("Changes"));
+            const pullRequestsPanel = element("section");
+            pullRequestsPanel.id = `${viewId}-pull-requests`;
+            pullRequestsPanel.setAttribute("aria-label", t("Pull requests"));
+            changesPanel.hidden = drafts.view !== "changes";
+            pullRequestsPanel.hidden = drafts.view !== "pull-requests";
+            const synchronization = element("section");
+            synchronization.setAttribute("aria-label", t("Synchronization"));
+            controls.replaceChildren();
+            const toolbar = element("div", "git-toolbar");
             toolbar.append(
-                button("Create pull request", () => {
-                    drafts.view = "pull-requests";
-                    drafts.opened.add("new-pr");
-                    render();
-                    controls
-                        .querySelector<HTMLInputElement>(`#${viewId}-pull-requests input`)
-                        ?.focus();
-                }),
+                element("strong", "resource-name", current.repo),
+                element("span", "resource-source", current.branch || current.head.slice(0, 7)),
+                button("Reload", () => void act()),
             );
-        controls.append(toolbar);
-        const branches = element("div", "git-actions");
-        const select = element("select");
-        select.setAttribute("aria-label", t("Branch"));
-        for (const branch of [...new Set([current.branch, ...current.branches])]) {
-            const option = element("option", "", branch || current.head.slice(0, 7));
-            option.value = branch;
-            select.append(option);
-        }
-        select.onchange = () => {
-            const selected = select.value;
-            if (busy || selected === current.branch) return;
-            select.disabled = true;
-            void (async () => {
-                await openBranch(selected);
-                select.value = state?.branch ?? "";
-                select.disabled = false;
-            })();
-        };
-        branches.append(select);
-        const createBranch = element("form", "git-actions");
-        const name = element("input");
-        name.placeholder = t("New branch");
-        name.setAttribute("aria-label", t("New branch"));
-        name.required = true;
-        name.maxLength = 256;
-        name.value = drafts.branchName;
-        name.oninput = () => {
-            drafts.branchName = name.value;
-        };
-        const create = actionButton("Create branch");
-        create.type = "submit";
-        createBranch.append(name, create);
-        createBranch.onsubmit = (event) => {
-            event.preventDefault();
-            void openBranch(name.value, true, () => {
-                drafts.branchName = "";
-            });
-        };
-        const branchControls = element("div", "git-branches");
-        branchControls.append(branches, createBranch);
-        controls.append(branchControls);
-        const tabs = element("nav", "resource-tabs");
-        tabs.setAttribute("aria-label", t("Git views"));
-        for (const [view, label, count] of [
-            ["changes", "Changes", current.changes.length],
-            ["pull-requests", "Pull requests", current.origin?.pullRequests.length ?? 0],
-        ] as const) {
-            const tab = element("a", "", `${t(label)} (${count})`);
-            tab.href = `#${viewId}-${view}`;
-            tab.dataset.gitView = view;
-            tab.setAttribute("aria-controls", `${viewId}-${view}`);
-            if (drafts.view === view) tab.setAttribute("aria-current", "page");
-            tab.onclick = (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                drafts.view = view;
-                changesPanel.hidden = view !== "changes";
-                pullRequestsPanel.hidden = view !== "pull-requests";
-                for (const item of tabs.querySelectorAll("a")) item.removeAttribute("aria-current");
-                tab.setAttribute("aria-current", "page");
+            if (current.origin?.capabilities.includes("createPr"))
+                toolbar.append(
+                    button("Create pull request", () => {
+                        drafts.view = "pull-requests";
+                        drafts.opened.add("new-pr");
+                        render();
+                        controls
+                            .querySelector<HTMLInputElement>(`#${viewId}-pull-requests input`)
+                            ?.focus();
+                    }),
+                );
+            controls.append(toolbar);
+            const branches = element("div", "git-actions");
+            const select = element("select");
+            select.setAttribute("aria-label", t("Branch"));
+            for (const branch of [...new Set([current.branch, ...current.branches])]) {
+                const option = element("option", "", branch || current.head.slice(0, 7));
+                option.value = branch;
+                select.append(option);
+            }
+            select.onchange = () => {
+                const selected = select.value;
+                if (busy || selected === current.branch) return;
+                select.disabled = true;
+                void (async () => {
+                    await openBranch(selected);
+                    select.value = state?.branch ?? "";
+                    select.disabled = false;
+                })();
             };
-            tabs.append(tab);
-        }
-        controls.append(synchronization, tabs, changesPanel, pullRequestsPanel);
-        const stash = element("div", "git-toolbar git-stash");
-        const saved = element(
-            "span",
-            "resource-name",
-            current.stash ? current.stash.label : t("Stash · empty"),
-        );
-        saved.title = current.stash?.label ?? t("Stash · empty");
-        stash.append(
-            saved,
-            button(
-                current.stash ? "Restore stash" : "Stash changes",
-                () => void act({ action: current?.stash ? "restoreStash" : "stash" }),
-                current.stash ? !!current.changes.length : !current.changes.length || !current.head,
-            ),
-        );
-        if (
-            current.localCapabilities === undefined ||
-            current.localCapabilities.includes(current.stash ? "restoreStash" : "stash")
-        )
-            changesPanel.append(stash);
-        const changes = element("div", "resource-toolbar");
-        changes.append(
-            element("span", "", t("Changes")),
-            element("span", "resource-count", String(current.changes.length)),
-        );
-        changesPanel.append(changes, element("p", "git-caption", t("Git uses saved files.")));
-        for (const change of current.changes) {
-            const row = details(`file:${change.path}`);
-            const summary = element("summary");
-            const path = element("span", "resource-name", change.path);
-            path.title = change.path;
-            summary.append(element("span", "git-status", change.index + change.worktree), path);
-            if (change.worktree !== " ")
-                summary.append(
-                    button("Stage", () => void act({ action: "stage", path: change.path })),
-                );
-            if (![" ", "?"].includes(change.index))
-                summary.append(
-                    button("Unstage", () => void act({ action: "unstage", path: change.path })),
-                );
-            const diff = element("pre", "git-diff");
-            row.append(summary, diff);
-            let loaded = false;
-            row.addEventListener("toggle", () => {
-                if (!row.open || loaded || busy) return;
-                loaded = true;
-                diff.textContent = t("Working…");
-                void request<{ diff: string }>({
-                    action: "diff",
-                    path: change.path,
-                    version: current.version,
-                }).then(
-                    (data) => {
-                        diff.textContent = data.diff;
-                    },
-                    (error) => {
-                        loaded = false;
-                        diff.textContent = String(error.message);
-                    },
-                );
-            });
-            changesPanel.append(row);
-        }
-        if (!current.changes.length)
-            changesPanel.append(element("p", "git-caption", t("Working tree clean")));
-        const commit = element("form", "git-form git-commit");
-        commit.append(
-            input(
-                "Commit message",
-                drafts.message,
-                (value) => {
-                    drafts.message = value;
-                },
-                true,
-            ),
-        );
-        const save = actionButton("Commit staged changes");
-        save.type = "submit";
-        save.disabled = !current.changes.some((change) => ![" ", "?"].includes(change.index));
-        commit.append(save);
-        commit.onsubmit = (event) => {
-            event.preventDefault();
-            void act({ action: "commit", message: drafts.message }, () => {
-                drafts.message = "";
-            });
-        };
-        changesPanel.append(commit);
-        const origin = current.origin;
-        const remote = element("div", "git-toolbar");
-        remote.append(
-            element("strong", "", t("Synchronization")),
-            element("span", "resource-name", origin?.name ?? "origin"),
-        );
-        for (const [action, label] of [
-            ["fetch", "Fetch"],
-            ["pull", "Pull (fast-forward)"],
-            ["push", "Push"],
-        ] as const) {
-            if (origin?.capabilities.includes(action))
-                remote.append(
-                    button(
-                        label,
-                        () => void act({ action }),
-                        (action !== "fetch" && (!current.branch || !current.head)) ||
-                            (action === "pull" && !!current.changes.length),
-                    ),
-                );
-        }
-        synchronization.append(remote);
-        if (!origin) {
-            const reason =
-                current.originError || t("Remote operations are not available for this workspace.");
-            synchronization.append(element("p", "git-caption", reason));
-            pullRequestsPanel.append(element("p", "git-caption", reason));
-            return;
-        }
-        if (current.upstream)
-            synchronization.append(
-                element(
-                    "p",
-                    "git-caption",
-                    `${current.upstream} · ↑${current.ahead} ↓${current.behind}`,
+            branches.append(select);
+            const createBranch = element("form", "git-actions");
+            const name = element("input");
+            name.dataset.gitFocus = "New branch";
+            name.placeholder = t("New branch");
+            name.setAttribute("aria-label", t("New branch"));
+            name.required = true;
+            name.maxLength = 256;
+            name.value = drafts.branchName;
+            name.oninput = () => {
+                drafts.branchName = name.value;
+            };
+            const create = actionButton("Create branch");
+            create.type = "submit";
+            createBranch.append(name, create);
+            createBranch.onsubmit = (event) => {
+                event.preventDefault();
+                void openBranch(name.value, true, () => {
+                    drafts.branchName = "";
+                });
+            };
+            const branchControls = element("div", "git-branches");
+            branchControls.append(branches, createBranch);
+            controls.append(branchControls);
+            const tabs = element("nav", "resource-tabs");
+            tabs.setAttribute("aria-label", t("Git views"));
+            for (const [view, label, count] of [
+                ["changes", "Changes", current.changes.length],
+                ["pull-requests", "Pull requests", current.origin?.pullRequests.length ?? 0],
+            ] as const) {
+                const tab = element("a", "", `${t(label)} (${count})`);
+                tab.href = `#${viewId}-${view}`;
+                tab.dataset.gitView = view;
+                tab.setAttribute("aria-controls", `${viewId}-${view}`);
+                if (drafts.view === view) tab.setAttribute("aria-current", "page");
+                tab.onclick = (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    drafts.view = view;
+                    changesPanel.hidden = view !== "changes";
+                    pullRequestsPanel.hidden = view !== "pull-requests";
+                    for (const item of tabs.querySelectorAll("a"))
+                        item.removeAttribute("aria-current");
+                    tab.setAttribute("aria-current", "page");
+                };
+                tabs.append(tab);
+            }
+            controls.append(synchronization, tabs, changesPanel, pullRequestsPanel);
+            const stash = element("div", "git-toolbar git-stash");
+            const saved = element(
+                "span",
+                "resource-name",
+                current.stash ? current.stash.label : t("Stash · empty"),
+            );
+            saved.title = current.stash?.label ?? t("Stash · empty");
+            stash.append(
+                saved,
+                button(
+                    current.stash ? "Restore stash" : "Stash changes",
+                    () => void act({ action: current?.stash ? "restoreStash" : "stash" }),
+                    current.stash
+                        ? !!current.changes.length
+                        : !current.changes.length || !current.head,
                 ),
             );
-        pullRequestsPanel.append(element("div", "resource-toolbar", t("Pull requests")));
-        if (origin.capabilities.includes("createPr")) {
-            const create = details("new-pr");
-            create.append(element("summary", "", t("Create pull request")), prForm());
-            pullRequestsPanel.append(create);
-            if (!current.branch || !current.head)
-                pullRequestsPanel.append(
+            if (
+                current.localCapabilities === undefined ||
+                current.localCapabilities.includes(current.stash ? "restoreStash" : "stash")
+            )
+                changesPanel.append(stash);
+            const changes = element("div", "resource-toolbar");
+            changes.append(
+                element("span", "", t("Changes")),
+                element("span", "resource-count", String(current.changes.length)),
+            );
+            changesPanel.append(changes, element("p", "git-caption", t("Git uses saved files.")));
+            for (const change of current.changes) {
+                const row = details(`file:${change.path}`);
+                const summary = element("summary");
+                const path = element("span", "resource-name", change.path);
+                path.title = change.path;
+                summary.append(element("span", "git-status", change.index + change.worktree), path);
+                if (change.worktree !== " ")
+                    summary.append(
+                        button("Stage", () => void act({ action: "stage", path: change.path })),
+                    );
+                if (![" ", "?"].includes(change.index))
+                    summary.append(
+                        button("Unstage", () => void act({ action: "unstage", path: change.path })),
+                    );
+                const diff = element("pre", "git-diff");
+                row.append(summary, diff);
+                let loaded = false;
+                row.addEventListener("toggle", () => {
+                    if (!row.open || loaded || busy) return;
+                    loaded = true;
+                    diff.textContent = t("Working…");
+                    void request<{ diff: string }>({
+                        action: "diff",
+                        path: change.path,
+                        version: current.version,
+                    }).then(
+                        (data) => {
+                            diff.textContent = data.diff;
+                        },
+                        (error) => {
+                            loaded = false;
+                            diff.textContent = String(error.message);
+                        },
+                    );
+                });
+                changesPanel.append(row);
+            }
+            if (!current.changes.length)
+                changesPanel.append(element("p", "git-caption", t("Working tree clean")));
+            const commit = element("form", "git-form git-commit");
+            commit.append(
+                input(
+                    "Commit message",
+                    drafts.message,
+                    (value) => {
+                        drafts.message = value;
+                    },
+                    true,
+                ),
+            );
+            const save = actionButton("Commit staged changes");
+            save.type = "submit";
+            save.disabled = !current.changes.some((change) => ![" ", "?"].includes(change.index));
+            commit.append(save);
+            commit.onsubmit = (event) => {
+                event.preventDefault();
+                void act({ action: "commit", message: drafts.message }, () => {
+                    drafts.message = "";
+                });
+            };
+            changesPanel.append(commit);
+            const origin = current.origin;
+            const remote = element("div", "git-toolbar");
+            remote.append(
+                element("strong", "", t("Synchronization")),
+                element("span", "resource-name", origin?.name ?? "origin"),
+            );
+            for (const [action, label] of [
+                ["fetch", "Fetch"],
+                ["pull", "Pull (fast-forward)"],
+                ["push", "Push"],
+            ] as const) {
+                if (origin?.capabilities.includes(action))
+                    remote.append(
+                        button(
+                            label,
+                            () => void act({ action }),
+                            (action !== "fetch" && (!current.branch || !current.head)) ||
+                                (action === "pull" && !!current.changes.length),
+                        ),
+                    );
+            }
+            synchronization.append(remote);
+            if (!origin) {
+                const reason =
+                    current.originError ||
+                    t("Remote operations are not available for this workspace.");
+                synchronization.append(element("p", "git-caption", reason));
+                pullRequestsPanel.append(element("p", "git-caption", reason));
+                return;
+            }
+            if (current.upstream)
+                synchronization.append(
                     element(
                         "p",
                         "git-caption",
-                        t("Create a commit on a branch before opening a pull request."),
+                        `${current.upstream} · ↑${current.ahead} ↓${current.behind}`,
                     ),
                 );
-        }
-        for (const pr of origin.pullRequests) {
-            const row = details(`pr:${pr.number}`);
-            const summary = element("summary");
-            const title = element("span", "resource-name", pr.title);
-            title.title = pr.title;
-            summary.append(
-                element("span", "resource-badge", `#${pr.number}`),
-                title,
-                element("span", "resource-source", `${pr.head} → ${pr.base}`),
-                element(
-                    "span",
-                    "resource-badge",
-                    [
-                        t(
-                            pr.state === "merged"
-                                ? "Merged"
-                                : pr.state === "closed"
-                                  ? "Closed"
-                                  : "Open",
+            pullRequestsPanel.append(element("div", "resource-toolbar", t("Pull requests")));
+            if (origin.capabilities.includes("createPr")) {
+                const create = details("new-pr");
+                create.append(element("summary", "", t("Create pull request")), prForm());
+                pullRequestsPanel.append(create);
+                if (!current.branch || !current.head)
+                    pullRequestsPanel.append(
+                        element(
+                            "p",
+                            "git-caption",
+                            t("Create a commit on a branch before opening a pull request."),
                         ),
-                        pr.draft && (!pr.state || pr.state === "open") ? t("Draft") : "",
-                        pr.status,
-                    ]
-                        .filter(Boolean)
-                        .join(" · "),
-                ),
-            );
-            row.append(summary, prForm(pr));
-            pullRequestsPanel.append(row);
+                    );
+            }
+            for (const pr of origin.pullRequests) {
+                const row = details(`pr:${pr.number}`);
+                const summary = element("summary");
+                const title = element("span", "resource-name", pr.title);
+                title.title = pr.title;
+                summary.append(
+                    element("span", "resource-badge", `#${pr.number}`),
+                    title,
+                    element("span", "resource-source", `${pr.head} → ${pr.base}`),
+                    element(
+                        "span",
+                        "resource-badge",
+                        [
+                            t(
+                                pr.state === "merged"
+                                    ? "Merged"
+                                    : pr.state === "closed"
+                                      ? "Closed"
+                                      : "Open",
+                            ),
+                            pr.draft && (!pr.state || pr.state === "open") ? t("Draft") : "",
+                            pr.status,
+                        ]
+                            .filter(Boolean)
+                            .join(" · "),
+                    ),
+                );
+                row.append(summary, prForm(pr));
+                pullRequestsPanel.append(row);
+            }
+            if (!origin.pullRequests.length)
+                pullRequestsPanel.append(element("p", "git-caption", t("No pull requests")));
+        } finally {
+            if (active) {
+                const owner = scope
+                    ? controls.querySelector(`[data-git-key="${CSS.escape(scope)}"]`)
+                    : controls;
+                const next = key
+                    ? owner?.querySelector<HTMLElement>(`[data-git-focus="${CSS.escape(key)}"]`)
+                    : [
+                          ...(owner?.querySelectorAll<HTMLElement>(
+                              "button, summary, select, input",
+                          ) ?? []),
+                      ].find(
+                          (node) =>
+                              node.tagName === active.tagName &&
+                              node.textContent === active.textContent,
+                      );
+                if (next) {
+                    next.focus({ preventScroll: true });
+                    if (
+                        selection &&
+                        (next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement) &&
+                        selection[0] !== null
+                    )
+                        next.setSelectionRange(
+                            selection[0],
+                            selection[1],
+                            selection[2] ?? undefined,
+                        );
+                } else {
+                    controls.tabIndex = -1;
+                    controls.focus({ preventScroll: true });
+                }
+                if (scrollTop !== undefined && host.parentElement)
+                    host.parentElement.scrollTop = scrollTop;
+            }
         }
-        if (!origin.pullRequests.length)
-            pullRequestsPanel.append(element("p", "git-caption", t("No pull requests")));
     };
+    const refresh = (): void => {
+        if (disposed) return;
+        if (busy) {
+            refreshPending = true;
+            return;
+        }
+        refreshPending = false;
+        void perform();
+    };
+    const stopChanges = client.on("change", (data) => {
+        if ((data as { kind?: string }).kind === "content") refresh();
+    });
     const relocalize = () => render();
     document.addEventListener("docs:ui-language", relocalize);
     controls.append(button("Reload", () => void perform()));
     void perform();
     return () => {
         disposed = true;
+        stopChanges();
         document.removeEventListener("docs:ui-language", relocalize);
         delete host.dataset.mounted;
     };

@@ -16,14 +16,16 @@ import { walkBlocks } from "../../engine/src/core/blocks.js";
 import { selectCodeGrammars } from "../../engine/src/core/code-grammars.js";
 import { parseVersionConfig } from "../../engine/src/core/document-version.js";
 import { type PreviewSettings, parsePreviewSettings } from "../../engine/src/core/previewers.js";
+import type { PublishOutput } from "../../frontend/src/document-application.js";
 import { loadBuildPlugins, pluginSnapshot } from "./build-plugins.js";
+import { buildSize, checkBuildSize, type SplitBuildOptions, splitBuild } from "./build-split.js";
 import { createDocumentVersions } from "./document-versions.js";
 import { loadSiteLanguages } from "./languages.js";
 import { loadReaderPlugins } from "./plugin-config.js";
 import { prepareDocumentSources } from "./remote-manifests.js";
 import { gitHeadFile, sourceFileBase } from "./workspace.js";
 
-export interface BuildOptions {
+export interface BuildOptions extends SplitBuildOptions {
     format: "html" | "zip";
     urlPreview?: "embed" | "network";
     mode?: "static" | "live";
@@ -40,6 +42,10 @@ export interface BuildOptions {
 
 export interface BuildResult {
     data: string | Buffer;
+    /** Additional files relative to the HTML entry point's directory. */
+    files?: ReadonlyMap<string, Buffer>;
+    /** Actual bytes of the entry point and its unique output files. */
+    bytes?: number;
     docs: number;
     warnings?: string[];
     version?: string;
@@ -52,6 +58,14 @@ export { writeBuildOutput } from "./build-output.js";
 /** Build one artifact from the manifest and its managed content. */
 export const buildBundle = async (root: string, options: BuildOptions): Promise<BuildResult> => {
     const format = options.format;
+    for (const key of ["split", "compress", "warningsAsErrors"] as const)
+        if (options[key] !== undefined && typeof options[key] !== "boolean")
+            throw new Error(`${key} must be a boolean`);
+    const maxFileSize = buildSize(options.maxFileSize, "--max-file-size");
+    const maxBuildSize = buildSize(options.maxBuildSize, "--max-build-size");
+    const split = !!(options.split || options.compress || maxFileSize || maxBuildSize);
+    if (split && format !== "html")
+        throw new Error("Split builds, compression and size limits apply to HTML only");
     if (options.download !== undefined && !["easy", "normal", "block"].includes(options.download))
         throw new Error("download must be easy | normal | block");
     if (options.download !== undefined && format !== "html")
@@ -162,7 +176,7 @@ export const buildBundle = async (root: string, options: BuildOptions): Promise<
             commitVersion: stored?.commit,
         };
     const config = await loadSiteLanguages(root);
-    const { bundleClient, publishHtml, siteFrom } = await import("./serve.js");
+    const { bundleClient, bundleGraph, publishHtml, siteFrom } = await import("./serve.js");
     const linkable = new Set(filesSnapshot(root).files.map((file) => file.path));
     const site = {
         ...siteFrom(compiled, config.languages, config),
@@ -195,27 +209,55 @@ export const buildBundle = async (root: string, options: BuildOptions): Promise<
             block.type === "schemaGraph" ||
             (block.type === "code" && block.lang === "mermaid" && !block.unavailable),
     );
-    const html = publishHtml(
-        site,
-        diagrams ? await bundleClient("schema-graph-global.tsx") : "",
-        undefined,
-        code.length ? await bundleClient("code-highlight.ts") : "",
-        options.mode === "live" ? "live" : urlPreview === "embed" ? "static" : "network",
+    const [graphJs, codeJs, pluginJs, subformatJs] = await Promise.all([
+        diagrams && !split ? bundleClient("schema-graph-global.tsx") : "",
+        code.length ? bundleClient("code-highlight.ts") : "",
         options.mode === "live" && blocks.some((block) => block.type === "external")
-            ? await bundleClient("published-plugins.ts")
+            ? bundleClient("published-plugins.ts")
             : "",
         compiled.docs.some((doc) => doc.subformat || doc.library) ||
-            blocks.some((block) => block.type === "code" && block.subformat)
-            ? await bundleClient("published-subformats.ts")
+        blocks.some((block) => block.type === "code" && block.subformat)
+            ? bundleClient("published-subformats.ts")
             : "",
-    );
-    return {
-        data: version
+    ]);
+    const render = (output?: PublishOutput): string => {
+        const html = publishHtml(
+            site,
+            graphJs,
+            undefined,
+            codeJs,
+            options.mode === "live" ? "live" : urlPreview === "embed" ? "static" : "network",
+            pluginJs,
+            subformatJs,
+            output,
+        );
+        return version
             ? html.replace(
                   "</head>",
                   `<meta name="dooc-version" content="${version}">${revision ? `<meta name="dooc-revision" content="${revision}">` : ""}</head>`,
               )
-            : html,
+            : html;
+    };
+    const output = split
+        ? await splitBuild(
+              render,
+              options,
+              site.fonts.map((font) => font.source),
+              diagrams ? await bundleGraph() : undefined,
+          )
+        : { data: render(), files: undefined, warnings: [] };
+    if (options.warningsAsErrors && output.warnings.length)
+        throw new Error(`Build warnings treated as errors:\n${output.warnings.join("\n")}`);
+    const bytes = split
+        ? checkBuildSize(
+              new Map([["index.html", Buffer.from(output.data)], ...(output.files ?? [])]),
+              maxFileSize,
+              maxBuildSize,
+          )
+        : Buffer.byteLength(output.data);
+    return {
+        ...output,
+        bytes,
         docs: compiled.docs.length,
         version,
         revision,

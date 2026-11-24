@@ -20,6 +20,7 @@ const icon = (path: string) =>
     `<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="${path}"/></svg>`;
 const folderIcon = icon(FOLDER_ICON_PATH);
 const fileIcon = icon("M4 2h8l4 4v12H4zM12 2v5h4");
+let viewSequence = 0;
 
 export const mountFiles = (
     openFile?: (file: string) => void,
@@ -37,6 +38,7 @@ export const mountFiles = (
     let busy = false;
     let dragging = false;
     let refreshPending = false;
+    let disposed = false;
     let drop: { directory: string } | undefined;
     const toolbar = document.createElement("div");
     toolbar.className = "files-toolbar";
@@ -45,7 +47,7 @@ export const mountFiles = (
     search.placeholder = t("Search files");
     search.setAttribute("aria-label", t("Search files"));
     const suggestions = document.createElement("datalist");
-    suggestions.id = "file-search-suggestions";
+    suggestions.id = `file-search-suggestions-${++viewSequence}`;
     search.setAttribute("list", suggestions.id);
     const makeButton = (label: string, svg?: string) => {
         const b = document.createElement("button");
@@ -93,16 +95,26 @@ export const mountFiles = (
         refresh.disabled = busy;
     };
     const perform = async (input: Record<string, unknown>) => {
-        if (busy) return;
+        if (busy || disposed) return;
         busy = true;
         refresh.dataset.state = "loading";
         refresh.setAttribute("aria-busy", "true");
         state();
         try {
             snapshot = await request({ ...input, revision: snapshot?.revision });
-            selected.clear();
+            if (disposed) return;
+            if (input.action !== "read") selected.clear();
+            else
+                for (const path of selected)
+                    if (
+                        !snapshot.files.some(
+                            (file) => file.path === path || file.path.startsWith(`${path}/`),
+                        )
+                    )
+                        selected.delete(path);
             render();
         } catch (error) {
+            if (disposed) return;
             refresh.dataset.state = "error";
             refresh.title = error instanceof Error ? error.message : String(error);
             await showNotice(refresh.title);
@@ -115,7 +127,7 @@ export const mountFiles = (
         }
     };
     const refreshFiles = () => {
-        if (!host.isConnected || !host.contains(refresh)) return;
+        if (disposed || !host.isConnected || !host.contains(refresh)) return;
         if (busy || dragging) {
             refreshPending = true;
             return;
@@ -148,7 +160,13 @@ export const mountFiles = (
         state();
     };
     const render = () => {
-        if (!snapshot) return;
+        if (!snapshot || disposed) return;
+        const active = body.contains(document.activeElement)
+            ? (document.activeElement as HTMLElement)
+            : null;
+        const focusedPath = active?.closest<HTMLElement>("tr[data-path]")?.dataset.path;
+        const focusSelector = active?.matches(".files-copy") ? ".files-copy" : ".files-folder, a";
+        const scrollTop = viewport.scrollTop;
         const query = search.value.trim().toLowerCase();
         const dot = search.value.lastIndexOf(".");
         suggestions.replaceChildren(
@@ -322,6 +340,18 @@ export const mountFiles = (
             body.append(tr);
         }
         state();
+        if (active) {
+            let path = focusedPath;
+            let target: HTMLElement | null = null;
+            while (path && !target) {
+                target = body.querySelector<HTMLElement>(
+                    `tr[data-path="${CSS.escape(path)}"] ${focusSelector}`,
+                );
+                path = parent(path);
+            }
+            (target ?? table).focus({ preventScroll: true });
+        }
+        viewport.scrollTop = scrollTop;
     };
     search.oninput = render;
     refresh.onclick = () => void perform({ action: "read" });
@@ -350,17 +380,30 @@ export const mountFiles = (
             render();
         }
     };
-    let dispose = (): void => {
+    const dispose = (): void => {
+        disposed = true;
+        stopChanges();
         document.removeEventListener("docs:files-changed", refreshFiles);
         document.removeEventListener("docs:ui-language", relocalize);
         delete host.dataset.mounted;
     };
     const relocalize = (): void => {
-        dispose();
-        host.replaceChildren();
-        dispose = mountFiles(openFile) ?? (() => {});
+        name.textContent = t("Name");
+        search.placeholder = t("Search files");
+        search.setAttribute("aria-label", t("Search files"));
+        table.setAttribute("aria-label", t("Files"));
+        const sizeHeading = head.querySelectorAll("th")[1];
+        if (sizeHeading) sizeHeading.textContent = t("Size");
+        history.textContent = history.title = t("History");
+        history.setAttribute("aria-label", t("History"));
+        refresh.title = t("Reload");
+        refresh.setAttribute("aria-label", t("Reload"));
+        render();
     };
-    document.addEventListener("docs:ui-language", relocalize, { once: true });
+    const stopChanges = workspace.on("change", (data) => {
+        if ((data as { kind?: string }).kind === "content") refreshFiles();
+    });
+    document.addEventListener("docs:ui-language", relocalize);
     void perform({ action: "read" });
     document.addEventListener("docs:files-changed", refreshFiles);
     return () => dispose();

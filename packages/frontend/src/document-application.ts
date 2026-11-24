@@ -23,7 +23,7 @@ import {
     unlinkSync,
     writeFileSync,
 } from "../../engine/src/compiler/host.js";
-import { ICONS_DIR, ownsDocIcon, squareSvg } from "../../engine/src/compiler/icons.js";
+import { ICONS_DIR, loadIcons, ownsDocIcon, squareSvg } from "../../engine/src/compiler/icons.js";
 import { ignoredFiles, withIgnoredFilesCache } from "../../engine/src/compiler/ignored-files.js";
 import {
     contentLanguageCode,
@@ -37,7 +37,7 @@ import {
     translationFile,
     translationFiles,
 } from "../../engine/src/compiler/locales.js";
-import { readManifest, writeManifest } from "../../engine/src/compiler/manifest.js";
+import { manifestFile, readManifest, writeManifest } from "../../engine/src/compiler/manifest.js";
 import {
     assembleDoc,
     createDocOps,
@@ -47,6 +47,7 @@ import {
 import { isRemoteSourceFile } from "../../engine/src/compiler/remote-manifests.js";
 import {
     compileSubformatSchema,
+    subformatIconSvg,
     subformatResponse,
     validateSubformatFile,
 } from "../../engine/src/compiler/subformats.js";
@@ -131,6 +132,7 @@ import { jsonSchemaHtml } from "./json-schema.js";
 import { loadPreviewScript } from "./lazy-preview.js";
 import { focusNavTree } from "./nav-focus.js";
 import { updateNav } from "./nav-update.js";
+import { mountPageJump } from "./page-jump.js";
 import { PLUGIN_BLOCK_CSS } from "./plugin-style.js";
 import { mountPanelResize } from "./resize.js";
 import {
@@ -231,6 +233,33 @@ export interface Site {
     themes?: readonly ("light" | "dark")[];
 }
 
+type NavigationEntry = Pick<
+    Entry,
+    | "id"
+    | "url"
+    | "root"
+    | "name"
+    | "origin"
+    | "included"
+    | "parent"
+    | "file"
+    | "sourceFile"
+    | "frontmatter"
+    | "icon"
+    | "subformat"
+    | "library"
+    | "translatedLanguages"
+>;
+type NavigationSite = Pick<
+    Site,
+    "title" | "icon" | "workspace" | "subformats" | "contentLanguage"
+> & { entries: NavigationEntry[] };
+
+export interface PublishOutput {
+    asset: (source: string, extension: "html" | "js" | "css") => string;
+    graph?: string;
+}
+
 interface PageOpts {
     title: string;
     main: string;
@@ -240,10 +269,7 @@ interface PageOpts {
     /** edit-mode doc pages only: right-panel html + client boot data. */
     aside?: string;
     boot?: unknown;
-    /**
-     * When writing out a single static HTML file (publishHtml). Replaces every server-served
-     * script with an inline one.
-     */
+    /** Published assets are inline unless an output sink is supplied. */
     publish?: {
         graphJs: string;
         codeJs: string;
@@ -252,6 +278,7 @@ interface PageOpts {
         network: boolean;
         pluginJs?: string;
         subformatJs?: string;
+        output?: PublishOutput;
     };
 }
 
@@ -557,6 +584,96 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
             };
         });
 
+    const loadNavigation = (locale: string, currentId: string | null): NavigationSite =>
+        withIgnoredFilesCache(() => {
+            const manifest = readManifest(root);
+            const title = manifest.titles?.[locale] ?? manifest.title;
+            const nodes = flattenTree(manifest.tree);
+            const { icons } = loadIcons(
+                root,
+                new Set(nodes.map(({ id }) => id)),
+                manifest.icon,
+                manifest.files,
+            );
+            const entries: NavigationEntry[] = nodes.map((node) => {
+                const format = manifest.subformats?.find(({ ext }) => ext === node.subformat);
+                let iconSvg: string | undefined;
+                if (format) {
+                    try {
+                        iconSvg = subformatIconSvg(root, format);
+                    } catch {}
+                }
+                return {
+                    ...node,
+                    included: !!node.resolved,
+                    file: `${node.id}.md`,
+                    sourceFile: isContentPage(node)
+                        ? sourceDocFile(node.id, manifest.files)
+                        : undefined,
+                    frontmatter: {
+                        title:
+                            node.title ??
+                            node.library ??
+                            node.subformat ??
+                            (isContentPage(node)
+                                ? (
+                                      sourceDocFile(node.id, manifest.files).split("/").pop() ??
+                                      node.id
+                                  ).replace(/\.md$/i, "")
+                                : ((node.root ? title : node.name) ?? "Contents")),
+                    },
+                    icon: icons.get(node.id),
+                    subformat: format ? { ...format, fields: [], records: [], iconSvg } : undefined,
+                };
+            });
+            if (!entries.some((entry) => entry.root)) {
+                let id = "document-root";
+                while (entries.some((entry) => entry.id === id)) id += "-root";
+                for (const entry of entries) entry.parent ??= id;
+                entries.unshift({
+                    id,
+                    root: true,
+                    url: "",
+                    file: "",
+                    frontmatter: { title: title ?? "Contents" },
+                });
+            }
+            const current = entries.find(({ id }) => id === currentId);
+            if (current) {
+                const source = contentLanguageCode(manifest.defaultLang ?? DEFAULT_LANG);
+                const translated = new Set(translationFiles(root));
+                current.translatedLanguages = [
+                    source,
+                    ...siteContentLanguages(root, manifest).filter(
+                        (language) =>
+                            language !== source &&
+                            isContentPage(current) &&
+                            translated.has(
+                                translationFile(
+                                    sourceDocFile(current.id, manifest.files),
+                                    language,
+                                    current.origin,
+                                ),
+                            ),
+                    ),
+                ];
+            }
+            let icon: string | undefined;
+            if (manifest.icon) {
+                try {
+                    icon = squareSvg(readTextfile(root, manifest.icon));
+                } catch {}
+            }
+            return {
+                entries,
+                title,
+                icon,
+                subformats: manifest.subformats,
+                contentLanguage: locale,
+                workspace: workspaceSource ?? readWorkspaceSource(root),
+            };
+        });
+
     const draftContext = (site: Site): DraftContext => ({
         previews: site.previews,
         root,
@@ -577,9 +694,9 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
 
     // fallbackTitle stands in for the h1 when frontmatter is missing. Each doc renders with its own
     // language's adapter (term ordering) and `<article lang>`.
-    const isLinkedEntry = (entry: Entry): boolean =>
+    const isLinkedEntry = (entry: NavigationEntry): boolean =>
         !!entry.included || !!(entry.url && ["link", "redirect"].includes(pageUrlKind(entry.url)));
-    const docLinks = (site: Site, html: string): string =>
+    const docLinks = (site: NavigationSite, html: string): string =>
         html.replace(/href="\/([a-z0-9][a-z0-9-]*)(?=["?#])/g, (whole, id: string) => {
             const entry = site.entries.find((entry) => entry.id === id);
             if (!entry) return whole;
@@ -930,11 +1047,11 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
         '<path d="m3 12 2-8h10l2 8"/><rect x="3" y="12" width="14" height="5" rx="1"/><path d="M13 14.5h1"/>',
     );
     const FOLDER_ICON = icon(`<path d="${FOLDER_ICON_PATH}"/>`);
-    const workspaceName = (site: Site): string =>
+    const workspaceName = (site: Pick<Site, "workspace">): string =>
         site.workspace?.protocol === "storage" ? workspaceLabel(site.workspace) : "Files";
     const workspaceText = (site: Site): string =>
         `<span${site.workspace?.protocol === "storage" ? "" : ' data-i18n="Files"'}>${escapeHtml(workspaceName(site))}</span>`;
-    const workspaceIcon = (site: Site): string => {
+    const workspaceIcon = (site: Pick<Site, "workspace">): string => {
         if (site.workspace?.protocol === "git") return FOLDER_ICON;
         return site.workspace?.icon
             ? svgImg(site.workspace.icon, "nav-icon workspace-icon")
@@ -1119,8 +1236,11 @@ body:has(#doc-search.search-docked[open]) #panel { flex-shrink: 100; min-width: 
 /* ── sidebar ── */
 #sidebar { width: var(--sidebar-width, 260px); height: 100vh; position: sticky; top: 0; flex: none;
   display: flex; flex-direction: column; background: var(--c-bg1);
-  border-right: 1px solid var(--c-line); overflow: hidden; }
+  border-right: 1px solid var(--c-line); overflow: hidden; transition: width 220ms cubic-bezier(.2, .8, .2, 1); }
+body.resizing #sidebar, #sidebar:has(> #sidebar-resize:focus) { transition: none; }
 body.sidebar-closed #sidebar { width: 52px; }
+#sidebar-head, #sidebar-content { width: calc(var(--sidebar-width, 260px) - 1px); }
+body.sidebar-closed :is(#sidebar-head, #sidebar-content) { width: 51px; }
 body.sidebar-closed #sidebar-resize { display: none; }
 .panel-resize { position: absolute; top: 0; bottom: 0; width: 8px; cursor: col-resize; z-index: 6;
   touch-action: none; }
@@ -1220,16 +1340,18 @@ body[data-version-read-only="true"] :is(.nav-doc-actions, .nav-icon-clear, #site
 .nav-row { position: relative; display: flex; align-items: center; min-width: 0; }
 .nav-row > .nav-link { flex: 1; min-width: 0; padding: 9px 16px; }
 .nav-row > .nav-link.cur { background: var(--c-raised); }
-.nav-item:not(.open) > .nav-list { display: none; }
+.nav-list > .nav-item { display: grid; grid-template-rows: auto 0fr; transition: grid-template-rows var(--nav-motion); }
+.nav-list > .nav-item.open { grid-template-rows: auto 1fr; }
+.nav-item > .nav-list { min-height: 0; overflow: hidden; visibility: hidden; transition: visibility 0s 260ms; }
+.nav-item.open > .nav-list { visibility: visible; transition-delay: 0s; }
 .nav-tree-toggle { flex: none; display: flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; margin-right: 6px; padding: 0; background: transparent; border: none;
   border-radius: 4px; color: var(--c-fg-faint); cursor: pointer; }
 .nav-tree-toggle:hover { color: var(--c-fg); background: var(--c-raised); }
-.nav-tree-toggle svg { transition: transform 120ms ease-out; }
+.nav-tree-toggle svg { transition: transform var(--nav-motion); }
 .nav-item.open > .nav-row > .nav-tree-toggle svg { transform: rotate(90deg); }
 .nav-tree { --nav-pad: calc(48px + (var(--nav-depth, 2) - 2) * 29px);
-  --nav-line: calc(var(--nav-pad) - 23px); margin: 0; padding-bottom: 4px; }
-.nav-tree:empty { padding-bottom: 0; }
+  --nav-line: calc(var(--nav-pad) - 23px); margin: 0; }
 .nav-tree > .nav-item { position: relative; }
 .nav-tree > .nav-item:not(:last-child)::before, .nav-tree > .nav-item > .nav-row::before,
 .nav-tree > .nav-item:last-child > .nav-row::after, .nav-tree > .nav-item:has(.cur) > .nav-row::after {
@@ -1246,13 +1368,17 @@ body[data-version-read-only="true"] :is(.nav-doc-actions, .nav-icon-clear, #site
 .nav-ancestor { --nav-pad: 12px; --nav-line: var(--nav-rail, 21px); }
 .nav-list:has(> .nav-ancestor) > .nav-item:not(.nav-ancestor) { height: 0; opacity: 0; overflow: hidden; visibility: hidden; }
 #nav-groups { --nav-motion: 260ms cubic-bezier(.2, .8, .2, 1); }
+body.sidebar-toggling #nav-groups { --nav-motion: 0s; }
 #nav-groups :is(.nav-tree-link, .nav-doc-row) { transition: padding-left var(--nav-motion); }
 #nav-groups :is(.nav-create, .nav-new) { transition: margin-left var(--nav-motion); }
 #nav-groups .nav-item::before, #nav-groups .nav-row::before, #nav-groups .nav-row::after {
   transition: left var(--nav-motion), width var(--nav-motion), height var(--nav-motion), top var(--nav-motion); }
 /* A connector changing orientation must stay 1px thick instead of morphing into a rectangle. */
 #nav-groups .nav-row::before { transition-property: left, top; }
-@media (prefers-reduced-motion: reduce) { #nav-groups { --nav-motion: 0s; } }
+@media (prefers-reduced-motion: reduce) {
+  #nav-groups { --nav-motion: 0s; }
+  #sidebar, .nav-item > .nav-list { transition: none; }
+}
 .nav-ancestor > .nav-tree > .nav-item::before,
 .nav-ancestor > .nav-tree > .nav-item > .nav-row::before,
 .nav-ancestor > .nav-tree > .nav-item > .nav-row::after { display: none; }
@@ -1356,6 +1482,8 @@ body[data-download="normal"] a[download], body[data-download="block"] a[download
 .resource-stage > * { margin: 0; }
 .resource-surface { position: absolute; inset: 0; touch-action: none; }
 .resource-modal-bar { position: absolute; top: 8px; right: 8px; display: flex; align-items: center; gap: 8px; padding-left: 8px; border-radius: 4px; background: var(--doc-panel); font: 12px/1.5 var(--font-sans); color: var(--doc-fg-2); }
+.resource-modal-bar button { min-width: 32px; min-height: 32px; padding: 4px; border: 0; border-radius: 4px; background: none; color: inherit; cursor: pointer; font: inherit; }
+.resource-modal-bar button:hover { background: var(--doc-bg-2); }
 .res-file-page h1 > .resource-download { margin-left: 8px; vertical-align: middle; }
 .resource-download-tools [role="status"] { font: 12px/1.5 var(--font-sans); color: var(--doc-fg-2); }
 .plugin { position: relative; min-width: 0; border: 2px solid var(--doc-border); border-top: 0; }
@@ -1610,9 +1738,12 @@ ul.idx a > .nav-icon { width: 18px; height: 18px; }
 #sidebar:has(.nav-root[data-document-link]) .site-title,
 ul.idx a[data-document-link] .document-card-label {
   color: color-mix(in srgb, var(--doc-accent-2) 85%, var(--doc-fg)); text-decoration: underline; text-underline-offset: 2px; }
-.document-web-tools { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
-.document-web-tools span { min-width: 0; overflow-wrap: anywhere; color: var(--doc-fg-2); }
-.document-web-frame { display: block; width: 100%; height: 70vh; min-height: 320px; border: 1px solid var(--doc-border); background: #fff; }
+main:has(> article > .document-web) { position: relative; padding: 0; overflow: hidden; }
+main:has(> article > .document-web) > .page-actions { display: none; }
+.document-web { position: absolute; inset: 0; }
+.document-web-notice { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; background: var(--doc-bg); text-align: center; }
+.document-web-notice[hidden] { display: none; }
+.document-web-frame { display: block; width: 100%; height: 100%; border: 0; background: Canvas; }
 details summary { cursor: pointer; opacity: .8; }
 /* Figure and term file links show previews on hover. */
 .figref, .dictref { color: var(--doc-accent-2); text-decoration: none;
@@ -1689,6 +1820,54 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 
 
 .resource-library { width: 100%; max-width: none; }
+.manifest-page { container-type: inline-size; font: 12px/1.55 var(--font-sans); color: var(--c-fg); }
+#manifest-manager { max-width: 760px; margin-inline: auto; }
+.manifest-toolbar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-block: 8px; background: var(--c-bg1); }
+.manifest-toolbar h1 { flex: 1; min-width: 0; margin: 0; padding: 0; border: 0; font: 500 14px/1.5 var(--font-sans); overflow-wrap: anywhere; }
+.manifest-toolbar [role="status"] { color: var(--c-fg-muted); font-size: 11px; }
+.manifest-page :is(input, select, button) { box-sizing: border-box; min-width: 0; max-width: 100%; min-height: 30px; border: 1px solid var(--c-line); border-radius: 4px; padding: 4px 8px; background: var(--c-bg1); color: var(--c-fg); font: inherit; }
+.manifest-page button { cursor: pointer; }
+.manifest-page button:hover { background: var(--c-raised); }
+.manifest-page button:disabled { opacity: .5; cursor: default; }
+.manifest-page [data-save]:not(:disabled) { color: var(--c-accent); border-color: currentColor; }
+.manifest-page :is(input, select, button, summary, a):focus-visible { outline: 2px solid var(--c-accent); outline-offset: 2px; }
+.manifest-page .manifest-path-input { font-family: var(--doc-mono); }
+.manifest-completions { inset: auto; box-sizing: border-box; font: 12px/1.6 var(--doc-mono); }
+.manifest-completions .language-options { overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--c-line) transparent; }
+.manifest-completions button { border: 0; border-radius: 0; background: transparent; }
+.resources-pane .manifest-tabs { margin: 0 0 4px; padding: 0; }
+.manifest-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 14px; background: transparent; color: var(--c-fg-muted); }
+.manifest-tabs button[aria-selected="true"] { color: var(--c-accent); border-bottom-color: currentColor; }
+.manifest-fields { min-width: 0; margin: 0; padding: 12px 0; border: 0; }
+.manifest-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 16px; min-width: 0; }
+.manifest-group { grid-column: 1 / -1; min-width: 0; }
+.manifest-group > summary { display: flex; align-items: center; gap: 8px; min-height: 30px; padding-inline: 4px; list-style: none; opacity: 1; font-weight: 500; }
+.manifest-group > summary::-webkit-details-marker { display: none; }
+.manifest-group > summary::before { content: ""; flex: none; width: 5px; height: 5px; margin-inline: 2px 4px; border-right: 1px solid var(--c-fg-muted); border-bottom: 1px solid var(--c-fg-muted); transform: rotate(-45deg); }
+.manifest-group[open] > summary::before { transform: rotate(45deg); }
+.manifest-group > summary:hover { background: var(--c-raised); }
+.manifest-group > .manifest-grid { margin-left: 8px; padding: 12px 0 2px 16px; border-left: 1px solid var(--c-line); }
+.manifest-field { position: relative; display: block; min-width: 0; align-self: start; }
+.manifest-field :is(input, select) { min-height: 34px; padding-top: 6px; }
+.manifest-grid :is(input, select) { width: 100%; }
+.manifest-paths { grid-column: 1 / -1; min-width: 0; margin: 0; padding: 8px; border: 1px solid var(--c-line); border-radius: 4px; }
+.manifest-paths > legend { padding-inline: 4px; color: var(--c-fg-muted); font: 11px/14px var(--font-sans); }
+.manifest-paths button { display: inline-grid; place-items: center; width: 30px; padding: 0; }
+.manifest-path-row { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
+.manifest-path-row input { flex: 1; }
+.manifest-path-row button { flex: none; border-color: transparent; background: transparent; color: var(--c-fg-muted); }
+.manifest-schema-link { align-self: center; justify-self: start; color: var(--c-fg-muted); text-underline-offset: 3px; }
+.manifest-error { white-space: pre-wrap; overflow-wrap: anywhere; }
+.manifest-source { margin-top: 14px; border: 1px solid var(--c-line); border-radius: 4px; overflow: hidden; }
+.manifest-source .cm-editor { height: 65dvh; background: var(--c-bg1); color: var(--c-fg); }
+.manifest-source .cm-scroller { overflow: auto; font: 12px/1.65 var(--doc-mono); scrollbar-width: thin; scrollbar-color: var(--c-line) transparent; }
+.manifest-source .cm-gutters { background: transparent; color: var(--c-fg-muted); border: 0; }
+@container (max-width: 540px) { .manifest-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 600px) {
+  .manifest-page :is(input, select, button, summary, .manifest-schema-link) { min-height: 44px; }
+  .manifest-paths button { width: 44px; }
+  .manifest-schema-link { display: inline-flex; align-items: center; }
+}
 .git-page { padding-top: 8px; font: 12px/1.55 var(--font-sans); }
 .git-page > #git-manager { max-width: 880px; margin-inline: auto; }
 .git-toolbar { gap: 8px; padding-block: 6px; }
@@ -1911,24 +2090,26 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 [data-subformat-view="list"] .subformat-columns { flex-direction: column; gap: 20px; overflow-x: visible; }
 [data-subformat-view="list"] .subformat-column { flex: none; }
 [data-subformat-view="list"] .subformat-cards { min-height: 40px; }
-.subformat-list-record { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(180px, 2fr) auto; align-items: start; gap: 10px 20px; margin: 0; padding: 12px 2px; border: 0; border-bottom: 1px solid var(--c-line); border-radius: 0; }
+.subformat-list-record { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(180px, 2fr) auto; align-items: center; gap: 4px 12px; margin: 0; padding: 6px 2px; border: 0; border-bottom: 1px solid var(--c-line); border-radius: 0; }
 .subformat-list-record > h3 { grid-column: 1; grid-row: 1; }
 .subformat-list-record .subformat-card-open { display: block; max-width: 100%; white-space: nowrap; text-overflow: ellipsis; }
-.subformat-list-record > .subformat-card-tools { grid-column: 3; grid-row: 1; margin: 0; padding: 0; background: transparent; }
-.subformat-list-record > .subformat-card-meta { flex-wrap: nowrap; grid-column: 2; grid-row: 1; min-width: 0; margin: 0; padding: 0 0 6px; border: 0; gap: 20px; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--c-line) transparent; }
-.subformat-list-record > .subformat-card-meta > div { flex: none; min-width: 80px; max-width: 32ch; }
+.subformat-list-record > .subformat-card-tools { grid-column: 3; grid-row: 1; gap: 0; height: 24px; margin: 0; padding: 0; background: transparent; }
+.subformat-list-record .subformat-card-file { margin-top: 8px; font-family: var(--font-sans); white-space: normal; }
+.subformat-list-record :is(.subformat-card-toggle, .subformat-card-copy, .resource-download) { width: 24px; height: 24px; }
+.subformat-list-record :is(.subformat-card-toggle, .subformat-card-copy, .resource-download) svg { width: 12px; height: 12px; }
+.subformat-list-record > .subformat-card-meta { flex-wrap: nowrap; grid-column: 2; grid-row: 1; min-width: 0; margin: 0; padding: 0; border: 0; gap: 16px; overflow-x: auto; scrollbar-width: thin; scrollbar-color: var(--c-line) transparent; }
+.subformat-list-record > .subformat-card-meta > div { display: flex; align-items: baseline; gap: 6px; flex: none; min-width: 0; max-width: 32ch; }
 .subformat-list-record > .subformat-card-meta dt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subformat-list-record > .subformat-card-meta dd { margin: 0; }
 .subformat-list-record > .subformat-card-details { grid-column: 1 / -1; margin: 0; }
-@container (max-width: 700px) {
-  .subformat-list-record { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
-  .subformat-list-record > .subformat-card-tools { grid-column: 2; }
-  .subformat-list-record > .subformat-card-meta { grid-column: 1 / -1; grid-row: 2; }
-  .subformat-list-record .subformat-card-file { max-width: 90px; }
-}
-@container (max-width: 420px) {
-  .subformat-list-record .subformat-card-file { display: none; }
+@media (hover: hover) and (pointer: fine) {
+  .subformat-list-record :is(.subformat-card-copy, .resource-download) { opacity: 0; }
+  .subformat-list-record:is(:hover, :focus-within) :is(.subformat-card-copy, .resource-download) { opacity: 1; }
 }
 @container (max-width: 600px) {
+  .subformat-list-record { grid-template-columns: minmax(0, 1fr) auto; }
+  .subformat-list-record > .subformat-card-tools { grid-column: 2; grid-row: 1; }
+  .subformat-list-record > .subformat-card-meta { grid-column: 1 / -1; grid-row: 2; }
   .subformat-filter-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .subformat-filter-row > label:nth-child(3) { grid-column: 1; }
   .subformat-embed-toolbar .subformat-control { flex: 1 1 120px; max-width: none; }
@@ -2363,6 +2544,8 @@ main.editor-workspace { padding: 0; height: 100vh; display: flex; flex-direction
 #preview-panes.split .pane-actions { top: -16px; margin: -16px -16px 16px; padding-inline: 10px; }
 #preview-panes.split .preview-pane + .preview-pane { border-left: 1px solid var(--c-line); }
 #preview-panes.split .preview-pane.active { border-top-color: var(--c-accent); }
+#preview-panes .preview-pane:has(> .pane-resource .document-web, > .preview-content:not([hidden]) .document-web) { position: relative; padding: 0; border: 0; overflow: hidden; }
+.preview-pane:has(> .preview-content:not([hidden]) .document-web) > .pane-actions { display: none; }
 .preview-pane:focus-visible { outline: 2px solid var(--c-accent); outline-offset: -2px; }
 @media (max-width: 820px) {
   body.edit:has(#panel) { display: grid; grid-template-columns: 52px minmax(0, 1fr); grid-template-rows: 50dvh 50dvh; height: 100dvh; min-height: 0; overflow: hidden; }
@@ -2573,13 +2756,13 @@ body.corr main article > [data-ln].corr-hi {
 body.edit .nav-row { cursor: grab; }
 .nav-item.dragging { opacity: .35; }
 .nav-row.drop-before { box-shadow: inset 0 2px 0 var(--c-accent); }
-.nav-row.drop-after { box-shadow: inset 0 -2px 0 var(--c-accent); }
+.nav-row.drop-after, #sidebar-head.drop-after { box-shadow: inset 0 -2px 0 var(--c-accent); }
 .nav-row.drop-into > a { background: color-mix(in srgb, var(--c-accent) 18%, transparent); }
 `;
 
     // Contents of #nav-groups (the doc tree). Used by both page()'s initial render and
     /** Sidebar glyph of a page: its own icon, else its subformat's or Library view's, else the book. */
-    const entryIcon = (e: Entry, cls: string): string => {
+    const entryIcon = (e: NavigationEntry, cls: string): string => {
         const svg = e.icon ?? e.subformat?.iconSvg;
         return svg
             ? svgImg(svg, cls)
@@ -2595,7 +2778,7 @@ body.edit .nav-row { cursor: grab; }
     // (it's the insertion target for the sidebar create form / drag).
     const navGroupsHtml = (
         mode: ServeMode,
-        site: Site,
+        site: NavigationSite,
         currentId?: string,
         currentRes?: string,
     ): string => {
@@ -2692,7 +2875,7 @@ body.edit .nav-row { cursor: grab; }
     const resourceHref = (kind?: ResourceKind, file?: string): string =>
         `/_files${kind ? `/${kind}` : ""}${file ? `/${encodeURIComponent(file)}` : ""}`;
 
-    const navFilesHtml = (site: Site, currentRes?: string): string => {
+    const navFilesHtml = (site: NavigationSite, currentRes?: string): string => {
         const source = site.workspace;
         const library =
             currentRes?.startsWith("_library") ||
@@ -2708,7 +2891,7 @@ body.edit .nav-row { cursor: grab; }
                 : "";
         const extensions = `<div class="nav-resources" id="nav-extensions" data-scope="${createHash("sha256").update(root).digest("hex")}"><div class="nav-item" data-node-id="_extensions"><div class="nav-row"><a class="nav-link${currentRes === "_extensions" ? " cur" : ""}" href="/_extensions" title="Plugins" data-i18n-title="Plugins">${PLUGINS_ICON}<span class="nav-label" data-i18n="Plugins">Plugins</span></a></div></div><div class="extensions-drop-hint" aria-hidden="true">${PLUGINS_ICON}<span data-i18n="Add plugins">Add plugins</span></div></div>`;
         const subformats = `<div class="nav-resources" id="nav-subformats"><div class="nav-item" data-node-id="_subformats"><div class="nav-row"><a class="nav-link${currentRes === "_subformats" ? " cur" : ""}" href="/_subformats" title="Subformats" data-i18n-title="Subformats">${SUBFORMATS_ICON}<span class="nav-label" data-i18n="Subformats">Subformats</span></a></div></div></div>`;
-        return `<details id="nav-tools" open>${location}<div class="nav-tool-cards"><div class="nav-resources" id="nav-files"><div class="nav-item" data-node-id="_files"><div class="nav-row"><a class="nav-link${currentRes !== undefined && currentRes !== "_git" && currentRes !== "_extensions" && currentRes !== "_subformats" && !library ? " cur" : ""}" href="/_files" title="Files" data-i18n-title="Files">${FOLDER_ICON}<span class="nav-label" data-i18n="Files">Files</span></a><span class="files-upload-status" role="status"></span></div></div>${hint}</div><div class="nav-resources" id="nav-library"><div class="nav-item" data-node-id="_library"><div class="nav-row"><a class="nav-link${library ? " cur" : ""}" href="/_library" title="Library" data-i18n-title="Library">${STATICS_ICON}<span class="nav-label" data-i18n="Library">Library</span></a></div></div></div>${subformats}${git}${extensions}</div></details>`;
+        return `<details id="nav-tools" open>${location}<div class="nav-tool-cards"><div class="nav-resources" id="nav-manifest"><div class="nav-item" data-node-id="_manifest"><div class="nav-row"><a class="nav-link${currentRes === "_manifest" ? " cur" : ""}" href="/_manifest" title="dooc.yaml">${GEAR_ICON}<span class="nav-label">dooc.yaml</span></a></div></div></div><div class="nav-resources" id="nav-files"><div class="nav-item" data-node-id="_files"><div class="nav-row"><a class="nav-link${currentRes !== undefined && currentRes !== "_manifest" && currentRes !== "_git" && currentRes !== "_extensions" && currentRes !== "_subformats" && !library ? " cur" : ""}" href="/_files" title="Files" data-i18n-title="Files">${FOLDER_ICON}<span class="nav-label" data-i18n="Files">Files</span></a><span class="files-upload-status" role="status"></span></div></div>${hint}</div><div class="nav-resources" id="nav-library"><div class="nav-item" data-node-id="_library"><div class="nav-row"><a class="nav-link${library ? " cur" : ""}" href="/_library" title="Library" data-i18n-title="Library">${STATICS_ICON}<span class="nav-label" data-i18n="Library">Library</span></a></div></div></div>${subformats}${git}${extensions}</div></details>`;
     };
 
     const formatSize = (bytes: number): string =>
@@ -2879,6 +3062,13 @@ body.edit .nav-row { cursor: grab; }
             const href = site.ctx.downloads?.get(file);
             return href ? resourceDownloadHtml(file, href) : "";
         };
+        if (rest === "_manifest") {
+            const file = manifestFile(site.root ?? root);
+            return {
+                title: file,
+                main: `<article class="res-page resource-library manifest-page"><div id="manifest-manager" data-file="${escapeHtml(file)}"></div></article>`,
+            };
+        }
         if (rest === "_extensions")
             return {
                 title: "Plugins",
@@ -3063,8 +3253,12 @@ body.edit .nav-row { cursor: grab; }
     };
 
     // Browser tab title — shared by page() and `/api/page` (doc switching via client-side navigation).
-    const pageTitle = (mode: ServeMode, title: string, siteTitle?: string): string =>
-        title === siteTitle ? title : `${title} — ${siteTitle ?? `dooc ${mode}`}`;
+    const pageTitle = (mode: ServeMode, title: string, site: Site): string =>
+        mode === "preview"
+            ? (site.entries.find((entry) => entry.root)?.frontmatter?.title ?? site.title ?? title)
+            : title === site.title
+              ? title
+              : `${title} — ${site.title ?? "dooc edit"}`;
 
     // Navigation follows the manifest hierarchy via routing.docPath.
     const page = (mode: ServeMode, site: Site, opts: PageOpts): string => {
@@ -3081,20 +3275,41 @@ body.edit .nav-row { cursor: grab; }
         const siteTitle = escapeHtml(site.title ?? "dooc");
         const iconImg = `<img id="site-icon" alt=""${site.icon ? ` src="${svgDataUri(site.icon)}"` : " hidden"}>`;
         const iconVariants = Object.entries(site.iconVariants ?? {});
+        const tabIcons = { "": site.icon, ...site.iconVariants };
+        const favicons =
+            mode === "preview"
+                ? Object.entries(tabIcons)
+                      .flatMap(([theme, svg]) =>
+                          svg && ["", "light", "dark"].includes(theme)
+                              ? `<link data-document-icon="${theme}" rel="icon" type="image/svg+xml" href="${svgDataUri(squareSvg(svg) ?? svg)}"${theme ? ` media="(prefers-color-scheme: ${theme})"` : ""}>`
+                              : [],
+                      )
+                      .join("\n")
+                : "";
         // The base image sits in a wrapper so theme switching and edit-client's #site-icon.hidden never fight.
         const iconHtml = iconVariants.length
             ? `<span class="site-icon-variants" data-theme-variants><span data-theme-variant="">${iconImg}</span>${iconVariants.map(([theme, svg]) => `<img data-theme-variant="${escapeHtml(theme)}" alt="" src="${svgDataUri(svg)}" hidden>`).join("")}</span>`
             : iconImg;
         const siteIcon = `<span id="site-icon-slot"${mode === "edit" ? ' title="Change site icon" data-i18n-title="Change site icon"' : ""}>${iconHtml}${DOCS_ICON}${mode === "edit" ? '<input type="file" accept=".svg,image/svg+xml" aria-label="Change site icon" data-i18n-aria-label="Change site icon">' : ""}</span>`;
+        const output = opts.publish?.output;
+        const script = (js: string): string =>
+            output
+                ? `<script src="${escapeHtml(output.asset(js, "js"))}"></script>`
+                : `<script>${inlineScript(js)}</script>`;
+        const css = `${fontCss(Boolean(opts.publish))}${CSS}${mode === "edit" ? EDIT_CSS : ""}`;
+        const stylesheet = output
+            ? `<link rel="stylesheet" href="${escapeHtml(output.asset(css, "css"))}">`
+            : `<style>${css}</style>`;
+        const self = output ? "'self' " : "";
         const bootScripts =
             opts.boot != null
                 ? `<script id="boot" type="application/json">${JSON.stringify(opts.boot).replace(/</g, "\\u003c")}</script>
 <script src="/assets/edit.js"></script>
 <script src="/assets/client.js"></script>`
                 : !opts.publish
-                  ? '<script src="/assets/ui.js"></script>'
+                  ? `<script src="/assets/${mode === "edit" && opts.currentRes === "_manifest" ? "manifest" : "ui"}.js"></script>`
                   : opts.publish.subformatJs
-                    ? `<script>${inlineScript(opts.publish.subformatJs)}</script>`
+                    ? script(opts.publish.subformatJs)
                     : "";
         // Interaction layer of the schema graph (zoom / pan / box drag / enlarged view). Shared by
         // preview / edit. Figures are readable without JS, so defer is enough (= progressive
@@ -3109,29 +3324,32 @@ body.edit .nav-row { cursor: grab; }
                 : mode === "edit" && opts.currentRes !== undefined
                   ? `<main class="resources-pane">${opts.main}</main>`
                   : `<main><div class="page-actions"><button class="pbtn" type="button" data-theme-picker="document" aria-label="Preview theme"></button>${fontButton("reader")}</div>${opts.main}</main>`;
-        const graphScript = opts.publish
-            ? `<script>${inlineScript(opts.publish.graphJs)}</script>`
-            : `<script>(${loadPreviewScript.toString()})("/assets/graph.js", "svg[data-sg-layout], [data-mermaid]", "module");</script>`;
+        const graphScript = output?.graph
+            ? `<script type="module" src="${escapeHtml(output.graph)}"></script>`
+            : opts.publish
+              ? script(opts.publish.graphJs)
+              : `<script>(${loadPreviewScript.toString()})("/assets/graph.js", "svg[data-sg-layout], [data-mermaid]", "module");</script>`;
         return `<!doctype html><html lang="en"><head><meta charset="utf-8">
-${opts.publish ? `<meta name="referrer" content="no-referrer"><meta http-equiv="x-dns-prefetch-control" content="off">${opts.publish.network ? "" : `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline' data:; img-src data: blob:; media-src data: blob:; object-src data:; font-src data: blob:; frame-src data: blob:; connect-src 'none'; base-uri 'none'; form-action 'none'">`}` : ""}
+${opts.publish ? `<meta name="referrer" content="no-referrer"><meta http-equiv="x-dns-prefetch-control" content="off">${opts.publish.network ? "" : `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src ${self}'unsafe-inline'; style-src ${self}'unsafe-inline' data:; img-src ${self}data: blob:; media-src ${self}data: blob:; object-src ${self}data:; font-src ${self}data: blob:; frame-src ${self}data: blob:; connect-src ${output ? "'self'" : "'none'"}; base-uri 'none'; form-action 'none'">`}` : ""}
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(pageTitle(mode, opts.title, site.title))}</title>
-<script>var __name = (f) => f;
+<title>${escapeHtml(pageTitle(mode, opts.title, site))}</title>
+${favicons}
+${script(`var __name = (f) => f;
 (${initializeThemes.toString()})(${JSON.stringify(site.themes)});
-(${mountFigureFrames.toString()})(document);</script>
-<style>${fontCss(Boolean(opts.publish))}${CSS}${mode === "edit" ? EDIT_CSS : ""}</style></head>
-<body data-document-manifest="${escapeHtml(currentDocument?.origin ?? "")}" data-document-path="${escapeHtml(currentDocument ? docPath(site.entries, currentDocument.id) : "/")}"${mode === "edit" ? ' class="edit"' : ""}${site.download ? ` data-download="${site.download}"` : ""}${site.sourceBase ? ` data-source-base="${escapeHtml(site.sourceBase)}"` : ""}><nav id="sidebar"><div id="sidebar-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" data-i18n-aria-label="Resize sidebar" title="Resize sidebar" data-i18n-title="Resize sidebar"></div><div id="sidebar-head">${siteIcon}<a id="site-title" class="site-title${rootCurrent ? " cur" : ""}" href="/"${/^https?:\/\//i.test(rootJump) ? ` data-jump-url="${escapeHtml(rootJump)}"` : ""} title="${siteTitle}"${rootCurrent ? ' aria-current="page"' : ""}${mode === "edit" ? ` data-title="${escapeHtml(site.title ?? "")}" aria-keyshortcuts="F2"` : ""}>${siteTitle}</a><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button></div><div id="sidebar-content"><div id="nav-groups">${nav}</div><div id="nav-status" role="status" aria-live="polite"></div></div></nav>${main}${opts.aside ?? ""}
-<script>
+(${mountFigureFrames.toString()})(document);`)}
+${stylesheet}</head>
+<body data-content-language="${escapeHtml(site.contentLanguage ?? site.defaultLang)}" data-document-manifest="${escapeHtml(currentDocument?.origin ?? "")}" data-document-path="${escapeHtml(currentDocument ? docPath(site.entries, currentDocument.id) : "/")}"${mode === "edit" ? ' class="edit"' : ""}${site.download ? ` data-download="${site.download}"` : ""}${site.sourceBase ? ` data-source-base="${escapeHtml(site.sourceBase)}"` : ""}><nav id="sidebar"><div id="sidebar-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" data-i18n-aria-label="Resize sidebar" title="Resize sidebar" data-i18n-title="Resize sidebar"></div><div id="sidebar-head">${siteIcon}<a id="site-title" class="site-title${rootCurrent ? " cur" : ""}" href="/"${/^https?:\/\//i.test(rootJump) ? ` data-jump-url="${escapeHtml(rootJump)}"` : ""} title="${siteTitle}"${rootCurrent ? ' aria-current="page"' : ""}${mode === "edit" ? ` data-title="${escapeHtml(site.title ?? "")}" aria-keyshortcuts="F2"` : ""}>${siteTitle}</a><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button></div><div id="sidebar-content"><div id="nav-groups">${nav}</div><div id="nav-status" role="status" aria-live="polite"></div></div></nav>${main}${opts.aside ?? ""}
+${script(`
 (${mountDocumentLinks.toString()})(${showDialog.toString()}, ${!opts.publish || !!opts.publish.network}${opts.publish ? "" : `, ${workspaceFetch.toString()}`});
 (${mountThemePickers.toString()})(${JSON.stringify(THEME_ICONS)}, ${JSON.stringify(site.themes)});
 (${mountThemeVariants.toString()})(document);
 ${site.download === "block" ? `(${inlineScript(mountDownloadBlock.toString())})();` : ""}
 ${site.ctx.downloads ? `(${mountResourceDownloads.toString()})(${workspaceFetch.toString()});(${mountResourceExpand.toString()})();` : ""}
-</script>
+`)}
 ${bootScripts}${graphScript}
 <script id="code-grammars" type="application/json"${opts.publish ? "" : ' data-src="/assets/code-grammars.json"'}>${opts.publish ? JSON.stringify(site.codeGrammars ?? []).replace(/</g, "\\u003c") : "[]"}</script>
-${opts.publish ? `<script>${inlineScript(opts.publish.codeJs)}</script>` : `<script>(${loadPreviewScript.toString()})("/assets/code.js", ".codeblk");</script>`}
-<script>
+${opts.publish ? script(opts.publish.codeJs) : `<script>(${loadPreviewScript.toString()})("/assets/code.js", ".codeblk");</script>`}
+${script(`
 (() => {
 // Functions toString'd under tsx (esbuild keepNames) contain __name(...) calls; define a no-op.
 var __name = (f) => f;
@@ -3148,8 +3366,19 @@ void (${mountFontPickers.toString()})(${createFontSettings.toString()}, ${JSON.s
   const KEY = "docs:sidebar-open";
   const toggle = document.getElementById("sidebar-toggle");
   if (!toggle) return;
-  const apply = (open) => {
+  let motionTimer;
+  let motionRevision = 0;
+  const apply = (open, animate = false) => {
+    const revision = ++motionRevision;
+    clearTimeout(motionTimer);
+    document.body.classList.toggle("sidebar-toggling", animate);
     document.body.classList.toggle("sidebar-closed", !open);
+    if (animate) {
+      const finish = () => { if (revision === motionRevision) document.body.classList.remove("sidebar-toggling"); };
+      const motion = document.getElementById("sidebar").getAnimations().find((animation) => animation.transitionProperty === "width");
+      if (motion) { void motion.finished.then(finish, () => {}); motionTimer = setTimeout(finish, 240); }
+      else finish();
+    }
     toggle.setAttribute("aria-expanded", String(open));
     toggle.dataset.i18nTitle = open ? "Close sidebar" : "Open sidebar";
     toggle.title = window.__docsTranslate ? window.__docsTranslate(toggle.dataset.i18nTitle) : toggle.dataset.i18nTitle;
@@ -3164,10 +3393,10 @@ void (${mountFontPickers.toString()})(${createFontSettings.toString()}, ${JSON.s
     open = !open;
     preferred = open;
     try { localStorage.setItem(KEY, open ? "1" : "0"); } catch {}
-    apply(open);
+    apply(open, true);
   });
   document.getElementById("sidebar-content")?.addEventListener("click", (event) => {
-    if (open || !(event.target instanceof Element) || !event.target.closest(".nav-row")) return;
+    if (open || !event.isTrusted || !(event.target instanceof Element) || !event.target.closest(".nav-row")) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     toggle.click();
@@ -3213,6 +3442,7 @@ void (${mountFontPickers.toString()})(${createFontSettings.toString()}, ${JSON.s
   const nav = document.getElementById("nav-groups");
   new ResizeObserver(() => (${focusNavTree.toString()})(nav)).observe(nav);
 })();
+(${mountPageJump.toString()})(${focusNavTree.toString()});
 ${
     mode === "edit"
         ? `(() => {
@@ -3234,7 +3464,7 @@ ${
     const cur = document.querySelector("#nav-groups .nav-row a.cur");
     const id = (cur && cur.closest(".nav-item").dataset.docId) || "";
     const pathname = location.pathname.slice((globalThis.__doocClientBase ?? "").length) || "/";
-    const rp = pathname.startsWith("/_library") ? pathname.slice(1) : ["/_git", "/_extensions", "/_subformats"].includes(pathname) ? pathname.slice(1) : pathname.startsWith("/_files") ? pathname.slice(8).replace(/^\\/|\\/$/g, "") : null;
+    const rp = pathname.startsWith("/_library") ? pathname.slice(1) : ["/_manifest", "/_git", "/_extensions", "/_subformats"].includes(pathname) ? pathname.slice(1) : pathname.startsWith("/_files") ? pathname.slice(8).replace(/^\\/|\\/$/g, "") : null;
     const res = await localeFetch("/api/nav?current=" + encodeURIComponent(id) + (rp == null ? "" : "&res=" + encodeURIComponent(rp)));
     if (res.ok) {
       const data = await res.json();
@@ -3422,73 +3652,97 @@ ${
 
   let dragContext;
   let dragged = null;
-  let drop = null; // { row, zone: "before" | "after" | "into" }
+  let drop = null;
+  let moving = false;
+  let hoverTimer;
+  let hovered;
   const clearMarker = () => {
-    for (const r of document.querySelectorAll(".nav-row.drop-before, .nav-row.drop-after, .nav-row.drop-into")) {
-      r.classList.remove("drop-before", "drop-after", "drop-into");
-    }
+    for (const row of document.querySelectorAll("#sidebar .drop-before, #sidebar .drop-after, #sidebar .drop-into"))
+      row.classList.remove("drop-before", "drop-after", "drop-into");
+  };
+  const clearDrag = () => {
+    clearTimeout(hoverTimer);
+    hovered = undefined;
+    dragged?.classList.remove("dragging");
+    dragged = drop = null;
+    clearMarker();
   };
   document.addEventListener("dragstart", (event) => {
-    const row = event.target instanceof Element ? event.target.closest(".nav-row") : null;
+    const row = event.target instanceof Element ? event.target.closest("#nav-groups .nav-row") : null;
     if (!row || !event.dataTransfer) return;
-    if (event.target.closest("input, button, .nav-doc-icon") || row.classList.contains("renaming")) {
+    if (moving || document.body.dataset.versionReadOnly === "true" || row.getAttribute("draggable") !== "true" || event.target.closest("input, button, .nav-doc-icon") || row.classList.contains("renaming")) {
       event.preventDefault();
       return;
     }
+    clearDrag();
     dragContext = context();
-    dragged = row.closest(".nav-item");
+    dragged = row.closest(".nav-item[data-doc-id]");
+    if (!dragged) { event.preventDefault(); return; }
     dragged.classList.add("dragging");
     event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("application/x-doc-id", dragged.dataset.docId || "");
+    event.dataTransfer.setData("application/x-doc-id", dragged.dataset.docId);
   });
-  document.addEventListener("dragend", () => {
-    if (dragged) dragged.classList.remove("dragging");
-    clearMarker();
-    dragged = null;
-    drop = null;
-  });
+  const cancelDrag = () => {
+    const wasDragging = !!dragged;
+    clearDrag();
+    if (wasDragging && !moving) void refresh();
+  };
+  document.addEventListener("dragend", cancelDrag);
+  window.addEventListener("blur", cancelDrag);
+  document.addEventListener("dooc:workspace-changed", clearDrag);
   document.addEventListener("dragover", (event) => {
-    if (!dragged || !event.dataTransfer) return;
-    const row = event.target instanceof Element ? event.target.closest("#nav-groups .nav-row") : null;
-    const item = row && row.closest(".nav-item");
-    // Can't drop onto itself or its own descendants (cycle).
-    if (!item || !item.dataset.docId || dragged.contains(item)) { clearMarker(); drop = null; return; }
+    if (!dragged || !event.dataTransfer || !current(dragContext)) return;
+    const target = event.target instanceof Element ? event.target : null;
+    const root = document.querySelector("#nav-groups > .nav-root");
+    const row = target?.closest("#nav-groups .nav-row, #sidebar-head");
+    const item = row?.closest(".nav-item");
+    const rootDrop = root && (row?.id === "sidebar-head" || item?.classList.contains("nav-placeholder") || target === root);
+    clearMarker();
+    drop = null;
+    if (rootDrop) {
+      const marker = row ?? root.querySelector(".nav-placeholder > .nav-row");
+      if (marker) drop = { row: marker, zone: "after", parent: root.dataset.parent || undefined, index: [...root.children].filter((node) => node.dataset.docId && node !== dragged).length };
+    } else if (item?.dataset.docId && !dragged.contains(item)) {
+      const rect = row.getBoundingClientRect();
+      const y = (event.clientY - rect.top) / rect.height;
+      const zone = y < 0.25 ? "before" : y > 0.75 ? "after" : "into";
+      const list = zone === "into" ? item.querySelector(":scope > .nav-list") : item.parentElement;
+      if (list && (zone !== "into" || row.getAttribute("draggable") === "true")) {
+        const siblings = [...list.children].filter((node) => node.dataset.docId && node !== dragged);
+        drop = { row, zone, parent: list.dataset.parent || undefined, index: zone === "into" ? siblings.length : siblings.indexOf(item) + (zone === "after" ? 1 : 0) };
+      }
+    }
+    const nextHover = drop?.zone === "into" && !item.classList.contains("open") ? item : undefined;
+    if (hovered !== nextHover) {
+      clearTimeout(hoverTimer);
+      hovered = nextHover;
+      if (hovered) hoverTimer = setTimeout(() => { if (dragged && hovered) window.__docsNavOpen?.(hovered.dataset.docId, true); }, 500);
+    }
+    if (!drop) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
-    const rect = row.getBoundingClientRect();
-    const y = (event.clientY - rect.top) / rect.height;
-    const zone = y < 0.25 ? "before" : y > 0.75 ? "after" : "into";
-    clearMarker();
-    row.classList.add("drop-" + zone);
-    drop = { row, zone };
+    drop.row.classList.add("drop-" + drop.zone);
   });
   document.addEventListener("drop", async (event) => {
-    if (!dragged || !drop) return;
+    if (!dragged || !drop || !current(dragContext)) return;
     event.preventDefault();
+    const target = dragContext;
     const id = dragged.dataset.docId;
-    const item = drop.row.closest(".nav-item");
-    let parent;
-    let index;
-    if (drop.zone === "into") {
-      parent = item.dataset.docId;
-      index = [...item.querySelector(":scope > .nav-list").children].filter((n) => n.dataset.docId && n !== dragged).length;
-      if (window.__docsNavOpen) window.__docsNavOpen(parent, true);
-    } else {
-      const list = item.parentElement;
-      parent = list.dataset.parent || undefined;
-      const siblings = [...list.children].filter((n) => n.dataset.docId && n !== dragged);
-      index = siblings.indexOf(item) + (drop.zone === "after" ? 1 : 0);
-    }
-    clearMarker();
+    const { parent, index, zone } = drop;
+    clearDrag();
+    moving = true;
     setStatus("Moving…", false);
     try {
-      await post("/api/move", { id, parent, index }, dragContext);
-      if (!current(dragContext)) return;
+      await post("/api/move", { id, parent, index }, target);
+      if (!current(target)) return;
+      if (zone === "into") window.__docsNavOpen?.(parent, true);
       setStatus("Moved", false);
     } catch (error) {
-      setStatus("Failed to move: " + error.message, true);
+      if (current(target)) setStatus("Failed to move: " + error.message, true);
+    } finally {
+      moving = false;
+      if (current(target)) await refresh();
     }
-    await refresh();
   });
 
   document.addEventListener("docs:files-changed", () => { void refresh(); });
@@ -3749,9 +4003,9 @@ document.addEventListener("click", (ev) => {
   }
 });
 })();
-</script>
-<script>${inlineScript(`(${mountSearch.toString()})(${JSON.stringify(opts.publish ? searchIndex(site) : []).replace(/</g, "\\u003c")}, ${searchSections.toString()}, ${JSON.stringify(Object.fromEntries(SEARCH_LABELS.map((key) => [key, translate(site.defaultLang, key)]))).replace(/</g, "\\u003c")}, ${Boolean(opts.publish)}, ${workspaceFetch.toString()});`)}</script>
-${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publish.first)}${opts.publish.network && !opts.publish.pluginJs ? `\n(${mountBundleNetwork.toString()})();` : ""}</script>${opts.publish.pluginJs ? `<script>${inlineScript(opts.publish.pluginJs)}</script>` : ""}` : ""}</body></html>`;
+`)}
+${script(`(${mountSearch.toString()})(${JSON.stringify(opts.publish ? searchIndex(site) : []).replace(/</g, "\\u003c")}, ${searchSections.toString()}, ${JSON.stringify(Object.fromEntries(SEARCH_LABELS.map((key) => [key, translate(site.defaultLang, key)]))).replace(/</g, "\\u003c")}, ${Boolean(opts.publish)}, ${workspaceFetch.toString()});`)}
+${opts.publish ? `${opts.publish.pages}${script(`${publishRouterScript(opts.publish.first)}${opts.publish.network && !opts.publish.pluginJs ? `\n(${mountBundleNetwork.toString()})();` : ""}`)}${opts.publish.pluginJs ? script(opts.publish.pluginJs) : ""}` : ""}</body></html>`;
     };
 
     // A `</script` inside an inline <script> would close the script early, so escape it.
@@ -3764,7 +4018,9 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
   const FIRST = ${JSON.stringify(first)};
   const main = document.querySelector("main");
   const pages = new Map([...document.querySelectorAll("template[data-route]")].map((t) => [t.dataset.route, t]));
-  const show = () => {
+  let navigation = 0;
+  const show = async () => {
+    const request = ++navigation;
     const [path, rawAnchor] = location.hash.slice(1).split("#");
     let anchor = "";
     try { anchor = decodeURIComponent(rawAnchor || ""); } catch {}
@@ -3777,22 +4033,33 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
       location.replace(target.startsWith("/") ? "#" + target : target);
       return;
     }
+    (${focusNavTree.toString()})(document.getElementById("nav-groups"), "#/" + route);
+    document.title = page.dataset.title;
     const actions = main.querySelector(":scope > .page-actions");
+    if (page.dataset.src) {
+      main.setAttribute("aria-busy", "true");
+      try {
+        if (location.protocol === "file:") throw new Error("Serve split builds over HTTP(S).");
+        const response = await fetch(page.dataset.src);
+        if (!response.ok) throw new Error("Page request failed: " + response.status);
+        page.innerHTML = await response.text();
+        delete page.dataset.src;
+      } catch (error) {
+        if (request !== navigation) return;
+        const notice = document.createElement("p");
+        notice.setAttribute("role", "alert");
+        notice.textContent = "Could not load page. " + error.message;
+        main.replaceChildren(notice);
+        if (actions) main.prepend(actions);
+        main.removeAttribute("aria-busy");
+        return;
+      }
+    }
+    if (request !== navigation) return;
+    main.removeAttribute("aria-busy");
     main.innerHTML = page.innerHTML;
     document.dispatchEvent(new Event("docs:page-shown"));
     if (actions) main.prepend(actions);
-    document.title = page.dataset.title;
-    for (const a of document.querySelectorAll("#site-title, #nav-groups a")) {
-      const current = a.getAttribute("href").split("?")[0] === "#/" + route;
-      a.classList.toggle("cur", current);
-      if (current) a.setAttribute("aria-current", "page");
-      else a.removeAttribute("aria-current");
-    }
-    const cur = document.querySelector("#nav-groups a.cur");
-    for (let it = cur && cur.closest(".nav-item").parentElement.closest(".nav-item"); it; it = it.parentElement.closest(".nav-item")) {
-      it.classList.add("open");
-    }
-    (${focusNavTree.toString()})(document.getElementById("nav-groups"));
     const target = anchor && document.getElementById(anchor);
     requestAnimationFrame(() => {
       if (target) target.scrollIntoView(); else main.scrollTo(0, 0);
@@ -3810,9 +4077,7 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
             .replace(/href="#(?!\/)/g, `href="#/${route}#`);
 
     /**
-     * Turns the whole Site into a single HTML file readable without a server (everything embedded,
-     * down to figures / terms / schema graph JS). Each doc is held in a
-     * <template> and switched via hash routes.
+     * Publish the Site with hash routes, either inline or through an external asset sink.
      */
     const publishHtml = (
         site: Site,
@@ -3822,7 +4087,9 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
         mode: "static" | "network" | "live" = "static",
         pluginJs = "",
         subformatJs = "",
+        output?: PublishOutput,
     ): string => {
+        const publishedSite = { ...site, title };
         const pages: { route: string; title: string; main: string; redirect?: string }[] =
             site.entries.map((e) => ({
                 route: docPath(site.entries, e.id).slice(1),
@@ -3866,29 +4133,27 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
             if (linked) pages.push({ route: encoded, ...linked });
         }
         const templates = pages
-            .map(
-                (p) =>
-                    `<template data-route="${escapeHtml(p.route)}" data-title="${escapeHtml(pageTitle("preview", p.title, title))}"${p.redirect ? ` data-redirect="${escapeHtml(p.redirect)}"` : ""}>${toHashLinks(p.main, p.route)}</template>`,
-            )
+            .map((p) => {
+                const content = toHashLinks(p.main, p.route);
+                const source = output?.asset(content, "html");
+                return `<template data-route="${escapeHtml(p.route)}" data-title="${escapeHtml(pageTitle("preview", p.title, publishedSite))}"${p.redirect ? ` data-redirect="${escapeHtml(p.redirect)}"` : ""}${source ? ` data-src="${escapeHtml(source)}"` : ""}>${source ? "" : content}</template>`;
+            })
             .join("");
         return toHashLinks(
-            page(
-                "preview",
-                { ...site, title },
-                {
-                    title,
-                    main: "",
-                    publish: {
-                        graphJs,
-                        codeJs,
-                        pages: templates,
-                        first,
-                        network: mode !== "static",
-                        pluginJs: mode === "live" ? pluginJs : undefined,
-                        subformatJs,
-                    },
+            page("preview", publishedSite, {
+                title,
+                main: "",
+                publish: {
+                    graphJs,
+                    codeJs,
+                    pages: templates,
+                    first,
+                    network: mode !== "static",
+                    pluginJs: mode === "live" ? pluginJs : undefined,
+                    subformatJs,
+                    output,
                 },
-            ),
+            }),
             first,
         );
     };
@@ -3898,7 +4163,7 @@ ${opts.publish ? `${opts.publish.pages}<script>${publishRouterScript(opts.publis
     const entryMain = (site: Site, e: Entry): string => {
         if (e.url && /^https?:\/\//i.test(e.url)) {
             const title = docDisplayName(e.frontmatter, e.id);
-            return `<article><section class="document-web" data-web-url="${escapeHtml(e.url)}" data-title="${escapeHtml(title)}"><div class="document-web-tools"><span>${escapeHtml(e.url)}</span><a href="${escapeHtml(e.url)}" data-web-open data-i18n="Open externally">Open externally</a></div><p data-web-status role="status" data-i18n="Loading website…">Loading website…</p></section></article>`;
+            return `<article><section class="document-web" data-web-url="${escapeHtml(e.url)}" data-title="${escapeHtml(title)}"><div class="document-web-notice"><p data-web-status role="status" data-i18n="Loading website…">Loading website…</p><a href="${escapeHtml(e.url)}" data-web-open data-i18n="Open externally" hidden>Open externally</a></div></section></article>`;
         }
         if (e.url && pageUrlKind(e.url) === "file")
             return (
@@ -4024,6 +4289,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
 <label><input type="checkbox" id="opt-corr"><span data-i18n="Source mapping">Source mapping</span></label>
 <label><input type="checkbox" id="opt-git-diff"><span data-i18n="Show Git changes">Show Git changes</span></label>
 <label><input type="checkbox" id="opt-line-wrap" checked><span data-i18n="Wrap lines">Wrap lines</span></label>
+<label><input type="checkbox" id="opt-page-jump" checked><span data-i18n="Space + arrow page jump">space+arrow page jump</span></label>
 </div></div>
 <button id="editor-open-workspace" class="pbtn" type="button" aria-label="Open workspace" data-i18n-aria-label="Open workspace" title="Open workspace" data-i18n-title="Open workspace">${icon('<path d="M2 5h6l2 2h8v10H2zM2 5V3h6l2 2"/>')}</button>
 </div></div>
@@ -4046,6 +4312,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
             return { status: 400, body: { error: "route must be /<docId>" } };
         }
         if (
+            path === "/_manifest" ||
             path === "/_extensions" ||
             path === "/_subformats" ||
             path === "/_git" ||
@@ -4059,7 +4326,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
                     site,
                     path.startsWith("/_library")
                         ? path.slice(1)
-                        : ["/_git", "/_extensions", "/_subformats"].includes(path)
+                        : ["/_manifest", "/_git", "/_extensions", "/_subformats"].includes(path)
                           ? path.slice(1)
                           : path.slice("/_files".length).replace(/^\/|\/$/g, ""),
                 );
@@ -4069,7 +4336,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
                           body: {
                               resource: true,
                               path,
-                              title: pageTitle("edit", resource.title, site.title),
+                              title: pageTitle("edit", resource.title, site),
                               html: docLinks(site, resource.main),
                               sourceFile: resource.sourceFile,
                           },
@@ -4095,7 +4362,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
                     resource: true,
                     versionManifest: doc.origin ?? "",
                     path,
-                    title: pageTitle("edit", docDisplayName(doc.frontmatter, doc.id), site.title),
+                    title: pageTitle("edit", docDisplayName(doc.frontmatter, doc.id), site),
                     html,
                 },
             };
@@ -4103,7 +4370,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
         return {
             status: 200,
             body: {
-                title: pageTitle("edit", docDisplayName(doc.frontmatter, doc.id), site.title),
+                title: pageTitle("edit", docDisplayName(doc.frontmatter, doc.id), site),
                 file: doc.file,
                 html,
                 errors,
@@ -4489,8 +4756,8 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
         req: IncomingMessage,
         res: ServerResponse,
     ): Promise<void> => {
-        await host.prepareSources?.(root);
         const requestUrl = new URL(req.url ?? "/", "http://localhost");
+        if (requestUrl.pathname !== "/api/nav") await host.prepareSources?.(root);
         const requestedLanguage =
             req.headers["x-docs-language"] ??
             requestUrl.searchParams.get("lang") ??
@@ -4753,6 +5020,25 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
             return;
         }
 
+        if (mode === "edit" && req.method === "GET" && path === "/api/nav") {
+            const site = loadNavigation(locale, requestUrl.searchParams.get("current"));
+            const params = new URL(req.url ?? "/", "http://localhost").searchParams;
+            sendJson(res, 200, {
+                siteTitle: site.title,
+                siteIcon: site.icon ? svgDataUri(site.icon) : undefined,
+                rootJump: docHref(site.entries, site.entries.find((entry) => entry.root)?.id ?? ""),
+                translatedLanguages: site.entries.find(
+                    (entry) => entry.id === requestUrl.searchParams.get("current"),
+                )?.translatedLanguages,
+                html: navGroupsHtml(
+                    mode,
+                    site,
+                    params.get("current") || undefined,
+                    params.get("res") ?? undefined,
+                ),
+            });
+            return;
+        }
         const site = loadSite(locale);
         if (req.method === "GET" && path === "/api/figure-preview") {
             const figure = [...site.ctx.figures.values()].find(
@@ -4804,24 +5090,6 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
         }
         // edit-mode-only APIs (used by edit-client.ts). handle() strips the query from path, so
         // the query is read from req.url via URL/URLSearchParams.
-        if (mode === "edit" && req.method === "GET" && path === "/api/nav") {
-            const params = new URL(req.url ?? "/", "http://localhost").searchParams;
-            sendJson(res, 200, {
-                siteTitle: site.title,
-                siteIcon: site.icon ? svgDataUri(site.icon) : undefined,
-                rootJump: docHref(site.entries, site.entries.find((entry) => entry.root)?.id ?? ""),
-                translatedLanguages: site.entries.find(
-                    (entry) => entry.id === requestUrl.searchParams.get("current"),
-                )?.translatedLanguages,
-                html: navGroupsHtml(
-                    mode,
-                    site,
-                    params.get("current") || undefined,
-                    params.get("res") ?? undefined,
-                ),
-            });
-            return;
-        }
         if (mode === "edit" && req.method === "GET" && path === "/api/page") {
             const params = new URL(req.url ?? "/", "http://localhost").searchParams;
             const { status, body } = pageDataResponse(site, params.get("route"));
@@ -4844,7 +5112,8 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
         }
         if (
             (mode === "edit" &&
-                (path === "/_extensions" ||
+                (path === "/_manifest" ||
+                    path === "/_extensions" ||
                     path === "/_subformats" ||
                     path === "/_git" ||
                     path === "/_library" ||
@@ -4856,7 +5125,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
         ) {
             const rest = path.startsWith("/_library")
                 ? path.slice(1)
-                : ["/_git", "/_extensions", "/_subformats"].includes(path)
+                : ["/_manifest", "/_git", "/_extensions", "/_subformats"].includes(path)
                   ? path.slice(1)
                   : requestUrl.pathname.slice("/_files".length).replace(/^\/|\/$/g, "");
             const page = resourcesMain(site, rest);
@@ -4885,7 +5154,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
                         ...boot,
                         resource: {
                             path,
-                            title: pageTitle(mode, page.title, site.title),
+                            title: pageTitle(mode, page.title, site),
                             html: docLinks(site, page.main),
                             sourceFile: page.sourceFile,
                         },
@@ -4936,7 +5205,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
                         ...boot,
                         resource: {
                             path,
-                            title: pageTitle(mode, opts.title, site.title),
+                            title: pageTitle(mode, opts.title, site),
                             html: entryMain(site, doc),
                             versionManifest: doc.origin ?? "",
                         },

@@ -11,7 +11,7 @@ import {
 /** `session` is whatever the host attached to the connection (who is asking, how far to trust). */
 export type WorkspaceOps<Session> = Record<
     string,
-    (args: Record<string, unknown>, session: Session) => unknown
+    (args: Record<string, unknown>, session: Session, signal?: AbortSignal) => unknown
 >;
 
 export interface WorkspaceServer<Session> {
@@ -33,13 +33,21 @@ export const createWorkspaceServer = <Session>(
     return {
         connect(port, session) {
             ports.add(port);
+            const requests = new Map<number, AbortController>();
             port.receive((message) => {
                 if (!ports.has(port) || typeof message !== "object" || message === null) return;
-                const { id, op, args } = message as Record<string, unknown>;
+                const { id, op, args, cancel } = message as Record<string, unknown>;
+                if (typeof cancel === "number") {
+                    requests.get(cancel)?.abort();
+                    return;
+                }
                 // Without an id there is nothing to answer.
                 if (typeof id !== "number") return;
+                const controller = new AbortController();
+                requests.set(id, controller);
                 const reply = (response: WorkspaceResponse) => {
-                    if (ports.has(port)) port.send(response);
+                    requests.delete(id);
+                    if (ports.has(port) && !controller.signal.aborted) port.send(response);
                 };
                 void (async () => {
                     if (op === "hello") return hello;
@@ -50,6 +58,7 @@ export const createWorkspaceServer = <Session>(
                             ? (args as Record<string, unknown>)
                             : {},
                         session,
+                        controller.signal,
                     );
                 })().then(
                     (value) => reply({ id, value }),
@@ -62,6 +71,8 @@ export const createWorkspaceServer = <Session>(
             });
             return () => {
                 ports.delete(port);
+                for (const controller of requests.values()) controller.abort();
+                requests.clear();
             };
         },
         broadcast(event, data) {

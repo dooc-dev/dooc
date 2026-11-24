@@ -2,8 +2,9 @@ import type { Root } from "mdast";
 import { bundledLanguagesInfo } from "shiki/langs";
 import { visit } from "unist-util-visit";
 import { parseContentSource } from "../../engine/src/compiler/code-blocks.js";
+import { rebaseFileLinks } from "../../engine/src/compiler/files.js";
 import { basename, extname } from "../../engine/src/compiler/host.js";
-import { readManifest } from "../../engine/src/compiler/manifest.js";
+import { readManifest, sourceOrigin } from "../../engine/src/compiler/manifest.js";
 import {
     type LoadedSubformat,
     loadSubformat,
@@ -225,7 +226,7 @@ export const resourceIndex = (
                 });
                 validateTerms(raw, source);
             } else {
-                const tree = parseMdast(raw);
+                const tree = parseMdast(rebaseFileLinks(raw, sourceOrigin(manifest, file)));
                 scan(tree, file);
                 for (const ref of subformatReferences(tree)) {
                     if (!formats.has(fileExtension(ref.file))) continue;
@@ -248,14 +249,26 @@ export const resourceIndex = (
                 : [],
         ),
     );
-    const embedded = new Set(result.codeblocks.map((item) => item.reference?.file));
-    for (const file of paths) {
+    const explicit = new Set([
+        ...(manifest.libraryFiles ?? []),
+        ...(manifest.includedLibraryFiles ?? []),
+    ]);
+    const indexed = new Set(
+        result.codeblocks.flatMap((item) => [item.reference?.file, item.source.file]),
+    );
+    for (const file of new Set([...paths, ...explicit])) {
         const format = fileExtension(file);
-        if (!listed.has(format) || embedded.has(file)) continue;
+        if (
+            (!listed.has(format) && !explicit.has(file)) ||
+            indexed.has(file) ||
+            (paths.has(file) && /\.md$/i.test(file))
+        )
+            continue;
         try {
+            if (!paths.has(file)) throw new Error("File is not available in the workspace");
             result.codeblocks.push({
-                language: format,
-                format,
+                language: format || "text",
+                format: codeFormat(format || "text"),
                 caption: file,
                 content: readTextfile(root, file),
                 source: { file, line: 1 },

@@ -611,6 +611,39 @@ describe("source-based CLI", () => {
         expect(readdirSync(root)).toEqual(["dooc.yaml"]);
     });
 
+    it("passes split, compression and byte budgets through to the shared build", async () => {
+        const root = mkdtempSync(join(tmpdir(), "dooc-cli-split-"));
+        roots.push(root);
+        writeFileSync(join(root, "dooc.yaml"), "docs: []\n");
+        const files = new Map([["dooc-assets/page.html", Buffer.from("Page")]]);
+        const buildBundle = vi.fn().mockResolvedValue({ data: "Entry", docs: 1, files, bytes: 9 });
+        vi.doMock("./build.js", () => ({ buildBundle }));
+        const result = cli(
+            "build",
+            join(root, "dooc.yaml"),
+            "--split",
+            "--compress",
+            "--max-file-size",
+            "25MiB",
+            "--max-build-size",
+            "100MB",
+            "--warnings-as-errors",
+        );
+        await result.run();
+        expect(buildBundle).toHaveBeenCalledWith(
+            root,
+            expect.objectContaining({
+                split: true,
+                compress: true,
+                maxFileSize: "25MiB",
+                maxBuildSize: "100MB",
+                warningsAsErrors: true,
+            }),
+        );
+        expect(readFileSync(join(root, "build/dooc-assets/page.html"), "utf8")).toBe("Page");
+        expect(result.stdout).toHaveBeenCalledWith(expect.stringContaining("2 files, 9 bytes"));
+    });
+
     it.each([
         ["build", [], "build/index.html", { format: "html", urlPreview: "network" }],
         [

@@ -13,6 +13,47 @@ import { pageWorkspace } from "../../workspace/src/client.js";
 import type { WorkspaceHello } from "../../workspace/src/protocol.js";
 import { updateNav } from "./nav-update.js";
 
+/** Keep the reader chrome, open branches and event handlers when only the page changes. */
+export const updateReaderPage = (next: Document): boolean => {
+    const main = document.querySelector("main");
+    const nextMain = next.querySelector("main");
+    if (!main || !nextMain) return false;
+    const owner = window as unknown as {
+        __docsHmr?: Partial<HmrBridge>;
+        __docsNavRestore?: () => void;
+    };
+    document.title = next.title;
+    for (const icon of document.head.querySelectorAll("link[data-document-icon]")) icon.remove();
+    document.head.append(...next.head.querySelectorAll("link[data-document-icon]"));
+    const title = document.getElementById("site-title");
+    const nextTitle = next.getElementById("site-title");
+    if (title && nextTitle) {
+        title.textContent = nextTitle.textContent;
+        title.title = nextTitle.title;
+        for (const name of ["href", "class", "aria-current", "data-jump-url"]) {
+            const value = nextTitle.getAttribute(name);
+            if (value === null) title.removeAttribute(name);
+            else title.setAttribute(name, value);
+        }
+    }
+    const nextLogo = next.getElementById("site-icon-slot");
+    if (nextLogo) document.getElementById("site-icon-slot")?.replaceWith(nextLogo);
+    const updatePreview = owner.__docsHmr?.updatePreview;
+    if (updatePreview) updatePreview(main, nextMain);
+    else main.innerHTML = nextMain.innerHTML;
+    const nav = document.getElementById("nav-groups");
+    const nextNav = next.getElementById("nav-groups");
+    if (nav && nextNav) {
+        updateNav(nav, nextNav.innerHTML);
+        owner.__docsNavRestore?.();
+    }
+    for (const name of ["documentManifest", "documentPath", "contentLanguage"])
+        document.body.dataset[name] = next.body.dataset[name] ?? "";
+    document.dispatchEvent(new Event("dooc:document-changed"));
+    document.dispatchEvent(new Event("docs:page-shown"));
+    return true;
+};
+
 export const mountHmr = (mode: "preview" | "edit"): void => {
     let dirty = false;
     let pendingReload = false;
@@ -44,18 +85,26 @@ export const mountHmr = (mode: "preview" | "edit"): void => {
         },
     });
 
+    let revision = 0;
     const swap = async (): Promise<void> => {
+        const request = ++revision;
         const requestedWorkspace = workspaceId();
+        const requestedUrl = location.href;
         let next: Document;
         try {
             const response = await workspaceFetch(
-                location.href,
+                requestedUrl,
                 {
                     headers: { "cache-control": "no-cache" },
                 },
                 requestedWorkspace,
             );
-            if (workspaceId() !== requestedWorkspace) return;
+            if (
+                request !== revision ||
+                workspaceId() !== requestedWorkspace ||
+                location.href !== requestedUrl
+            )
+                return;
             if (!response.ok) {
                 reload();
                 return;
@@ -65,41 +114,26 @@ export const mountHmr = (mode: "preview" | "edit"): void => {
             // The server is restarting; the boot id on reconnect takes over.
             return;
         }
-        if (workspaceId() !== requestedWorkspace) return;
+        if (
+            request !== revision ||
+            workspaceId() !== requestedWorkspace ||
+            location.href !== requestedUrl
+        )
+            return;
         const main = document.querySelector("main");
-        const nextMain = next.querySelector("main");
-        if (!main || !nextMain) {
+        if (main?.getAttribute("aria-busy") === "true") return;
+        const y = main?.scrollTop ?? 0;
+        if (!updateReaderPage(next)) {
             reload();
             return;
         }
-        const y = main.scrollTop;
-        document.title = next.title;
-        const title = document.getElementById("site-title");
-        const nextTitle = next.getElementById("site-title");
-        if (title && nextTitle) {
-            title.textContent = nextTitle.textContent;
-            title.title = nextTitle.title;
-            for (const name of ["href", "class", "aria-current", "data-jump-url"]) {
-                const value = nextTitle.getAttribute(name);
-                if (value === null) title.removeAttribute(name);
-                else title.setAttribute(name, value);
-            }
-        }
-        const nextLogo = next.getElementById("site-icon");
-        if (nextLogo) document.getElementById("site-icon")?.replaceWith(nextLogo);
-        const updatePreview = owner.__docsHmr?.updatePreview;
-        if (updatePreview) updatePreview(main, nextMain);
-        else main.innerHTML = nextMain.innerHTML;
-        const nav = document.getElementById("nav-groups");
-        const nextNav = next.getElementById("nav-groups");
-        if (nav && nextNav) {
-            updateNav(nav, nextNav.innerHTML);
-            owner.__docsNavRestore?.();
-        }
-        main.scrollTo(0, y);
+        main?.scrollTo(0, y);
     };
 
     const observed = new Set<string>();
+    document.addEventListener("dooc:document-changed", () => {
+        revision++;
+    });
     const observe = () => {
         const id = workspaceId();
         if (observed.has(id)) return;
@@ -119,6 +153,10 @@ export const mountHmr = (mode: "preview" | "edit"): void => {
         workspace.on("change", (data) => {
             if (workspaceId() !== id) return;
             const { kind, files } = data as { kind: HmrKind; files: string[] };
+            if (kind === "content")
+                document.dispatchEvent(
+                    new CustomEvent("dooc:content-changed", { detail: { workspace: id, files } }),
+                );
             if (kind !== "content") reload();
             else if (mode === "preview") void swap();
             else if (owner.__docsHmr?.onContent) owner.__docsHmr.onContent(files);

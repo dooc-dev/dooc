@@ -14,7 +14,30 @@ const extract = (start: string, end: string): string => {
 };
 // Exercise the actual controller with delayed responses without booting the entire editor DOM.
 const run = (code: string, globals: Record<string, unknown>) => {
-    const context = createContext({ clientPath, workspacePath, ...globals });
+    const context = createContext({
+        clientPath,
+        workspacePath,
+        AbortController,
+        URL,
+        navigationController: undefined,
+        resourceRevision: 0,
+        pendingNavigationPath: undefined,
+        resourceView: undefined,
+        hasManifestDraft: () => false,
+        paneBusy: false,
+        paneIdle: Promise.resolve(),
+        boot: { path: "/a", defaultLang: "eng" },
+        currentPath: "/a",
+        currentUrl: (hash = "") => (context.resourceView?.path ?? context.currentPath) + hash,
+        localeUrl: (path: string) => path,
+        location: { pathname: "/a", search: "", hash: "", href: "http://localhost/a" },
+        isResourcePath: () => false,
+        focusNavTree: vi.fn(),
+        document: { getElementById: () => null },
+        workspace: { setAttribute: vi.fn(), removeAttribute: vi.fn() },
+        updateNavLocation: vi.fn(),
+        ...globals,
+    });
     runInContext(
         transpileModule(code, { compilerOptions: { target: ScriptTarget.ES2022 } }).outputText,
         context,
@@ -470,6 +493,63 @@ it.each([
 });
 
 it.each([
+    false,
+    true,
+])("lets a newer navigation overtake a slow page (resource: %s)", async (resource) => {
+    const responses = new Map<string, ReturnType<typeof deferred<unknown>>>();
+    const shown = vi.fn();
+    const context = run(
+        [
+            extract("const openDoc =", "\nconst scrollToAnchor"),
+            extract("const openResource =", "\nconst activatePane"),
+            extract("let navigationTask:", "\n(window as unknown as { __docsNavigate"),
+            "globalThis.run = navigateTo;",
+        ].join("\n"),
+        {
+            boot: { path: "/a", defaultLang: "eng" },
+            view: { state: { doc: {} } },
+            paneBusy: false,
+            activePane: { workspace: "default" },
+            saveTask: undefined,
+            readFm: () => ({}),
+            isResourcePath: () => resource,
+            localeUrl: (value: string) => value,
+            resourceUrl: (value: string) => value,
+            currentPath: "/a",
+            currentUrl: () => "/fast",
+            confirmFileEditorLeave: async () => true,
+            confirmLeave: async () => true,
+            closeResource: vi.fn(),
+            showResource: shown,
+            swapDoc: shown,
+            history: { pushState: vi.fn() },
+            scrollToAnchor: vi.fn(),
+            workspaceFetch: (path: string) => {
+                const response = deferred<unknown>();
+                responses.set(path, response);
+                return response.promise;
+            },
+            localeFetch: (path: string) => context.workspaceFetch(path),
+        },
+    );
+    const slow = context.run("/slow");
+    await vi.waitFor(() => expect(responses.size).toBe(1));
+    const fast = context.run("/fast");
+    await vi.waitFor(() => expect(responses.size).toBe(2));
+    responses
+        .get("/api/page?route=%2Ffast")
+        ?.resolve({ ok: true, json: async () => ({ resource, html: "Fast" }) });
+    await fast;
+    responses
+        .get("/api/page?route=%2Fslow")
+        ?.resolve({ ok: true, json: async () => ({ resource, html: "Slow" }) });
+    await slow;
+    expect(shown).toHaveBeenCalledOnce();
+    expect(shown).toHaveBeenCalledWith({ resource, html: "Fast" });
+    expect(context.history.pushState).toHaveBeenCalledOnce();
+});
+
+it.each([
     "document",
     "frontmatter",
     "pane",
@@ -562,7 +642,8 @@ it.each([
             confirmLeave: async () => true,
             resourceUrl: (value: string) => value,
             localeUrl: (value: string) => value,
-            currentPath: "/b",
+            currentPath: "/a",
+            currentUrl: () => "/b",
             history: { pushState: vi.fn() },
             scrollToAnchor: vi.fn(),
         },
@@ -594,10 +675,11 @@ it.each([
 ])("protects a form when history returns to the current document (discard: %s)", async (discard) => {
     let popstate!: () => void;
     const closeResource = vi.fn();
-    const pushState = vi.fn();
+    const replaceState = vi.fn();
     const context = run(
         [
             extract("const confirmFileEditorLeave =", "\nconst openFileEditor ="),
+            extract("let navigationTask:", "\n(window as unknown as { __docsNavigate"),
             extract('window.addEventListener("popstate"', "\nsyncPane();"),
         ].join("\n"),
         {
@@ -613,7 +695,7 @@ it.each([
             t: (value: string) => value,
             closeResource,
             scrollToAnchor: vi.fn(),
-            history: { pushState },
+            history: { replaceState },
         },
     );
     context.fileEditor = {
@@ -624,9 +706,48 @@ it.each([
         },
     };
     popstate();
-    await vi.waitFor(() => expect(discard ? closeResource : pushState).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(discard ? closeResource : replaceState).toHaveBeenCalledOnce());
     expect(closeResource).toHaveBeenCalledTimes(discard ? 1 : 0);
     expect(Boolean(context.fileEditor)).toBe(!discard);
     if (!discard)
-        expect(pushState).toHaveBeenCalledWith(null, "", "/_subformats?lang=eng&editor=a");
+        expect(replaceState).toHaveBeenCalledWith(null, "", "/_subformats?lang=eng&editor=a");
+});
+
+it("retains earlier changed files when a newer notification overtakes an update", async () => {
+    const older = deferred<unknown>();
+    const reflected = vi.fn();
+    const fetch = vi
+        .fn()
+        .mockReturnValueOnce(older.promise)
+        .mockResolvedValue({ ok: true, json: async () => ({ raw: "Newest body" }) });
+    const context = run(
+        `${extract("let contentRevision =", "\n// mountHmr (below)")}
+        globalThis.notify = (files) => { contentRevision++; pendingContentFiles.push(...files); flushContent(); };
+        globalThis.pendingFiles = () => pendingContentFiles;`,
+        {
+            document: { querySelector: () => null },
+            boot: { file: "home.md" },
+            textfiles: { reloadChanged: async () => {} },
+            saveTask: undefined,
+            dirty: false,
+            baseRaw: "Original body",
+            localeFetch: fetch,
+            isManifestFile: (file: string) => file === "dooc.yaml",
+            reflectExternal: reflected,
+            render: async () => {},
+            refreshNav: async () => {},
+            resourceView: undefined,
+            debounce: (_ms: number, callback: () => void) => callback,
+        },
+    );
+    context.notify(["home.md"]);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    context.notify(["image.svg"]);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() =>
+        expect(reflected).toHaveBeenCalledWith({ raw: "Newest body" }, "Applied external changes"),
+    );
+    older.resolve({ ok: true, json: async () => ({ raw: "Older body" }) });
+    await vi.waitFor(() => expect(context.pendingFiles()).toHaveLength(0));
+    expect(reflected).toHaveBeenCalledOnce();
 });

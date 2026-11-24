@@ -23,6 +23,7 @@ it("emits only selected assets and chooses a separate read-only Worker", async (
         worker: false,
     });
     expect(reader.has("assets/edit.js")).toBe(false);
+    expect(reader.has("assets/manifest.js")).toBe(false);
     expect(reader.has("assets/workspace-worker.js")).toBe(false);
     expect(reader.has("assets/client.js")).toBe(true);
     expect(JSON.parse(reader.get("dooc-client.json")?.toString() ?? "{}")).toEqual({
@@ -33,6 +34,7 @@ it("emits only selected assets and chooses a separate read-only Worker", async (
     });
     const editor = await clientAssets();
     expect(editor.has("assets/edit.js")).toBe(true);
+    expect(editor.has("assets/manifest.js")).toBe(true);
     expect(editor.get("assets/workspace-worker.js")?.toString()).toBe("workspace-worker.global.js");
     expect(editor.has("assets/mcp.js")).toBe(false);
     const mcp = await clientAssets(undefined, {

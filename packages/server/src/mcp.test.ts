@@ -334,6 +334,32 @@ describe("mcp", () => {
         expect(readFileSync(result.path)).toEqual(data);
     });
 
+    it("returns every split output and enforces byte budgets through MCP", async () => {
+        const root = fixture(false);
+        const tools = createTools(root);
+        const result = await call(tools, "build", {
+            format: "html",
+            split: true,
+            max_file_size: "25MiB",
+            max_build_size: "100MiB",
+        });
+        expect(result.isError).toBe(false);
+        expect(result.files.length).toBeGreaterThan(3);
+        const assets = result.files as { file: string; bytes: number }[];
+        expect(result.bytes).toBe(
+            readFileSync(result.path).length +
+                assets.reduce(
+                    (sum, file) => sum + readFileSync(join(root, "build", file.file)).length,
+                    0,
+                ),
+        );
+        const before = readFileSync(result.path);
+        expect(
+            (await call(tools, "build", { format: "html", max_file_size: "1KiB" })).isError,
+        ).toBe(true);
+        expect(readFileSync(result.path)).toEqual(before);
+    });
+
     it("connects local Git and injected origin actions while enforcing freshness", async () => {
         const root = fixture(false);
         const git = (...args: string[]) =>
@@ -450,7 +476,11 @@ describe("mcp", () => {
         const init = (await handleRpc(tools, { jsonrpc: "2.0", id: 0, method: "initialize" })) as {
             result: { capabilities: object };
         };
-        expect(init.result.capabilities).toEqual({ tools: {} });
+        expect(init.result.capabilities).toEqual({
+            tools: {},
+            resources: {},
+            extensions: { "io.modelcontextprotocol/skills": {} },
+        });
         expect(init.result).toMatchObject({ serverInfo: { name: "dooc" } });
         const list = (await handleRpc(tools, { jsonrpc: "2.0", id: 1, method: "tools/list" })) as {
             result: { tools: { name: string }[] };

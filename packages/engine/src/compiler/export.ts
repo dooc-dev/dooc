@@ -24,7 +24,8 @@ import {
 } from "./host.js";
 import { assertNotIgnored, ignoredFiles } from "./ignored-files.js";
 import { siteContentLanguages, translationFile } from "./locales.js";
-import { manifestFile, readManifest } from "./manifest.js";
+import { manifestFile, readManifest, sourceOrigin } from "./manifest.js";
+import { readProjectSkills } from "./skills.js";
 import { readTextfile, textfilePath } from "./textfile.js";
 import { siteThemes, themeVariants } from "./theme-variants.js";
 import { type ZipEntry, zip } from "./zip.js";
@@ -36,9 +37,19 @@ export const exportEntries = (root: string, file = manifestFile(root)): ZipEntry
     const themes = siteThemes(root, manifest);
     const entries = new Map<string, ZipEntry>();
     const origins = new Map<string, string>();
+    const skillFiles = new Map<string, Buffer>();
+    for (const source of [file, ...(manifest.includedManifests ?? [])])
+        for (const skill of readProjectSkills(root, source))
+            for (const [name, data] of skill.files)
+                skillFiles.set(posix.join(posix.dirname(skill.file), name), data);
     const add = (file: string, origin?: string): void => {
         file = file.replace(/^(\.\/)+/, "");
         if (entries.has(file)) return;
+        const skillData = skillFiles.get(file);
+        if (skillData) {
+            entries.set(file, { name: file, data: skillData });
+            return;
+        }
         const settingsFile = [PROJECT_FONTS_DIR, CODE_LANGUAGES_DIR, ".dooc/editor-tools"].some(
             (dir) => file.startsWith(`${dir}/`) && localFile(file.slice(dir.length + 1)),
         );
@@ -61,6 +72,8 @@ export const exportEntries = (root: string, file = manifestFile(root)): ZipEntry
     for (const file of manifest.includedManifests ?? []) add(file);
     for (const file of manifest.includedAssets ?? []) add(file);
     if (manifest.licence) add(manifest.licence);
+    for (const file of [...(manifest.libraryFiles ?? []), ...(manifest.includedLibraryFiles ?? [])])
+        add(file, sourceOrigin(manifest, file));
     optional(CONFIG_FILE);
     for (const node of flattenTree(manifest.tree)) {
         const { id, origin } = node;
@@ -130,6 +143,7 @@ export const exportEntries = (root: string, file = manifestFile(root)): ZipEntry
     }
     // Map iteration visits dependencies appended while walking the graph, once per path.
     for (const entry of entries.values()) {
+        if (skillFiles.has(entry.name)) continue;
         const ext = fileExtension(entry.name);
         if (["md", "callouth"].includes(ext)) {
             const origin = origins.get(entry.name);
@@ -153,6 +167,7 @@ export const exportEntries = (root: string, file = manifestFile(root)): ZipEntry
                 return url;
             });
     }
+    for (const [name, data] of skillFiles) entries.set(name, { name, data });
     return [...entries.values()];
 };
 

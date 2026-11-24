@@ -466,13 +466,16 @@ export const nodeWorkspaceOperations = async (
         };
     }
     const queues = new Map<string, Promise<unknown>>();
+    const reads = new Map<string, Set<Promise<unknown>>>();
+    const gitReads = new Map<string, Promise<unknown>>();
     const serial = Object.fromEntries(
         Object.entries(ops).map(([name, operation]) => [
             name,
-            (input: Record<string, unknown>, session: Session) => {
+            (input: Record<string, unknown>, session: Session, signal?: AbortSignal) => {
                 if (readOnly || session.readOnly) assertReadOnlyOperation(name, input);
                 const id = typeof input.workspace === "string" ? input.workspace : "main";
                 const run = async () => {
+                    signal?.throwIfAborted();
                     let target = entry(input);
                     if (
                         readOnly &&
@@ -500,13 +503,40 @@ export const nodeWorkspaceOperations = async (
                         if (name !== "http" || input.method !== "GET")
                             assertReadOnlyOperation(name, input, !readOnly);
                     }
-                    return operation({ ...input, workspace: target.description.id }, session);
+                    signal?.throwIfAborted();
+                    return operation(
+                        { ...input, workspace: target.description.id },
+                        session,
+                        signal,
+                    );
                 };
-                const next = (queues.get(id) ?? Promise.resolve()).then(run, run);
-                queues.set(
-                    id,
-                    next.catch(() => {}),
-                );
+                const reading =
+                    (name === "http" && input.method === "GET") ||
+                    (name === "files" && ["read", "complete"].includes(String(input.action))) ||
+                    (name === "git" && ["read", "branches", "diff"].includes(String(input.action)));
+                const active = reads.get(id) ?? new Set<Promise<unknown>>();
+                reads.set(id, active);
+                // Reads share a snapshot between writes; slow remote Git reads do not hold up navigation.
+                const before = reading
+                    ? [queues.get(id), ...(name === "git" ? [gitReads.get(id)] : [])]
+                    : [queues.get(id), ...active];
+                const next = Promise.allSettled(before).then(run);
+                if (reading) {
+                    active.add(next);
+                    void next.then(
+                        () => active.delete(next),
+                        () => active.delete(next),
+                    );
+                    if (name === "git")
+                        gitReads.set(
+                            id,
+                            next.catch(() => {}),
+                        );
+                } else
+                    queues.set(
+                        id,
+                        next.catch(() => {}),
+                    );
                 return next;
             },
         ]),

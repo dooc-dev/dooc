@@ -2,6 +2,20 @@
 export const updateNav = (root: HTMLElement, html: string): void => {
     const template = root.ownerDocument.createElement("template");
     template.innerHTML = html;
+    // Selection runs before the link observer, so mount new routes synchronously.
+    for (const link of template.content.querySelectorAll<HTMLAnchorElement>("a[href]")) {
+        const href = link.getAttribute("href") ?? "";
+        if (
+            !globalThis.__doocClientBase ||
+            !href.startsWith("/") ||
+            href.startsWith("//") ||
+            href === link.dataset.doocClientHref
+        )
+            continue;
+        const mounted = `${globalThis.__doocClientBase ?? ""}${href}`;
+        link.setAttribute("href", mounted);
+        link.dataset.doocClientHref = mounted;
+    }
     const key = (node: Node): string | undefined => {
         if (!(node instanceof HTMLElement)) return;
         if (node.dataset.docId) return `doc:${node.dataset.docId}`;

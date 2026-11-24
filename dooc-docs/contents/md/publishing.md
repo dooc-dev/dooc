@@ -25,6 +25,12 @@ dooc build
 
 `build/` holds only the reading page, so that folder can be served as it is; `dooc zip` writes archives to `dist/` instead. The build commands create files; they do not deploy a site. Use [CI/CD](contents/md/ci.md) to repeat the validation and artifact steps in a pipeline.
 
+## Browser tab identity
+
+Reader applications and published HTML use the root `document.title` as the browser tab title. Opening a child page, a file preview, or a hash route keeps that document title. A localized `document.sidebar.title` remains the sidebar label; it does not replace an explicitly authored root title. Older manifests and roots without a title retain the available site or root-page title as a fallback. Editor tab titles continue to identify the active page.
+
+The tab icon and sidebar header share the root `document.icon`. Its light and dark variants follow the browser's appearance in the tab. Favicons embed the compiled SVG, so standalone HTML and static reader assets do not require a separate icon endpoint. Reader navigation and workspace updates replace the tab metadata together with the document. This applies to single-file and split HTML publications and to documents opened by a statically built reader.
+
 ## Choose network and file behavior
 
 `--url_preview` controls remote embeds. Local files are always included.

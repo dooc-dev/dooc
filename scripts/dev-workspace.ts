@@ -65,6 +65,7 @@ export const syncDevWorkspace = (
 
 export const watchDevWorkspace = (
     root: string,
+    testPageUrl?: string,
     initial = devWorkspaceSnapshot(root),
 ): { close: () => void } => {
     let before = initial;
@@ -73,7 +74,7 @@ export const watchDevWorkspace = (
         timer = undefined;
         const generated = mkdtempSync(join(tmpdir(), "dooc-dev-source-"));
         try {
-            createDevWorkspace(generated);
+            createDevWorkspace(generated, testPageUrl);
             const after = devWorkspaceSnapshot(generated);
             const result = syncDevWorkspace(root, before, after);
             before = after;
@@ -107,7 +108,7 @@ export const watchDevWorkspace = (
     };
 };
 
-export const createDevWorkspace = (root: string): void => {
+export const createDevWorkspace = (root: string, testPageUrl?: string): void => {
     rmSync(root, { recursive: true, force: true });
     const documentation = join(repository, "dooc-docs");
     const project = join(repository, "sample/dooc-sample-project");
@@ -151,6 +152,7 @@ export const createDevWorkspace = (root: string): void => {
         document: {
             title: "dooc playground",
             url: "redirect:first",
+            icon: reference.document.icon,
             sidebar: { ...reference.document.sidebar, title: { eng: "dooc playground" } },
             children: [
                 {
@@ -181,6 +183,15 @@ export const createDevWorkspace = (root: string): void => {
                                 document: {
                                     url: "contents/md/history.md",
                                     title: "History playground",
+                                },
+                            },
+                            ...(testPageUrl
+                                ? [{ document: { url: testPageUrl, title: "Iframe test page" } }]
+                                : []),
+                            {
+                                document: {
+                                    url: "https://dooc.dev/",
+                                    title: "dooc.dev",
                                 },
                             },
                         ],

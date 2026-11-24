@@ -28,7 +28,7 @@ A diagram source:
 
 ![](contents/mermaid/review.mermaid)
 
-The site icon takes one file per theme in `document.sidebar.icon`.
+The sidebar header and browser tab use `document.icon`, with one SVG path or separate `light` and `dark` paths.
 
 ![The dooc icon](contents/svg/_site.svg)
 

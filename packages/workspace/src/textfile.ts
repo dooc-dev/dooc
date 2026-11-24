@@ -1,4 +1,5 @@
-import { readManifest } from "../../engine/src/compiler/manifest.js";
+import { parseDocument } from "yaml";
+import { parseManifestText, readManifest } from "../../engine/src/compiler/manifest.js";
 import {
     compileSubformatSchema,
     isSubformatSchemaFile,
@@ -11,6 +12,7 @@ import {
     writeTextfile,
 } from "../../engine/src/compiler/textfile.js";
 import { TextfileUnavailable } from "../../engine/src/compiler/textfile-remote.js";
+import { isManifestFile, migrateDocumentIcon } from "../../engine/src/core/content-metadata.js";
 import type { SchemaContext } from "../../engine/src/core/schema-refs.js";
 import { isRemoteTextfile } from "../../engine/src/core/textfile.js";
 
@@ -55,13 +57,19 @@ export const textfileResponse = async (
                 (input.base !== null && typeof input.base !== "string")
             )
                 return { status: 400, body: { error: "Content and original text are required" } };
-            validateSubformatFile(root, input.file, input.content, domains);
-            if (!writeTextfile(root, input.file, input.content, input.base))
+            let content = input.content;
+            if (isManifestFile(input.file.split("/").at(-1) ?? "")) {
+                const { errors } = parseManifestText(content, input.file);
+                if (errors.length) throw new Error(errors.join("\n"));
+                const document = parseDocument(content);
+                if (migrateDocumentIcon(document)) content = document.toString({ lineWidth: 0 });
+            } else validateSubformatFile(root, input.file, content, domains);
+            if (!writeTextfile(root, input.file, content, input.base))
                 return {
                     status: 409,
                     body: { error: "File changed externally. Reload it before saving." },
                 };
-            return { status: 200, body: { content: input.content } };
+            return { status: 200, body: { content } };
         }
         const configs = isRemoteTextfile(input.file) ? [] : (readManifest(root).subformats ?? []);
         const extension = input.file.split(".").at(-1);

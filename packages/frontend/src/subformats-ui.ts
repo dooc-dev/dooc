@@ -1540,6 +1540,9 @@ const render = (
             ) as HTMLElement;
             const meta = card.querySelector<HTMLElement>(".subformat-card-meta") as HTMLElement;
             if (view.view === "list") {
+                const file = card.querySelector(".subformat-card-file") as HTMLElement;
+                file.textContent = record.file;
+                details.prepend(file);
                 meta.tabIndex = 0;
                 meta.setAttribute("role", "region");
                 meta.setAttribute("aria-label", `${t("Parameters")}: ${title}`);

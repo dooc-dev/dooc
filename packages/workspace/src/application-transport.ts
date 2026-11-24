@@ -10,6 +10,7 @@ export const workspaceHttp =
         if (typeof input !== "string" || /^[a-z]+:/i.test(input))
             url.pathname = workspacePath(url.pathname);
         const request = new Request(url, init);
+        request.signal.throwIfAborted();
         const body =
             request.method === "GET" || request.method === "HEAD" ? "" : await request.text();
         for (let redirect = 0; redirect < 6; redirect++) {
@@ -17,12 +18,17 @@ export const workspaceHttp =
                 status: number;
                 headers: Record<string, string>;
                 body: string | number[];
-            }>("http", {
-                url: url.pathname + url.search,
-                method: request.method,
-                headers: Object.fromEntries(request.headers),
-                body,
-            });
+            }>(
+                "http",
+                {
+                    url: url.pathname + url.search,
+                    method: request.method,
+                    headers: Object.fromEntries(request.headers),
+                    body,
+                },
+                request.signal,
+            );
+            request.signal.throwIfAborted();
             const next = result.headers.location;
             if (next && [301, 302, 303, 307, 308].includes(result.status)) {
                 url = new URL(next, url);

@@ -85,6 +85,7 @@ import { mountHmr } from "./hmr-client.js";
 import { applyUiLanguage, mountUiLanguage, t } from "./i18n.js";
 import { mountIdentity } from "./identity.js";
 import { mountSelectPickers } from "./language-picker.js";
+import { hasManifestDraft, mountManifest } from "./manifest-ui.js";
 import { focusNavTree } from "./nav-focus.js";
 import { updateNav } from "./nav-update.js";
 import { mountPlugins } from "./plugins-ui.js";
@@ -421,6 +422,7 @@ const setDirty = (v: boolean): void => {
     setSaveState(v ? (autosaveEl.checked ? "saving" : "pending") : "saved");
     hmr()?.setDirty?.(
         v ||
+            hasManifestDraft() ||
             hasSubformatDraft() ||
             [...textfileWorkspaces.values()].some((files) => files.hasUnsavedChanges()) ||
             panes.some((pane) =>
@@ -432,6 +434,7 @@ const setDirty = (v: boolean): void => {
             ),
     );
 };
+document.addEventListener("docs:manifest-draft", () => setDirty(dirty));
 let corrOn = false;
 let ranges: Corr[] = [];
 let lastBlockLines: number[] = boot.blockLines ?? [];
@@ -1115,6 +1118,7 @@ const post = async (url: string): Promise<DraftResponse> => {
 };
 
 // Keep the active page, its live title and the ancestor breadcrumb in sync.
+let pendingNavigationPath: string | undefined;
 const updateNavLocation = (): void => {
     const header = $("site-title");
     if (!header.querySelector("form") && header.textContent !== (siteTitle ?? "dooc"))
@@ -1136,11 +1140,13 @@ const updateNavLocation = (): void => {
         resourceView?.title ??
         (docTitle === siteTitle ? docTitle : `${docTitle} — ${siteTitle ?? "dooc editor"}`);
     for (const link of document.querySelectorAll<HTMLAnchorElement>(
-        "#nav-files a, #nav-git a, #nav-library a, #nav-subformats a, #nav-extensions a",
+        "#nav-manifest a, #nav-files a, #nav-git a, #nav-library a, #nav-subformats a, #nav-extensions a",
     )) {
         const current =
             resourceView !== undefined &&
-            (["/_git", "/_extensions", "/_subformats"].includes(workspacePath(link.pathname))
+            (["/_manifest", "/_git", "/_extensions", "/_subformats"].includes(
+                workspacePath(link.pathname),
+            )
                 ? resourceView.path === workspacePath(link.pathname)
                 : workspacePath(link.pathname) === "/_library"
                   ? resourceView.path.startsWith("/_library") ||
@@ -1165,8 +1171,11 @@ const updateNavLocation = (): void => {
                 `#nav-groups .nav-item[data-doc-id="${CSS.escape(boot.docId)}"]`,
             );
     const cur = item?.querySelector(":scope > .nav-row > a");
-    for (const a of document.querySelectorAll("#nav-docs .nav-row > a"))
+    for (const a of document.querySelectorAll("#nav-docs .nav-row > a")) {
         a.classList.toggle("cur", a === cur);
+        if (a === cur) a.setAttribute("aria-current", "page");
+        else a.removeAttribute("aria-current");
+    }
     // Reflect the current title (empty -> id, like the server's docDisplayName).
     const label = cur?.querySelector(".nav-label");
     if (cur && label && !resourceView) {
@@ -1180,7 +1189,10 @@ const updateNavLocation = (): void => {
     ) {
         it.classList.add("open");
     }
-    focusNavTree($("nav-groups"));
+    focusNavTree(
+        $("nav-groups"),
+        pendingNavigationPath ? localeUrl(pendingNavigationPath) : undefined,
+    );
 };
 
 const apply = (r: RenderSnapshot, keepLastValid = true): void => {
@@ -1304,7 +1316,9 @@ const render = async (): Promise<RenderSnapshot | undefined> => {
 // untouched if dirty (for our own file).
 
 // Refresh the tree and restore its expanded branches.
+let navRevision = 0;
 const refreshNav = async (): Promise<void> => {
+    const revision = ++navRevision;
     const requestedBoot = boot;
     const requestedResource = resourceView;
     const pageId = [
@@ -1318,13 +1332,19 @@ const refreshNav = async (): Promise<void> => {
         ?.closest<HTMLElement>("[data-doc-id]")?.dataset.docId;
     try {
         const res = await localeFetch(
-            `/api/nav?current=${encodeURIComponent(boot.docId)}${resourceView ? `&res=${encodeURIComponent(resourceView.path.startsWith("/_library") ? resourceView.path.slice(1) : ["/_git", "/_extensions", "/_subformats"].includes(resourceView.path) ? resourceView.path.slice(1) : resourceView.path.slice("/_files".length).replace(/^\/|\/$/g, ""))}` : ""}`,
+            `/api/nav?current=${encodeURIComponent(boot.docId)}${resourceView ? `&res=${encodeURIComponent(resourceView.path.startsWith("/_library") ? resourceView.path.slice(1) : ["/_manifest", "/_git", "/_extensions", "/_subformats"].includes(resourceView.path) ? resourceView.path.slice(1) : resourceView.path.slice("/_files".length).replace(/^\/|\/$/g, ""))}` : ""}`,
         );
         if (!res.ok) {
             return;
         }
         const data = (await res.json()) as NavResponse;
-        if (boot !== requestedBoot || document.querySelector(".nav-rename-form")) return;
+        if (
+            revision !== navRevision ||
+            boot !== requestedBoot ||
+            document.querySelector("#nav-groups .dragging") ||
+            document.querySelector(".nav-rename-form")
+        )
+            return;
         siteTitle = data.siteTitle;
         siteIcon = data.siteIcon;
         boot.siteTitle = data.siteTitle;
@@ -1341,7 +1361,8 @@ const refreshNav = async (): Promise<void> => {
                 );
                 if (link && resourceView.path !== workspacePath(link.pathname)) {
                     resourceView.path = workspacePath(link.pathname);
-                    history.replaceState(null, "", currentUrl(location.hash));
+                    if (!pendingNavigationPath)
+                        history.replaceState(null, "", currentUrl(location.hash));
                 }
             }
             for (const pane of panes) {
@@ -1355,7 +1376,8 @@ const refreshNav = async (): Promise<void> => {
             }
             if (currentPath !== boot.path) {
                 currentPath = boot.path;
-                history.replaceState(null, "", currentUrl(location.hash));
+                if (!pendingNavigationPath)
+                    history.replaceState(null, "", currentUrl(location.hash));
             }
         }
         updateNavLocation();
@@ -1372,20 +1394,22 @@ const refreshNav = async (): Promise<void> => {
 // Watch events use physical paths; the save API keeps the document's stable ID.
 const ownWatchPath = (): string => boot.sourceFile ?? `content/${boot.file}`;
 
+let contentRevision = 0;
 const handleContentChange = async (files: string[]): Promise<void> => {
+    const revision = contentRevision;
     const currentBoot = boot;
     const currentFiles = textfiles;
     if (document.querySelector(".nav-rename-form")) {
-        pendingContentFiles.push(...files);
         return;
     }
     if (saveTask) await saveTask;
-    if (boot !== currentBoot) return;
+    if (revision !== contentRevision || boot !== currentBoot) return;
     await currentFiles.reloadChanged(files);
-    if (boot !== currentBoot) return;
+    if (revision !== contentRevision || boot !== currentBoot) return;
     if (files.some(isManifestFile) || files.some((file) => file.endsWith(".md"))) {
         try {
             const res = await localeFetch(`/api/doc?file=${encodeURIComponent(boot.file)}`);
+            if (revision !== contentRevision || boot !== currentBoot) return;
             if (!res.ok) {
                 setPreviewState("error", String(res.status));
                 setStatus(
@@ -1395,7 +1419,7 @@ const handleContentChange = async (files: string[]): Promise<void> => {
                 return;
             }
             const result = (await res.json()) as DocResponse;
-            if (boot !== currentBoot) return;
+            if (revision !== contentRevision || boot !== currentBoot) return;
             if (result.raw !== baseRaw) {
                 if (dirty) {
                     if (!conflictPending && (await handleConflict(result)) === "local")
@@ -1403,7 +1427,7 @@ const handleContentChange = async (files: string[]): Promise<void> => {
                 } else reflectExternal(result, "Applied external changes");
             }
         } catch (e) {
-            if (boot !== currentBoot) return;
+            if (revision !== contentRevision || boot !== currentBoot) return;
             setPreviewState("error", String(e));
             setStatus(t("Failed to apply external changes: {error}", { error: String(e) }), true);
             return;
@@ -1411,30 +1435,36 @@ const handleContentChange = async (files: string[]): Promise<void> => {
     }
     // Other docs / figures / dooc.yaml: reflect changes to figures, file links and the
     // terms in the main content using the current edits, and swap the nav (list, order).
+    if (revision !== contentRevision || boot !== currentBoot) return;
     await render();
+    if (revision !== contentRevision || boot !== currentBoot) return;
     await refreshNav();
+    if (revision !== contentRevision || boot !== currentBoot) return;
     // Tool pages refresh their own state; remounting interrupts forms, drafts and running actions.
     if (
+        !pendingNavigationPath &&
         resourceView &&
+        !resourceView.element.querySelector("#files-manager") &&
         !fileEditor?.element.matches("form") &&
-        !["/_git", "/_extensions"].includes(resourceView.path)
+        !["/_manifest", "/_git", "/_extensions"].includes(resourceView.path)
     )
         await openResource(resourceView.path);
+    if (revision === contentRevision && boot === currentBoot) pendingContentFiles = [];
 };
 
 // Files from the server are already debounced (60ms, hmr.ts), but several change frames can still
 // arrive in quick succession, so the client also batches them over 120ms into one call.
 let pendingContentFiles: string[] = [];
 const flushContent = debounce(120, () => {
-    const files = pendingContentFiles;
-    pendingContentFiles = [];
-    void handleContentChange(files);
+    const files = [...new Set(pendingContentFiles)];
+    if (files.length) void handleContentChange(files);
 });
 
 // mountHmr (below) merges setDirty into this object, so the order of the two does not matter.
 (window as unknown as { __docsHmr?: HmrBridge }).__docsHmr = {
     ...(hmr() ?? ({} as HmrBridge)),
     onContent: (files: string[]) => {
+        contentRevision++;
         renderRevision++;
         setPreviewState(
             "loading",
@@ -1790,7 +1820,7 @@ const startRename = (): void => {
             return;
         }
         busy = true;
-        paneBusy = true;
+        setPaneBusy(true);
         title.readOnly = input.readOnly = submit.disabled = cancel.disabled = true;
         void (async () => {
             try {
@@ -1832,7 +1862,7 @@ const startRename = (): void => {
                 input.focus();
             } finally {
                 busy = false;
-                paneBusy = false;
+                setPaneBusy(false);
                 title.readOnly = input.readOnly = submit.disabled = cancel.disabled = false;
             }
         })();
@@ -2097,6 +2127,7 @@ document.addEventListener("click", (ev) => {
 
 let leavingPage = false;
 const otherUnsaved = (): boolean =>
+    hasManifestDraft() ||
     hasSubformatDraft() ||
     [...textfileWorkspaces.values()].some((files) => files.hasUnsavedChanges()) ||
     panes.some((pane) =>
@@ -2263,6 +2294,19 @@ const panes: PreviewPane[] = [
 let activePane = panes[0] as PreviewPane;
 let paneSequence = 1;
 let paneBusy = false;
+let paneIdle = Promise.resolve();
+let finishPane: (() => void) | undefined;
+const setPaneBusy = (busy: boolean): void => {
+    paneBusy = busy;
+    if (busy)
+        paneIdle = new Promise((resolve) => {
+            finishPane = resolve;
+        });
+    else {
+        finishPane?.();
+        finishPane = undefined;
+    }
+};
 const stateKey = (value: Boot): string =>
     JSON.stringify([activePane.id, activePane.workspace, value.contentLanguage, value.file]);
 const capturePane = (): void => {
@@ -2490,6 +2534,18 @@ const closeFileEditor = (): void => {
     document.body.classList.remove("textfile-open");
 };
 const confirmFileEditorLeave = async (): Promise<boolean> => {
+    const resource = resourceView;
+    if (resource && hasManifestDraft(resource.element)) {
+        if (
+            !(await confirmDialog(
+                t("You have unsaved changes. Discard them and leave?"),
+                t("Discard changes"),
+                true,
+            ))
+        )
+            return false;
+        if (resource !== resourceView) return false;
+    }
     const editor = fileEditor;
     if (!editor?.element.matches("form")) return true;
     if (
@@ -2819,13 +2875,21 @@ const showResource = (resource: ResourcePage): void => {
         ...resource,
         element,
         dispose:
-            resource.path === "/_git"
-                ? mountGit(element.querySelector<HTMLElement>("#git-manager"), activePane.workspace)
-                : mountFiles(
-                      (file) => void openLibraryFile(file),
-                      element.querySelector<HTMLElement>("#files-manager"),
+            resource.path === "/_manifest"
+                ? mountManifest(
+                      element.querySelector<HTMLElement>("#manifest-manager"),
                       activePane.workspace,
-                  ),
+                  )
+                : resource.path === "/_git"
+                  ? mountGit(
+                        element.querySelector<HTMLElement>("#git-manager"),
+                        activePane.workspace,
+                    )
+                  : mountFiles(
+                        (file) => void openLibraryFile(file),
+                        element.querySelector<HTMLElement>("#files-manager"),
+                        activePane.workspace,
+                    ),
     };
     document.body.dataset.documentManifest = resource.versionManifest ?? boot.origin ?? "";
     document.body.dataset.documentPath = resource.path;
@@ -2840,22 +2904,29 @@ const showResource = (resource: ResourcePage): void => {
     updateNavLocation();
     applyUiLanguage();
 };
-const openResource = async (path: string): Promise<boolean> => {
+let resourceRevision = 0;
+const openResource = async (path: string, signal?: AbortSignal): Promise<boolean | undefined> => {
+    const revision = ++resourceRevision;
     const requestedBoot = boot;
     try {
-        const response = await localeFetch(`/api/page?route=${encodeURIComponent(path)}`);
+        const response = await localeFetch(`/api/page?route=${encodeURIComponent(path)}`, {
+            signal,
+        });
+        if (signal?.aborted || revision !== resourceRevision) return;
         if (!response.ok) return false;
         const data = (await response.json()) as ResourcePage & { resource?: boolean };
+        if (signal?.aborted || revision !== resourceRevision) return;
         if (!data.resource || boot !== requestedBoot) return false;
         showResource(data);
         return true;
     } catch {
+        if (signal?.aborted) return;
         return false;
     }
 };
 const activatePane = async (pane: PreviewPane): Promise<void> => {
     if (!panes.includes(pane) || pane === activePane || paneBusy) return;
-    paneBusy = true;
+    setPaneBusy(true);
     syncWorkspaceSelectors();
     try {
         await saveTask;
@@ -2866,30 +2937,36 @@ const activatePane = async (pane: PreviewPane): Promise<void> => {
         document.dispatchEvent(new Event("dooc:workspace-changed"));
         history.replaceState(null, "", currentUrl());
         void refreshNav();
-        const draft = pane.draft;
-        let fresh: PageResponse | undefined;
-        if (!draft.dirty) {
+    } finally {
+        setPaneBusy(false);
+        syncWorkspaceSelectors();
+    }
+    const requestedBoot = boot;
+    const requestedDoc = view.state.doc;
+    try {
+        if (!dirty) {
             const response = await workspaceFetch(
-                `/api/page?route=${encodeURIComponent(draft.boot.path)}`,
-                {
-                    headers: {
-                        "x-docs-language": draft.boot.contentLanguage ?? draft.boot.defaultLang,
-                    },
-                },
+                `/api/page?route=${encodeURIComponent(boot.path)}`,
+                { headers: { "x-docs-language": boot.contentLanguage ?? boot.defaultLang } },
                 pane.workspace,
             );
-            if (response.ok) fresh = (await response.json()) as PageResponse;
-        }
-        if (fresh && !dirty) {
-            const scrollTop = pane.element.scrollTop;
-            swapDoc(fresh);
-            pane.element.scrollTop = scrollTop;
+            const fresh = response.ok ? ((await response.json()) as PageResponse) : undefined;
+            if (
+                activePane !== pane ||
+                boot !== requestedBoot ||
+                view.state.doc !== requestedDoc ||
+                pendingNavigationPath
+            )
+                return;
+            if (fresh && !dirty) {
+                const scrollTop = pane.element.scrollTop;
+                swapDoc(fresh);
+                pane.element.scrollTop = scrollTop;
+            } else void render();
         } else void render();
     } catch {
-        setStatus(t("Failed to load pane"), true);
-    } finally {
-        paneBusy = false;
-        syncWorkspaceSelectors();
+        if (activePane === pane && boot === requestedBoot && !pendingNavigationPath)
+            setStatus(t("Failed to load pane"), true);
     }
     if (pane.pendingWorkspace && pane === activePane) {
         const id = pane.pendingWorkspace;
@@ -2911,7 +2988,7 @@ const changeWorkspace = async (
         await activatePane(pane);
         if (pane !== activePane || paneBusy) return;
     }
-    paneBusy = true;
+    setPaneBusy(true);
     syncWorkspaceSelectors();
     const previous = pane.workspace;
     try {
@@ -2976,7 +3053,7 @@ const changeWorkspace = async (
             restorePane(pane);
         }
     } finally {
-        paneBusy = false;
+        setPaneBusy(false);
         syncPane();
     }
     if (pane.pendingWorkspace && pane === activePane) {
@@ -3099,7 +3176,7 @@ window.addEventListener("blur", () => {
 
 const changeLanguage = async (language: string): Promise<void> => {
     if (paneBusy || language === boot.contentLanguage) return;
-    paneBusy = true;
+    setPaneBusy(true);
     syncWorkspaceSelectors();
     $<HTMLSelectElement>("fm-lang").disabled = true;
     const buttons = languageMenu.querySelectorAll<HTMLButtonElement>("button");
@@ -3121,7 +3198,7 @@ const changeLanguage = async (language: string): Promise<void> => {
         for (const button of buttons) button.disabled = false;
         $<HTMLSelectElement>("fm-lang").disabled = false;
         updateLanguageControls();
-        paneBusy = false;
+        setPaneBusy(false);
         syncWorkspaceSelectors();
     }
 };
@@ -3147,7 +3224,7 @@ const toggleTranslation = async (language: string): Promise<void> => {
             await activatePane(originalPane);
         }
         if (paneBusy || boot.docId !== docId) return;
-        paneBusy = true;
+        setPaneBusy(true);
         syncWorkspaceSelectors();
         $<HTMLSelectElement>("fm-lang").disabled = true;
         await saveTask;
@@ -3172,13 +3249,13 @@ const toggleTranslation = async (language: string): Promise<void> => {
         setStatus(String(error), true);
     } finally {
         $<HTMLSelectElement>("fm-lang").disabled = false;
-        paneBusy = false;
+        setPaneBusy(false);
         syncWorkspaceSelectors();
     }
 };
 $("split-preview").addEventListener("click", () => {
     if (paneBusy) return;
-    paneBusy = true;
+    setPaneBusy(true);
     syncWorkspaceSelectors();
     void (async () => {
         try {
@@ -3189,7 +3266,9 @@ $("split-preview").addEventListener("click", () => {
                     other &&
                     [...other.drafts.values()].some(
                         (draft) =>
-                            draft.dirty || draft.fileEditor?.element.dataset.dirty === "true",
+                            draft.dirty ||
+                            draft.fileEditor?.element.dataset.dirty === "true" ||
+                            (draft.resource && hasManifestDraft(draft.resource.element)),
                     ) &&
                     !(await confirmDialog(
                         t("Close pane and discard its unsaved changes?"),
@@ -3248,7 +3327,7 @@ $("split-preview").addEventListener("click", () => {
         } catch {
             setStatus(t("Failed to load pane"), true);
         } finally {
-            paneBusy = false;
+            setPaneBusy(false);
             syncWorkspaceSelectors();
         }
     })();
@@ -3312,6 +3391,7 @@ const swapDoc = (data: PageResponse, remember = true): void => {
 const openDoc = async (
     path: string,
     language = boot.contentLanguage ?? boot.defaultLang,
+    signal?: AbortSignal,
 ): Promise<boolean | undefined> => {
     const requestedBoot = boot;
     const requestedDoc = view.state.doc;
@@ -3321,14 +3401,17 @@ const openDoc = async (
             `/api/page?route=${encodeURIComponent(path)}`,
             {
                 headers: { "x-docs-language": language },
+                signal,
             },
             activePane.workspace,
         );
+        if (signal?.aborted) return;
         if (!res.ok) {
             return false;
         }
         const data = (await res.json()) as PageResponse & { redirect?: string };
         if (
+            signal?.aborted ||
             boot !== requestedBoot ||
             view.state.doc !== requestedDoc ||
             JSON.stringify(readFm()) !== requestedFm
@@ -3343,6 +3426,7 @@ const openDoc = async (
         swapDoc(data);
         return true;
     } catch {
+        if (signal?.aborted) return;
         return false;
     }
 };
@@ -3371,6 +3455,7 @@ const isResourcePath = (path: string): boolean =>
                   "[data-subformat-nav] > .nav-row > a",
               ),
           ].some((link) => workspacePath(link.pathname) === path) ||
+          path === "/_manifest" ||
           path === "/_extensions" ||
           path === "/_subformats" ||
           path === "/_git" ||
@@ -3378,31 +3463,96 @@ const isResourcePath = (path: string): boolean =>
           path.startsWith("/_library/") ||
           path === "/_files" ||
           path.startsWith("/_files/");
-let navigationTask: Promise<void> | undefined;
-const navigateTo = (path: string, hash = ""): Promise<void> => {
-    navigationTask ??= (async () => {
-        if (paneBusy) return;
-        if (!(await confirmFileEditorLeave())) return;
-        if (isResourcePath(path) && (await openResource(path))) {
-            history.pushState(null, "", resourceUrl(path + hash));
-            scrollToAnchor(hash);
+let navigationTask: Promise<boolean> | undefined;
+let documentLeaveTask: Promise<boolean> | undefined;
+let navigationController: AbortController | undefined;
+const navigateTo = async (path: string, hash = "", popped?: URL): Promise<void> => {
+    navigationController?.abort();
+    const controller = new AbortController();
+    navigationController = controller;
+    resourceRevision++;
+    const { signal } = controller;
+    pendingNavigationPath = path;
+    focusNavTree(document.getElementById("nav-groups"), localeUrl(path));
+    workspace.setAttribute("aria-busy", "true");
+    let completed = false;
+    const confirmDocument = async (): Promise<boolean> => {
+        await saveTask;
+        if (signal.aborted) return false;
+        documentLeaveTask ??= confirmLeave().finally(() => {
+            documentLeaveTask = undefined;
+        });
+        return (await documentLeaveTask) && !signal.aborted;
+    };
+    const complete = (): void => {
+        completed = true;
+        const url = currentUrl(hash);
+        if (!popped && location.pathname + location.search + location.hash !== url)
+            history.pushState(null, "", url);
+        scrollToAnchor(hash);
+    };
+    try {
+        while (paneBusy && !signal.aborted) await paneIdle;
+        if (signal.aborted) return;
+        const language =
+            popped?.searchParams.get("lang") ?? boot.contentLanguage ?? boot.defaultLang;
+        navigationTask ??= confirmFileEditorLeave().finally(() => {
+            navigationTask = undefined;
+        });
+        if (!(await navigationTask) || signal.aborted) return;
+        if (isResourcePath(path)) {
+            const editor = popped?.searchParams.get("editor");
+            if (
+                (editor && editor !== boot.docId) ||
+                language !== (boot.contentLanguage ?? boot.defaultLang)
+            ) {
+                if (!(await confirmDocument())) return;
+                const link = document.querySelector<HTMLAnchorElement>(
+                    `#nav-docs [data-doc-id="${CSS.escape(editor ?? boot.docId)}"] > .nav-row > a`,
+                );
+                const opened = await openDoc(
+                    link ? workspacePath(link.pathname) : currentPath,
+                    language,
+                    signal,
+                );
+                if (signal.aborted || opened === undefined) return;
+                if (!opened) return;
+            }
+            const opened = await openResource(path, signal);
+            if (signal.aborted || opened === undefined) return;
+            if (opened) {
+                complete();
+                return;
+            }
+        } else if (
+            path === currentPath &&
+            language === (boot.contentLanguage ?? boot.defaultLang)
+        ) {
+            closeResource();
+            complete();
             return;
         }
-        await saveTask;
-        if (!(await confirmLeave())) return;
-        const opened = await openDoc(path);
-        if (opened === undefined) return;
+        if (!(await confirmDocument())) return;
+        const opened = await openDoc(path, language, signal);
+        if (signal.aborted || opened === undefined) return;
         if (opened) {
             closeResource();
-            history.pushState(null, "", localeUrl(currentPath + hash));
-            scrollToAnchor(hash);
+            complete();
             return;
         }
-        await leavePage(localeUrl(path + hash));
-    })().finally(() => {
-        navigationTask = undefined;
-    });
-    return navigationTask;
+        if ((await confirmLeave(true)) && !signal.aborted) {
+            completed = true;
+            goToPage(popped?.href ?? localeUrl(path + hash));
+        }
+    } finally {
+        if (navigationController === controller) {
+            pendingNavigationPath = undefined;
+            if (popped && !completed && !signal.aborted)
+                history.replaceState(null, "", currentUrl());
+            workspace.removeAttribute("aria-busy");
+            updateNavLocation();
+        }
+    }
 };
 (window as unknown as { __docsNavigate: typeof navigateTo }).__docsNavigate = navigateTo;
 
@@ -3455,80 +3605,14 @@ document.addEventListener("click", (ev) => {
         void leavePage(url.href);
         return;
     }
-    if (path === currentPath) {
-        ev.preventDefault();
-        void (async () => {
-            if (!(await confirmFileEditorLeave())) return;
-            closeResource();
-            const targetUrl = localeUrl(currentPath + url.hash);
-            if (location.pathname + location.search + location.hash !== targetUrl) {
-                history.pushState(null, "", targetUrl);
-            }
-            scrollToAnchor(url.hash);
-        })();
-        return;
-    }
     ev.preventDefault();
     void navigateTo(path, url.hash);
 });
 
-// Back / forward. Going back to a non-doc page or a fetch failure falls back to normal
-// navigation. When leaving is cancelled, restore the URL to the current location (so history
-// never moves without the display following).
+// History navigation shares cancellation with clicks so stale responses cannot rewrite the URL.
 window.addEventListener("popstate", () => {
-    const target = workspacePath(location.pathname);
-    const language =
-        new URL(location.href).searchParams.get("lang") ?? boot.sourceLanguage ?? boot.defaultLang;
-    void (async () => {
-        if (!(await confirmFileEditorLeave())) {
-            history.pushState(null, "", currentUrl());
-            return;
-        }
-        if (target === currentPath && language === (boot.contentLanguage ?? boot.defaultLang)) {
-            closeResource();
-            scrollToAnchor(location.hash);
-            return;
-        }
-        if (isResourcePath(target)) {
-            const editor = new URL(location.href).searchParams.get("editor");
-            if (
-                (editor && editor !== boot.docId) ||
-                language !== (boot.contentLanguage ?? boot.defaultLang)
-            ) {
-                if (!(await confirmLeave())) {
-                    history.pushState(null, "", currentUrl());
-                    return;
-                }
-                const link = document.querySelector<HTMLAnchorElement>(
-                    `#nav-docs [data-doc-id="${CSS.escape(editor ?? boot.docId)}"] > .nav-row > a`,
-                );
-                const opened = link
-                    ? await openDoc(workspacePath(new URL(link.href).pathname), language)
-                    : false;
-                if (!opened) {
-                    if (opened === undefined || !(await leavePage(location.href)))
-                        history.pushState(null, "", currentUrl());
-                    return;
-                }
-            }
-            if (await openResource(target)) {
-                scrollToAnchor(location.hash);
-                return;
-            }
-        }
-        if (!(await confirmLeave())) {
-            history.pushState(null, "", currentUrl());
-            return;
-        }
-        const opened = await openDoc(target, language);
-        if (!opened) {
-            if (opened === undefined || !(await leavePage(location.href)))
-                history.pushState(null, "", currentUrl());
-        } else {
-            closeResource();
-            scrollToAnchor(location.hash);
-        }
-    })();
+    const target = new URL(location.href);
+    void navigateTo(workspacePath(target.pathname), target.hash, target);
 });
 
 syncPane();

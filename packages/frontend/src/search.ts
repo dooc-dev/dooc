@@ -506,19 +506,21 @@ export const mountSearch = (
     };
     window.addEventListener("resize", fit);
     if (sidebar) new ResizeObserver(fit).observe(sidebar);
-    const open = async (): Promise<void> => {
+    const open = async (focus = true): Promise<void> => {
         const request = ++revision;
         language =
             JSON.parse(document.getElementById("boot")?.textContent || "null")?.contentLanguage ??
             new URL(location.href).searchParams.get("lang") ??
             "";
-        if (!dialog.open) dialog.show();
+        if (!dialog.open && focus) dialog.show();
         if (dialog.style.left) position(dialog.getBoundingClientRect(), 0, 0);
-        input.focus();
-        input.select();
+        if (focus) {
+            input.focus();
+            input.select();
+        }
         failed = false;
         loading = !published;
-        if (!published) index = [];
+        if (!published && focus) index = [];
         render();
         if (published) return;
         try {
@@ -557,6 +559,15 @@ export const mountSearch = (
         revision++;
         index = [];
         dialog.close();
+    });
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    document.addEventListener("dooc:content-changed", () => {
+        if (published || !dialog.open) return;
+        revision++;
+        clearTimeout(refreshTimer);
+        refreshTimer = setTimeout(() => {
+            if (dialog.open) void open(false);
+        }, 120);
     });
     input.addEventListener("input", render);
     input.addEventListener("keydown", (event) => {

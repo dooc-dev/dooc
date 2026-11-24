@@ -10,6 +10,7 @@ import { flattenTree, parseManifest, serializeManifest } from "../core/content-m
 import { fileDocumentId } from "../core/files.js";
 import { docPath, resolveDocPath } from "../core/routing.js";
 import { compileSite } from "./compile.js";
+import { exportEntries } from "./export.js";
 import { filesSnapshot, updateFiles } from "./files.js";
 import { readManifest } from "./manifest.js";
 import { createDocOps } from "./ops.js";
@@ -21,9 +22,9 @@ afterEach(() => {
 const config = () => ({
     system: { languages: ["eng", "jpn"], default_lang: "eng", themes: ["light", "dark"] },
     document: {
+        icon: { light: "icons/light.svg", dark: "icons/dark.svg" },
         sidebar: {
             title: { eng: "Guide", jpn: "ガイド" },
-            icon: { light: "icons/light.svg", dark: "icons/dark.svg" },
         },
         children: [
             {
@@ -50,6 +51,36 @@ const fixture = () => {
         write(`icons/${theme}.svg`, `<svg viewBox="0 0 10 10"><title>${theme}</title></svg>`);
     return { root, write };
 };
+
+it("reads the old sidebar icon and serializes one canonical document icon", () => {
+    const value = config();
+    const { icon, ...document } = value.document;
+    const legacy = { ...value, document: { ...document, sidebar: { ...document.sidebar, icon } } };
+    const parsed = parseManifest(legacy);
+    expect(parsed).toEqual(parseManifest(value));
+    const saved = parse(serializeManifest(parsed.tree, parsed));
+    expect(saved.document.icon).toEqual(icon);
+    expect(saved.document.sidebar.icon).toBeUndefined();
+});
+
+it("moves and exports both root icon variants without recreating sidebar.icon", () => {
+    const { root } = fixture();
+    updateFiles(root, {
+        action: "move",
+        paths: ["icons/light.svg"],
+        directory: "art",
+        revision: filesSnapshot(root).revision,
+    });
+    const saved = parse(readFileSync(join(root, "dooc.yaml"), "utf8"));
+    expect(saved.document.icon).toEqual({ light: "art/light.svg", dark: "icons/dark.svg" });
+    expect(saved.document.sidebar.icon).toBeUndefined();
+    const compiled = compileSite(root);
+    expect(compiled.errors).toEqual([]);
+    expect(compiled.iconVariants?.light).toContain("<title>light</title>");
+    expect(exportEntries(root).map((entry) => entry.name)).toEqual(
+        expect.arrayContaining(["art/light.svg", "icons/dark.svg"]),
+    );
+});
 
 it("uses complete paths for identity, preserves ordered children and localizes the site title", () => {
     const { root } = fixture();
@@ -217,6 +248,10 @@ it.each([
         },
     },
     { ...config(), document: { url: "one.md", id: "one" } },
+    { document: { icon: "logo.png" } },
+    { document: { icon: { dark: "../private.svg" } } },
+    { document: { icon: { contrast: "logo.svg" } } },
+    { document: { icon: "logo.svg", sidebar: { icon: { light: "other.svg" } } } },
 ])("rejects malformed nested manifests: %j", (value) => {
     expect(parseManifest(value).errors.length).toBeGreaterThan(0);
 });

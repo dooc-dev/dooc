@@ -92,13 +92,14 @@ export const clientAssets = async (
             files.set(file, data);
         const entries = {
             edit: "edit-client.ts",
+            manifest: "manifest-client.ts",
             ui: "ui-client.ts",
             code: "code-highlight.ts",
             "code-worker": "code-worker.ts",
             graph: "schema-graph-global.tsx",
         };
         for (const [name, entry] of Object.entries(entries)) {
-            if (name === "edit" && options.readOnly) continue;
+            if ((name === "edit" || name === "manifest") && options.readOnly) continue;
             files.set(`assets/${name}.js`, Buffer.from(await bundleClient(entry)));
         }
     }

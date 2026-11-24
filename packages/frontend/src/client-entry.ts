@@ -15,6 +15,8 @@ import {
 import { type DesktopConnection, desktopConnection } from "../../workspace/src/mcp-relay.js";
 import { connectServer } from "../../workspace/src/socket-connection.js";
 import { mountClientHtml, mountClientLinks } from "./client-mount.js";
+import { updateReaderPage } from "./hmr-client.js";
+import { focusNavTree } from "./nav-focus.js";
 
 const script = document.currentScript as HTMLScriptElement | null;
 if (script?.src)
@@ -98,8 +100,9 @@ async function openBrowser(
         if (phase === "storage") clearTimeout(timer);
     });
     const client: WorkspaceClient = {
-        request: <T>(op: string, args?: Record<string, unknown>) => {
+        request: <T>(op: string, args?: Record<string, unknown>, signal?: AbortSignal) => {
             const run = async (): Promise<T> => {
+                signal?.throwIfAborted();
                 timer = setTimeout(
                     () => {
                         worker.terminate();
@@ -108,14 +111,22 @@ async function openBrowser(
                     op === "initialize" || op === "git" ? 180_000 : 60_000,
                 );
                 try {
-                    return await raw.request<T>(op, args);
+                    return await raw.request<T>(op, args, signal);
                 } finally {
                     clearTimeout(timer);
                 }
             };
             const next = pending.then(run, run);
             pending = next.catch(() => {});
-            return next;
+            if (!signal) return next;
+            return new Promise<T>((resolve, reject) => {
+                const abort = () => reject(signal.reason);
+                if (signal.aborted) abort();
+                else signal.addEventListener("abort", abort, { once: true });
+                void next
+                    .then(resolve, reject)
+                    .finally(() => signal.removeEventListener("abort", abort));
+            });
         },
         on: raw.on,
         opened: raw.opened,
@@ -209,12 +220,16 @@ async function openBrowser(
             const existing = workspaceConnection(id);
             if (existing) return existing;
             const scoped: WorkspaceClient = {
-                request: (op, args) =>
-                    client.request(op, {
-                        ...args,
-                        revision: revision.revision,
-                        section: revision.manifest,
-                    }),
+                request: (op, args, signal) =>
+                    client.request(
+                        op,
+                        {
+                            ...args,
+                            revision: revision.revision,
+                            section: revision.manifest,
+                        },
+                        signal,
+                    ),
                 on: client.on,
                 opened: client.opened,
             };
@@ -482,38 +497,92 @@ function attach(): void {
         };
     }
 }
+let navigation = 0;
+let pageRequest: AbortController | undefined;
 async function render(
     connection: WorkspaceConnection,
     url = location.href,
     push = false,
 ): Promise<void> {
+    const request = ++navigation;
+    pageRequest?.abort();
+    const controller = new AbortController();
+    pageRequest = controller;
+    const previous = workspaceConnection();
     const target = new URL(url, location.origin);
-    const version = target.searchParams.get("version");
-    if (version && connection.openVersion && connection.revision?.version !== version)
-        connection = await connection.openVersion(
-            version,
-            target.searchParams.get("manifest") ?? undefined,
-        );
-    else if (!version && connection.revision && connection.openVersion)
-        connection = await connection.openVersion("latest");
-    selectWorkspace(connection.id);
-    let response = await connection.fetch(url);
-    if (!response.ok) response = await connection.fetch("/");
-    if (!response.ok) throw new Error(await response.text());
-    let html = await response.text();
-    if (settings.readOnly)
-        html = html
-            .replace("<body", '<body data-dooc-reader="true"')
-            .replace("</body>", '<script src="/assets/client.js"></script></body>');
-    const mounted = mountClientHtml(html);
-    const nextUrl = response.url || url;
-    if (push) history.pushState(null, "", nextUrl);
-    else history.replaceState(null, "", nextUrl);
-    rendered = true;
-    // The registry and Worker instances live on window and survive replacing the initial shell.
-    document.open();
-    document.write(mounted);
-    document.close();
+    const main =
+        rendered &&
+        settings.readOnly &&
+        previous?.id === connection.id &&
+        target.searchParams.get("lang") === document.body.dataset.contentLanguage
+            ? document.querySelector("main")
+            : null;
+    const focusedContent = main?.contains(document.activeElement) ? document.activeElement : null;
+    if (main) {
+        focusNavTree(document.getElementById("nav-groups"), target.href);
+        main.setAttribute("aria-busy", "true");
+    }
+    try {
+        const version = target.searchParams.get("version");
+        if (version && connection.openVersion && connection.revision?.version !== version)
+            connection = await connection.openVersion(
+                version,
+                target.searchParams.get("manifest") ?? undefined,
+            );
+        else if (!version && connection.revision && connection.openVersion)
+            connection = await connection.openVersion("latest");
+        if (request !== navigation) return;
+        selectWorkspace(connection.id);
+        let response = await connection.fetch(url, { signal: controller.signal });
+        if (request !== navigation) return;
+        if (!response.ok) response = await connection.fetch("/", { signal: controller.signal });
+        if (!response.ok) throw new Error(await response.text());
+        let html = await response.text();
+        if (request !== navigation) return;
+        if (settings.readOnly)
+            html = html
+                .replace("<body", '<body data-dooc-reader="true"')
+                .replace("</body>", '<script src="/assets/client.js"></script></body>');
+        const mounted = mountClientHtml(html);
+        const nextUrl = response.url || url;
+        if (push) history.pushState(null, "", nextUrl);
+        else history.replaceState(null, "", nextUrl);
+        rendered = true;
+        if (
+            main &&
+            previous?.id === connection.id &&
+            updateReaderPage(new DOMParser().parseFromString(mounted, "text/html"))
+        ) {
+            focusNavTree(document.getElementById("nav-groups"), nextUrl);
+            let anchor = new URL(nextUrl, location.href).hash.slice(1);
+            try {
+                anchor = decodeURIComponent(anchor);
+            } catch {}
+            const heading = anchor ? document.getElementById(anchor) : null;
+            if (
+                focusedContent &&
+                (document.activeElement === focusedContent ||
+                    document.activeElement === document.body)
+            ) {
+                const destination = heading ?? main.querySelector<HTMLElement>("h1, h2") ?? main;
+                destination.tabIndex = -1;
+                destination.focus({ preventScroll: true });
+            }
+            if (heading) heading.scrollIntoView({ block: "start" });
+            else main.scrollTo(0, 0);
+            return;
+        }
+        // The registry and Worker instances live on window and survive replacing the initial shell.
+        document.open();
+        document.write(mounted);
+        document.close();
+    } catch (error) {
+        if (request !== navigation) return;
+        if (main) focusNavTree(document.getElementById("nav-groups"), location.href);
+        throw error;
+    } finally {
+        if (request === navigation) main?.removeAttribute("aria-busy");
+    }
 }
 
 attach();
