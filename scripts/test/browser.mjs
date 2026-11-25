@@ -316,7 +316,9 @@ browserTest("Root document header navigation and title editing", async (page) =>
         await page.locator("#site-title:not(.cur):not([aria-current])").waitFor();
         await page.locator("#site-title").press("Enter");
         await page.locator('#site-title.cur[aria-current="page"]').waitFor();
-        assert.match(await page.locator("main").textContent(), /Welcome to the handbook/);
+        await page.waitForFunction(() =>
+            document.querySelector("main")?.textContent.includes("Welcome to the handbook"),
+        );
         assert.equal(await page.locator("#nav-groups a.cur").count(), 0);
         assert.equal(new URL(page.url()).searchParams.get("lang"), "eng");
         if (product !== "editor") continue;

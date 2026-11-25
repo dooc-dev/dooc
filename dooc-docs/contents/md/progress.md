@@ -17,7 +17,7 @@ The full-size embedded website behavior already published in 0.0.22 remains part
 
 ## UX follow-up
 
-All 17 findings from the 2026-11-24 audit and the additional root drag-and-drop issue have implementation fixes and targeted regressions. They cover navigation ordering, canceled transport calls, stale refreshes, Files pane identity/focus, Git and search refresh, theme restoration, sidebar motion, figure interaction and menu dismissal. The original evidence remains in the repository's `dooc-ux-audit-report.md` / `.html` and `dooc-ux-fix-report.md` / `.html`; their measurements describe that dated run, not universal performance guarantees.
+All 17 findings from the 2026-11-24 audit and the additional root drag-and-drop issue have implementation fixes and targeted regressions. They cover navigation ordering, canceled transport calls, stale refreshes, Files pane identity/focus, Git and search refresh, theme restoration, sidebar motion, figure interaction and menu dismissal. The original evidence remains in the repository's `dooc-ux-audit-report.md`, `dooc-ux-audit.html`, `dooc-ux-fix-report.md` and `dooc-ux-fix-report.html`; their measurements describe that dated run, not universal performance guarantees.
 
 The earlier 1,000-row sidebar measurement still contained 33.4 ms frames. Touch checks use synthetic Chromium input. Firefox, Safari and physical touch devices have not been certified by those regressions.
 
@@ -34,4 +34,14 @@ The following items retain their existing board status; this patch does not clai
 
 The release candidate must pass the repository's complete `pnpm check`: Biome, TypeScript, production build, unit tests, Chromium browser tests, installer checks, npm contents checks and a packed plugin consumer. Local binary checks exercise the current host. The remote **Check** workflow must pass for the exact commit before dispatching the patch release; the release workflow repeats validation and tests all four Linux/macOS executable targets.
 
-Current gate: validation pending. Publication uses the [Release procedure](contents/md/release.md); the workflow owns the package version bump. This page will record the completed validation before dispatch.
+Navigation regressions check immediate selection separately from completed rendering: the selected destination updates before its asynchronous page response, so content assertions wait for the destination body rather than treating the selection marker as a load-completion signal.
+
+Local verification completed on 2026-11-25:
+
+| Check | Result |
+| --- | --- |
+| Complete `pnpm check` | Passed: Biome, TypeScript, production build, 1,656 unit tests in 166 files, 60 Chromium browser tests, installer checks, npm contents and packed plugin consumer |
+| `pnpm build:binary` and `pnpm test:binary` | Passed on Linux x64: standalone CLI, MCP, HTML and reader builds, editor assets, Japanese lint, installer and self update |
+| Test exclusions | No skipped unit or browser tests in the local run; Firefox, Safari and physical touch devices remain untested |
+
+Publication follows the [Release procedure](contents/md/release.md); the workflow owns the package version bump. Published versions and their artifacts are recorded in [GitHub Releases](https://github.com/dooc-dev/dooc/releases), with cross-platform validation in the linked release workflow.
