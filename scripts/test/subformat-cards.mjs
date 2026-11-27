@@ -224,8 +224,9 @@ window.testSubformatCards = async () => {
             "Card controls sit on the top border",
         );
         assert(
-            !root.querySelector("[data-subformat-trigger] svg"),
-            "The prominent picker has no icon",
+            root.querySelector("[data-subformat-trigger] svg[aria-hidden=true]") &&
+                !root.querySelector(".subformat-schema-link"),
+            "The editor has one icon-and-name title that opens the type menu",
         );
         const setting = (key) => root.querySelector(`[data-subformat-setting="${key}"]`);
         const menu = (key) => root.querySelector(`#${setting(key).getAttribute("aria-controls")}`);
@@ -1063,10 +1064,23 @@ window.testSubformatCards = async () => {
         registration.querySelector("[data-cancel]").click();
         document.body.classList.remove("edit");
         root = createRoot(false);
+        const schemaTitle = root.querySelector(".subformat-schema-link");
+        assert(
+            schemaTitle.textContent === "issue" &&
+                schemaTitle.getAttribute("href") === "/_files/schema/issue" &&
+                schemaTitle.querySelector("svg[aria-hidden=true]") &&
+                getComputedStyle(root.querySelector(".resource-query")).display === "none",
+            "The reader has one icon-and-name link to the schema instead of the type menu",
+        );
         const publishedPage = document.createElement("template");
         publishedPage.dataset.route = "guide";
         host.append(publishedPage);
         filterSubformats(root, []);
+        assert(
+            root.querySelector(".subformat-schema-link").getAttribute("href") ===
+                "#/_files/schema/issue",
+            "The published title links to the bundled schema route",
+        );
         assert(
             card().querySelector(".subformat-reference-list a").getAttribute("href") === "#/guide",
             "Published reference links use the bundle's document routes",

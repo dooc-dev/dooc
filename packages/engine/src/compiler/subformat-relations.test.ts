@@ -51,9 +51,9 @@ test("keeps library pages through a manifest round trip", () => {
     expect(ops.addLibrary("Not A View", "x")).toMatchObject({ status: 400 });
     const manifest = readManifest(root);
     expect(manifest.errors).toEqual([]);
-    expect(flattenTree(manifest.tree).find((node) => node.library === "schemath")).toMatchObject({
-        library: "schemath",
+    expect(flattenTree(manifest.tree).find((node) => node.format === "schemath")).toMatchObject({
+        format: "schemath",
         title: "Schemas",
     });
-    expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toContain("library: schemath");
+    expect(readFileSync(join(root, "dooc.yaml"), "utf8")).toContain("format: schemath");
 });

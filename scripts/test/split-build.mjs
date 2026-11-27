@@ -120,8 +120,10 @@ export async function testSplitBuild(page, root) {
             document.querySelector("main").textContent.includes("Third document content."),
         );
         release();
-        await page.waitForFunction(
-            () => !document.querySelector('template[data-route="next"]').dataset.src,
+        await page.locator('#nav-groups a[href="#/third"] [data-nav-loading="complete"]').waitFor();
+        assert.equal(
+            await page.locator('#nav-groups a[href="#/next"] [data-nav-loading]').count(),
+            0,
         );
         assert.match(await page.locator("main").textContent(), /Third document content/);
         assert.equal(await page.locator("#sidebar").getAttribute("data-retained"), "yes");
@@ -134,6 +136,7 @@ export async function testSplitBuild(page, root) {
         await page.locator("main article").waitFor();
         await page.locator('#nav-groups a[href="#/next"]').click();
         await page.locator('main [role="alert"]').waitFor();
+        assert.equal(await page.locator("[data-nav-loading]").count(), 0);
         assert.match(await page.locator('main [role="alert"]').textContent(), /503/);
         assert.equal(await page.locator("#sidebar").isVisible(), true);
         await page.locator('#nav-groups a[href="#/guide"]').click();

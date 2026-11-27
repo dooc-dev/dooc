@@ -1,10 +1,12 @@
 import type { Root } from "mdast";
-import { bundledLanguagesInfo } from "shiki/langs";
 import { visit } from "unist-util-visit";
 import { parseContentSource } from "../../engine/src/compiler/code-blocks.js";
 import { rebaseFileLinks } from "../../engine/src/compiler/files.js";
-import { basename, extname } from "../../engine/src/compiler/host.js";
-import { readManifest, sourceOrigin } from "../../engine/src/compiler/manifest.js";
+import { PROJECT_FONTS_DIR } from "../../engine/src/compiler/fonts.js";
+import { formatFiles } from "../../engine/src/compiler/format-files.js";
+import { statSync } from "../../engine/src/compiler/host.js";
+import { assertNotIgnored } from "../../engine/src/compiler/ignored-files.js";
+import { manifestFile, readManifest, sourceOrigin } from "../../engine/src/compiler/manifest.js";
 import {
     type LoadedSubformat,
     loadSubformat,
@@ -14,11 +16,16 @@ import {
     validateSubformatRecord,
 } from "../../engine/src/compiler/subformats.js";
 import { parseTermSource } from "../../engine/src/compiler/terms.js";
-import { readTextfile, selectTextfileRange } from "../../engine/src/compiler/textfile.js";
-import { flattenTree } from "../../engine/src/core/content-metadata.js";
+import {
+    readTextfile,
+    selectTextfileRange,
+    textfilePath,
+} from "../../engine/src/compiler/textfile.js";
+import { flattenTree, isContentPage } from "../../engine/src/core/content-metadata.js";
 import type { TermEntry } from "../../engine/src/core/content-types.js";
 import { parseFileEmbed } from "../../engine/src/core/file-embed.js";
-import { fileExtension } from "../../engine/src/core/files.js";
+import { docFile, fileExtension, localFile } from "../../engine/src/core/files.js";
+import { fenceFormat, fileFormat, REFERENCE_LIBRARIES } from "../../engine/src/core/formats.js";
 import { blocksHtml, escapeHtml } from "../../engine/src/core/html.js";
 import { libraryIcon, SEARCH_ICON_PATH } from "../../engine/src/core/icons.js";
 import { termComparator } from "../../engine/src/core/language.js";
@@ -26,7 +33,6 @@ import { parseMdast } from "../../engine/src/core/markdown.js";
 import type { SchemaModel } from "../../engine/src/core/schema-graph.js";
 import { subformatReferences } from "../../engine/src/core/subformat-references.js";
 import { type SubformatCollection, subformatChange } from "../../engine/src/core/subformats.js";
-import { CODE_TEMPLATES } from "../../engine/src/core/taxonomy.js";
 import { parseTextfileRange } from "../../engine/src/core/textfile.js";
 
 interface SourceLocation {
@@ -41,7 +47,11 @@ export interface ResourceIndex {
         content: string;
         source: SourceLocation;
         reference?: SourceLocation & { range?: string };
+        inline?: boolean;
     }[];
+    files?: { file: string; format: string; sources: SourceLocation[] }[];
+    formats?: string[];
+    libraries?: readonly string[];
     urls: { url: string; host: string; sources: SourceLocation[] }[];
     urlPreviews: ResourceIndex["urls"];
     subformats: SubformatCollection[];
@@ -49,13 +59,6 @@ export interface ResourceIndex {
     relations?: SchemaModel;
     errors: string[];
 }
-
-const codeFormat = (language: string): string =>
-    /^(text|txt|plain|plaintext)$/.test(language)
-        ? "text"
-        : (bundledLanguagesInfo.find(
-              (entry) => entry.id === language || entry.aliases?.includes(language),
-          )?.id ?? language);
 
 /** Index authored content, including files not referenced by any document. */
 export const resourceIndex = (
@@ -73,6 +76,40 @@ export const resourceIndex = (
     const paths = new Set(files);
     const manifest = readManifest(root);
     result.errors.push(...manifest.errors);
+    result.libraries = manifest.libraries ?? REFERENCE_LIBRARIES;
+    const discovered = new Set(Object.keys(manifest.formats ?? {}));
+    for (const settings of Object.values(manifest.includedFormats ?? {}))
+        for (const format of Object.keys(settings)) discovered.add(format);
+    const collected = new Map<string, NonNullable<ResourceIndex["files"]>[number]>();
+    const collect = (file: string, source?: SourceLocation): void => {
+        if (!paths.has(file)) {
+            const path = textfilePath(root, file);
+            assertNotIgnored(root, file);
+            const settingsFile =
+                file === manifestFile(root) ||
+                (file.startsWith(`${PROJECT_FONTS_DIR}/`) &&
+                    localFile(file.slice(PROJECT_FONTS_DIR.length + 1)));
+            if (!settingsFile || !statSync(path, { throwIfNoEntry: false })?.isFile())
+                throw new Error(`File is not available in the workspace: ${file}`);
+        }
+        const item = collected.get(file) ?? { file, format: fileFormat(file), sources: [] };
+        if (
+            source &&
+            !item.sources.some((value) => value.file === source.file && value.line === source.line)
+        )
+            item.sources.push(source);
+        collected.set(file, item);
+        discovered.add(item.format);
+    };
+    const selected = formatFiles(root, manifest, files);
+    result.errors.push(...selected.errors.map(({ file, message }) => `${file}: ${message}`));
+    for (const file of selected.files) collect(file);
+    for (const node of flattenTree(manifest.tree)) {
+        if (node.format)
+            discovered.add(discovered.has(node.format) ? node.format : fenceFormat(node.format));
+        if (isContentPage(node) && paths.has(docFile(node.id, manifest.files)))
+            collect(docFile(node.id, manifest.files));
+    }
     const formats = new Map<string, LoadedSubformat>();
     for (const config of manifest.subformats ?? []) {
         try {
@@ -80,6 +117,7 @@ export const resourceIndex = (
                 throw new Error("Schema is not available in the workspace");
             const loaded = loadSubformat(root, config, domains);
             formats.set(config.ext, loaded);
+            discovered.add(config.ext);
             let iconSvg: string | undefined;
             try {
                 iconSvg = subformatIconSvg(root, config);
@@ -122,13 +160,20 @@ export const resourceIndex = (
             if (node.type === "code") {
                 const language = node.lang?.toLowerCase() || "text";
                 const format = formats.get(language.replace(/^\./, ""));
-                result.codeblocks.push({
-                    language: format?.format ?? language,
-                    format: format?.ext ?? codeFormat(language),
-                    caption: node.meta ?? "",
-                    content: node.value,
-                    source,
-                });
+                const extension = format?.ext ?? fenceFormat(language);
+                discovered.add(extension);
+                const origin = sourceOrigin(manifest, file);
+                const setting =
+                    (origin ? manifest.includedFormats?.[origin]?.[extension] : undefined) ??
+                    manifest.formats?.[extension];
+                if (setting?.codeblock !== false)
+                    result.codeblocks.push({
+                        language: format?.format ?? language,
+                        format: extension,
+                        caption: node.meta ?? "",
+                        content: node.value,
+                        source,
+                    });
                 if (language === "termth")
                     validateTerms(node.value, { ...source, line: source.line + 1 });
                 if (language === "callouth") scan(parseMdast(node.value), file, source.line);
@@ -142,21 +187,28 @@ export const resourceIndex = (
                       : undefined;
             if (!target) return;
             const preview = node.type === "image" || node.type === "imageReference";
-            if (preview && !/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(target)) {
+            if (!/^(?:[a-z][a-z\d+.-]*:|[/#])/i.test(target)) {
                 try {
-                    const ref = parseFileEmbed(target);
-                    if (ref.kind !== "textfile") return;
+                    const ref = parseFileEmbed(
+                        preview ? target : (target.split(/[?#]/)[0] ?? target),
+                    );
                     const referencedFile = ref.file.replace(/^(\.\/)+/, "");
-                    if (!paths.has(referencedFile))
-                        throw new Error("File is not available in the workspace");
-                    const language = (
-                        extname(referencedFile).slice(1) || basename(referencedFile)
-                    ).toLowerCase();
+                    if (!preview || ref.kind !== "textfile") {
+                        collect(referencedFile, source);
+                        return;
+                    }
+                    const language = fileFormat(referencedFile);
+                    const content = selectTextfileRange(
+                        readTextfile(root, referencedFile),
+                        ref.range,
+                    );
+                    collect(referencedFile, source);
                     result.codeblocks.push({
                         language: formats.get(language)?.format ?? language,
-                        format: formats.has(language) ? language : codeFormat(language),
+                        format: language,
+                        inline: false,
                         caption: node.alt ?? "",
-                        content: selectTextfileRange(readTextfile(root, referencedFile), ref.range),
+                        content,
                         source,
                         reference: {
                             file: referencedFile,
@@ -193,7 +245,9 @@ export const resourceIndex = (
         if (format && !(manifest.subformats ?? []).some((item) => item.schema === file)) {
             try {
                 const content = readTextfile(root, file);
+                collect(file);
                 result.codeblocks.push({
+                    inline: false,
                     language: format.format,
                     format: format.ext,
                     caption: file,
@@ -217,7 +271,9 @@ export const resourceIndex = (
             const raw = readTextfile(root, file);
             if (/\.termth$/i.test(file)) {
                 const source = { file, line: 1 };
+                collect(file);
                 result.codeblocks.push({
+                    inline: false,
                     language: "termth",
                     format: "termth",
                     caption: "",
@@ -241,46 +297,36 @@ export const resourceIndex = (
             );
         }
     }
-    // A format with its own Library page lists every file of that type, like subformat records.
-    const listed = new Set(
-        flattenTree(manifest.tree).flatMap((node) =>
-            node.library && node.library !== "termth" && Object.hasOwn(CODE_TEMPLATES, node.library)
-                ? [node.library]
-                : [],
-        ),
-    );
-    const explicit = new Set([
-        ...(manifest.libraryFiles ?? []),
-        ...(manifest.includedLibraryFiles ?? []),
-    ]);
     const indexed = new Set(
-        result.codeblocks.flatMap((item) => [item.reference?.file, item.source.file]),
+        result.codeblocks
+            .filter((item) => item.inline === false)
+            .map((item) => item.reference?.file ?? item.source.file),
     );
-    for (const file of new Set([...paths, ...explicit])) {
-        const format = fileExtension(file);
-        if (
-            (!listed.has(format) && !explicit.has(file)) ||
-            indexed.has(file) ||
-            (paths.has(file) && /\.md$/i.test(file))
-        )
+    for (const file of collected.keys()) {
+        if (indexed.has(file) || /\.(svg|html|png|webp|gif|mp4|webm|jpe?g|pdf|dxf)$/i.test(file))
             continue;
         try {
-            if (!paths.has(file)) throw new Error("File is not available in the workspace");
+            const format = fileFormat(file);
             result.codeblocks.push({
-                language: format || "text",
-                format: codeFormat(format || "text"),
+                language: formats.get(format)?.format ?? format,
+                format,
+                inline: false,
                 caption: file,
                 content: readTextfile(root, file),
                 source: { file, line: 1 },
             });
-        } catch (error) {
-            result.errors.push(
-                `${file}: ${error instanceof Error ? error.message : String(error)}`,
-            );
+        } catch {
+            // Binary and unknown formats remain available through their file preview or link.
         }
     }
-    result.urls = [...urls.values()].sort((a, b) => a.url.localeCompare(b.url));
-    result.urlPreviews = [...urlPreviews.values()].sort((a, b) => a.url.localeCompare(b.url));
+    result.files = [...collected.values()].sort((a, b) => a.file.localeCompare(b.file));
+    result.formats = [...discovered].sort();
+    result.urls = result.libraries.includes("urls")
+        ? [...urls.values()].sort((a, b) => a.url.localeCompare(b.url))
+        : [];
+    result.urlPreviews = result.libraries.includes("url-previews")
+        ? [...urlPreviews.values()].sort((a, b) => a.url.localeCompare(b.url))
+        : [];
     for (const collection of result.subformats)
         for (const record of collection.records)
             record.references = references.get(record.file) ?? [];
@@ -288,34 +334,50 @@ export const resourceIndex = (
 };
 
 export type ResourceView = "files" | "codeblocks" | "urls" | "url-previews";
-export const resourceTabs = (view: ResourceView): string =>
-    view === "files"
+export const resourceTabs = (
+    view: ResourceView,
+    libraries: readonly string[] = REFERENCE_LIBRARIES,
+): string =>
+    view === "files" || view === "codeblocks"
         ? ""
         : `<nav class="resource-tabs" aria-label="Resource views" data-i18n-aria-label="Resource views">${(
               [
-                  ["codeblocks", "Codeblocks"],
                   ["urls", "URLs"],
                   ["url-previews", "URL previews"],
               ] as const
           )
+              .filter(([key]) => libraries.includes(key))
               .map(
                   ([key, label]) =>
                       `<a href="/_library/${key}"${view === key ? ' aria-current="page"' : ""}>${libraryIcon(key) ?? ""}<span data-i18n="${label}">${label}</span></a>`,
               )
               .join("")}</nav>`;
 
-const sourceLink = ({ file, line }: SourceLocation): string =>
-    `<a class="resource-source" href="/_files/file/${encodeURIComponent(file)}#L${line}" data-resource-source="${escapeHtml(file)}" data-resource-line="${line}" title="${escapeHtml(file)}:L${line}"><span class="resource-source-file">${escapeHtml(file)}</span><span>L${line}</span></a>`;
+const sourceLink = ({ file, line }: SourceLocation, edit = true): string =>
+    `<a class="resource-source" href="/_files/file/${encodeURIComponent(file)}${edit ? `#L${line}` : ""}"${edit ? ` data-resource-source="${escapeHtml(file)}" data-resource-line="${line}"` : ""} title="${escapeHtml(file)}${edit ? `:L${line}` : ""}"><span class="resource-source-file">${escapeHtml(file)}</span>${edit ? `<span>L${line}</span>` : ""}</a>`;
 
-const codeItems = (codeblocks: ResourceIndex["codeblocks"], page: boolean): string[] => {
+const codeItems = (
+    codeblocks: ResourceIndex["codeblocks"],
+    page: boolean,
+    native = page,
+): string[] => {
     const terms = new Map<
         string,
         { entry: TermEntry; source: SourceLocation; references: Map<string, SourceLocation> }
     >();
+    const references = new Map<string, SourceLocation[]>();
+    for (const item of codeblocks) {
+        if (!item.reference) continue;
+        const key = JSON.stringify([item.reference, item.content]);
+        const sources = references.get(key) ?? [];
+        sources.push(item.source);
+        references.set(key, sources);
+    }
+    const displayed = new Set<string>();
     const items = codeblocks.flatMap(
-        ({ language, format, caption, content, source, reference }) => {
+        ({ language, format, caption, content, source, reference, inline }) => {
             const location = reference ?? source;
-            const parsed = page
+            const parsed = native
                 ? parseContentSource(language, content, `${location.file}#L${location.line}`)
                 : undefined;
             const term = parsed?.blocks[0];
@@ -332,6 +394,10 @@ const codeItems = (codeblocks: ResourceIndex["codeblocks"], page: boolean): stri
                 terms.set(key, item);
                 return [];
             }
+            const key = reference && JSON.stringify([reference, content]);
+            if (key && displayed.has(key)) return [];
+            if (key) displayed.add(key);
+            const uses = key ? (references.get(key)?.slice(1) ?? []) : [];
             const name = page
                 ? caption !== source.file && caption !== reference?.file
                     ? caption
@@ -351,7 +417,7 @@ const codeItems = (codeblocks: ResourceIndex["codeblocks"], page: boolean): stri
                 ? `<ul class="resource-errors">${parsed.errors.map((error) => `<li>${escapeHtml(error.message)}</li>`).join("")}</ul>`
                 : "";
             return [
-                `<details class="resource-item resource-code"${page ? " open" : ""} data-resource-item data-resource-group="${escapeHtml(format)}"><summary>${page ? "" : `${libraryIcon(format) ?? ""}<span class="resource-badge">${escapeHtml(format)}</span>`}${name ? `<span class="resource-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>` : ""}${sourceLink(source)}</summary><div class="resource-body">${reference ? `<div class="resource-sources">${sourceLink(reference)}</div>` : ""}${errors}${blocksHtml(blocks)}</div></details>`,
+                `<details class="resource-item resource-code"${page ? " open" : ""} data-resource-item${inline !== false ? " data-resource-inline" : ""} data-resource-group="${escapeHtml(format)}"><summary>${page ? "" : `${libraryIcon(format) ?? ""}<span class="resource-badge">${escapeHtml(format)}</span>`}${name ? `<span class="resource-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>` : ""}${sourceLink(source)}</summary><div class="resource-body">${reference ? `<div class="resource-sources">${sourceLink(reference)}${uses.map((source) => sourceLink(source)).join("")}</div>` : ""}${errors}${blocksHtml(blocks)}</div></details>`,
             ];
         },
     );
@@ -361,7 +427,7 @@ const codeItems = (codeblocks: ResourceIndex["codeblocks"], page: boolean): stri
             .sort((a, b) => compare(a.entry, b.entry))
             .map(
                 ({ entry, source, references }) =>
-                    `<div class="resource-item resource-term" data-resource-item data-resource-group="termth">${blocksHtml([{ type: "term", entry }])}<div class="resource-term-sources">${sourceLink(source)}${references.size ? `<details><summary><span data-i18n="references">references</span> (${references.size})</summary><div class="resource-sources">${[...references.values()].map(sourceLink).join("")}</div></details>` : ""}</div></div>`,
+                    `<div class="resource-item resource-term" data-resource-item data-resource-group="termth">${blocksHtml([{ type: "term", entry }])}<div class="resource-term-sources">${sourceLink(source)}${references.size ? `<details><summary><span data-i18n="references">references</span> (${references.size})</summary><div class="resource-sources">${[...references.values()].map((source) => sourceLink(source)).join("")}</div></details>` : ""}</div></div>`,
             ),
         ...items,
     ];
@@ -373,6 +439,7 @@ export const resourceLibraryHtml = (
     pageTitle?: string,
     /** Library page: use each format's preview without the format picker. */
     page = false,
+    preview?: (file: string) => string,
 ): string => {
     const subformatsOnly = view === "subformats";
     const groupLabel = subformatsOnly ? "Subformats" : view === "codeblocks" ? "Format" : "Domain";
@@ -383,6 +450,8 @@ export const resourceLibraryHtml = (
                 ? index.subformats.map((item) => item.ext)
                 : view === "codeblocks"
                   ? [
+                        ...(index.formats ?? []),
+                        ...(index.files ?? []).map((item) => item.format),
                         ...index.codeblocks.map((item) => item.format),
                         ...index.subformats.map((item) => item.ext),
                     ]
@@ -392,10 +461,25 @@ export const resourceLibraryHtml = (
     const items = subformatsOnly
         ? []
         : view === "codeblocks"
-          ? codeItems(index.codeblocks, page)
+          ? [
+                ...codeItems(index.codeblocks, page, page || !!preview),
+                ...(index.files ?? [])
+                    .filter(
+                        ({ file }) =>
+                            !index.codeblocks.some(
+                                (item) =>
+                                    item.inline === false &&
+                                    (item.reference?.file ?? item.source.file) === file,
+                            ),
+                    )
+                    .map(({ file, format, sources }) => {
+                        const content = preview?.(file) ?? "";
+                        return `<details class="resource-item resource-code"${page ? " open" : ""} data-resource-item data-resource-group="${escapeHtml(format)}"><summary>${page ? "" : `${libraryIcon(format) ?? ""}<span class="resource-badge">${escapeHtml(format)}</span>`}${sourceLink({ file, line: 1 }, false)}</summary><div class="resource-body">${content}<div class="resource-sources">${sources.map((source) => sourceLink(source)).join("")}</div></div></details>`;
+                    }),
+            ]
           : urls.map(
                 ({ url, host, sources }) =>
-                    `<details class="resource-item resource-url" data-resource-item data-resource-group="${escapeHtml(host)}"><summary><a class="resource-name" href="${escapeHtml(url)}" title="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a><span class="resource-usage" title="references" data-i18n-title="references">${sources.length}</span></summary><div class="resource-body resource-sources">${sources.map(sourceLink).join("")}</div></details>`,
+                    `<details class="resource-item resource-url" data-resource-item data-resource-group="${escapeHtml(host)}"><summary><a class="resource-name" href="${escapeHtml(url)}" title="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a><span class="resource-usage" title="references" data-i18n-title="references">${sources.length}</span></summary><div class="resource-body resource-sources">${sources.map((source) => sourceLink(source)).join("")}</div></details>`,
             );
     const relations =
         subformatsOnly && pageTitle === undefined && index.relations?.edges.length
@@ -415,12 +499,9 @@ export const resourceLibraryHtml = (
                   )}${relations ? '<option value="*" data-i18n="Relations">Relations</option>' : ""}</select>`
             : "";
     const selectedChange = index.subformats[0] && subformatChange(index.subformats[0]);
-    const filter =
-        pageTitle !== undefined
-            ? ""
-            : subformatsOnly
-              ? `<div class="subformat-picker">${selector}<button type="button" data-subformat-trigger aria-haspopup="menu" aria-expanded="false"${selectedChange ? ` data-subformat-change="${selectedChange}"` : ""}>${escapeHtml(filterGroups[0] ?? "Subformats")}</button><div class="subformat-picker-menu" data-subformat-options popover="auto" role="menu" aria-label="Subformats" data-i18n-aria-label="Subformats"></div></div>`
-              : selector;
+    const filter = subformatsOnly
+        ? `<div class="subformat-picker">${selector}<button type="button" data-subformat-trigger aria-haspopup="menu" aria-expanded="false"${selectedChange ? ` data-subformat-change="${selectedChange}"` : ""}>${escapeHtml(filterGroups[0] ?? "Subformats")}</button><div class="subformat-picker-menu" data-subformat-options popover="auto" role="menu" aria-label="Subformats" data-i18n-aria-label="Subformats"></div></div>`
+        : selector;
     const search = `<label class="resource-search"><svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="${SEARCH_ICON_PATH}"/></svg><input type="search" data-resource-search placeholder="Search resources" aria-label="Search resources" data-i18n-placeholder="Search resources" data-i18n-aria-label="Search resources"></label>`;
     const toolbar = `<div class="resource-toolbar">${subformatsOnly ? (filter ? `<div class="resource-query">${filter}</div>` : "") : `${page ? "" : '<span data-i18n="Name">Name</span>'}${search}${filter}`}${subformatsOnly ? "" : `<span class="resource-count" data-resource-count role="status" aria-live="polite">${items.length}</span>`}</div>`;
     const subformats =
@@ -434,18 +515,46 @@ export const resourceLibraryHtml = (
     return `<section class="resource-results" data-resource-results${page ? " data-resource-page" : ""}${pageTitle !== undefined ? ` data-subformat-page="${escapeHtml(index.subformats[0]?.ext ?? "")}"` : ""}>${toolbar}${subformats}${index.errors.length && !page ? `<details class="resource-errors"><summary><span data-i18n="Files with errors">Files with errors</span> (${index.errors.length})</summary><ul>${index.errors.map((error) => `<li>${escapeHtml(error)}</li>`).join("")}</ul></details>` : ""}<div class="resource-items resource-${view}">${items.join("")}</div><p class="resource-empty" data-resource-empty${items.length ? " hidden" : ""} data-i18n="${emptyMessage}">${emptyMessage}</p></section>`;
 };
 
-/** A Library view shown as a site page: one block format, `urls` or `url-previews`. */
-export const libraryPageHtml = (index: ResourceIndex, view: string, _title: string): string => {
-    if (view === "urls" || view === "url-previews")
-        return resourceLibraryHtml({ ...index, subformats: [] }, view, undefined, true);
+/** Legacy callers can still request a content view through Library. */
+export const libraryPageHtml = (index: ResourceIndex, view: string, title: string): string =>
+    view === "urls" || view === "url-previews"
+        ? resourceLibraryHtml({ ...index, subformats: [] }, view, undefined, true)
+        : formatPageHtml(index, view, title);
+
+export const formatPageHtml = (
+    index: ResourceIndex,
+    view: string,
+    _title: string,
+    preview?: (file: string) => string,
+): string => {
+    const format = index.formats?.includes(view) ? view : fenceFormat(view);
+    const collection = index.subformats.find((item) => item.ext === format);
+    if (collection) {
+        const inline = index.codeblocks.filter(
+            (item) => item.format === format && item.inline !== false,
+        );
+        return (
+            resourceLibraryHtml({ ...index, subformats: [collection] }, "subformats", _title) +
+            (inline.length
+                ? resourceLibraryHtml(
+                      { ...index, subformats: [], files: [], codeblocks: inline },
+                      "codeblocks",
+                      undefined,
+                      true,
+                  )
+                : "")
+        );
+    }
     return resourceLibraryHtml(
         {
             ...index,
             subformats: [],
-            codeblocks: index.codeblocks.filter((item) => item.format === view),
+            files: index.files?.filter((item) => item.format === format),
+            codeblocks: index.codeblocks.filter((item) => item.format === format),
         },
         "codeblocks",
         undefined,
         true,
+        preview,
     );
 };

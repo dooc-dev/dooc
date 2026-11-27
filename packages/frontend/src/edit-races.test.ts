@@ -3,6 +3,7 @@ import { createContext, runInContext } from "node:vm";
 import { ScriptTarget, transpileModule } from "typescript";
 import { expect, it, vi } from "vitest";
 import { clientPath, workspacePath } from "../../workspace/src/client-path.js";
+import { readNavigationText } from "./nav-loading.js";
 
 const source = readFileSync(new URL("./edit-client.ts", import.meta.url), "utf8");
 const extract = (start: string, end: string): string => {
@@ -23,6 +24,7 @@ const run = (code: string, globals: Record<string, unknown>) => {
         resourceRevision: 0,
         pendingNavigationPath: undefined,
         resourceView: undefined,
+        fileEditor: undefined,
         hasManifestDraft: () => false,
         paneBusy: false,
         paneIdle: Promise.resolve(),
@@ -33,6 +35,8 @@ const run = (code: string, globals: Record<string, unknown>) => {
         location: { pathname: "/a", search: "", hash: "", href: "http://localhost/a" },
         isResourcePath: () => false,
         focusNavTree: vi.fn(),
+        startNavLoading: () => ({ update: vi.fn(), finish: vi.fn() }),
+        readNavigationText,
         document: { getElementById: () => null },
         workspace: { setAttribute: vi.fn(), removeAttribute: vi.fn() },
         updateNavLocation: vi.fn(),
@@ -51,6 +55,27 @@ const deferred = <T>() => {
     });
     return { promise, resolve };
 };
+
+it("keeps a native file save from acting on a newer editor selection", async () => {
+    const flushed = deferred<void>();
+    const post = vi.fn();
+    const setDirty = vi.fn();
+    const context = run(
+        `${extract("const saveCurrent =", "\nconst refresh = debounce")}\nglobalThis.run = saveCurrent;`,
+        {
+            fileEditor: { file: "dooc.yaml" },
+            textfiles: { flush: () => flushed.promise },
+            post,
+            setDirty,
+        },
+    );
+    const saving = context.run();
+    context.fileEditor = { file: "another.yaml" };
+    flushed.resolve();
+    await saving;
+    expect(post).not.toHaveBeenCalled();
+    expect(setDirty).not.toHaveBeenCalled();
+});
 
 it.each([
     false,
@@ -483,7 +508,7 @@ it.each([
     ]);
     context.view.state.doc = { version: 2 };
     context.dirty = true;
-    response.resolve({ ok, json: async () => ({ html: "B" }) });
+    response.resolve(Response.json({ html: "B" }, { status: ok ? 200 : 500 }));
     await pending;
     expect(context.window.location.href).toBe("/a");
     expect(context.leavingPage).toBe(false);
@@ -536,13 +561,9 @@ it.each([
     await vi.waitFor(() => expect(responses.size).toBe(1));
     const fast = context.run("/fast");
     await vi.waitFor(() => expect(responses.size).toBe(2));
-    responses
-        .get("/api/page?route=%2Ffast")
-        ?.resolve({ ok: true, json: async () => ({ resource, html: "Fast" }) });
+    responses.get("/api/page?route=%2Ffast")?.resolve(Response.json({ resource, html: "Fast" }));
     await fast;
-    responses
-        .get("/api/page?route=%2Fslow")
-        ?.resolve({ ok: true, json: async () => ({ resource, html: "Slow" }) });
+    responses.get("/api/page?route=%2Fslow")?.resolve(Response.json({ resource, html: "Slow" }));
     await slow;
     expect(shown).toHaveBeenCalledOnce();
     expect(shown).toHaveBeenCalledWith({ resource, html: "Fast" });

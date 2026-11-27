@@ -180,7 +180,7 @@ export const testUxNavigation = async (page, url) => {
 
     await page.goto(url);
     await page.locator("#cm .cm-content").waitFor();
-    for (const name of ["files", "library", "subformats"]) {
+    for (const name of ["format", "files", "library", "subformats"]) {
         await page.locator(`#nav-${name} a`).click();
         await page.waitForFunction((name) => location.pathname.endsWith(`/_${name}`), name);
     }

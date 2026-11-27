@@ -5,6 +5,7 @@ import { embeddedImages, parseMdast } from "../core/markdown.js";
 import { isRemoteTextfile } from "../core/textfile.js";
 import { collectRefs } from "./dialect.js";
 import { reportDownloadProgress } from "./download-progress.js";
+import { formatFiles } from "./format-files.js";
 import { createHash, fetchPublicFile, posix, readFileSync } from "./host.js";
 import { assertNotIgnored } from "./ignored-files.js";
 import { readManifest } from "./manifest.js";
@@ -49,6 +50,8 @@ export const embedBundleUrls = async (
             .flatMap((entry) => collectRefs(parseMdast(decode(entry.data))).figures),
     );
     const manifest = readManifest(root);
+    for (const file of formatFiles(root, manifest).files)
+        if (/\.(svg|html?)$/i.test(file)) figures.add(file);
     for (const file of [manifest.icon, ...Object.values(manifest.themeIcons ?? {})])
         if (file) figures.add(file);
     const cache = new Map<string, { data: Buffer; type: string }>();

@@ -9,7 +9,7 @@ import {
     type DocSource,
     type DraftContext,
 } from "../../engine/src/compiler/compile.js";
-import { figureName } from "../../engine/src/compiler/figures.js";
+import { figureName, loadFigures } from "../../engine/src/compiler/figures.js";
 import { filesSnapshot, updateFiles } from "../../engine/src/compiler/files.js";
 import { loadProjectFonts, type ProjectFont } from "../../engine/src/compiler/fonts.js";
 import {
@@ -70,6 +70,7 @@ import {
     docFile as sourceDocFile,
     suggestDocFileName,
 } from "../../engine/src/core/files.js";
+import { REFERENCE_LIBRARIES } from "../../engine/src/core/formats.js";
 import {
     blocksHtml,
     docHtml,
@@ -83,6 +84,7 @@ import {
     LIBRARY_ICONS,
     libraryIcon,
     PLUGINS_ICON,
+    SUBFORMATS_ICON,
 } from "../../engine/src/core/icons.js";
 import {
     DEFAULT_LANG,
@@ -100,12 +102,7 @@ import {
     resolveDocPath,
     subformatSchemaPath,
 } from "../../engine/src/core/routing.js";
-import {
-    CODE_LANGS,
-    CODE_TEMPLATES,
-    docDisplayName,
-    type Frontmatter,
-} from "../../engine/src/core/taxonomy.js";
+import { CODE_LANGS, docDisplayName, type Frontmatter } from "../../engine/src/core/taxonomy.js";
 import { isTermFile, termAnchor, termFileUrl } from "../../engine/src/core/term-reference.js";
 import { isRemoteTextfile, textfileName } from "../../engine/src/core/textfile.js";
 import { mountThemeVariants } from "../../engine/src/core/theme-variants.js";
@@ -131,6 +128,7 @@ import { translate } from "./i18n.js";
 import { jsonSchemaHtml } from "./json-schema.js";
 import { loadPreviewScript } from "./lazy-preview.js";
 import { focusNavTree } from "./nav-focus.js";
+import { readNavigationText, startNavLoading } from "./nav-loading.js";
 import { updateNav } from "./nav-update.js";
 import { mountPageJump } from "./page-jump.js";
 import { PLUGIN_BLOCK_CSS } from "./plugin-style.js";
@@ -141,6 +139,7 @@ import {
     mountResourceExpand,
 } from "./resource-download.js";
 import {
+    formatPageHtml,
     libraryPageHtml,
     resourceIndex,
     resourceLibraryHtml,
@@ -168,6 +167,7 @@ export interface Entry extends Pick<CompiledDoc, "url" | "root" | "name" | "orig
     id: string;
     subformat?: CompiledDoc["subformat"];
     library?: string;
+    format?: string;
     translatedLanguages?: string[];
     /** Parent doc id (omitted = top level). */
     parent?: string;
@@ -248,11 +248,12 @@ type NavigationEntry = Pick<
     | "icon"
     | "subformat"
     | "library"
+    | "format"
     | "translatedLanguages"
 >;
 type NavigationSite = Pick<
     Site,
-    "title" | "icon" | "workspace" | "subformats" | "contentLanguage"
+    "title" | "icon" | "workspace" | "subformats" | "contentLanguage" | "themes"
 > & { entries: NavigationEntry[] };
 
 export interface PublishOutput {
@@ -263,6 +264,7 @@ export interface PublishOutput {
 interface PageOpts {
     title: string;
     main: string;
+    loading?: boolean;
     currentId?: string;
     /** Current location among the Resources pages (the part after `/_files`). */
     currentRes?: string;
@@ -372,6 +374,7 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
         included: doc.included,
         ...(doc.subformat ? { subformat: doc.subformat } : {}),
         ...(doc.library ? { library: doc.library } : {}),
+        ...(doc.format ? { format: doc.format } : {}),
         ...(doc.parent == null ? {} : { parent: doc.parent }),
         file: `${doc.id}.md`,
         sourceFile: doc.file,
@@ -507,7 +510,7 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
             ]),
         );
     };
-    const loadSite = (locale?: string): Site =>
+    const loadSite = (locale?: string, route?: string, mode: ServeMode = "preview"): Site =>
         withIgnoredFilesCache(() => {
             const previews = applicationPreviews;
             const manifest = readManifest(root);
@@ -519,7 +522,26 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
                     localeCompilers.get(locale) ?? createCompiler(root, { locale, previews });
                 localeCompilers.set(locale, selected);
             }
-            const site = siteFrom(selected.compile(), siteLanguages.languages, siteLanguages);
+            const nodes = flattenTree(manifest.tree);
+            const currentId = resolveDocPath(nodes, route ?? "/");
+            const current = nodes.find((node) => node.id === currentId);
+            const documentIds =
+                route !== undefined &&
+                !route.startsWith("/_") &&
+                !current?.subformat &&
+                !current?.library &&
+                !current?.format
+                    ? new Set(current ? [current.id] : [])
+                    : undefined;
+            if (documentIds && mode === "edit" && (!current || !isContentPage(current))) {
+                const editor = nodes.find(isContentPage);
+                if (editor) documentIds.add(editor.id);
+            }
+            const site = siteFrom(
+                selected.compile(documentIds),
+                siteLanguages.languages,
+                siteLanguages,
+            );
             const sourceLanguage = contentLanguageCode(site.defaultLang);
             for (const entry of site.entries) {
                 entry.translatedLanguages = [sourceLanguage];
@@ -558,7 +580,7 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
                 entry.subformat ? [entry.subformat] : [],
             );
             const snapshot = manifest.errors.length ? undefined : filesSnapshot(root);
-            if (workspace?.protocol === "git" && subformats.length)
+            if (!documentIds && workspace?.protocol === "git" && subformats.length)
                 setSubformatChanges(root, subformats, snapshot?.revision);
             return {
                 ...site,
@@ -614,6 +636,7 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
                         title:
                             node.title ??
                             node.library ??
+                            node.format ??
                             node.subformat ??
                             (isContentPage(node)
                                 ? (
@@ -670,6 +693,7 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
                 icon,
                 subformats: manifest.subformats,
                 contentLanguage: locale,
+                themes: manifest.themes,
                 workspace: workspaceSource ?? readWorkspaceSource(root),
             };
         });
@@ -854,19 +878,17 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
 
     /** Renders only the requested doc, not every doc in site.entries. */
     const renderEntryHtml = (site: Site, entry: Entry): { html: string; errors: string[] } => {
-        if (entry.library)
+        if (entry.library || entry.format) {
+            const index = resourceIndex(
+                site.root ?? root,
+                site.filePaths ?? filesSnapshot(site.root ?? root).files.map((item) => item.path),
+                site.previews?.domains,
+            );
             return {
-                html: `<article class="res-page resource-library subformat-page">${libraryPageHtml(
-                    resourceIndex(
-                        root,
-                        site.filePaths ?? filesSnapshot(root).files.map((item) => item.path),
-                        site.previews?.domains,
-                    ),
-                    entry.library,
-                    docDisplayName(entry.frontmatter, entry.id),
-                )}</article>`,
+                html: `<article class="res-page resource-library subformat-page">${entry.format ? formatPageHtml(index, entry.format, docDisplayName(entry.frontmatter, entry.id), formatPreview(site, index.files?.map((item) => item.file) ?? [])) : libraryPageHtml(index, entry.library ?? "", docDisplayName(entry.frontmatter, entry.id))}</article>`,
                 errors: [...site.errors, ...entry.errors],
             };
+        }
         if (entry.subformat)
             return {
                 html: `<article class="res-page resource-library subformat-page">${resourceLibraryHtml(
@@ -1037,9 +1059,6 @@ export const createDocumentApplication = (root: string, host: ApplicationHost) =
         '<path d="M3.5 6.5 10 3l6.5 3.5v7L10 17l-6.5-3.5v-7Z"/><path d="M3.5 6.5 10 10l6.5-3.5M10 10v7"/>',
     );
     const STATICS_ICON = icon('<path d="M3 3v14h14M7 13V9m4 4V5m4 8V7"/>');
-    const SUBFORMATS_ICON = icon(
-        '<rect x="3" y="3" width="14" height="14" rx="1"/><rect x="6" y="8" width="6" height="6" rx="1"/>',
-    );
     const GIT_ICON = icon(
         '<path d="M5.5 6.5v7M14.5 6.5v1a4 4 0 0 1-4 4h-5"/><circle cx="5.5" cy="4.5" r="2"/><circle cx="5.5" cy="15.5" r="2"/><circle cx="14.5" cy="4.5" r="2"/>',
     );
@@ -1132,7 +1151,9 @@ main { --doc-mono: var(--reader-font, ${MONO_FONT}); }
   gap: 2px; height: 36px; padding: 0 24px; pointer-events: none; z-index: 5; }
 :is(.page-actions, .pane-actions) > .pbtn { pointer-events: auto; background: var(--c-bg0); }
 .pane-actions > .pbtn { background: inherit; }
-.page-actions { top: 0; margin: -20px -24px 16px; background: var(--c-bg0); }
+.page-actions { top: 0; margin: 0 -24px 16px; background: var(--c-bg0); }
+main:has(> .subformat-page [data-subformat-page]) > .page-actions { float: right; position: relative;
+  height: 30px; margin: 14px 0 0 12px; padding: 0; }
 .page-controls { display: flex; align-items: center; flex: 1; min-width: 0; gap: 4px; margin-right: auto; pointer-events: auto; }
 .page-controls > .in-toc { min-width: 0; }
 .page-controls .toc-current { width: 100%; }
@@ -1153,7 +1174,7 @@ input[type="checkbox"]:indeterminate::after { content: ""; position: absolute; l
 input[type="checkbox"]:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 3px; }
 input[type="checkbox"]:disabled { opacity: .5; cursor: default; }
 @media (forced-colors: active) { input[type="checkbox"] { appearance: auto; } input[type="checkbox"]::after { display: none; } }
-body { margin: 0; display: flex; min-height: 100vh; background: var(--c-bg0); color: var(--c-fg);
+body { margin: 0; display: flex; min-height: 100dvh; background: var(--c-bg0); color: var(--c-fg);
   font-family: var(--font-sans); font-weight: var(--fw-body); font-size: 13px; line-height: 1.55;
   overflow-x: hidden; }
 button { font-family: inherit; font-size: inherit; font-weight: var(--fw-body); }
@@ -1216,7 +1237,7 @@ button { font-family: inherit; font-size: inherit; font-weight: var(--fw-body); 
   100% { background-color: transparent; box-shadow: 0 0 0 4px transparent; } }
 /* Docked, the panel is a right sidebar like #panel. */
 #doc-search.search-docked { position: sticky; top: 0; left: auto; right: auto; z-index: auto; flex: 0 1 auto;
-  align-self: flex-start; width: 320px; min-width: 240px; height: 100vh; min-height: 0; max-height: none; margin: 0;
+  align-self: flex-start; width: 320px; min-width: 240px; height: 100dvh; min-height: 0; max-height: none; margin: 0;
   padding: 8px 10px 10px; border: 0; border-left: 1px solid var(--c-line); border-radius: 0;
   background: var(--c-bg1); box-shadow: none; backdrop-filter: none; }
 .search-docked #doc-search-results { margin-right: -10px; padding-right: 10px; }
@@ -1234,7 +1255,7 @@ body:has(#doc-search.search-docked[open]) #panel { flex-shrink: 100; min-width: 
 .search-resize-w { top: 0; left: 0; bottom: 0; width: 6px; cursor: ew-resize; }
 
 /* ── sidebar ── */
-#sidebar { width: var(--sidebar-width, 260px); height: 100vh; position: sticky; top: 0; flex: none;
+#sidebar { width: var(--sidebar-width, 260px); height: 100dvh; position: sticky; top: 0; flex: none;
   display: flex; flex-direction: column; background: var(--c-bg1);
   border-right: 1px solid var(--c-line); overflow: hidden; transition: width 220ms cubic-bezier(.2, .8, .2, 1); }
 body.resizing #sidebar, #sidebar:has(> #sidebar-resize:focus) { transition: none; }
@@ -1307,22 +1328,27 @@ select:focus-visible, .language-select-input:focus-visible, .subformat-control >
 .language-options button:disabled { opacity: .5; cursor: wait; }
 .language-empty { padding: 8px; color: var(--c-fg-muted); }
 #document-versions { flex: none; display: grid; gap: 10px; padding: 8px 16px 12px; }
-#document-versions[hidden], #document-versions [hidden], body.sidebar-closed #document-versions { display: none; }
+#document-versions[hidden], #document-versions [hidden] { display: none; }
 #document-versions .language-select, #document-versions .language-select-input { min-width: 0; width: 100%; }
 #document-versions .version-select .language-select-input { padding-right: 76px; background: transparent; font-variant-numeric: tabular-nums; }
-#document-versions > .subformat-control { width: 100%; max-width: none; }
+#document-versions > .subformat-control { width: 100%; min-width: 0; max-width: none; }
 #document-versions p { margin: 0; color: var(--c-danger); font-size: 12px; overflow-wrap: anywhere; }
 .version-select > .version-status { position: absolute; right: 26px; top: 5px; pointer-events: none; }
 .version-status { flex: none; color: var(--c-fg-muted); font-size: 12px; }
 .version-picker .language-options button { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-variant-numeric: tabular-nums; }
 .version-picker .language-options button > :first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+body.sidebar-closed #document-versions { padding: 8px 4px 12px; }
+body.sidebar-closed #document-versions .subformat-control-label { position: static; display: block; padding: 0; background: transparent; font-size: 9px; line-height: 14px; text-align: center; white-space: normal; overflow-wrap: anywhere; }
+body.sidebar-closed #document-versions .version-select .language-select-input { display: block; height: 52px; padding: 3px 2px 25px; font-size: 11px; text-align: center; }
+body.sidebar-closed .version-select > .version-status { top: 23px; left: 0; right: 0; font-size: 9px; line-height: 14px; text-align: center; }
+body.sidebar-closed .version-select::after { top: 40px; right: calc(50% - 2px); width: 4px; height: 4px; }
 body[data-version-read-only="true"] :is(.nav-doc-actions, .nav-icon-clear, #site-icon-slot input, #save, #validate, .cm-textfile-validate) { display: none; }
 .nav-link { position: relative; display: flex; align-items: center; gap: 14px; padding: 10px 16px;
   color: var(--c-fg-muted); text-decoration: none; background: transparent; border: none;
   font: inherit; text-align: left; cursor: pointer; min-width: 0; }
 .nav-link::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
   background: transparent; transition: background 120ms ease-out; }
-.nav-link:hover { color: var(--c-fg); background: var(--c-raised); }
+.nav-link:hover { color: var(--c-fg); }
 .nav-link:hover::before { background: var(--c-line); }
 .nav-link.cur { color: var(--c-fg); }
 .nav-link.cur::before { background: var(--c-accent); }
@@ -1330,6 +1356,20 @@ body[data-version-read-only="true"] :is(.nav-doc-actions, .nav-icon-clear, #site
 .nav-row :is(svg.nav-icon, .doc-icon-frame) { translate: 0 1px; }
 .workspace-icon { width: 18px; height: 18px; object-fit: contain; }
 .nav-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@property --nav-progress { syntax: "<length>"; inherits: false; initial-value: 0px; }
+#sidebar [data-nav-loading], #sidebar #site-title[data-nav-loading] { color: var(--c-fg); text-decoration: none; }
+@supports (background-clip: text) {
+  #sidebar [data-nav-loading], #sidebar #site-title[data-nav-loading] { color: transparent; background-color: var(--c-fg); background-clip: text; }
+  #sidebar :is([data-nav-loading="pending"], [data-nav-loading="bytes"], [data-nav-loading="finishing"]) { background-image: linear-gradient(to right, var(--c-accent) var(--nav-progress), var(--c-fg) var(--nav-progress)); }
+}
+#sidebar [data-nav-loading="complete"], #sidebar #site-title[data-nav-loading="complete"] { color: var(--c-accent); background: none; }
+#sidebar a:not(.cur) [data-nav-loading="complete"], #sidebar #site-title:not(.cur)[data-nav-loading="complete"] { color: inherit; }
+@media (prefers-reduced-motion: reduce) {
+  #sidebar [data-nav-loading] { animation: none; transition: none; }
+}
+@media (forced-colors: active) {
+  #sidebar [data-nav-loading], #sidebar #site-title[data-nav-loading] { color: LinkText; background: none; animation: none; transition: none; }
+}
 /* The doc tree. Top-level docs are .nav-link with an icon,
    descendants are .nav-tree. --nav-depth is set on the children list (top level's children = 2),
    --nav-pad = where that level's label starts, --nav-line = x of that level's guide line. Each
@@ -1339,7 +1379,7 @@ body[data-version-read-only="true"] :is(.nav-doc-actions, .nav-icon-clear, #site
    per level. */
 .nav-row { position: relative; display: flex; align-items: center; min-width: 0; }
 .nav-row > .nav-link { flex: 1; min-width: 0; padding: 9px 16px; }
-.nav-row > .nav-link.cur { background: var(--c-raised); }
+.nav-row:has(> a):hover, .nav-row:has(> a.cur, > :focus-visible) { background: var(--c-raised); }
 .nav-list > .nav-item { display: grid; grid-template-rows: auto 0fr; transition: grid-template-rows var(--nav-motion); }
 .nav-list > .nav-item.open { grid-template-rows: auto 1fr; }
 .nav-item > .nav-list { min-height: 0; overflow: hidden; visibility: hidden; transition: visibility 0s 260ms; }
@@ -1347,7 +1387,7 @@ body[data-version-read-only="true"] :is(.nav-doc-actions, .nav-icon-clear, #site
 .nav-tree-toggle { flex: none; display: flex; align-items: center; justify-content: center;
   width: 28px; height: 28px; margin-right: 6px; padding: 0; background: transparent; border: none;
   border-radius: 4px; color: var(--c-fg-faint); cursor: pointer; }
-.nav-tree-toggle:hover { color: var(--c-fg); background: var(--c-raised); }
+.nav-tree-toggle:hover { color: var(--c-fg); }
 .nav-tree-toggle svg { transition: transform var(--nav-motion); }
 .nav-item.open > .nav-row > .nav-tree-toggle svg { transform: rotate(90deg); }
 .nav-tree { --nav-pad: calc(48px + (var(--nav-depth, 2) - 2) * 29px);
@@ -1366,7 +1406,7 @@ body[data-version-read-only="true"] :is(.nav-doc-actions, .nav-icon-clear, #site
 .nav-tree > .nav-item:has(~ .nav-item .cur)::before, .nav-tree > .nav-item:has(.cur) > .nav-row::before,
 .nav-tree > .nav-item:has(.cur) > .nav-row::after { background: var(--c-accent); }
 .nav-ancestor { --nav-pad: 12px; --nav-line: var(--nav-rail, 21px); }
-.nav-list:has(> .nav-ancestor) > .nav-item:not(.nav-ancestor) { height: 0; opacity: 0; overflow: hidden; visibility: hidden; }
+.nav-list:has(> .nav-ancestor) > .nav-item:not(.nav-ancestor, .nav-placeholder, .nav-new-item) { height: 0; opacity: 0; overflow: hidden; visibility: hidden; }
 #nav-groups { --nav-motion: 260ms cubic-bezier(.2, .8, .2, 1); }
 body.sidebar-toggling #nav-groups { --nav-motion: 0s; }
 #nav-groups :is(.nav-tree-link, .nav-doc-row) { transition: padding-left var(--nav-motion); }
@@ -1396,10 +1436,10 @@ body.sidebar-toggling #nav-groups { --nav-motion: 0s; }
 .nav-ancestor > .nav-tree > .nav-item:has(> .nav-row > a.cur) > .nav-row::after { display: block; }
 .nav-tree-link { position: relative; flex: 1; min-width: 0; display: flex; align-items: center;
   padding: 6px 8px 6px var(--nav-pad); color: var(--c-fg-muted); font-size: 13px; text-decoration: none; }
-.nav-tree-link:hover:not(.cur) { color: var(--c-fg); background: var(--c-raised); }
+.nav-tree-link:hover:not(.cur) { color: var(--c-fg); }
 /* The accented guide line marks the current doc, so no left-edge vertical bar (the top-level
    marker). */
-.nav-tree-link.cur { color: var(--c-fg); background: var(--c-raised); }
+.nav-tree-link.cur { color: var(--c-fg); }
 /* Doc-specific icon (icons/<id>.svg, 1:1). Top level: in place of the book icon; descendants:
    before the label */
 img.doc-icon { flex: none; width: 18px; height: 18px; object-fit: contain; }
@@ -1410,7 +1450,7 @@ img.doc-icon { flex: none; width: 18px; height: 18px; object-fit: contain; }
 body.sidebar-closed :is(#sidebar-content, #nav-groups > .nav-root) { scrollbar-width: none; scrollbar-gutter: auto; }
 body.sidebar-closed #nav-groups { --nav-rail: 8px; }
 body.sidebar-closed #nav-groups .nav-label, body.sidebar-closed #nav-status { opacity: 0; pointer-events: none; }
-body.sidebar-closed #nav-groups .nav-placeholder { visibility: hidden; pointer-events: none; }
+body.sidebar-closed #nav-groups .nav-row > .nav-create { margin: 3px auto; width: 36px; height: 32px; }
 body.sidebar-closed #nav-groups :is(.nav-tree-toggle, .nav-tree-spacer, .new, .nav-delete, .files-upload-status, .files-drop-hint, .extensions-drop-hint, input, .nav-icon-clear) { display: none; }
 body.sidebar-closed #nav-groups .nav-tree { --nav-pad: 18px; --nav-line: 8px; }
 body.sidebar-closed #nav-groups .nav-tree > .nav-item:not(.nav-ancestor) > .nav-row::before { width: calc(var(--nav-pad) - var(--nav-line) - 2px); }
@@ -1462,7 +1502,13 @@ body.files-over #nav-files { background: color-mix(in srgb, var(--c-accent) 10%,
 
 /* ── main (document body) ── */
 main { flex: 1; min-width: 0; padding: 20px 24px 50vh; }
-main:not(.editor-workspace) { height: 100vh; overflow: auto; overscroll-behavior: contain; }
+main:not(.editor-workspace) { height: 100dvh; overflow: auto; overscroll-behavior: contain; }
+main:has(> .page-actions):not(:has(> .subformat-page [data-subformat-page])) { padding-top: 0; }
+body[data-client-loading] .pbtn { visibility: hidden; }
+#client-loading { color: var(--c-fg-muted); font: 13px/1.5 var(--font-sans); }
+#client-start { max-width: 600px; margin: 24px auto; }
+#client-start[hidden] { display: none; }
+#client-start button { font: inherit; padding: 8px 12px; border: 1px solid var(--c-line); border-radius: 4px; background: var(--c-bg1); color: var(--c-fg); cursor: pointer; }
 article { max-width: 860px; margin: 0 auto; font-family: var(--reader-font, system-ui, sans-serif); }
 .external-embed { margin: 18px 0; overflow-wrap: anywhere; }
 .downloadable-resource { position: relative; }
@@ -1485,7 +1531,7 @@ body[data-download="normal"] a[download], body[data-download="block"] a[download
 .resource-modal-bar button { min-width: 32px; min-height: 32px; padding: 4px; border: 0; border-radius: 4px; background: none; color: inherit; cursor: pointer; font: inherit; }
 .resource-modal-bar button:hover { background: var(--doc-bg-2); }
 .res-file-page h1 > .resource-download { margin-left: 8px; vertical-align: middle; }
-.resource-download-tools [role="status"] { font: 12px/1.5 var(--font-sans); color: var(--doc-fg-2); }
+.resource-download-status { max-width: min(150px, 35vw); overflow-wrap: anywhere; font: 12px/1.3 var(--font-sans); color: var(--doc-fg-2); }
 .plugin { position: relative; min-width: 0; border: 2px solid var(--doc-border); border-top: 0; }
 .plugin-toolbar { position: absolute; top: 0; left: -2px; right: -2px; transform: translateY(-50%);
   display: flex; align-items: center; gap: 4px; }
@@ -1824,7 +1870,6 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 #manifest-manager { max-width: 760px; margin-inline: auto; }
 .manifest-toolbar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-block: 8px; background: var(--c-bg1); }
 .manifest-toolbar h1 { flex: 1; min-width: 0; margin: 0; padding: 0; border: 0; font: 500 14px/1.5 var(--font-sans); overflow-wrap: anywhere; }
-.manifest-toolbar [role="status"] { color: var(--c-fg-muted); font-size: 11px; }
 .manifest-page :is(input, select, button) { box-sizing: border-box; min-width: 0; max-width: 100%; min-height: 30px; border: 1px solid var(--c-line); border-radius: 4px; padding: 4px 8px; background: var(--c-bg1); color: var(--c-fg); font: inherit; }
 .manifest-page button { cursor: pointer; }
 .manifest-page button:hover { background: var(--c-raised); }
@@ -1842,6 +1887,10 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .manifest-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 16px; min-width: 0; }
 .manifest-group { grid-column: 1 / -1; min-width: 0; }
 .manifest-group > summary { display: flex; align-items: center; gap: 8px; min-height: 30px; padding-inline: 4px; list-style: none; opacity: 1; font-weight: 500; }
+.manifest-remove-format { margin-inline-start: auto; }
+.manifest-reference { display: flex; align-items: center; gap: 8px; }
+.manifest-reference input { min-height: 0; accent-color: var(--c-accent); }
+.manifest-path-row > .manifest-field { flex: 1; }
 .manifest-group > summary::-webkit-details-marker { display: none; }
 .manifest-group > summary::before { content: ""; flex: none; width: 5px; height: 5px; margin-inline: 2px 4px; border-right: 1px solid var(--c-fg-muted); border-bottom: 1px solid var(--c-fg-muted); transform: rotate(-45deg); }
 .manifest-group[open] > summary::before { transform: rotate(45deg); }
@@ -1907,7 +1956,7 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .resource-tabs a { display: inline-flex; align-items: center; gap: 6px; padding: 9px 15px; color: var(--doc-fg-3); text-decoration: none; white-space: nowrap; font-size: 13px; border-bottom: 2px solid transparent; }
 .resource-tabs a svg, .resource-item > summary > svg { flex: none; width: 15px; height: 15px; }
 .nav-page-menu .subformat-setting-option > button svg { width: 16px; height: 16px; margin-right: 9px; vertical-align: -3px; color: var(--c-fg-muted); }
-.subformat-picker button > img.doc-icon { width: 16px; height: 16px; margin-right: 8px; vertical-align: -3px; }
+.subformat-picker button > :is(img.doc-icon, svg.nav-icon), .subformat-schema-link > :is(img.doc-icon, svg.nav-icon) { flex: none; width: 16px; height: 16px; margin-right: 8px; vertical-align: -3px; }
 .resource-tabs a:hover { color: var(--doc-fg); background: color-mix(in srgb, var(--doc-fg) 4%, transparent); }
 .resource-tabs a[aria-current] { color: var(--doc-accent); border-bottom-color: currentColor; }
 .resource-toolbar { position: relative; display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 6px;
@@ -1936,6 +1985,7 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .resource-results:has(> .resource-empty:not([hidden])) [data-subformat-board] { flex: none; }
 .resource-results:has(> .resource-empty:not([hidden])) .subformat-columns { display: none; }
 .resource-query { display: flex; align-items: center; gap: 8px; flex: 0 1 auto; min-width: 0; max-width: 400px; }
+.resource-query[hidden], [data-subformat-trigger][hidden] { display: none; }
 .resource-query > select { flex: 0 1 auto; min-width: 64px; max-width: 140px; height: 30px; padding: 4px 8px; border: 1px solid var(--c-line); border-radius: 4px; background: var(--c-bg1); color: var(--c-fg); cursor: pointer; }
 .resource-query > select:focus-visible { outline-color: var(--c-fg-muted); }
 .subformat-picker { flex: 0 1 auto; min-width: 0; max-width: 220px; }
@@ -1954,9 +2004,9 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 
 .resource-results [data-subformat-change="added"] { color: var(--c-ok); }
 .resource-results [data-subformat-change="modified"] { color: var(--c-accent); }
-.subformat-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; min-width: 0; max-width: 100%; margin-left: auto; }
-.subformat-schema-link { display: inline-flex; align-items: center; min-height: 34px; padding-inline: 8px; color: var(--c-fg); text-underline-offset: 3px; }
-.subformat-schema-link:hover { background: var(--c-raised); }
+.subformat-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; min-width: 0; max-width: 100%; }
+.subformat-schema-link { display: inline-flex; align-items: center; min-width: 0; min-height: 30px;
+  overflow-wrap: anywhere; color: var(--doc-accent); font: 500 18px/30px var(--font-sans); text-underline-offset: 3px; }
 .subformat-schema-link:focus-visible { outline: 2px solid var(--c-fg-muted); outline-offset: 2px; }
 .subformat-control { position: relative; min-width: 80px; max-width: 160px; margin-top: 6px; }
 .subformat-control-label { position: absolute; z-index: 1; top: -7px; left: 7px; padding: 0 4px; background: var(--c-bg1); color: var(--c-fg-muted); font: 11px/14px var(--font-sans); white-space: nowrap; pointer-events: none; }
@@ -2147,31 +2197,33 @@ body.extensions-over #nav-extensions, body.extensions-over .extensions-dropzone 
 .subformat-page-name { display: block; box-sizing: border-box; width: 100%; margin: 8px 0 20px; padding: 8px; color: var(--c-fg); background: var(--c-bg0); border: 1px solid var(--c-line); border-radius: 4px; font: inherit; }
 .subformat-page .resource-query { flex-wrap: wrap; max-width: none; }
 .subformat-page .resource-toolbar { align-items: flex-end; }
+.subformat-page [data-subformat-page] > .resource-toolbar { min-width: min(100%, 160px); }
 .subformat-page .subformat-columns { padding-top: 20px; }
-body:not(.edit) .subformat-page { padding-top: 64px; }
 .subformat-detail-path { color: var(--c-fg-muted); font: 11px var(--doc-mono); overflow-wrap: anywhere; }
 .subformat-detail dl { display: grid; gap: 14px; margin: 20px 0; }
 .subformat-detail dt { font-size: 12px; }
-.json-schema-page { overflow-wrap: anywhere; }
-body:not(.edit) .json-schema-page { padding-top: 64px; }
-.json-schema-page > p, .json-schema-page > p > a { color: var(--doc-fg); }
-.json-schema { margin-block: 28px; font: 14px/1.6 var(--font-sans); }
-.json-schema-node { min-width: 0; border-top: 1px solid var(--c-line); }
-.json-schema-node > summary { padding-block: 12px; cursor: pointer; }
-.json-schema-node > summary:hover { background: var(--c-raised); }
-.json-schema-node > summary:focus-visible { outline: 2px solid var(--c-fg-muted); outline-offset: 2px; }
-.json-schema-node > summary > code { font-weight: 600; }
-.json-schema-type, .json-schema-required { margin-left: 12px; color: var(--doc-fg); font-size: 12px; }
-.json-schema-required { font-weight: 600; }
-.json-schema-body { min-width: 0; padding: 0 0 12px 18px; }
+.json-schema-page { overflow-wrap: anywhere; font-family: var(--reader-font, var(--font-sans)); }
+.json-schema-page > p { color: var(--doc-fg-2); font-size: 12px; }
+.json-schema { margin-block: 20px; }
+.json-schema-node { min-width: 0; border-top: 1px solid var(--doc-border); }
+.json-schema-page details > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  min-height: 36px; padding: 8px 6px; list-style: none; color: var(--doc-fg); opacity: 1; }
+.json-schema-page details > summary:hover { background: var(--doc-panel-2); }
+.json-schema-page details > summary:focus-visible { outline: 2px solid var(--doc-accent); outline-offset: -2px; }
+.json-schema-node > summary > code { min-width: 0; font-size: 1em; font-weight: 500; }
+.json-schema-type, .json-schema-required { color: var(--doc-fg-2); font-size: 12px; }
+.json-schema-required { margin-left: auto; }
+.json-schema-body { min-width: 0; padding: 0 6px 12px 22px; }
 .json-schema-body p { margin: 4px 0 12px; white-space: pre-wrap; }
 .json-schema-rules { margin: 12px 0; }
 .json-schema-rules > div { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 3fr); gap: 12px; padding-block: 4px; }
+.json-schema-rules dt { color: var(--doc-fg-2); }
 .json-schema-rules dd { margin: 0; white-space: pre-wrap; }
-.json-schema-keyword { padding-top: 12px; color: var(--doc-fg); }
+.json-schema-keyword { padding-top: 12px; color: var(--doc-fg-2); }
 .json-schema code { padding: 0; background: none; }
 @media (max-width: 600px) {
   .subformat-schema-link { min-height: 44px; }
+  .json-schema-page details > summary { min-height: 44px; }
   .json-schema-body { padding-left: 10px; }
   .json-schema-rules > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 }
@@ -2179,10 +2231,10 @@ body:not(.edit) .json-schema-page { padding-top: 64px; }
 .resource-item[hidden], .resource-empty[hidden] { display: none; }
 .resource-item > summary { display: flex; align-items: center; gap: 8px; min-width: 0; height: 28px; padding: 0 6px;
   list-style: none; color: var(--doc-fg); font-size: 13px; cursor: pointer; }
-.resource-item > summary::-webkit-details-marker { display: none; }
-.resource-item > summary::before { content: ""; flex: none; width: 5px; height: 5px; margin: 0 4px 0 2px;
-  border-right: 1px solid var(--c-fg-faint); border-bottom: 1px solid var(--c-fg-faint); transform: rotate(-45deg); }
-.resource-item[open] > summary::before { transform: rotate(45deg); }
+.resource-item > summary::-webkit-details-marker, .json-schema-page summary::-webkit-details-marker { display: none; }
+.resource-item > summary::before, .json-schema-page details > summary::before { content: ""; flex: none; width: 5px; height: 5px; margin: 0 4px 0 2px;
+  border-right: 1px solid var(--doc-fg-3); border-bottom: 1px solid var(--doc-fg-3); transform: rotate(-45deg); }
+.resource-item[open] > summary::before, .json-schema-page details[open] > summary::before { transform: rotate(45deg); }
 .resource-item > summary:hover { background: var(--c-surface); }
 .resource-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .resource-item a.resource-name { color: inherit; text-decoration: none; }
@@ -2251,10 +2303,11 @@ body.git-diff-hidden .cm-line:is(.cm-git-added, .cm-git-modified, .cm-git-delete
 body.sidebar-closed #site-icon-slot input { display: none; }
 /* Right panel = header / properties / editor stacked on one surface, separated by rules (no
    nested frames). */
-#panel { width: var(--panel-width, min(760px, 52vw)); flex-shrink: 0; position: sticky; top: 0; height: 100vh; container: editor-panel / inline-size;
+#panel { width: var(--panel-width, min(760px, 52vw)); flex-shrink: 0; position: sticky; top: 0; height: 100dvh; container: editor-panel / inline-size;
   display: flex; flex-direction: column; font-size: 12.5px; line-height: 1.6;
   border-left: 1px solid var(--c-line); background: var(--c-bg1); }
-body.textfile-open #phead :is(.fm-language, #status, #validate, #save, #split-preview) { display: none; }
+body.textfile-open #phead :is(.fm-language, #status, #validate, #split-preview) { display: none; }
+body.textfile-open:has(#file-editor:is(form), #file-editor .cm-content[contenteditable="false"]) #phead #save { display: none; }
 #file-editor { display: flex; flex-direction: column; flex: 1; min-height: 0; color: var(--doc-fg); background: var(--doc-bg); }
 .file-editor-heading { display: flex; align-items: center; flex: 1; min-width: 0; gap: 6px; margin-left: 6px; color: var(--c-fg-muted); }
 .file-editor-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--doc-mono); }
@@ -2453,7 +2506,6 @@ body.textfile-open #phead :is(.fm-language, #status, #validate, #save, #split-pr
 body.edit #nav-groups { --nav-rail: 22px; --nav-icon-half: 9px; }
 .nav-doc-row { padding-left: 12px; gap: 3px; min-height: 38px; }
 .nav-tree .nav-doc-row { padding-left: var(--nav-pad); }
-.nav-doc-row:has(> a.cur) { background: var(--c-raised); }
 .nav-row.nav-doc-row > a { padding: 4px 2px; background: transparent; }
 .nav-doc-row > a::before { display: none; }
 .nav-doc-name { display: flex; flex: 1; flex-direction: column; min-width: 0; line-height: 17px; }
@@ -2528,20 +2580,19 @@ body.edit #nav-groups { --nav-rail: 22px; --nav-icon-half: 9px; }
 .fm-language > .language-select { flex: 1; width: 0; min-width: 0; }
 
 
-main.editor-workspace { padding: 0; height: 100vh; display: flex; flex-direction: column; position: sticky; top: 0; }
+main.editor-workspace { padding: 0; height: 100dvh; display: flex; flex-direction: column; position: sticky; top: 0; }
 #split-preview[aria-pressed="true"] { color: var(--c-accent); background: var(--c-raised); }
 .resources-pane .pane-actions { display: none; }
-.pane-actions { top: -20px; margin: -20px -24px 16px; padding: 4px 12px; min-height: 38px; background: inherit; }
+.pane-actions { top: 0; margin: 0 -24px 16px; padding: 4px 12px; min-height: 38px; background: var(--c-bg0); }
 .pane-resource { min-width: 0; }
 #preview-panes { display: flex; flex: 1; min-height: 0; }
 #preview-panes[hidden] { display: none; }
 .preview-pane.resources-pane { min-height: 0; padding-bottom: 24px; }
-.preview-pane.resources-pane:has(.resource-library) { padding-top: 20px; }
-#preview-panes .resources-pane:has(> .pane-resource [data-subformat-board]:not([hidden])) { padding-top: 0; }
 .resources-pane .resource-tabs { margin-inline: -24px; padding: 0 12px; }
-.preview-pane { flex: 1; min-width: 0; overflow: auto; padding: 20px 24px 50vh; border-top: 2px solid transparent; }
-#preview-panes.split .preview-pane { padding: 16px; }
-#preview-panes.split .pane-actions { top: -16px; margin: -16px -16px 16px; padding-inline: 10px; }
+.preview-pane { flex: 1; min-width: 0; overflow: auto; padding: 0 24px 50vh; border-top: 2px solid transparent; }
+#preview-panes.split .preview-pane { padding: 0 16px 16px; }
+#preview-panes .preview-pane.resources-pane { padding-top: 0; }
+#preview-panes.split .pane-actions { margin: 0 -16px 16px; padding-inline: 10px; }
 #preview-panes.split .preview-pane + .preview-pane { border-left: 1px solid var(--c-line); }
 #preview-panes.split .preview-pane.active { border-top-color: var(--c-accent); }
 #preview-panes .preview-pane:has(> .pane-resource .document-web, > .preview-content:not([hidden]) .document-web) { position: relative; padding: 0; border: 0; overflow: hidden; }
@@ -2608,42 +2659,46 @@ body.corr main article > [data-ln].corr-hi {
   background: color-mix(in srgb, var(--c-accent) 12%, transparent);
   box-shadow: -6px 0 0 color-mix(in srgb, var(--c-accent) 55%, transparent); border-radius: 2px; }
 
-.files-toolbar {display:flex;gap:10px;align-items:center;min-width:0;}
+.files-toolbar {display:flex;gap:8px;align-items:center;min-width:0;}
 .files-toolbar > span {flex:none;}
-.files-toolbar button {flex:none;position:relative;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;margin-left:auto;cursor:pointer;}
-.files-toolbar button:disabled {opacity:.5;cursor:default;}.files-toolbar button[data-state=loading] {color:transparent;opacity:1;}
-.files-toolbar button[data-state=loading]:after {content:"";position:absolute;left:calc(50% - 6px);top:calc(50% - 6px);width:12px;height:12px;border:1px solid var(--c-line);border-top-color:var(--c-accent);border-radius:50%;animation:files-spin .8s linear infinite;}
+.files-toolbar .resource-search {flex:1;}
+.files-toolbar button {flex:none;position:relative;display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;cursor:pointer;}
+.files-toolbar button {border:0;background:none;padding:3px;}
+.files-toolbar button:disabled {opacity:.5;cursor:default;}.files-toolbar button[data-state=loading] {opacity:1;}
+.files-toolbar button[data-state=loading] svg {animation:files-spin .8s linear infinite;}
 @keyframes files-spin {to{transform:rotate(360deg);}}
-@media(prefers-reduced-motion:reduce){.files-toolbar button[data-state=loading]:after{animation:none;}}
-.files-toolbar button[data-state=error] {color:var(--c-danger);}
-.files-viewport {overflow:auto;min-height:360px;max-height:70vh;}
+@media(prefers-reduced-motion:reduce){.files-toolbar button[data-state=loading] svg{animation:none;}}
+.files-viewport {container-type:inline-size;overflow:auto;min-height:360px;max-height:70vh;}
 .files-table {width:100%;border-collapse:collapse;table-layout:fixed;font-size:13px;}
-.files-table th,.files-table td {height:26px;padding:0 6px;text-align:left;}
+.files-table th,.files-table td {height:24px;padding:0 6px;text-align:left;}
 .files-table th {height:30px;border-bottom:1px solid var(--c-line);}
 .files-table th:nth-child(2) {width:76px;}.files-table th:last-child {width:28px;}
 .files-table th:nth-child(2),.files-table td:nth-child(2) {text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;}
-.files-table td:nth-child(2) {font-size:11px;color:var(--c-fg-faint);}
-.files-table tbody tr:hover {background:var(--c-surface);}
+.files-table td:nth-child(2) {font-size:11px;color:var(--c-fg-muted);}
+.files-table tbody tr:hover,.files-table tbody tr:focus-within {background:var(--c-surface);}
 .files-table tbody {user-select:none;}
+.files-table tr[data-path] {cursor:pointer;}
 .files-table tr.selected {background:var(--c-raised);}
 .files-table button {border:0;background:none;color:inherit;cursor:pointer;padding:3px;}
 .files-name {display:flex;min-width:0;}
-.files-name a,.files-name .files-folder {position:relative;display:flex;align-items:center;gap:6px;min-width:0;white-space:nowrap;width:100%;height:26px;padding:0 0 0 16px;color:var(--c-fg);font:inherit;text-align:left;text-decoration:none;}
-.files-folder:before {content:"";position:absolute;left:3px;top:9px;width:5px;height:5px;border-right:1px solid var(--c-fg-faint);border-bottom:1px solid var(--c-fg-faint);transform:rotate(45deg);}
-.files-folder[aria-expanded=false]:before {transform:rotate(-45deg);}
-.files-name span {display:flex;flex:none;}
-.files-name svg {width:15px;height:15px;color:var(--c-fg-muted);}
+.files-name a,.files-name .files-folder {display:flex;align-items:center;gap:6px;min-width:0;white-space:nowrap;width:100%;height:24px;padding:0;color:var(--c-fg);font:inherit;text-align:left;text-decoration:none;}
+.files-name .files-symbol {display:flex;flex:none;}
+.files-toolbar svg,.files-symbol svg,.files-copy svg {width:16px;height:16px;color:var(--c-fg-muted);}
 .files-name .files-basename {display:block;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .files-copy {display:flex;opacity:0;}
-.files-copy svg {width:14px;height:14px;color:var(--c-fg-faint);}
 .files-table tr:hover .files-copy,.files-table tr:focus-within .files-copy {opacity:1;}
 @media(hover:none){.files-copy{opacity:1;}}
 .files-table [data-drop=into], .files-viewport[data-drop=into] {outline:2px solid var(--c-accent);outline-offset:-2px;}
-.files-table .files-placeholder {height:96px;text-align:center;vertical-align:middle;}
+.files-table .files-placeholder {height:96px;text-align:center;vertical-align:middle;color:var(--c-fg-muted);}
 .app-dialog textarea {display:block;box-sizing:border-box;width:100%;min-height:64px;max-height:65vh;resize:both;font:inherit;}
 @media(max-width:600px){.files-table {min-width:0;}.files-table th:nth-child(2){width:65px;}.files-name{max-width:100%;}}
 
-@media(max-width:400px){.files-table th:nth-child(2),.files-table td:nth-child(2){display:none;}}
+@container(max-width:360px){.files-table th:nth-child(2),.files-table td:nth-child(2){display:none;}}
+@container(max-width:260px){
+  .files-toolbar {flex-wrap:wrap;row-gap:2px;}
+  .files-toolbar > span {margin-inline-end:auto;}
+  .files-toolbar .resource-search {flex-basis:100%;order:1;}
+}
 
 /* Files pages */
 .res-page h1 { margin-bottom: 6px; }
@@ -2716,7 +2771,7 @@ body.corr main article > [data-ln].corr-hi {
 .nav-page-menu > button:not(:disabled):hover { background: var(--c-raised); }
 .nav-page-menu :focus-visible { outline: 1px solid var(--c-fg-muted); outline-offset: -2px; }
 .nav-page-menu button:disabled { color: var(--c-fg-muted); cursor: default; }
-.nav-page-menu .nav-page-chevron { display: flex; margin-left: auto; transform: rotate(90deg); }
+.nav-page-menu .nav-page-chevron { display: flex; margin-left: auto; }
 .nav-page-menu .nav-page-chevron svg { width: 12px; height: 12px; }
 .nav-page-menu .subformat-setting-option > button:is(:hover, :focus-visible) { background: var(--c-raised); }
 .nav-page-menu .err { margin: 0; padding: 4px 10px; color: var(--c-danger); overflow-wrap: anywhere; }
@@ -2768,8 +2823,8 @@ body.edit .nav-row { cursor: grab; }
             ? svgImg(svg, cls)
             : e.subformat
               ? SUBFORMATS_ICON
-              : e.library
-                ? (libraryIcon(e.library) ?? STATICS_ICON)
+              : e.library || e.format
+                ? (libraryIcon(e.library ?? e.format ?? "") ?? STATICS_ICON)
                 : DOCS_ICON;
     };
     // `GET /api/nav` (edit mode; the client reconciles changed nodes after an md change)
@@ -2830,7 +2885,7 @@ body.edit .nav-row { cursor: grab; }
             list(rootPage?.id, 0) +
             '<div id="document-versions" hidden></div>' +
             (mode === "edit"
-                ? `<template data-page-libraries>${escapeHtml(JSON.stringify([...Object.keys(CODE_TEMPLATES), "urls", "url-previews"].filter((view) => !site.entries.some((entry) => entry.library === view))))}</template><template data-page-subformats>${escapeHtml(JSON.stringify((site.subformats ?? []).filter((format) => !site.entries.some((entry) => entry.subformat?.ext === format.ext))))}</template>${navFilesHtml(site, currentRes)}`
+                ? `<template data-page-libraries>${escapeHtml(JSON.stringify([...REFERENCE_LIBRARIES].filter((view) => !site.entries.some((entry) => entry.library === view))))}</template><template data-page-subformats>${escapeHtml(JSON.stringify((site.subformats ?? []).map((format) => ({ ext: format.ext, added: site.entries.some((entry) => entry.subformat?.ext === format.ext) }))))}</template>${navFilesHtml(site, currentRes)}`
                 : "");
         const links = docLinks(site, html);
         return site.contentLanguage ? languageLinks(links, site.contentLanguage) : links;
@@ -2877,9 +2932,13 @@ body.edit .nav-row { cursor: grab; }
 
     const navFilesHtml = (site: NavigationSite, currentRes?: string): string => {
         const source = site.workspace;
+        const format =
+            currentRes === "_format" ||
+            ["codeblocks", "_library/codeblocks", "dictionary", "code"].includes(currentRes ?? "");
         const library =
-            currentRes?.startsWith("_library") ||
-            ["codeblocks", "urls", "url-previews", "dictionary", "code"].includes(currentRes ?? "");
+            !format &&
+            (currentRes?.startsWith("_library") ||
+                ["urls", "url-previews"].includes(currentRes ?? ""));
         const hint = `<div class="files-drop-hint" aria-hidden="true">${UPLOAD_ICON}<span data-i18n="Upload files">Upload files</span></div>`;
         const location =
             source?.protocol === "git"
@@ -2891,7 +2950,7 @@ body.edit .nav-row { cursor: grab; }
                 : "";
         const extensions = `<div class="nav-resources" id="nav-extensions" data-scope="${createHash("sha256").update(root).digest("hex")}"><div class="nav-item" data-node-id="_extensions"><div class="nav-row"><a class="nav-link${currentRes === "_extensions" ? " cur" : ""}" href="/_extensions" title="Plugins" data-i18n-title="Plugins">${PLUGINS_ICON}<span class="nav-label" data-i18n="Plugins">Plugins</span></a></div></div><div class="extensions-drop-hint" aria-hidden="true">${PLUGINS_ICON}<span data-i18n="Add plugins">Add plugins</span></div></div>`;
         const subformats = `<div class="nav-resources" id="nav-subformats"><div class="nav-item" data-node-id="_subformats"><div class="nav-row"><a class="nav-link${currentRes === "_subformats" ? " cur" : ""}" href="/_subformats" title="Subformats" data-i18n-title="Subformats">${SUBFORMATS_ICON}<span class="nav-label" data-i18n="Subformats">Subformats</span></a></div></div></div>`;
-        return `<details id="nav-tools" open>${location}<div class="nav-tool-cards"><div class="nav-resources" id="nav-manifest"><div class="nav-item" data-node-id="_manifest"><div class="nav-row"><a class="nav-link${currentRes === "_manifest" ? " cur" : ""}" href="/_manifest" title="dooc.yaml">${GEAR_ICON}<span class="nav-label">dooc.yaml</span></a></div></div></div><div class="nav-resources" id="nav-files"><div class="nav-item" data-node-id="_files"><div class="nav-row"><a class="nav-link${currentRes !== undefined && currentRes !== "_manifest" && currentRes !== "_git" && currentRes !== "_extensions" && currentRes !== "_subformats" && !library ? " cur" : ""}" href="/_files" title="Files" data-i18n-title="Files">${FOLDER_ICON}<span class="nav-label" data-i18n="Files">Files</span></a><span class="files-upload-status" role="status"></span></div></div>${hint}</div><div class="nav-resources" id="nav-library"><div class="nav-item" data-node-id="_library"><div class="nav-row"><a class="nav-link${library ? " cur" : ""}" href="/_library" title="Library" data-i18n-title="Library">${STATICS_ICON}<span class="nav-label" data-i18n="Library">Library</span></a></div></div></div>${subformats}${git}${extensions}</div></details>`;
+        return `<details id="nav-tools" open>${location}<div class="nav-tool-cards"><div class="nav-resources" id="nav-manifest"><div class="nav-item" data-node-id="_manifest"><div class="nav-row"><a class="nav-link${currentRes === "_manifest" ? " cur" : ""}" href="/_manifest" title="dooc.yaml">${GEAR_ICON}<span class="nav-label">dooc.yaml</span></a></div></div></div><div class="nav-resources" id="nav-files"><div class="nav-item" data-node-id="_files"><div class="nav-row"><a class="nav-link${currentRes !== undefined && currentRes !== "_manifest" && currentRes !== "_git" && currentRes !== "_extensions" && currentRes !== "_subformats" && !library && !format ? " cur" : ""}" href="/_files" title="Files" data-i18n-title="Files">${FOLDER_ICON}<span class="nav-label" data-i18n="Files">Files</span></a><span class="files-upload-status" role="status"></span></div></div>${hint}</div><div class="nav-resources" id="nav-library"><div class="nav-item" data-node-id="_library"><div class="nav-row"><a class="nav-link${library ? " cur" : ""}" href="/_library" title="Library" data-i18n-title="Library">${STATICS_ICON}<span class="nav-label" data-i18n="Library">Library</span></a></div></div></div><div class="nav-resources" id="nav-format"><div class="nav-item" data-node-id="_format"><div class="nav-row"><a class="nav-link${format ? " cur" : ""}" href="/_format" title="Format" data-i18n-title="Format">${libraryIcon("codeblocks") ?? STATICS_ICON}<span class="nav-label" data-i18n="Format">Format</span></a></div></div></div>${subformats}${git}${extensions}</div></details>`;
     };
 
     const formatSize = (bytes: number): string =>
@@ -3030,6 +3089,9 @@ body.edit .nav-row { cursor: grab; }
             const mime = extension === "svg" ? "svg+xml" : extension === "jpg" ? "jpeg" : extension;
             preview = `<img alt="" src="data:image/${mime};base64,${content.toString("base64")}">`;
             if (extension === "svg") sourceFile = file;
+        } else if (/\.(pdf|dxf|html)$/i.test(file)) {
+            preview = formatPreview(site, [file])(file);
+            if (!/\.pdf$/i.test(file)) sourceFile = file;
         } else if (/\.(mp4|webm|ogg)$/i.test(file)) {
             preview = `<video data-dooc-video controls playsinline preload="metadata" aria-label="Video preview" src="data:video/${file.split(".").pop()};base64,${content.toString("base64")}"></video>`;
         } else {
@@ -3054,6 +3116,31 @@ body.edit .nav-row { cursor: grab; }
         };
     };
 
+    const formatPreview = (site: Site, files: string[]): ((file: string) => string) => {
+        const visual = files.filter((file) =>
+            /\.(svg|html|png|webp|gif|mp4|webm|jpe?g|pdf|dxf)$/i.test(file),
+        );
+        const missing = visual.filter((file) => !site.ctx.figures.has(figureName(file)));
+        const figures = new Map(site.ctx.figures);
+        if (missing.length)
+            for (const figure of loadFigures(join(site.root ?? root, "figures"), missing).figures)
+                figures.set(figure.name, figure);
+        return (file) => {
+            const figure = figures.get(figureName(file));
+            if (figure)
+                return blocksHtml([{ type: "figureRef", name: figure.name }], {
+                    ...site.ctx,
+                    figures,
+                    figurePreview: figureFrameHtml,
+                });
+            try {
+                return textfilePreviewHtml(site, file, readTextfile(site.root ?? root, file));
+            } catch {
+                return "";
+            }
+        };
+    };
+
     const resourcesMain = (
         site: Site,
         rest: string,
@@ -3066,6 +3153,7 @@ body.edit .nav-row { cursor: grab; }
             const file = manifestFile(site.root ?? root);
             return {
                 title: file,
+                sourceFile: file,
                 main: `<article class="res-page resource-library manifest-page"><div id="manifest-manager" data-file="${escapeHtml(file)}"></div></article>`,
             };
         }
@@ -3081,8 +3169,11 @@ body.edit .nav-row { cursor: grab; }
                       main: '<article class="res-page resource-library git-page"><div id="git-manager"></div></article>',
                   }
                 : undefined;
+        if (rest === "_format") return resourcesMain(site, "codeblocks");
         if (rest === "_library" || rest.startsWith("_library/")) {
-            const view = rest.slice("_library".length).replace(/^\//, "") || "codeblocks";
+            const view =
+                rest.slice("_library".length).replace(/^\//, "") ||
+                (readManifest(site.root ?? root).libraries?.[0] ?? "urls");
             return ["codeblocks", "urls", "url-previews", "dictionary", "code"].includes(view)
                 ? resourcesMain(site, view)
                 : undefined;
@@ -3131,15 +3222,20 @@ body.edit .nav-row { cursor: grab; }
                 kind === "_subformats")
         ) {
             const index = resourceIndex(
-                root,
-                site.filePaths ?? filesSnapshot(root).files.map((item) => item.path),
+                site.root ?? root,
+                site.filePaths ?? filesSnapshot(site.root ?? root).files.map((item) => item.path),
                 site.previews?.domains,
             );
             if (site.workspace?.protocol === "git" && index.subformats.length)
                 setSubformatChanges(root, index.subformats);
             return {
-                title: kind === "_subformats" ? "Subformats" : "Library",
-                main: `<article class="res-page files-page resource-library">${kind === "_subformats" ? "" : resourceTabs(kind)}${resourceLibraryHtml(index, kind === "_subformats" ? "subformats" : kind)}</article>`,
+                title:
+                    kind === "_subformats"
+                        ? "Subformats"
+                        : kind === "codeblocks"
+                          ? "Format"
+                          : "Library",
+                main: `<article class="res-page files-page resource-library">${kind === "_subformats" ? "" : resourceTabs(kind, index.libraries)}${resourceLibraryHtml(index, kind === "_subformats" ? "subformats" : kind, undefined, false, formatPreview(site, index.files?.map((item) => item.file) ?? []))}</article>`,
             };
         }
         if (kind === "file" && file) {
@@ -3267,7 +3363,7 @@ body.edit .nav-row { cursor: grab; }
         const rootJump = rootPage ? docHref(site.entries, rootPage.id) : "";
         const rootCurrent = currentDocument?.root && (!opts.currentRes || opts.currentRes === "/");
         const nav = navGroupsHtml(
-            historicalReadOnly ? "preview" : mode,
+            historicalReadOnly || opts.loading ? "preview" : mode,
             site,
             opts.currentId,
             opts.currentRes,
@@ -3315,7 +3411,7 @@ body.edit .nav-row { cursor: grab; }
         // preview / edit. Figures are readable without JS, so defer is enough (= progressive
         // enhancement).
         const main =
-            opts.boot != null
+            opts.boot != null || (opts.loading && mode === "edit")
                 ? `<main class="editor-workspace">
 
 
@@ -3329,7 +3425,7 @@ body.edit .nav-row { cursor: grab; }
             : opts.publish
               ? script(opts.publish.graphJs)
               : `<script>(${loadPreviewScript.toString()})("/assets/graph.js", "svg[data-sg-layout], [data-mermaid]", "module");</script>`;
-        return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+        const frame = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 ${opts.publish ? `<meta name="referrer" content="no-referrer"><meta http-equiv="x-dns-prefetch-control" content="off">${opts.publish.network ? "" : `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src ${self}'unsafe-inline'; style-src ${self}'unsafe-inline' data:; img-src ${self}data: blob:; media-src ${self}data: blob:; object-src ${self}data:; font-src ${self}data: blob:; frame-src ${self}data: blob:; connect-src ${output ? "'self'" : "'none'"}; base-uri 'none'; form-action 'none'">`}` : ""}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(pageTitle(mode, opts.title, site))}</title>
@@ -3339,7 +3435,16 @@ ${script(`var __name = (f) => f;
 (${mountFigureFrames.toString()})(document);`)}
 ${stylesheet}</head>
 <body data-content-language="${escapeHtml(site.contentLanguage ?? site.defaultLang)}" data-document-manifest="${escapeHtml(currentDocument?.origin ?? "")}" data-document-path="${escapeHtml(currentDocument ? docPath(site.entries, currentDocument.id) : "/")}"${mode === "edit" ? ' class="edit"' : ""}${site.download ? ` data-download="${site.download}"` : ""}${site.sourceBase ? ` data-source-base="${escapeHtml(site.sourceBase)}"` : ""}><nav id="sidebar"><div id="sidebar-resize" class="panel-resize" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="sidebar" aria-label="Resize sidebar" data-i18n-aria-label="Resize sidebar" title="Resize sidebar" data-i18n-title="Resize sidebar"></div><div id="sidebar-head">${siteIcon}<a id="site-title" class="site-title${rootCurrent ? " cur" : ""}" href="/"${/^https?:\/\//i.test(rootJump) ? ` data-jump-url="${escapeHtml(rootJump)}"` : ""} title="${siteTitle}"${rootCurrent ? ' aria-current="page"' : ""}${mode === "edit" ? ` data-title="${escapeHtml(site.title ?? "")}" aria-keyshortcuts="F2"` : ""}>${siteTitle}</a><button id="sidebar-toggle" type="button" aria-controls="sidebar-content" aria-expanded="true" title="Close sidebar" data-i18n-title="Close sidebar">${SIDEBAR_ICON}</button></div><div id="sidebar-content"><div id="nav-groups">${nav}</div><div id="nav-status" role="status" aria-live="polite"></div></div></nav>${main}${opts.aside ?? ""}
-${script(`
+`;
+        if (opts.loading)
+            return `${frame}<script>document.body.dataset.clientLoading = "true";
+try { document.body.classList.toggle("sidebar-closed", matchMedia("(max-width: ${mode === "edit" ? 820 : 600}px)").matches || localStorage.getItem("docs:sidebar-open") === "0"); } catch {}
+const toggle = document.getElementById("sidebar-toggle");
+const open = !document.body.classList.contains("sidebar-closed");
+toggle.setAttribute("aria-expanded", String(open));
+toggle.title = open ? "Close sidebar" : "Open sidebar";
+</script><script src="/assets/client.js"></script></body></html>`;
+        return `${frame}${script(`
 (${mountDocumentLinks.toString()})(${showDialog.toString()}, ${!opts.publish || !!opts.publish.network}${opts.publish ? "" : `, ${workspaceFetch.toString()}`});
 (${mountThemePickers.toString()})(${JSON.stringify(THEME_ICONS)}, ${JSON.stringify(site.themes)});
 (${mountThemeVariants.toString()})(document);
@@ -3396,7 +3501,7 @@ void (${mountFontPickers.toString()})(${createFontSettings.toString()}, ${JSON.s
     apply(open, true);
   });
   document.getElementById("sidebar-content")?.addEventListener("click", (event) => {
-    if (open || !event.isTrusted || !(event.target instanceof Element) || !event.target.closest(".nav-row")) return;
+    if (open || !event.isTrusted || !(event.target instanceof Element) || !event.target.closest(".nav-row") || event.target.closest(".nav-create")) return;
     event.preventDefault();
     event.stopImmediatePropagation();
     toggle.click();
@@ -3464,7 +3569,7 @@ ${
     const cur = document.querySelector("#nav-groups .nav-row a.cur");
     const id = (cur && cur.closest(".nav-item").dataset.docId) || "";
     const pathname = location.pathname.slice((globalThis.__doocClientBase ?? "").length) || "/";
-    const rp = pathname.startsWith("/_library") ? pathname.slice(1) : ["/_manifest", "/_git", "/_extensions", "/_subformats"].includes(pathname) ? pathname.slice(1) : pathname.startsWith("/_files") ? pathname.slice(8).replace(/^\\/|\\/$/g, "") : null;
+    const rp = pathname.startsWith("/_library") ? pathname.slice(1) : ["/_manifest", "/_git", "/_extensions", "/_subformats", "/_format"].includes(pathname) ? pathname.slice(1) : pathname.startsWith("/_files") ? pathname.slice(8).replace(/^\\/|\\/$/g, "") : null;
     const res = await localeFetch("/api/nav?current=" + encodeURIComponent(id) + (rp == null ? "" : "&res=" + encodeURIComponent(rp)));
     if (res.ok) {
       const data = await res.json();
@@ -3750,11 +3855,12 @@ ${
   // ── Page type menu and in-sidebar create form ──
   const suggestFileName = ${suggestDocFileName.toString()};
   const availableLibraries = () => JSON.parse(document.querySelector("[data-page-libraries]")?.content.textContent || "[]");
-  const availableSubformats = () => JSON.parse(document.querySelector("[data-page-subformats]")?.content.textContent || "[]");
+  const pageSubformats = () => JSON.parse(document.querySelector("[data-page-subformats]")?.content.textContent || "[]");
   const closeForm = () => { for (const f of document.querySelectorAll(".nav-new-item")) f.remove(); };
   const openForm = (trigger) => {
     const target = context();
     closeForm();
+    if (document.body.classList.contains("sidebar-closed")) document.getElementById("sidebar-toggle")?.click();
     const parent = trigger.dataset.parent || "";
     const host = document.querySelector('#nav-groups .nav-list[data-parent="' + CSS.escape(parent) + '"]');
     if (!host) return;
@@ -3825,11 +3931,13 @@ ${
   menu.setAttribute("role", "menu");
   menu.setAttribute("aria-label", t("Page type"));
   menu.dataset.i18nAriaLabel = "Page type";
-  menu.innerHTML = '<button type="button" role="menuitem" tabindex="-1" data-page-type="markdown">${DOCS_ICON}Markdown</button><button type="button" role="menuitem" tabindex="-1" data-page-type="subformat" aria-haspopup="menu" popovertarget="nav-subformat-menu">${SUBFORMATS_ICON}Subformat<span class="nav-page-chevron">${CHEVRON_ICON}</span></button><button type="button" role="menuitem" tabindex="-1" data-page-type="library" aria-haspopup="menu">${STATICS_ICON}Library<span class="nav-page-chevron">${CHEVRON_ICON}</span></button><div id="nav-subformat-menu" class="subformat-picker-menu subformat-setting-menu" role="menu" aria-label="Subformat" popover="auto"></div><p class="err" role="alert"></p>';
+  menu.innerHTML = '<button type="button" role="menuitem" tabindex="-1" data-page-type="markdown">${DOCS_ICON}Markdown</button><button type="button" role="menuitem" tabindex="-1" data-page-type="subformat" aria-haspopup="menu" popovertarget="nav-subformat-menu">${SUBFORMATS_ICON}Subformat<span class="nav-page-chevron">${CHEVRON_ICON}</span></button><button type="button" role="menuitem" tabindex="-1" data-page-type="library" aria-haspopup="menu">${STATICS_ICON}Library<span class="nav-page-chevron">${CHEVRON_ICON}</span></button><button type="button" role="menuitem" tabindex="-1" data-page-type="format" aria-haspopup="menu">${libraryIcon("codeblocks") ?? STATICS_ICON}<span data-i18n="Format">Format</span><span class="nav-page-chevron">${CHEVRON_ICON}</span></button><div id="nav-subformat-menu" class="subformat-picker-menu subformat-setting-menu" role="menu" aria-label="Subformat" popover="auto"></div><p class="err" role="alert"></p>';
   document.body.append(menu);
   const formatsMenu = menu.querySelector("#nav-subformat-menu");
+  formatsMenu.tabIndex = -1;
   const formatTrigger = menu.querySelector('[data-page-type="subformat"]');
   const libraryTrigger = menu.querySelector('[data-page-type="library"]');
+  const collectionTrigger = menu.querySelector('[data-page-type="format"]');
   const markdownTrigger = menu.querySelector('[data-page-type="markdown"]');
   const menuError = menu.querySelector(".err");
   let menuTrigger;
@@ -3845,16 +3953,24 @@ ${
     popup.style.maxHeight = "";
     popup.showPopover();
     const rect = trigger.getBoundingClientRect();
-    const top = popup === menu ? rect.top : rect.bottom + 4;
-    const bottom = popup === menu ? rect.bottom : rect.top - 4;
-    const above = innerHeight - top < popup.offsetHeight + 8 && bottom > innerHeight - top;
+    let left = rect.left;
+    let top = rect.top;
+    if (popup !== menu) {
+      const parent = menu.getBoundingClientRect();
+      left = parent.right + 4;
+      if (left + popup.offsetWidth > innerWidth - 8 && parent.left - popup.offsetWidth - 4 >= 8)
+        left = parent.left - popup.offsetWidth - 4;
+      top = Math.max(8, Math.min(top, innerHeight - popup.offsetHeight - 8));
+    }
+    const bottom = rect.bottom;
+    const above = popup === menu && innerHeight - top < popup.offsetHeight + 8 && bottom > innerHeight - top;
     Object.assign(popup.style, {
-      left: Math.max(8, Math.min(rect.left, innerWidth - popup.offsetWidth - 8)) + "px",
+      left: Math.max(8, Math.min(left, innerWidth - popup.offsetWidth - 8)) + "px",
       top: above ? "auto" : top + "px",
       bottom: above ? innerHeight - bottom + "px" : "auto",
       maxHeight: Math.max(80, (above ? bottom : innerHeight - top) - 8) + "px",
     });
-    popup.querySelector("button:not(:disabled)")?.focus();
+    (popup.querySelector("button:not(:disabled)") ?? popup).focus();
   };
   markdownTrigger.addEventListener("click", () => {
     if (addingPage) return;
@@ -3863,13 +3979,18 @@ ${
   });
   let pageKind = "subformat";
   const libraryIcons = ${JSON.stringify(LIBRARY_ICONS)};
-  const openPages = (trigger, kind, names) => (event) => {
+  const openPages = (trigger, kind, names) => async (event) => {
     event.preventDefault();
     if (addingPage) return;
     if (formatsMenu.matches(":popover-open")) { formatsMenu.hidePopover(); if (pageKind === kind) return; }
     pageKind = kind;
     formatsMenu.replaceChildren();
-    for (const name of names()) {
+    let values;
+    try { const available = names(); values = available instanceof Promise ? await available : available; }
+    catch (error) { menuError.textContent = error.message; return; }
+    if (!menu.matches(":popover-open") || pageKind !== kind) return;
+    const added = new Set(kind === "subformat" ? pageSubformats().filter((format) => format.added).map((format) => format.ext) : []);
+    for (const name of values) {
       const row = document.createElement("div");
       row.className = "subformat-setting-option";
       row.setAttribute("role", "none");
@@ -3878,22 +3999,34 @@ ${
       option.tabIndex = -1;
       option.setAttribute("role", "menuitem");
       option.dataset.page = name;
-      option.textContent = name;
-      if (kind === "library" && Object.hasOwn(libraryIcons, name)) option.insertAdjacentHTML("afterbegin", libraryIcons[name]);
+      option.disabled = added.has(name);
+      option.textContent = option.disabled ? name + " · " + t("Already added") : name;
+      if (Object.hasOwn(libraryIcons, name)) option.insertAdjacentHTML("afterbegin", libraryIcons[name]);
       row.append(option);
       formatsMenu.append(row);
     }
+    if (!values.length) {
+      const empty = document.createElement("p");
+      empty.className = "language-empty";
+      empty.textContent = t(kind === "subformat" ? "No subformats configured. Add subformats to dooc.yaml." : "No results");
+      formatsMenu.append(empty);
+    }
     showMenu(formatsMenu, trigger);
   };
-  formatTrigger.addEventListener("click", openPages(formatTrigger, "subformat", () => availableSubformats().map((format) => format.ext)));
+  formatTrigger.addEventListener("click", openPages(formatTrigger, "subformat", () => pageSubformats().map((format) => format.ext)));
   libraryTrigger.addEventListener("click", openPages(libraryTrigger, "library", availableLibraries));
+  collectionTrigger.addEventListener("click", openPages(collectionTrigger, "format", async () => {
+    const response = await localeFetch("/api/formats");
+    if (!response.ok) throw new Error(t("Could not load formats"));
+    return response.json();
+  }));
   formatsMenu.addEventListener("click", async (event) => {
     const option = event.target.closest("button[data-page]");
-    if (!option || addingPage) return;
+    if (!option || option.disabled || addingPage) return;
     const target = context();
     const parent = menuTrigger.dataset.parent || undefined;
     const page = option.dataset.page;
-    addingPage = markdownTrigger.disabled = formatTrigger.disabled = libraryTrigger.disabled = true;
+    addingPage = markdownTrigger.disabled = formatTrigger.disabled = libraryTrigger.disabled = collectionTrigger.disabled = true;
     menu.setAttribute("aria-busy", "true");
     menuError.textContent = "";
     setStatus("", false);
@@ -3911,8 +4044,7 @@ ${
       menuError.textContent = error.message;
       if (!menu.matches(":popover-open")) setStatus(error.message, true);
     } finally {
-      addingPage = markdownTrigger.disabled = libraryTrigger.disabled = false;
-      formatTrigger.disabled = !availableSubformats().length;
+      addingPage = markdownTrigger.disabled = formatTrigger.disabled = libraryTrigger.disabled = collectionTrigger.disabled = false;
       menu.removeAttribute("aria-busy");
       if (menu.matches(":popover-open")) formatTrigger.focus();
     }
@@ -3943,9 +4075,6 @@ ${
       if (menuTrigger === btn) return;
     }
     menuTrigger = btn;
-    const unavailable = !availableSubformats().length;
-    formatTrigger.disabled = unavailable;
-    formatTrigger.title = unavailable ? t("No subformats available to add.") : "";
     menuError.textContent = "";
     menu.setAttribute("aria-label", t("Page type"));
     showMenu(menu, btn);
@@ -4019,8 +4148,12 @@ ${opts.publish ? `${opts.publish.pages}${script(`${publishRouterScript(opts.publ
   const main = document.querySelector("main");
   const pages = new Map([...document.querySelectorAll("template[data-route]")].map((t) => [t.dataset.route, t]));
   let navigation = 0;
+  let controller;
   const show = async () => {
     const request = ++navigation;
+    controller?.abort();
+    controller = new AbortController();
+    const { signal } = controller;
     const [path, rawAnchor] = location.hash.slice(1).split("#");
     let anchor = "";
     try { anchor = decodeURIComponent(rawAnchor || ""); } catch {}
@@ -4036,15 +4169,17 @@ ${opts.publish ? `${opts.publish.pages}${script(`${publishRouterScript(opts.publ
     (${focusNavTree.toString()})(document.getElementById("nav-groups"), "#/" + route);
     document.title = page.dataset.title;
     const actions = main.querySelector(":scope > .page-actions");
+    const loading = page.dataset.src ? (${startNavLoading.toString()})(signal) : undefined;
     if (page.dataset.src) {
       main.setAttribute("aria-busy", "true");
       try {
         if (location.protocol === "file:") throw new Error("Serve split builds over HTTP(S).");
-        const response = await fetch(page.dataset.src);
+        const response = await fetch(page.dataset.src, { signal });
         if (!response.ok) throw new Error("Page request failed: " + response.status);
-        page.innerHTML = await response.text();
+        page.innerHTML = await (${readNavigationText.toString()})(response, loading.update, signal);
         delete page.dataset.src;
       } catch (error) {
+        loading.finish();
         if (request !== navigation) return;
         const notice = document.createElement("p");
         notice.setAttribute("role", "alert");
@@ -4058,6 +4193,7 @@ ${opts.publish ? `${opts.publish.pages}${script(`${publishRouterScript(opts.publ
     if (request !== navigation) return;
     main.removeAttribute("aria-busy");
     main.innerHTML = page.innerHTML;
+    loading?.finish(true);
     document.dispatchEvent(new Event("docs:page-shown"));
     if (actions) main.prepend(actions);
     const target = anchor && document.getElementById(anchor);
@@ -4172,7 +4308,7 @@ ${opts.publish ? `${opts.publish.pages}${script(`${publishRouterScript(opts.publ
             );
         const html = renderEntryHtml(site, e).html;
         const kids = childrenOf(site.entries, e.id);
-        if (e.subformat || e.library || e.blocks.length > 0 || kids.length === 0) {
+        if (e.subformat || e.library || e.format || e.blocks.length > 0 || kids.length === 0) {
             return html;
         }
         const items = kids
@@ -4208,12 +4344,26 @@ ${opts.publish ? `${opts.publish.pages}${script(`${publishRouterScript(opts.publ
     // The same thing is passed for the initial render (editorAside) and doc switch (`/api/page`)
     // (= the client only has to handle one boot shape, initially and after a switch).
     const editorBoot = (entry: Entry, site: Site): EditorBoot => {
-        // Completion candidates are files in the figures/ catalog.
+        // Keep file candidates available before their previews or definitions are loaded.
         const directory = manifestDirectory(entry.origin);
-        const figures = [...site.ctx.figures.values()]
-            .map((f) => f.file)
+        const figures = [
+            ...new Set([
+                ...[...site.ctx.figures.values()].map((f) => f.file),
+                ...(site.filePaths ?? []).filter((file) =>
+                    /\.(svg|html|png|webp|gif|mp4|webm|jpe?g|pdf|dxf)$/i.test(file),
+                ),
+            ]),
+        ]
             .filter((file) => file.startsWith(directory))
             .map((file) => file.slice(directory.length));
+        const terms = [...site.ctx.terms];
+        for (const file of site.filePaths ?? [])
+            if (isTermFile(file) && !terms.some((term) => term.id === file))
+                terms.push({
+                    id: file,
+                    name: textfileName(file).replace(/\.termth$/i, ""),
+                    definition: "",
+                });
         const docs = site.entries
             .filter(isContentPage)
             .map((e) => ({
@@ -4258,7 +4408,7 @@ ${opts.publish ? `${opts.publish.pages}${script(`${publishRouterScript(opts.publ
             figures,
             codeLanguages: site.codeLanguages ?? CODE_LANGS,
             docs,
-            terms: [...site.ctx.terms],
+            terms,
             blockLines: entry.blockLines,
             baseRaw: entry.raw,
             icon: entry.icon ? svgDataUri(entry.icon) : null,
@@ -4315,6 +4465,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
             path === "/_manifest" ||
             path === "/_extensions" ||
             path === "/_subformats" ||
+            path === "/_format" ||
             path === "/_git" ||
             path === "/_library" ||
             path.startsWith("/_library/") ||
@@ -4326,7 +4477,13 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
                     site,
                     path.startsWith("/_library")
                         ? path.slice(1)
-                        : ["/_manifest", "/_git", "/_extensions", "/_subformats"].includes(path)
+                        : [
+                                "/_manifest",
+                                "/_git",
+                                "/_extensions",
+                                "/_subformats",
+                                "/_format",
+                            ].includes(path)
                           ? path.slice(1)
                           : path.slice("/_files".length).replace(/^\/|\/$/g, ""),
                 );
@@ -4399,8 +4556,12 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
     };
 
     const sendJson = (res: ServerResponse, code: number, body: unknown): void => {
-        res.writeHead(code, { "content-type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify(body));
+        const json = JSON.stringify(body);
+        res.writeHead(code, {
+            "content-type": "application/json; charset=utf-8",
+            "content-length": String(Buffer.byteLength(json)),
+        });
+        res.end(json);
     };
 
     const sendOp = (res: ServerResponse, r: OpResult<object>): void => {
@@ -4419,9 +4580,13 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
         );
 
     const sendPage = (res: ServerResponse, mode: ServeMode, site: Site, opts: PageOpts): void => {
-        res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        const html = docLinks(site, page(mode, site, opts));
-        res.end(site.contentLanguage ? languageLinks(html, site.contentLanguage) : html);
+        let html = docLinks(site, page(mode, site, opts));
+        if (site.contentLanguage) html = languageLinks(html, site.contentLanguage);
+        res.writeHead(200, {
+            "content-type": "text/html; charset=utf-8",
+            "content-length": String(Buffer.byteLength(html)),
+        });
+        res.end(html);
     };
 
     const readBody = (req: IncomingMessage, limit = 5_000_000): Promise<string> =>
@@ -4572,11 +4737,13 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
         const parent =
             typeof body?.parent === "string" && body.parent !== "" ? body.parent : undefined;
         const result =
-            typeof body?.library === "string"
-                ? ops.addLibrary(body.library, title, parent)
-                : typeof body?.subformat === "string"
-                  ? ops.addSubformat(body.subformat, title, parent)
-                  : ops.addFile(name, title, parent);
+            typeof body?.format === "string"
+                ? ops.addFormat(body.format, title, parent)
+                : typeof body?.library === "string"
+                  ? ops.addLibrary(body.library, title, parent)
+                  : typeof body?.subformat === "string"
+                    ? ops.addSubformat(body.subformat, title, parent)
+                    : ops.addFile(name, title, parent);
         sendOp(
             res,
             isOpError(result)
@@ -5020,26 +5187,56 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
             return;
         }
 
-        if (mode === "edit" && req.method === "GET" && path === "/api/nav") {
+        if (req.method === "GET" && path === "/api/nav") {
             const site = loadNavigation(locale, requestUrl.searchParams.get("current"));
             const params = new URL(req.url ?? "/", "http://localhost").searchParams;
+            const currentId =
+                params.get("current") || resolveDocPath(site.entries, params.get("route") ?? "/");
             sendJson(res, 200, {
                 siteTitle: site.title,
                 siteIcon: site.icon ? svgDataUri(site.icon) : undefined,
+                themes: site.themes,
                 rootJump: docHref(site.entries, site.entries.find((entry) => entry.root)?.id ?? ""),
                 translatedLanguages: site.entries.find(
                     (entry) => entry.id === requestUrl.searchParams.get("current"),
                 )?.translatedLanguages,
                 html: navGroupsHtml(
-                    mode,
+                    params.has("route") ? "preview" : mode,
                     site,
-                    params.get("current") || undefined,
+                    currentId,
                     params.get("res") ?? undefined,
                 ),
             });
             return;
         }
-        const site = loadSite(locale);
+        if (mode === "edit" && req.method === "GET" && path === "/api/formats") {
+            const manifest = readManifest(root);
+            const existing = new Set(
+                flattenTree(manifest.tree).flatMap((node) => node.format ?? []),
+            );
+            const index = resourceIndex(
+                root,
+                filesSnapshot(root).files.map((file) => file.path),
+            );
+            sendJson(
+                res,
+                200,
+                (index.formats ?? []).filter(
+                    (format) =>
+                        requestUrl.searchParams.get("all") === "true" || !existing.has(format),
+                ),
+            );
+            return;
+        }
+        const route =
+            req.method === "GET"
+                ? path === "/api/page"
+                    ? (requestUrl.searchParams.get("route") ?? "/")
+                    : !path.startsWith("/api/") && !path.startsWith("/_")
+                      ? requestUrl.pathname
+                      : undefined
+                : undefined;
+        const site = loadSite(locale, route, mode);
         if (req.method === "GET" && path === "/api/figure-preview") {
             const figure = [...site.ctx.figures.values()].find(
                 (figure) => figure.file === requestUrl.searchParams.get("file"),
@@ -5115,6 +5312,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
                 (path === "/_manifest" ||
                     path === "/_extensions" ||
                     path === "/_subformats" ||
+                    path === "/_format" ||
                     path === "/_git" ||
                     path === "/_library" ||
                     path.startsWith("/_library/") ||
@@ -5125,7 +5323,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
         ) {
             const rest = path.startsWith("/_library")
                 ? path.slice(1)
-                : ["/_manifest", "/_git", "/_extensions", "/_subformats"].includes(path)
+                : ["/_manifest", "/_git", "/_extensions", "/_subformats", "/_format"].includes(path)
                   ? path.slice(1)
                   : requestUrl.pathname.slice("/_files".length).replace(/^\/|\/$/g, "");
             const page = resourcesMain(site, rest);
@@ -5139,6 +5337,7 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
                           (entry) =>
                               !entry.subformat &&
                               !entry.library &&
+                              !entry.format &&
                               entry.id === requestUrl.searchParams.get("editor"),
                       ) ?? site.entries.find(isContentPage))
                     : undefined;
@@ -5216,6 +5415,22 @@ ${languageFieldHtml(site.defaultLang, site.contentLanguage, entry.translatedLang
         sendPage(res, mode, site, opts);
     };
     return {
+        clientShell(readOnly = false): string {
+            const site: Site = {
+                title: "dooc",
+                entries: [],
+                ctx: { figures: new Map(), terms: [] },
+                errors: [],
+                languages: DEFAULT_SITE_LANGUAGES.languages,
+                defaultLang: DEFAULT_LANG,
+            };
+            return page(readOnly ? "preview" : "edit", site, {
+                title: "dooc",
+                loading: true,
+                main: '<div id="client-loading" role="status" aria-live="polite">Loading…</div><div id="client-start" hidden><h1>dooc</h1><p>Open a local folder, browser storage, or a connected workspace.</p><button id="retry-document" type="button" hidden>Retry</button> <button id="open-workspace" type="button">Open a workspace</button></div>',
+                aside: readOnly ? "" : '<aside id="panel" aria-busy="true"></aside>',
+            });
+        },
         siteFrom,
         filePreviewResults,
         renderEntryHtml,

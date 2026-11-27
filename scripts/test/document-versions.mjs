@@ -69,6 +69,43 @@ export async function testDocumentVersionLayout(page) {
     assert.equal(await latest.locator("span").first().textContent(), check.number);
     assert.equal(await latest.locator(".version-status").textContent(), "latest");
     await input.press("Escape");
+    for (const width of [1440, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        if (!(await page.locator("body.sidebar-closed").count()))
+            await page.locator("#sidebar-toggle").click();
+        await page.waitForFunction(() => document.getElementById("sidebar").clientWidth <= 52);
+        const compact = await input.evaluate((input) => {
+            const wrapper = input.parentElement;
+            const status = wrapper.querySelector(":scope > .version-status");
+            const label = input
+                .closest(".subformat-control")
+                .querySelector(".subformat-control-label");
+            const sidebar = document.getElementById("sidebar").getBoundingClientRect();
+            const box = input.getBoundingClientRect();
+            const badge = status.getBoundingClientRect();
+            return {
+                visible: input.checkVisibility(),
+                labelAbove: label.getBoundingClientRect().bottom <= box.top,
+                statusBelow: badge.top > box.top + 18 && badge.bottom < box.bottom,
+                centered: Math.abs((badge.left + badge.right) / 2 - (box.left + box.right) / 2) < 1,
+                fits: box.left >= sidebar.left && box.right <= sidebar.right,
+                value: input.value,
+                title: input.title,
+            };
+        });
+        assert.equal(compact.visible, true);
+        assert.equal(compact.labelAbove, true);
+        assert.equal(compact.statusBelow, true);
+        assert.equal(compact.centered, true);
+        assert.equal(compact.fits, true);
+        assert.equal(compact.value, check.number);
+        assert.match(compact.title, /latest/);
+        await input.click();
+        const bounds = await page.locator("#document-version-select-picker").boundingBox();
+        assert(bounds && bounds.width >= 180 && bounds.x >= 0 && bounds.x + bounds.width <= width);
+        assert.equal(await page.locator("body.sidebar-closed").count(), 1);
+        await input.press("Escape");
+    }
 }
 
 /** Run against an editor fixture with at least two committed document versions. */

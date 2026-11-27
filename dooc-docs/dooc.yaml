@@ -137,7 +137,7 @@ document:
               title: App runtimes
               url: contents/md/runtimes.md
           - document:
-              library: termth
+              format: termth
               title: Terms
     - document:
         title: Development
@@ -152,14 +152,26 @@ document:
               icon: contents/svg/icons/system.svg
               url: contents/md/system.md
           - document:
+              title: Plugin architecture
+              url: contents/md/plugin-architecture.md
+          - document:
+              title: Diff design
+              url: contents/md/diff.md
+          - document:
+              title: Viewer loading
+              url: contents/md/viewer-loading.md
+          - document:
+              title: Site icon variants
+              url: contents/md/icon-variants.md
+          - document:
+              title: Theme palette study
+              url: contents/md/theme-variants.md
+          - document:
               title: Release
               url: contents/md/release.md
           - document:
               subformat: feature
               title: Feature gaps
-          - document:
-              title: License audit (2026-11-12)
-              url: contents/md/license-audit.md
 json_subformats:
   - ext: feature
     format: yaml

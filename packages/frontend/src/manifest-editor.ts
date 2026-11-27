@@ -5,6 +5,7 @@ import {
     migrateDocumentIcon,
     parseManifest,
 } from "../../engine/src/core/content-metadata.js";
+import { migrateCollections } from "../../engine/src/core/formats.js";
 import { documentPathErrors } from "../../engine/src/core/routing.js";
 import { pageWorkspace } from "../../workspace/src/client.js";
 
@@ -23,6 +24,7 @@ export const updateManifestSetting = (raw: string, path: string[], value: unknow
     const document = parseDocument(raw);
     if (document.errors.length) throw new Error(document.errors[0]?.message);
     migrateDocumentIcon(document);
+    migrateCollections(document);
     if (path[0] === "document" && path[1] === "icon" && path.length === 3) {
         const icon = document.getIn(["document", "icon"], true);
         if (isScalar(icon) && typeof icon.value === "string")
@@ -56,7 +58,7 @@ export const manifestPathCompletion = async (
             const parent = context.state.doc.line(n).text;
             if (!parent.trim() || parent.trimStart().startsWith("#")) continue;
             if (parent.search(/\S/) >= indent) continue;
-            if (/^\s*(?:files|skills):\s*$/.test(parent))
+            if (/^\s*(?:files|folders|skills):\s*$/.test(parent))
                 match = /^\s*-\s+(["']?)([^"'\n]*)$/.exec(before);
             break;
         }

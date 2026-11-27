@@ -390,6 +390,7 @@
     "Page type": "Page type",
     "Markdown page": "Markdown page",
     "No subformats available to add.": "No subformats available to add.",
+    "Already added": "Already added",
     "Add page": "Add page",
     "Remove page": "Remove page",
     "Rename page": "Rename page",
@@ -466,5 +467,14 @@
     "Manifest file is unavailable.": "Manifest file is unavailable.",
     "Discard changes and reload the manifest?": "Discard changes and reload the manifest?",
     "Load failed": "Load failed",
-    "Remove path": "Remove path"
+    "Remove path": "Remove path",
+    "Add format": "Add format",
+    "Add folder": "Add folder",
+    "Remove format": "Remove format",
+    "Enter a new file extension": "Enter a new file extension",
+    "Could not load formats": "Could not load formats",
+    "Downloading…": "Downloading…",
+    "Access denied.": "Access denied.",
+    "File unavailable.": "File unavailable.",
+    "Download failed. Retry.": "Download failed. Retry."
 }

@@ -87,6 +87,7 @@ import { mountIdentity } from "./identity.js";
 import { mountSelectPickers } from "./language-picker.js";
 import { hasManifestDraft, mountManifest } from "./manifest-ui.js";
 import { focusNavTree } from "./nav-focus.js";
+import { type NavigationProgress, readNavigationText, startNavLoading } from "./nav-loading.js";
 import { updateNav } from "./nav-update.js";
 import { mountPlugins } from "./plugins-ui.js";
 import { createPreviewUpdater } from "./preview-update.js";
@@ -419,7 +420,9 @@ const setSaveState = (state: "pending" | "saving" | "saved" | "error"): void => 
 };
 const setDirty = (v: boolean): void => {
     dirty = v;
-    setSaveState(v ? (autosaveEl.checked ? "saving" : "pending") : "saved");
+    const pending =
+        v || [...textfileWorkspaces.values()].some((files) => files.hasUnsavedChanges());
+    setSaveState(pending ? (autosaveEl.checked ? "saving" : "pending") : "saved");
     hmr()?.setDirty?.(
         v ||
             hasManifestDraft() ||
@@ -857,6 +860,7 @@ const workspaceTextfiles = (id: string) => {
             },
             () => setDirty(dirty),
             id,
+            () => autosaveEl.checked,
         );
         textfileWorkspaces.set(id, files);
     }
@@ -1140,11 +1144,11 @@ const updateNavLocation = (): void => {
         resourceView?.title ??
         (docTitle === siteTitle ? docTitle : `${docTitle} — ${siteTitle ?? "dooc editor"}`);
     for (const link of document.querySelectorAll<HTMLAnchorElement>(
-        "#nav-manifest a, #nav-files a, #nav-git a, #nav-library a, #nav-subformats a, #nav-extensions a",
+        "#nav-manifest a, #nav-files a, #nav-git a, #nav-library a, #nav-format a, #nav-subformats a, #nav-extensions a",
     )) {
         const current =
             resourceView !== undefined &&
-            (["/_manifest", "/_git", "/_extensions", "/_subformats"].includes(
+            (["/_manifest", "/_git", "/_extensions", "/_subformats", "/_format"].includes(
                 workspacePath(link.pathname),
             )
                 ? resourceView.path === workspacePath(link.pathname)
@@ -1332,7 +1336,7 @@ const refreshNav = async (): Promise<void> => {
         ?.closest<HTMLElement>("[data-doc-id]")?.dataset.docId;
     try {
         const res = await localeFetch(
-            `/api/nav?current=${encodeURIComponent(boot.docId)}${resourceView ? `&res=${encodeURIComponent(resourceView.path.startsWith("/_library") ? resourceView.path.slice(1) : ["/_manifest", "/_git", "/_extensions", "/_subformats"].includes(resourceView.path) ? resourceView.path.slice(1) : resourceView.path.slice("/_files".length).replace(/^\/|\/$/g, ""))}` : ""}`,
+            `/api/nav?current=${encodeURIComponent(boot.docId)}${resourceView ? `&res=${encodeURIComponent(resourceView.path.startsWith("/_library") ? resourceView.path.slice(1) : ["/_manifest", "/_git", "/_extensions", "/_subformats", "/_format"].includes(resourceView.path) ? resourceView.path.slice(1) : resourceView.path.slice("/_files".length).replace(/^\/|\/$/g, ""))}` : ""}`,
         );
         if (!res.ok) {
             return;
@@ -1493,6 +1497,16 @@ const save = (): Promise<void> => {
 };
 const saveCurrent = async (): Promise<void> => {
     if (boot.readOnly) return;
+    const savingFileEditor = fileEditor;
+    if (savingFileEditor) {
+        const savingTextfiles = textfiles;
+        await savingTextfiles.flush();
+        if (textfiles !== savingTextfiles || fileEditor !== savingFileEditor) return;
+        if (!dirty) {
+            setDirty(dirty);
+            return;
+        }
+    }
     const savingWorkspace = workspaceId();
     const savingBoot = boot;
     const savingDoc = view.state.doc;
@@ -2060,11 +2074,13 @@ const deleteDoc = async (): Promise<void> => {
 autosaveEl.checked = localStorage.getItem(AUTOSAVE_KEY) !== "0";
 setSaveState(dirty ? (autosaveEl.checked ? "saving" : "pending") : "saved");
 autosaveEl.addEventListener("change", () => {
-    setSaveState(dirty ? (autosaveEl.checked ? "saving" : "pending") : "saved");
+    setDirty(dirty);
     localStorage.setItem(AUTOSAVE_KEY, autosaveEl.checked ? "1" : "0");
     if (autosaveEl.checked && dirty) {
         void save();
     }
+    if (autosaveEl.checked)
+        void Promise.all([...textfileWorkspaces.values()].map((files) => files.flush()));
 });
 autovalidateEl.addEventListener("change", () => {
     localStorage.setItem("docs-edit:autovalidate", autovalidateEl.checked ? "1" : "0");
@@ -2164,7 +2180,8 @@ const currentUrl = (hash = ""): string =>
 // navigation). With autosave ON, silently save and then move (= treated as a continuation of
 // typing).
 const confirmLeave = async (all = false, activeApproved = false): Promise<boolean> => {
-    if (all) await Promise.all([...textfileWorkspaces.values()].map((files) => files.flush()));
+    if (all && autosaveEl.checked)
+        await Promise.all([...textfileWorkspaces.values()].map((files) => files.flush()));
     if (!activeApproved && dirty && autosaveEl.checked && !conflictPending) {
         await save();
     }
@@ -2534,18 +2551,6 @@ const closeFileEditor = (): void => {
     document.body.classList.remove("textfile-open");
 };
 const confirmFileEditorLeave = async (): Promise<boolean> => {
-    const resource = resourceView;
-    if (resource && hasManifestDraft(resource.element)) {
-        if (
-            !(await confirmDialog(
-                t("You have unsaved changes. Discard them and leave?"),
-                t("Discard changes"),
-                true,
-            ))
-        )
-            return false;
-        if (resource !== resourceView) return false;
-    }
     const editor = fileEditor;
     if (!editor?.element.matches("form")) return true;
     if (
@@ -2879,6 +2884,7 @@ const showResource = (resource: ResourcePage): void => {
                 ? mountManifest(
                       element.querySelector<HTMLElement>("#manifest-manager"),
                       activePane.workspace,
+                      textfiles,
                   )
                 : resource.path === "/_git"
                   ? mountGit(
@@ -2905,7 +2911,11 @@ const showResource = (resource: ResourcePage): void => {
     applyUiLanguage();
 };
 let resourceRevision = 0;
-const openResource = async (path: string, signal?: AbortSignal): Promise<boolean | undefined> => {
+const openResource = async (
+    path: string,
+    signal?: AbortSignal,
+    progress?: NavigationProgress,
+): Promise<boolean | undefined> => {
     const revision = ++resourceRevision;
     const requestedBoot = boot;
     try {
@@ -2914,7 +2924,11 @@ const openResource = async (path: string, signal?: AbortSignal): Promise<boolean
         });
         if (signal?.aborted || revision !== resourceRevision) return;
         if (!response.ok) return false;
-        const data = (await response.json()) as ResourcePage & { resource?: boolean };
+        const data = JSON.parse(
+            await readNavigationText(response, progress, signal),
+        ) as ResourcePage & {
+            resource?: boolean;
+        };
         if (signal?.aborted || revision !== resourceRevision) return;
         if (!data.resource || boot !== requestedBoot) return false;
         showResource(data);
@@ -3392,6 +3406,7 @@ const openDoc = async (
     path: string,
     language = boot.contentLanguage ?? boot.defaultLang,
     signal?: AbortSignal,
+    progress?: NavigationProgress,
 ): Promise<boolean | undefined> => {
     const requestedBoot = boot;
     const requestedDoc = view.state.doc;
@@ -3409,7 +3424,9 @@ const openDoc = async (
         if (!res.ok) {
             return false;
         }
-        const data = (await res.json()) as PageResponse & { redirect?: string };
+        const data = JSON.parse(await readNavigationText(res, progress, signal)) as PageResponse & {
+            redirect?: string;
+        };
         if (
             signal?.aborted ||
             boot !== requestedBoot ||
@@ -3459,6 +3476,7 @@ const isResourcePath = (path: string): boolean =>
           path === "/_extensions" ||
           path === "/_subformats" ||
           path === "/_git" ||
+          path === "/_format" ||
           path === "/_library" ||
           path.startsWith("/_library/") ||
           path === "/_files" ||
@@ -3474,6 +3492,7 @@ const navigateTo = async (path: string, hash = "", popped?: URL): Promise<void> 
     const { signal } = controller;
     pendingNavigationPath = path;
     focusNavTree(document.getElementById("nav-groups"), localeUrl(path));
+    const loading = startNavLoading(signal);
     workspace.setAttribute("aria-busy", "true");
     let completed = false;
     const confirmDocument = async (): Promise<boolean> => {
@@ -3490,6 +3509,7 @@ const navigateTo = async (path: string, hash = "", popped?: URL): Promise<void> 
         if (!popped && location.pathname + location.search + location.hash !== url)
             history.pushState(null, "", url);
         scrollToAnchor(hash);
+        loading.finish(true);
     };
     try {
         while (paneBusy && !signal.aborted) await paneIdle;
@@ -3518,7 +3538,7 @@ const navigateTo = async (path: string, hash = "", popped?: URL): Promise<void> 
                 if (signal.aborted || opened === undefined) return;
                 if (!opened) return;
             }
-            const opened = await openResource(path, signal);
+            const opened = await openResource(path, signal, loading.update);
             if (signal.aborted || opened === undefined) return;
             if (opened) {
                 complete();
@@ -3533,7 +3553,7 @@ const navigateTo = async (path: string, hash = "", popped?: URL): Promise<void> 
             return;
         }
         if (!(await confirmDocument())) return;
-        const opened = await openDoc(path, language, signal);
+        const opened = await openDoc(path, language, signal, loading.update);
         if (signal.aborted || opened === undefined) return;
         if (opened) {
             closeResource();
@@ -3552,6 +3572,7 @@ const navigateTo = async (path: string, hash = "", popped?: URL): Promise<void> 
             workspace.removeAttribute("aria-busy");
             updateNavLocation();
         }
+        loading.finish();
     }
 };
 (window as unknown as { __docsNavigate: typeof navigateTo }).__docsNavigate = navigateTo;

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { build } from "esbuild";
 import { parse } from "yaml";
 
 export async function testManifestSettings(page, url, project) {
@@ -20,17 +21,31 @@ export async function testManifestSettings(page, url, project) {
     writeFileSync(file, `# Preserve this comment\n${original}`);
     const host = page.locator("#manifest-manager");
     const title = host.locator('[name="document.title"]');
-    const path = host.locator('[name="system.library.files"]').first();
-    const yaml = host.locator(".cm-content");
-    const source = async () => (await yaml.locator(".cm-line").allTextContents()).join("\n");
+    const path = host.locator('[name="system.format.ts.files"]').first();
+    const yaml = page.locator("#file-editor .cm-content");
+    const source = () => page.evaluate(() => window.manifestSource());
     const replaceSource = async (value) => {
         await yaml.focus();
         await page.keyboard.press("ControlOrMeta+a");
         await page.keyboard.insertText(value);
     };
     try {
+        await page.addInitScript(() => {
+            if (window === window.top) localStorage.setItem("docs-edit:autosave", "0");
+        });
         await page.goto(url);
         await page.waitForSelector("#cm .cm-content");
+        const script = await build({
+            stdin: {
+                contents:
+                    'import {EditorView} from "@codemirror/view"; window.manifestSource = () => EditorView.findFromDOM(document.querySelector("#file-editor .cm-content")).state.doc.toString();',
+                resolveDir: process.cwd(),
+            },
+            bundle: true,
+            write: false,
+            format: "iife",
+        });
+        await page.addScriptTag({ content: script.outputFiles[0].text });
         assert.equal(
             new URL(await page.locator(".nav-tool-cards a").first().getAttribute("href"), url)
                 .pathname,
@@ -38,9 +53,26 @@ export async function testManifestSettings(page, url, project) {
         );
         await page.locator("#nav-manifest a").click();
         await title.waitFor();
+        await yaml.waitFor();
+        assert.equal(await page.locator(".file-editor-title").textContent(), "dooc.yaml");
+        assert.equal(
+            await host
+                .locator("[data-save], [data-reload], .manifest-toolbar [role=status]")
+                .count(),
+            0,
+        );
+        await host.locator('[name="format"]').fill("ts");
+        await host.getByRole("button", { name: "Add format", exact: true }).click();
+        const codeblock = host.locator('[name="system.format.ts.codeblock"]');
+        await codeblock.selectOption("false");
+        const folder = host.locator('[name="system.format.ts.folders"]').first();
+        await folder.fill("contents/t");
+        await host.getByRole("option", { name: "contents/ts/", exact: true }).click();
+        assert.equal(await folder.inputValue(), "contents/ts");
+        assert.equal(await host.locator(".manifest-completions").isVisible(), false);
         const icon = host.locator('details[data-path="document.icon"]');
-        const library = host.locator('details[data-path="system.library"]');
-        const libraryPaths = library.locator(".manifest-paths");
+        const library = host.locator('details[data-path="system.format.ts"]');
+        const libraryPaths = path.locator("xpath=ancestor::fieldset[1]");
         const light = icon.locator('[name="document.icon.light"]');
         assert.equal(await light.isVisible(), false);
         await icon.locator(":scope > summary").click();
@@ -64,16 +96,17 @@ export async function testManifestSettings(page, url, project) {
         await page.keyboard.press("Space");
         assert.equal(await path.isVisible(), false);
         await title.fill("true");
-        await host.getByRole("tab", { name: "YAML", exact: true }).click();
         assert.equal(parse(await source()).document.title, "true");
-        assert.deepEqual(parse(await source()).system.library.files, [libraryPath]);
-        await host.getByRole("tab", { name: "Settings", exact: true }).click();
+        assert.deepEqual(parse(await source()).system.format.ts.files, [libraryPath]);
         assert.equal(await title.inputValue(), "true");
         assert.equal(await light.isVisible(), true);
         assert.equal(await path.isVisible(), false);
         await library.locator(":scope > summary").click();
         assert.equal(await path.inputValue(), libraryPath);
-        await title.press("ControlOrMeta+s");
+        await title.fill("Undo this title");
+        await yaml.press("ControlOrMeta+z");
+        assert.equal(await title.inputValue(), "true");
+        await page.locator("#save").click();
         await page.waitForFunction(
             () => document.querySelector("#manifest-manager")?.dataset.dirty === "false",
         );
@@ -84,8 +117,10 @@ export async function testManifestSettings(page, url, project) {
             parse(saved).document.icon,
             parse(original).document.icon ?? parse(original).document.sidebar?.icon,
         );
-        assert.deepEqual(parse(saved).system.library.files, [libraryPath]);
-        await page.locator("#nav-library a").click();
+        assert.deepEqual(parse(saved).system.format.ts.files, [libraryPath]);
+        assert.equal(parse(saved).system.format.ts.codeblock, false);
+        assert.deepEqual(parse(saved).system.format.ts.folders, ["contents/ts"]);
+        await page.locator("#nav-format a").click();
         await page.waitForFunction(() =>
             [...document.querySelectorAll(".resource-item")].some((item) =>
                 item.textContent.includes("manifestLibraryExample"),
@@ -93,40 +128,48 @@ export async function testManifestSettings(page, url, project) {
         );
         await page.locator("#nav-manifest a").click();
         await title.waitFor();
-        await host.getByRole("tab", { name: "YAML", exact: true }).click();
         await replaceSource("document: [");
-        await host.getByRole("button", { name: "Save", exact: true }).click();
+        await yaml.press("ControlOrMeta+s");
         await host.getByRole("alert").waitFor();
         assert.equal(readFileSync(file, "utf8"), saved);
-        await host.getByRole("tab", { name: "Settings", exact: true }).click();
-        assert.equal(
-            await host
-                .getByRole("tab", { name: "YAML", exact: true })
-                .getAttribute("aria-selected"),
-            "true",
-        );
+        assert.equal(await title.isDisabled(), true);
         await page.locator("#nav-files a").click();
-        await page.getByRole("dialog").getByRole("button", { name: "Cancel", exact: true }).click();
+        await page.locator("#files-manager").waitFor();
+        await page.locator("#nav-manifest a").click();
+        await yaml.waitFor();
         assert.equal(await source(), "document: [");
         await replaceSource(saved);
-        await host.getByRole("tab", { name: "Settings", exact: true }).click();
         await title.fill("Local draft");
         const external = saved.replace(/title: ["']?true["']?/, "title: External edit");
         assert.notEqual(external, saved);
         writeFileSync(file, external);
-        await host.getByRole("button", { name: "Save", exact: true }).click();
-        await page.waitForFunction(() =>
-            document
-                .querySelector("#manifest-manager [role=alert]")
-                ?.textContent.includes("changed externally"),
-        );
+        await yaml.press("ControlOrMeta+s");
+        await page.getByRole("dialog").waitFor();
         assert.equal(readFileSync(file, "utf8"), external);
         assert.equal(await title.inputValue(), "Local draft");
-        await host.getByRole("button", { name: "Reload", exact: true }).click();
-        await page.getByRole("dialog").getByRole("button", { name: "Reload", exact: true }).click();
+        await page
+            .getByRole("dialog")
+            .getByRole("button", { name: "Use external changes", exact: true })
+            .click();
         await page.waitForFunction(
             () => document.querySelector('[name="document.title"]')?.value === "External edit",
         );
+        await title.fill("Auto-save example");
+        await page.waitForTimeout(800);
+        assert.equal(readFileSync(file, "utf8"), external);
+        await page.locator("#opt-autosave").evaluate((input) => {
+            input.checked = true;
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        await page.waitForFunction(
+            () => document.querySelector("#manifest-manager")?.dataset.dirty === "false",
+        );
+        assert.equal(parse(readFileSync(file, "utf8")).document.title, "Auto-save example");
+        await title.fill("Auto-save after typing");
+        await page.waitForFunction(
+            () => document.querySelector("#manifest-manager")?.dataset.dirty === "false",
+        );
+        assert.equal(parse(readFileSync(file, "utf8")).document.title, "Auto-save after typing");
         await page.reload();
         await title.waitFor();
         assert.equal(await path.inputValue(), libraryPath);

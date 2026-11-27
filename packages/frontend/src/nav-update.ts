@@ -86,6 +86,9 @@ export const updateNav = (root: HTMLElement, html: string): void => {
                         (name === "inert" ||
                             (name === "open" && current.localName === "details") ||
                             (name === "style" && current.matches(".nav-list")) ||
+                            (current.hasAttribute("data-nav-loading") &&
+                                (name === "style" || name === "data-nav-loading")) ||
+                            (name === "aria-busy" && current.matches(".nav-row > a[aria-busy]")) ||
                             (name === "aria-expanded" && current.matches(".nav-tree-toggle")))
                     )
                         continue;

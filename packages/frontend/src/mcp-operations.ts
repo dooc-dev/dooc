@@ -158,8 +158,9 @@ export const createMcpOperations = (
                     depth.set(d.id, dep);
                     return {
                         id: d.id,
-                        file: d.subformat || d.library ? manifestFile(root) : d.file,
+                        file: d.subformat || d.library || d.format ? manifestFile(root) : d.file,
                         ...(d.library ? { library: d.library } : {}),
+                        ...(d.format ? { format: d.format } : {}),
                         ...(d.subformat ? { subformat: d.subformat.ext } : {}),
                         title: docDisplayName(d, d.id),
                         parent: d.parent,
@@ -190,6 +191,7 @@ export const createMcpOperations = (
             const id = String(a.id);
             const compiled = compiler.compile();
             const doc = compiled.docs.find((d) => d.id === id);
+            if (doc?.format) return { file: manifestFile(root), format: doc.format, errors: [] };
             if (doc?.library) return { file: manifestFile(root), library: doc.library, errors: [] };
             if (doc?.subformat)
                 return {

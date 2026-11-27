@@ -20,18 +20,18 @@ it("changes a setting without dropping comments, the document tree, or other set
         "# Project settings\nversion: {major: 2}\nsystem:\n  default_lang: eng # Source language\ndocument:\n  title: Handbook\n  children: [{document: {url: guide.md}}]\n";
     const raw = updateManifestSetting(
         original,
-        ["system", "library", "files"],
+        ["system", "format", "ts", "files"],
         ["examples/main.ts"],
     );
     expect(raw).toContain("# Project settings");
     expect(raw).toContain("# Source language");
     expect(parse(raw)).toEqual({
         ...parse(original),
-        system: { default_lang: "eng", library: { files: ["examples/main.ts"] } },
+        system: { default_lang: "eng", format: { ts: { files: ["examples/main.ts"] } } },
     });
     expect(manifestErrors(raw)).toEqual([]);
-    const cleared = updateManifestSetting(raw, ["system", "library", "files"], undefined);
-    expect(parse(cleared).system.library).toEqual({});
+    const cleared = updateManifestSetting(raw, ["system", "format", "ts", "files"], undefined);
+    expect(parse(cleared).system.format.ts).toEqual({});
 });
 
 it("keeps syntax, unknown-key, and duplicate-route errors visible", () => {
@@ -48,12 +48,12 @@ it("keeps syntax, unknown-key, and duplicate-route errors visible", () => {
 it("allows settings to be added under an empty optional YAML section", () => {
     const raw = updateManifestSetting(
         "system:\ndocument: {icon: null}\n",
-        ["system", "library", "files"],
+        ["system", "format", "csv", "files"],
         ["data.csv"],
     );
     const next = updateManifestSetting(raw, ["document", "icon", "light"], "icon.svg");
     expect(parse(next)).toEqual({
-        system: { library: { files: ["data.csv"] } },
+        system: { format: { csv: { files: ["data.csv"] } } },
         document: { icon: { light: "icon.svg" } },
     });
 });
@@ -118,4 +118,15 @@ it("replaces existing quotes and avoids path suggestions in language lists and r
                 "local",
             ),
         ).toBeNull();
+});
+
+it("allows a partially typed format path to be corrected before save", () => {
+    const raw = "document: {}\nsystem: {format: {ts: {files: [partial], codeblock: true}}}\n";
+    expect(manifestErrors(raw)).not.toEqual([]);
+    const next = updateManifestSetting(raw, ["system", "format", "ts", "files"], ["example.ts"]);
+    expect(manifestErrors(next)).toEqual([]);
+    expect(
+        parse(updateManifestSetting(next, ["system", "format", "ts", "codeblock"], false)).system
+            .format.ts.codeblock,
+    ).toBe(false);
 });

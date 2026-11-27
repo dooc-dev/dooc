@@ -8,23 +8,27 @@ it.each([
     { themes: ["light"], stored: "auto", expected: "light" },
     { themes: ["light", "dark"], stored: "light", expected: "light" },
     { themes: ["light", "dark"], stored: null, expected: "auto" },
+    { themes: ["light", "dark"], stored: "light", expected: "light", editing: false },
+    { themes: ["dark"], stored: "light", expected: "dark", editing: false },
 ])("initializes declared themes despite an incompatible saved preference: %j", ({
     themes,
     stored,
     expected,
+    editing = true,
 }) => {
     const pane = { dataset: { theme: "unsupported" } };
     const resource = { dataset: { theme: "unsupported" } };
+    const sidebar = { id: "sidebar", dataset: { theme: "unsupported" } };
     const root = { dataset: { theme: "light", editorTheme: "" } };
     let sync = () => {};
     vi.stubGlobal("document", {
         documentElement: root,
-        body: { append: vi.fn() },
+        body: { append: vi.fn(), classList: { contains: () => editing } },
         createElement: () => ({ setAttribute: vi.fn(), addEventListener: vi.fn() }),
         addEventListener: vi.fn(),
         querySelectorAll: (selector: string) =>
             selector === ".resources-pane, #sidebar, #panel"
-                ? [resource]
+                ? [resource, sidebar]
                 : selector === ".preview-pane:not(.resources-pane)"
                   ? [pane]
                   : [],
@@ -46,10 +50,12 @@ it.each([
     expect(pane.dataset.theme).toBe(expected);
     expect(root.dataset.editorTheme).toBe(stored === "light" ? "light" : "auto");
     expect(resource.dataset.theme).toBe(root.dataset.editorTheme);
+    expect(sidebar.dataset.theme).toBe(editing ? root.dataset.editorTheme : expected);
     for (const theme of ["dark", "light", "auto"]) {
         root.dataset.editorTheme = theme;
         sync();
         expect(resource.dataset.theme).toBe(theme);
+        expect(sidebar.dataset.theme).toBe(editing ? theme : expected);
         expect(pane.dataset.theme).toBe(expected);
     }
 });

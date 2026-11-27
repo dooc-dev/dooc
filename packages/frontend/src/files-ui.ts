@@ -1,11 +1,7 @@
-import {
-    FOLDER_ICON_PATH,
-    RELOAD_ICON_PATH,
-    SEARCH_ICON_PATH,
-} from "../../engine/src/core/icons.js";
 import { pageWorkspace } from "../../workspace/src/client.js";
 import { workspaceId } from "../../workspace/src/connection.js";
 import { showNotice } from "./edit-dialog.js";
+import { fileIcon, filesIcon, folderIcon } from "./file-icons.js";
 import { openHistory } from "./history-ui.js";
 import { t } from "./i18n.js";
 
@@ -16,10 +12,7 @@ type Snapshot = {
 };
 type Row = { path: string; folder: boolean; depth: number };
 const parent = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
-const icon = (path: string) =>
-    `<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="${path}"/></svg>`;
-const folderIcon = icon(FOLDER_ICON_PATH);
-const fileIcon = icon("M4 2h8l4 4v12H4zM12 2v5h4");
+const names = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 let viewSequence = 0;
 
 export const mountFiles = (
@@ -32,7 +25,7 @@ export const mountFiles = (
     const workspace = pageWorkspace(workspaceKey);
     let snapshot: Snapshot | undefined;
     let selected = new Set<string>();
-    const closed = new Set<string>();
+    const opened = new Set<string>();
     let rows: Row[] = [];
     let anchor: string | undefined;
     let busy = false;
@@ -58,14 +51,14 @@ export const mountFiles = (
         else b.textContent = t(label);
         return b;
     };
-    const refresh = makeButton("Reload", icon(RELOAD_ICON_PATH));
+    const refresh = makeButton("Reload", filesIcon("refresh"));
     const name = document.createElement("span");
     name.textContent = t("Name");
     const searchLabel = document.createElement("label");
     searchLabel.className = "resource-search";
-    searchLabel.innerHTML = icon(SEARCH_ICON_PATH);
+    searchLabel.innerHTML = filesIcon("search");
     searchLabel.append(search);
-    const history = makeButton("History");
+    const history = makeButton("History", filesIcon("history"));
     history.addEventListener("click", () => {
         // Restoring rewrites files; the list is reloaded once the dialog is done.
         void openHistory(workspace).then(() => refresh.click());
@@ -203,12 +196,16 @@ export const mountFiles = (
                 if (i < parts.length - 1) folders.add(path);
             }
         }
+        for (const childrenInFolder of children.values())
+            childrenInFolder.sort(
+                (a, b) => Number(folders.has(b)) - Number(folders.has(a)) || names.compare(a, b),
+            );
         rows = [];
         const walk = (dir: string, depth: number) => {
             for (const path of children.get(dir) ?? []) {
                 const folder = folders.has(path);
                 rows.push({ path, folder, depth });
-                if (folder && (!closed.has(path) || query)) walk(path, depth + 1);
+                if (folder && (opened.has(path) || query)) walk(path, depth + 1);
             }
         };
         walk("", 0);
@@ -228,25 +225,18 @@ export const mountFiles = (
             label.className = "files-name";
             label.style.paddingInlineStart = `${row.depth * 16}px`;
             const symbol = document.createElement("span");
-            symbol.innerHTML = row.folder ? folderIcon : fileIcon;
+            symbol.className = "files-symbol";
+            symbol.setAttribute("aria-hidden", "true");
+            const expanded = opened.has(row.path) || !!query;
+            symbol.innerHTML = row.folder ? folderIcon(expanded) : fileIcon(row.path);
             const filename = document.createElement("span");
             filename.className = "files-basename";
             filename.textContent = row.path.split("/").pop() ?? "";
             if (row.folder) {
                 const button = makeButton(row.path);
                 button.className = "files-folder";
-                button.setAttribute("aria-expanded", String(!closed.has(row.path) || !!query));
+                button.setAttribute("aria-expanded", String(expanded));
                 button.replaceChildren(symbol, filename);
-                button.onclick = (e) => {
-                    e.stopPropagation();
-                    if (e.ctrlKey || e.metaKey || e.shiftKey) {
-                        select(row.path, e);
-                        return;
-                    }
-                    if (closed.has(row.path)) closed.delete(row.path);
-                    else closed.add(row.path);
-                    render();
-                };
                 label.append(button);
             } else {
                 const link = document.createElement("a");
@@ -270,7 +260,7 @@ export const mountFiles = (
                           ? `${(bytes / 1024 ** 2).toFixed(1)} MB`
                           : `${(bytes / 1024 ** 3).toFixed(1)} GB`;
             const copyCell = document.createElement("td");
-            const copy = makeButton("Copy path", icon("M7 6V2h10v12h-4M3 6h10v12H3z"));
+            const copy = makeButton("Copy path", filesIcon("copy"));
             copy.className = "files-copy";
             copy.onclick = async (e) => {
                 e.stopPropagation();
@@ -290,7 +280,12 @@ export const mountFiles = (
                 select(row.path, e);
                 if (e.ctrlKey || e.metaKey || e.shiftKey) {
                     e.preventDefault();
-                } else if (!row.folder && openFile) {
+                } else if (row.folder) {
+                    tr.querySelector<HTMLElement>(".files-folder")?.focus({ preventScroll: true });
+                    if (opened.has(row.path)) opened.delete(row.path);
+                    else opened.add(row.path);
+                    render();
+                } else if (openFile) {
                     e.preventDefault();
                     openFile(row.path);
                 }
@@ -335,7 +330,7 @@ export const mountFiles = (
             const td = document.createElement("td");
             td.colSpan = 3;
             td.className = "files-placeholder";
-            td.innerHTML = folderIcon;
+            td.textContent = t("No results");
             tr.append(td);
             body.append(tr);
         }
@@ -394,7 +389,7 @@ export const mountFiles = (
         table.setAttribute("aria-label", t("Files"));
         const sizeHeading = head.querySelectorAll("th")[1];
         if (sizeHeading) sizeHeading.textContent = t("Size");
-        history.textContent = history.title = t("History");
+        history.title = t("History");
         history.setAttribute("aria-label", t("History"));
         refresh.title = t("Reload");
         refresh.setAttribute("aria-label", t("Reload"));

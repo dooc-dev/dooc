@@ -16,6 +16,7 @@ import { parseContentSource } from "./code-blocks.js";
 import { compileSite } from "./compile.js";
 import { collectRefs, parseDoc } from "./dialect.js";
 import { rebaseFileLinks } from "./files.js";
+import { formatFiles } from "./format-files.js";
 import { createHash, existsSync, readdirSync, readFileSync, resolve, statSync } from "./host.js";
 import { contentLanguageCode, isContentLanguage } from "./language-codes.js";
 import { siteContentLanguages, translationFile } from "./locales.js";
@@ -198,13 +199,10 @@ export const checkSite = (root: string, options: CheckOptions = {}): CheckReport
             add("MANIFEST_INVALID", "error", manifestFile(root), message);
         if (manifest.errors.length) return finish(report, options);
         if (manifest.licence) read(manifest.licence, { sourceFile: manifestFile(root) });
-        for (const file of [
-            ...(manifest.libraryFiles ?? []),
-            ...(manifest.includedLibraryFiles ?? []),
-        ]) {
-            const data = read(file, { sourceFile: manifestFile(root) });
-            if (data) text(file, data, { sourceFile: manifestFile(root) });
-        }
+        const collection = formatFiles(root, manifest);
+        for (const { file, message } of collection.errors)
+            add("FILE_UNREADABLE", "error", file, message, { sourceFile: manifestFile(root) });
+        for (const file of collection.files) read(file, { sourceFile: manifestFile(root) });
         for (const file of [manifestFile(root), ...(manifest.includedManifests ?? [])]) {
             try {
                 readProjectSkills(root, file);

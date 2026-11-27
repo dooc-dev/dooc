@@ -120,10 +120,10 @@ export interface CompileOptions {
 
 export interface Compiler {
     /**
-     * Compiles the whole docs root (content/ figures/). Unchanged files hit the
-     * cache.
+     * Compiles the whole project, or selected pages with metadata for the remaining tree.
+     * Unchanged files hit the cache.
      */
-    compile(): Compiled;
+    compile(documentIds?: ReadonlySet<string>): Compiled;
 }
 
 /** Site context needed to check a draft's references (document file targets / figures). */
@@ -455,7 +455,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
     let docCacheKey = "";
     const figuresCache = createSigCache<ReturnType<typeof loadFigures>>();
 
-    const compile = (): Compiled => {
+    const compile = (documentIds?: ReadonlySet<string>): Compiled => {
         const manifestPath = join(root, manifestFile(root));
         const manifest = existsSync(manifestPath)
             ? readManifest(root)
@@ -472,12 +472,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
         const visualFiles = paths
             .map((file) => file.path)
             .filter((file) => /\.(svg|html|png|webp|gif|mp4|webm|jpe?g|pdf|dxf)$/i.test(file));
-        const { figures, errors: figErrors } = figuresCache.get(
-            dirSig(figuresDir) +
-                visualFiles.map((file) => `${file}:${fileSig(textfilePath(root, file))}`).join("|"),
-            () => loadFigures(figuresDir, visualFiles),
-        );
-        const siteErrors: string[] = figErrors.filter((error) => error.startsWith("figures/"));
+        const siteErrors: string[] = [];
         if (manifest.licence) {
             try {
                 assertNotIgnored(root, manifest.licence);
@@ -493,6 +488,28 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             siteErrors.push("defaultLang must be a BCP 47 language tag");
         }
         const previews = parsePreviewSettings(options.previews ?? defaultPreviewSettings());
+        const readSource = (file: string, origin?: string) => {
+            let parsed = docCache.get(textfilePath(root, file), (raw) =>
+                parseFile(raw, previews, file, origin),
+            );
+            let language = defaultLang;
+            if (options.locale && options.locale !== contentLanguageCode(defaultLang)) {
+                const translation = translationFile(file, options.locale, origin);
+                try {
+                    const path = textfilePath(root, translation);
+                    if (existsSync(path)) {
+                        assertNotIgnored(root, translation);
+                        parsed = docCache.get(path, (raw) =>
+                            parseFile(raw, previews, file, origin),
+                        );
+                        language = options.locale;
+                    }
+                } catch (error) {
+                    siteErrors.push(`${translation}: ${error}`);
+                }
+            }
+            return { parsed, language };
+        };
         let title: string | undefined;
         let icon: string | undefined;
         let iconVariants: Record<string, string> | undefined;
@@ -501,7 +518,9 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
         if (
             !existsSync(contentDir) &&
             !manifest.files &&
-            !flattenTree(manifest.tree).some((node) => node.subformat || node.library)
+            !flattenTree(manifest.tree).some(
+                (node) => node.subformat || node.library || node.format,
+            )
         ) {
             siteErrors.push(`${contentDir}: content/ is missing`);
         } else {
@@ -596,24 +615,12 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
                     );
                     continue;
                 }
-                let parsed = docCache.get(path, (raw) => parseFile(raw, previews, rel, origin));
-                let language = defaultLang;
-                if (options.locale && options.locale !== contentLanguageCode(defaultLang)) {
-                    const file = translationFile(rel, options.locale, origin);
-                    try {
-                        const translated = textfilePath(root, file);
-                        if (existsSync(translated)) {
-                            assertNotIgnored(root, file);
-                            parsed = docCache.get(translated, (raw) =>
-                                parseFile(raw, previews, rel, origin),
-                            );
-                            language = options.locale;
-                        }
-                    } catch (error) {
-                        siteErrors.push(`${file}: ${error}`);
-                    }
-                }
-                parsed = resolveFiles(parsed, root, undefined, previews, themes, manifest);
+                const selected = !documentIds || documentIds.has(id);
+                let { parsed, language } = selected
+                    ? readSource(rel, origin)
+                    : { parsed: parseFile("", previews, rel, origin), language: defaultLang };
+                if (selected)
+                    parsed = resolveFiles(parsed, root, undefined, previews, themes, manifest);
                 files.push({ doc: toDoc(id, parent, rel, parsed, language, title), parsed });
             }
             for (const id of onDisk) {
@@ -621,9 +628,43 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             }
         }
 
-        for (const file of new Set(files.flatMap(({ parsed }) => parsed.figureFiles)))
+        const referencedFigures = new Set(files.flatMap(({ parsed }) => parsed.figureFiles));
+        if (documentIds)
+            for (const node of flattenTree(manifest.tree))
+                if (documentIds.has(node.id) && node.url && pageUrlKind(node.url) === "file")
+                    referencedFigures.add(node.url);
+        const selectedVisuals = documentIds
+            ? visualFiles.filter((file) => referencedFigures.has(file))
+            : visualFiles;
+        const { figures, errors: figErrors } = figuresCache.get(
+            (documentIds ? "selected:" : dirSig(figuresDir)) +
+                selectedVisuals
+                    .map((file) => `${file}:${fileSig(textfilePath(root, file))}`)
+                    .join("|"),
+            () =>
+                loadFigures(
+                    figuresDir,
+                    selectedVisuals,
+                    documentIds ? referencedFigures : undefined,
+                ),
+        );
+        siteErrors.unshift(...figErrors.filter((error) => error.startsWith("figures/")));
+        for (const file of referencedFigures)
             if (!file.startsWith("figures/"))
                 siteErrors.push(...figErrors.filter((error) => error.startsWith(`${file}:`)));
+
+        // Read linked headings on demand so selective rendering retains link validation.
+        if (documentIds)
+            for (const { parsed } of files)
+                for (const url of parsed.docLinks) {
+                    const ref = parseDocLink(url);
+                    const target = ref?.fragment && files.find(({ doc }) => doc.file === ref.file);
+                    if (target && !documentIds.has(target.doc.id))
+                        target.doc.toc = readSource(
+                            target.doc.file,
+                            target.parsed.origin,
+                        ).parsed.toc;
+                }
 
         // Icons are small, so read them every time (no cache).
         const { icons, errors: iconErrors } = loadIcons(
@@ -699,38 +740,39 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
             } catch (error) {
                 pageErrors.push(`icon: ${error instanceof Error ? error.message : error}`);
             }
-            try {
-                assertNotIgnored(root, config.schema);
-                if (!paths.some((file) => file.path === config.schema))
-                    throw new Error("Subformat schema is not available in the workspace");
-                const loaded = loadSubformat(root, config, previews.domains);
-                collection.fields = loaded.fields;
-                collection.template = loaded.template;
-                collection.defaultFolder = manifest.defaultSubformatFolder;
-                for (const record of paths.filter(
-                    (file) => file.extension === config.ext && file.path !== config.schema,
-                )) {
-                    try {
-                        const content = readTextfile(root, record.path);
-                        const data = parseSubformatRecord(content, config.format);
-                        validateSubformatRecord(loaded, data);
-                        collection.records.push({
-                            file: record.path,
-                            content,
-                            data,
-                            references: recordReferences.get(record.path) ?? [],
-                        });
-                    } catch (error) {
-                        pageErrors.push(
-                            `${record.path}: ${error instanceof Error ? error.message : error}`,
-                        );
+            if (!documentIds || documentIds.has(node.id))
+                try {
+                    assertNotIgnored(root, config.schema);
+                    if (!paths.some((file) => file.path === config.schema))
+                        throw new Error("Subformat schema is not available in the workspace");
+                    const loaded = loadSubformat(root, config, previews.domains);
+                    collection.fields = loaded.fields;
+                    collection.template = loaded.template;
+                    collection.defaultFolder = manifest.defaultSubformatFolder;
+                    for (const record of paths.filter(
+                        (file) => file.extension === config.ext && file.path !== config.schema,
+                    )) {
+                        try {
+                            const content = readTextfile(root, record.path);
+                            const data = parseSubformatRecord(content, config.format);
+                            validateSubformatRecord(loaded, data);
+                            collection.records.push({
+                                file: record.path,
+                                content,
+                                data,
+                                references: recordReferences.get(record.path) ?? [],
+                            });
+                        } catch (error) {
+                            pageErrors.push(
+                                `${record.path}: ${error instanceof Error ? error.message : error}`,
+                            );
+                        }
                     }
+                } catch (error) {
+                    pageErrors.push(
+                        `${config.schema}: ${error instanceof Error ? error.message : error}`,
+                    );
                 }
-            } catch (error) {
-                pageErrors.push(
-                    `${config.schema}: ${error instanceof Error ? error.message : error}`,
-                );
-            }
             docs.push({
                 id: node.id,
                 parent: node.parent,
@@ -756,16 +798,16 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
         }
         // Library pages are rendered from the workspace index when shown, not compiled here.
         for (const node of flattenTree(manifest.tree)) {
-            if (!node.library) continue;
-            const file = `library:${node.library}`;
-            const title = node.title ?? node.library;
+            if (!node.library && !node.format) continue;
+            const file = node.library ? `library:${node.library}` : `format:${node.format}`;
+            const title = node.title ?? node.library ?? node.format ?? "";
             docs.push({
                 id: node.id,
                 parent: node.parent,
                 title,
                 file,
                 lang: defaultLang,
-                library: node.library,
+                ...(node.library ? { library: node.library } : { format: node.format }),
                 icon: icons.get(node.id),
                 body: "",
                 blocks: [],
@@ -784,7 +826,7 @@ export const createCompiler = (root: string, options: CompileOptions = {}): Comp
         const order = flattenTree(manifest.tree).map((node) => node.id);
         for (const node of pages) {
             let doc = docs.find((doc) => doc.id === node.id);
-            if (!doc && !isContentPage(node) && !node.subformat && !node.library) {
+            if (!doc && !isContentPage(node) && !node.subformat && !node.library && !node.format) {
                 const file = `page:${node.id}`;
                 const pageTitle = node.title ?? (node.root ? title : node.name) ?? "Contents";
                 if (node.url && pageUrlKind(node.url) === "file") {

@@ -1,7 +1,7 @@
 import { escapeHtml } from "../../engine/src/core/escape-html.js";
 import { defaultFilePath, localFile } from "../../engine/src/core/files.js";
 import { resourceDownloadHtml, subformatTableHtml } from "../../engine/src/core/html.js";
-import { CHECK_ICON } from "../../engine/src/core/icons.js";
+import { CHECK_ICON, SUBFORMATS_ICON } from "../../engine/src/core/icons.js";
 import { subformatSchemaPath } from "../../engine/src/core/routing.js";
 import {
     matchesSubformatRecord,
@@ -295,25 +295,56 @@ export const filterSubformats = (
     board.setAttribute("aria-label", collection.ext);
     state.selected = collection.ext;
     render(root, board, state, collection, words);
+    if (items) {
+        let inline = 0;
+        for (const item of items.querySelectorAll<HTMLElement>("[data-resource-item]")) {
+            const text = item.textContent?.normalize("NFKC").toLowerCase() ?? "";
+            item.hidden =
+                !item.hasAttribute("data-resource-inline") ||
+                item.dataset.resourceGroup !== collection.ext ||
+                !words.every((word) => text.includes(word));
+            if (!item.hidden) inline++;
+        }
+        items.hidden = !inline;
+        if (inline) {
+            root.querySelector<HTMLElement>("[data-resource-empty]")?.setAttribute("hidden", "");
+            const count = root.querySelector("[data-resource-count]");
+            if (count) count.textContent = String(Number(count.textContent) + inline);
+        }
+    }
     return true;
+};
+
+const prependSubformatIcon = (element: HTMLElement, collection?: SubformatCollection): void => {
+    if (!collection) return;
+    if (!collection.iconSvg) {
+        element.insertAdjacentHTML("afterbegin", SUBFORMATS_ICON);
+        return;
+    }
+    // An <img> keeps ids and styles of a configured SVG from leaking into the page.
+    const icon = document.createElement("img");
+    icon.className = "doc-icon";
+    icon.alt = "";
+    icon.src = `data:image/svg+xml,${encodeURIComponent(collection.iconSvg)}`;
+    element.prepend(icon);
 };
 
 const syncSubformatPicker = (root: HTMLElement, select: HTMLSelectElement, state: State): void => {
     const trigger = root.querySelector<HTMLButtonElement>("[data-subformat-trigger]");
     const popup = root.querySelector<HTMLElement>("[data-subformat-options]");
     if (!trigger || !popup) return;
-    // An <img> keeps ids and styles of a configured SVG from leaking into the page.
-    const withIcon = (button: HTMLButtonElement, ext: string): void => {
-        const svg = state.collections.find((item) => item.ext === ext)?.iconSvg;
-        if (!svg) return;
-        const icon = document.createElement("img");
-        icon.className = "doc-icon";
-        icon.alt = "";
-        icon.src = `data:image/svg+xml,${encodeURIComponent(svg)}`;
-        button.prepend(icon);
-    };
+    trigger.hidden =
+        !state.openSource ||
+        !document.body.classList.contains("edit") ||
+        !!workspaceConnection(state.workspace)?.readOnly;
+    const query = trigger.closest<HTMLElement>(".resource-query");
+    if (query) query.hidden = trigger.hidden;
+    if (trigger.hidden) return;
     trigger.textContent = select.selectedOptions[0]?.text || t("Subformats");
-    withIcon(trigger, select.value);
+    prependSubformatIcon(
+        trigger,
+        state.collections.find((item) => item.ext === select.value),
+    );
     trigger.disabled = ![...select.options].some((option) => option.value);
     if (select.dataset.subformatChange)
         trigger.dataset.subformatChange = select.dataset.subformatChange;
@@ -325,7 +356,10 @@ const syncSubformatPicker = (root: HTMLElement, select: HTMLSelectElement, state
         button.type = "button";
         button.tabIndex = -1;
         button.textContent = option.text;
-        withIcon(button, option.value);
+        prependSubformatIcon(
+            button,
+            state.collections.find((item) => item.ext === option.value),
+        );
         button.setAttribute("role", option.value === "+" ? "menuitem" : "menuitemradio");
         if (option.value === "+") button.dataset.subformatAdd = "";
         else button.setAttribute("aria-checked", String(option.selected));
@@ -704,13 +738,16 @@ const render = (
     else root.querySelector(".resource-toolbar")?.append(controls);
     const openSetting = state.openSetting;
     controls.replaceChildren();
-    const schemaLink = document.createElement("a");
-    schemaLink.className = "subformat-schema-link";
-    schemaLink.href = published
-        ? `#${subformatSchemaPath(collection.ext)}`
-        : subformatSchemaPath(collection.ext);
-    schemaLink.textContent = "JSON Schema";
-    controls.append(schemaLink);
+    if (!root.querySelector("[data-subformat-trigger]:not([hidden])")) {
+        const schemaLink = document.createElement("a");
+        schemaLink.className = "subformat-schema-link";
+        schemaLink.href = published
+            ? `#${subformatSchemaPath(collection.ext)}`
+            : subformatSchemaPath(collection.ext);
+        schemaLink.textContent = collection.ext;
+        prependSubformatIcon(schemaLink, collection);
+        controls.append(schemaLink);
+    }
     const settings: {
         key: keyof NonNullable<Subformat["layouts"]>;
         fields: { name: string; title: string }[];

@@ -580,3 +580,63 @@ it("embeds a source URL in static HTML before the temporary build directory is r
         buildBundle(root, { format: "html", sourceUrl: "javascript:alert(1)" }),
     ).rejects.toThrow("HTTP(S)");
 });
+
+it.each([
+    false,
+    true,
+])("publishes Format files and their native runtimes with codeblock disabled (split: %s)", async (split) => {
+    write(
+        "dooc.yaml",
+        `system:
+  format:
+    svg: {folders: [assets]}
+    mermaid: {folders: [diagrams]}
+    ts: {codeblock: false, folders: [src]}
+    bin: {files: [data.bin]}
+document:
+  title: Format handbook
+  children:
+    - document: {format: svg}
+    - document: {format: mermaid}
+    - document: {format: ts}
+    - document: {format: bin}
+`,
+    );
+    write(
+        "assets/logo.svg",
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><title>Fig.logo</title><image href="pixel.png" width="20" height="20"/></svg>',
+    );
+    write(
+        "assets/pixel.png",
+        Buffer.from(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j3ZkAAAAASUVORK5CYII=",
+            "base64",
+        ),
+    );
+    write("diagrams/flow.mermaid", "flowchart LR\nA --> B");
+    write("src/example.ts", "const fileSource = 42;");
+    write("notes.md", "```typescript\nconst excludedFence = 1;\n```");
+    write("data.bin", Buffer.from([0, 255, 1]));
+    const bundle = await buildBundle(root, { format: "html", split });
+    const html = [
+        bundle.data.toString(),
+        ...[...(bundle.files?.values() ?? [])].map((file) => file.toString()),
+    ].join("\n");
+    expect(html).toContain('data-route="svg"');
+    expect(html).toContain('data-resource-group="svg"');
+    if (split)
+        expect(
+            [...(bundle.files ?? [])].some(
+                ([file, data]) =>
+                    file.endsWith(".png") &&
+                    Buffer.from(data).equals(readFileSync(join(root, "assets/pixel.png"))),
+            ),
+        ).toBe(true);
+    else expect(html).toContain("data:image/png;base64,");
+    expect(html).toContain('data-mermaid="pending"');
+    expect(html).toContain("const fileSource = 42;");
+    expect(html).not.toContain("const excludedFence = 1;");
+    expect(html).toContain('data-route="_files/file/data.bin"');
+    expect(bundleClient).toHaveBeenCalledWith("code-highlight.ts");
+    if (!split) expect(bundleClient).toHaveBeenCalledWith("schema-graph-global.tsx");
+});

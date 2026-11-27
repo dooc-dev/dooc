@@ -29,7 +29,13 @@ window.testFilesFocusAndLanguage = async () => {
                     op === "hello"
                         ? { ops: [] }
                         : {
-                              files: [{ path: `${id}/item.txt`, size: 10, extension: "txt" }],
+                              files: [
+                                  { path: "aaa.md", size: 10, extension: "md" },
+                                  { path: `${id}/item10.txt`, size: 10, extension: "txt" },
+                                  { path: `${id}/item2.txt`, size: 10, extension: "txt" },
+                                  { path: `${id}/nested/config.yaml`, size: 10, extension: "yaml" },
+                                  { path: `${id}/item.txt`, size: 10, extension: "txt" },
+                              ],
                               revision: id,
                               documents: {},
                           },
@@ -47,7 +53,27 @@ window.testFilesFocusAndLanguage = async () => {
     );
     try {
         await wait(() => hosts.every((host) => host.querySelector(".files-folder")));
+        assert(
+            hosts[1].querySelectorAll("tr[data-path]").length === 2 &&
+                hosts[1].querySelector(".files-folder").getAttribute("aria-expanded") === "false",
+            "Folders start closed so the tree only shows its root entries",
+        );
+        hosts[1].querySelector(".files-folder").click();
+        hosts[1].querySelector('tr[data-path="second/nested"] .files-folder').click();
+        assert(
+            [...hosts[1].querySelectorAll("tr[data-path]")]
+                .map((row) => row.dataset.path)
+                .join() ===
+                "second,second/nested,second/nested/config.yaml,second/item.txt,second/item2.txt,second/item10.txt,aaa.md",
+            "Each level sorts folders first and filenames in natural order",
+        );
+        assert(
+            hosts[1].querySelector('tr[data-path="aaa.md"] .files-symbol').innerHTML !==
+                hosts[1].querySelector('tr[data-path="second/item.txt"] .files-symbol').innerHTML,
+            "File icons identify their formats",
+        );
         const folder = hosts[1].querySelector(".files-folder");
+        const openIcon = folder.querySelector(".files-symbol").innerHTML;
         folder.focus();
         folder.click();
         assert(
@@ -58,6 +84,26 @@ window.testFilesFocusAndLanguage = async () => {
             document.activeElement.getAttribute("aria-expanded") === "false",
             "Focus follows the collapsed folder",
         );
+        assert(
+            document.activeElement.querySelector(".files-symbol").innerHTML !== openIcon,
+            "The folder icon changes when its children are hidden",
+        );
+        hosts[1].querySelector('tr[data-path="second"] td:nth-child(2)').click();
+        assert(
+            document.activeElement.getAttribute("aria-expanded") === "true",
+            "Clicking the folder row outside its name expands it and focuses its button",
+        );
+        document.activeElement.click();
+        const search = hosts[1].querySelector('input[type="search"]');
+        search.value = "item2";
+        search.dispatchEvent(new Event("input"));
+        assert(
+            hosts[1].querySelector('tr[data-path="second/item2.txt"]') &&
+                hosts[1].querySelector(".files-folder").getAttribute("aria-expanded") === "true",
+            "Search reveals matches inside closed folders",
+        );
+        search.value = "";
+        search.dispatchEvent(new Event("input"));
         document.dispatchEvent(new Event("docs:ui-language"));
         assert(
             hosts.every((host) => host.querySelector(".files-table")),
@@ -74,6 +120,24 @@ window.testFilesFocusAndLanguage = async () => {
         assert(
             document.activeElement.getAttribute("aria-expanded") === "false",
             "Language changes preserve collapsed folders",
+        );
+        const icons = [
+            ...hosts[1].querySelectorAll(".files-toolbar svg, .files-symbol svg, .files-copy svg"),
+        ];
+        const iconColor = getComputedStyle(icons[0]).color;
+        assert(
+            icons.length >= 6 &&
+                icons.every((icon) => {
+                    const style = getComputedStyle(icon);
+                    return (
+                        style.width === "16px" &&
+                        style.height === "16px" &&
+                        style.strokeWidth === "1.5px" &&
+                        style.fill === "none" &&
+                        style.color === iconColor
+                    );
+                }),
+            "File and toolbar icons keep one monochrome outline style after relocalization",
         );
         document.activeElement.click();
         const row = hosts[1].querySelector('tr[data-path="second/item.txt"]');
@@ -94,6 +158,14 @@ window.testFilesFocusAndLanguage = async () => {
             document.activeElement.matches(".files-copy") &&
                 hosts[1].contains(document.activeElement),
             "Background reads retain row control focus",
+        );
+        hosts[1].style.width = "220px";
+        await new Promise(requestAnimationFrame);
+        const viewport = hosts[1].querySelector(".files-viewport");
+        assert(
+            viewport.scrollWidth <= viewport.clientWidth &&
+                search.getBoundingClientRect().width >= 100,
+            "Narrow panes keep search usable without horizontal overflow",
         );
     } finally {
         for (const dispose of disposers) dispose?.();

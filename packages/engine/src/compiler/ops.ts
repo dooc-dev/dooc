@@ -5,10 +5,10 @@
 import {
     type DocNode,
     flattenTree,
+    formatPageId,
     insertDoc,
     isContentPage,
     isDocId,
-    isLibraryView,
     libraryPageId,
     moveDoc,
     type ParsedManifest,
@@ -24,6 +24,7 @@ import {
     isDocumentFileName,
     parseFileLayout,
 } from "../core/files.js";
+import { isFormat, isReferenceLibrary } from "../core/formats.js";
 import {
     documentPathErrors,
     docPath as pagePath,
@@ -220,19 +221,32 @@ export const createDocOps = (root: string) => {
         return { id };
     };
 
-    const addLibrary = (view: string, title: string, parent?: string): OpResult<{ id: string }> => {
+    const addCollection = (
+        view: string,
+        title: string,
+        parent: string | undefined,
+        reference: boolean,
+    ): OpResult<{ id: string }> => {
         const loaded = loadTree();
         if (isOpError(loaded)) return loaded;
-        if (!isLibraryView(view) || !title.trim())
+        if (!(reference ? isReferenceLibrary(view) : isFormat(view)) || !title.trim())
             return { error: "Choose a library view and enter a title", status: 400 };
-        const id = libraryPageId(view);
-        const tree = insertDoc(loaded.tree, id, parent, { library: view, title: title.trim() });
+        const id = reference ? libraryPageId(view) : formatPageId(view);
+        const tree = insertDoc(loaded.tree, id, parent, {
+            ...(reference ? { library: view } : { format: view }),
+            title: title.trim(),
+        });
         if (!tree) return { error: "Page already exists or parent is missing", status: 409 };
         const invalidPath = pathError(tree, loaded);
         if (invalidPath) return invalidPath;
         writeManifest(root, tree, loaded);
         return { id };
     };
+
+    const addLibrary = (view: string, title: string, parent?: string) =>
+        addCollection(view, title, parent, isReferenceLibrary(view));
+    const addFormat = (view: string, title: string, parent?: string) =>
+        addCollection(view, title, parent, false);
 
     const setTitle = (id: string, title: string): OpResult<{ id: string }> => {
         const loaded = loadTree();
@@ -595,6 +609,7 @@ export const createDocOps = (root: string) => {
         addFile,
         addSubformat,
         addLibrary,
+        addFormat,
         setTitle,
         move,
         rename,

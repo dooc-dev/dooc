@@ -22,7 +22,7 @@ window.testResourceDownloads = async () => {
         '<a href="https://example.test/source.txt" download="source.txt" data-resource-download>Download</a>';
     document.body.append(host);
     const link = host.querySelector("a");
-    let fail = false;
+    let fail = 0;
     let release;
     const requests = [];
     const downloads = [];
@@ -41,8 +41,9 @@ window.testResourceDownloads = async () => {
         await new Promise((resolve) => {
             release = resolve;
         });
+        if (fail === -1) throw new TypeError("Network unavailable");
         return new Response(fail ? "Denied" : "Complete source\r\nLast line\r\n", {
-            status: fail ? 403 : 200,
+            status: fail || 200,
         });
     };
     try {
@@ -63,16 +64,35 @@ window.testResourceDownloads = async () => {
             requests[0].options.credentials === "omit",
             "Do not send credentials to resource URLs",
         );
-        fail = true;
+        fail = 403;
         link.click();
         release();
         await wait(() => !link.hasAttribute("aria-busy"));
         assert(downloads.length === 1, "Do not save an HTTP error response");
         assert(
-            host.querySelector('[role="status"]').textContent.includes("Download failed"),
-            "Announce failed downloads",
+            host.querySelector('[role="status"]').textContent === "Access denied.",
+            "Announce permission failures without a long generic message",
         );
-        fail = false;
+        for (const [code, message] of [
+            [404, "File unavailable."],
+            [503, "Download failed. Retry."],
+            [-1, "Download failed. Retry."],
+        ]) {
+            fail = code;
+            link.click();
+            release();
+            await wait(() => !link.hasAttribute("aria-busy"));
+            assert(
+                host.querySelector('[role="status"]').textContent === message,
+                "Distinguish unavailable files from retryable failures",
+            );
+            assert(
+                host.querySelectorAll('[role="status"]').length === 1,
+                "Reuse the status on retries",
+            );
+            assert(downloads.length === 1, "Never download an error body");
+        }
+        fail = 0;
         link.click();
         release();
         await wait(() => !link.hasAttribute("aria-busy"));

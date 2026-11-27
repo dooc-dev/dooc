@@ -1,9 +1,11 @@
-import { autocompletion } from "@codemirror/autocomplete";
-import { Compartment, EditorState } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
 import { isNode, parseDocument } from "yaml";
 import { migrateDocumentIcon } from "../../engine/src/core/content-metadata.js";
 import { escapeHtml } from "../../engine/src/core/escape-html.js";
+import {
+    isFormat,
+    migrateCollections,
+    REFERENCE_LIBRARIES,
+} from "../../engine/src/core/formats.js";
 import { pageWorkspace } from "../../workspace/src/client.js";
 import { clientPath } from "../../workspace/src/client-path.js";
 import {
@@ -11,15 +13,9 @@ import {
     workspaceFetch,
     workspaceId,
 } from "../../workspace/src/connection.js";
-import { editorCodeHighlight } from "./edit-code-highlight.js";
-import { confirmDialog } from "./edit-dialog.js";
-import { editorSetup } from "./edit-setup.js";
+import { createTextfileEditors } from "./edit-textfile.js";
 import { t } from "./i18n.js";
-import {
-    manifestErrors,
-    manifestPathCompletion,
-    updateManifestSetting,
-} from "./manifest-editor.js";
+import { updateManifestSetting } from "./manifest-editor.js";
 
 const hosts = new Set<HTMLElement>();
 let sequence = 0;
@@ -29,6 +25,7 @@ export const hasManifestDraft = (scope?: HTMLElement): boolean =>
 export const mountManifest = (
     host: HTMLElement | null,
     workspace = workspaceId(),
+    sharedFiles?: ReturnType<typeof createTextfileEditors>,
 ): (() => void) | undefined => {
     if (!host || host.dataset.mounted) return;
     host.dataset.mounted = "true";
@@ -36,24 +33,28 @@ export const mountManifest = (
     const file = host.dataset.file ?? "dooc.yaml";
     const readOnly = !!workspaceConnection(workspace)?.readOnly;
     const client = pageWorkspace(workspace);
-    let base: string | undefined;
+    const files =
+        sharedFiles ??
+        createTextfileEditors(
+            [],
+            () => document.dispatchEvent(new Event("docs:files-changed")),
+            () => {},
+            workspace,
+            () => localStorage.getItem("docs-edit:autosave") !== "0",
+        );
     let raw = "";
-    let busy = false;
+    let busy = true;
     let disposed = false;
     let sourceView = false;
-    let editor: EditorView | undefined;
-    const editable = new Compartment();
+    let valid = true;
     const id = `manifest-${++sequence}`;
     const text = (key: string) => escapeHtml(t(key));
-    host.innerHTML = `<header class="manifest-toolbar"><h1>${escapeHtml(file)}</h1><span role="status" aria-live="polite"></span><button type="button" data-reload>${text("Reload")}</button><button type="button" data-save>${text("Save")}</button></header>
+    host.innerHTML = `<header class="manifest-toolbar"><h1>${escapeHtml(file)}</h1></header>
 <p class="manifest-error err" role="alert" hidden></p>
-<div class="resource-tabs manifest-tabs" role="tablist" aria-label="${text("Manifest editor")}"><button type="button" role="tab" id="${id}-settings-tab" aria-controls="${id}-settings" aria-selected="true">${text("Settings")}</button><button type="button" role="tab" id="${id}-yaml-tab" aria-controls="${id}-yaml" aria-selected="false" tabindex="-1">YAML</button></div>
-<form id="${id}-settings" role="tabpanel" aria-labelledby="${id}-settings-tab"><fieldset class="manifest-fields manifest-grid"></fieldset></form>
+${sharedFiles ? "" : `<div class="resource-tabs manifest-tabs" role="tablist" aria-label="${text("Manifest editor")}"><button type="button" role="tab" id="${id}-settings-tab" aria-controls="${id}-settings" aria-selected="true">${text("Settings")}</button><button type="button" role="tab" id="${id}-yaml-tab" aria-controls="${id}-yaml" aria-selected="false" tabindex="-1">YAML</button></div>`}
+<form id="${id}-settings"${sharedFiles ? ` aria-label="${text("Settings")}"` : ` role="tabpanel" aria-labelledby="${id}-settings-tab"`}><fieldset class="manifest-fields manifest-grid"></fieldset></form>
 <div id="${id}-yaml" class="manifest-source" role="tabpanel" aria-labelledby="${id}-yaml-tab" hidden></div>`;
-    const status = host.querySelector('[role="status"]') as HTMLElement;
     const error = host.querySelector('[role="alert"]') as HTMLElement;
-    const saveButton = host.querySelector("[data-save]") as HTMLButtonElement;
-    const reload = host.querySelector("[data-reload]") as HTMLButtonElement;
     const form = host.querySelector("form") as HTMLFormElement;
     const fields = host.querySelector("fieldset") as HTMLFieldSetElement;
     const source = host.querySelector(".manifest-source") as HTMLElement;
@@ -116,12 +117,14 @@ export const mountManifest = (
     const chooseCompletion = (item: HTMLButtonElement) => {
         const input = completionInput;
         if (!input || busy || readOnly || input.matches(":disabled")) return;
-        const value = item.textContent ?? "";
+        const value = input.dataset.folder
+            ? (item.textContent ?? "").replace(/\/$/, "")
+            : (item.textContent ?? "");
         closeCompletion();
         input.value = value;
         input.setSelectionRange(value.length, value.length);
         input.dispatchEvent(new Event("input", { bubbles: true }));
-        if (!value.endsWith("/")) closeCompletion();
+        if (input.dataset.folder || !value.endsWith("/")) closeCompletion();
     };
     options.addEventListener("pointerdown", (event) => event.preventDefault());
     options.addEventListener("click", (event) => {
@@ -156,27 +159,21 @@ export const mountManifest = (
         error.textContent = message;
         error.hidden = !message;
     };
-    const state = (message?: string) => {
-        const dirty = base !== undefined && raw !== base;
-        host.dataset.dirty = String(dirty);
-        saveButton.disabled = busy || readOnly || !dirty;
-        reload.disabled = busy;
-        fields.disabled = busy || readOnly || base === undefined;
+    const state = () => {
+        const snapshot = files.snapshot(file);
+        busy = snapshot.content === undefined;
+        host.dataset.dirty = String(snapshot.dirty);
+        fields.disabled = busy || readOnly || !valid;
         if (fields.disabled) closeCompletion();
         host.setAttribute("aria-busy", String(busy));
-        editor?.dispatch({
-            effects: editable.reconfigure(EditorState.readOnly.of(busy || readOnly)),
-        });
-        status.textContent = t(
-            message ?? (readOnly ? "Read-only version" : dirty ? "Unsaved changes" : "Saved"),
-        );
+        if (snapshot.error) showError(snapshot.error);
         document.dispatchEvent(new Event("docs:manifest-draft"));
     };
     const change = (path: string[], value: unknown) => {
         try {
             raw = updateManifestSetting(raw, path, value);
             showError();
-            state();
+            files.update(file, raw);
         } catch (cause) {
             showError(cause instanceof Error ? cause.message : String(cause));
         }
@@ -192,7 +189,9 @@ export const mountManifest = (
                 prefix: input.value,
             });
             if (disposed || request !== completionRevision || !input.isConnected) return false;
-            const candidates = paths.filter((path) => path !== input.value);
+            const candidates = paths.filter(
+                (path) => path !== input.value && (!input.dataset.folder || path.endsWith("/")),
+            );
             if (!candidates.length) {
                 closeCompletion();
                 return false;
@@ -271,6 +270,7 @@ export const mountManifest = (
         }
         try {
             migrateDocumentIcon(yaml);
+            migrateCollections(yaml);
         } catch (cause) {
             showError(cause instanceof Error ? cause.message : String(cause));
             return false;
@@ -308,6 +308,7 @@ export const mountManifest = (
                 fallback?: string;
                 path?: boolean;
                 list?: boolean;
+                boolean?: boolean;
                 choices?: [string, string][];
             } = {},
         ) => {
@@ -341,14 +342,14 @@ export const mountManifest = (
                         ? undefined
                         : options.list
                           ? value.split(/[,\s]+/).filter(Boolean)
-                          : path.at(-1) === "default_layout"
+                          : options.boolean || path.at(-1) === "default_layout"
                             ? value === "true"
                             : value,
                 );
             });
             return input;
         };
-        const paths = (parent: HTMLElement, path: string[]) => {
+        const paths = (parent: HTMLElement, path: string[], folder = false) => {
             const section = document.createElement("fieldset");
             section.classList.add("manifest-paths");
             const legend = document.createElement("legend");
@@ -362,7 +363,7 @@ export const mountManifest = (
                 button.innerHTML = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="${icon}"/></svg>`;
                 return button;
             };
-            const add = button("Add file", "M10 4v12M4 10h12");
+            const add = button(folder ? "Add folder" : "Add file", "M10 4v12M4 10h12");
             const update = () =>
                 change(
                     path,
@@ -376,6 +377,7 @@ export const mountManifest = (
                 const input = document.createElement("input");
                 input.value = value;
                 input.name = path.join(".");
+                if (folder) input.dataset.folder = "true";
                 input.setAttribute("aria-label", path.join("."));
                 const remove = button("Remove path", "m5 5 10 10M15 5 5 15");
                 remove.setAttribute(
@@ -402,7 +404,11 @@ export const mountManifest = (
         };
         const general = group(fields, ["document"], true);
         field(general, ["document", "title"]);
-        if (!yaml.getIn(["document", "library"]) && !yaml.getIn(["document", "subformat"]))
+        if (
+            !yaml.getIn(["document", "library"]) &&
+            !yaml.getIn(["document", "format"]) &&
+            !yaml.getIn(["document", "subformat"])
+        )
             field(general, ["document", "url"], { path: true });
         const icon = group(general, ["document", "icon"]);
         const sharedIcon = valueAt(["document", "icon"]);
@@ -412,8 +418,91 @@ export const mountManifest = (
                 fallback: typeof sharedIcon === "string" ? sharedIcon : undefined,
             });
         const system = group(fields, ["system"], true);
-        const library = group(system, ["system", "library"], true);
-        paths(library, ["system", "library", "files"]);
+        const library = group(system, ["system", "library"]);
+        const views = valueAt(["system", "library"]) ?? REFERENCE_LIBRARIES;
+        for (const view of REFERENCE_LIBRARIES) {
+            const label = document.createElement("label");
+            label.className = "manifest-reference";
+            const input = document.createElement("input");
+            input.type = "checkbox";
+            input.name = "system.library";
+            input.value = view;
+            input.checked = Array.isArray(views) && views.includes(view);
+            label.append(input, view);
+            library.append(label);
+            input.onchange = () =>
+                change(
+                    ["system", "library"],
+                    [...library.querySelectorAll<HTMLInputElement>("input:checked")].map(
+                        (input) => input.value,
+                    ),
+                );
+        }
+        const formats = group(system, ["system", "format"], true);
+        for (const format of Object.keys((valueAt(["system", "format"]) as object) ?? {})) {
+            const path = ["system", "format", format];
+            const section = group(formats, path, true);
+            field(section, [...path, "codeblock"], {
+                boolean: true,
+                fallback: "true",
+                choices: [
+                    ["true", "true"],
+                    ["false", "false"],
+                ],
+            });
+            paths(section, [...path, "folders"], true);
+            paths(section, [...path, "files"]);
+            const remove = document.createElement("button");
+            remove.type = "button";
+            remove.title = remove.ariaLabel = `${t("Remove format")}: ${format}`;
+            remove.className = "manifest-remove-format";
+            remove.innerHTML =
+                '<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 5h12M8 5V3h4v2M6 5l1 12h6l1-12M9 8v6M11 8v6"/></svg>';
+            section.parentElement?.querySelector("summary")?.append(remove);
+            remove.onclick = (event) => {
+                event.preventDefault();
+                change(path, undefined);
+                settings();
+                fields.querySelector<HTMLInputElement>('[name="format"]')?.focus();
+            };
+        }
+        const add = document.createElement("div");
+        add.className = "manifest-path-row";
+        add.innerHTML = `<label class="manifest-field"><span class="subformat-control-label">format</span><input name="format" aria-label="format" autocomplete="off" spellcheck="false" list="${id}-formats"></label><button type="button" title="${text("Add format")}" aria-label="${text("Add format")}"><svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></button><datalist id="${id}-formats"></datalist>`;
+        formats.append(add);
+        const extension = add.querySelector("input") as HTMLInputElement;
+        const addFormat = () => {
+            const format = extension.value.trim().replace(/^\./, "").toLowerCase();
+            if (!isFormat(format) || yaml.hasIn(["system", "format", format])) {
+                extension.setCustomValidity(t("Enter a new file extension"));
+                extension.reportValidity();
+                return;
+            }
+            change(["system", "format", format], { codeblock: true });
+            settings();
+            fields
+                .querySelector<HTMLInputElement>(
+                    `[name="system.format.${CSS.escape(format)}.folders"]`,
+                )
+                ?.focus();
+        };
+        extension.oninput = () => extension.setCustomValidity("");
+        extension.onkeydown = (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                addFormat();
+            }
+        };
+        add.querySelector("button")?.addEventListener("click", addFormat);
+        void workspaceFetch("/api/formats?all=true", undefined, workspace)
+            .then(async (response) => {
+                if (!response.ok || !add.isConnected) return;
+                const names: string[] = await response.json();
+                add.querySelector("datalist")?.replaceChildren(
+                    ...names.map((name) => new Option(name)),
+                );
+            })
+            .catch(() => {});
         field(system, ["system", "default_lang"], { fallback: "eng" });
         field(system, ["system", "languages"], { list: true });
         field(system, ["system", "themes"], {
@@ -445,98 +534,20 @@ export const mountManifest = (
     };
     const switchView = (yaml: boolean) => {
         closeCompletion();
-        if (!yaml && !settings()) return;
+        if (!yaml) {
+            valid = settings();
+            if (!valid) return;
+        }
         sourceView = yaml;
-        editor?.destroy();
-        editor = undefined;
         form.hidden = yaml;
         source.hidden = !yaml;
         tabs.forEach((tab, index) => {
             tab.setAttribute("aria-selected", String(index === Number(yaml)));
             tab.tabIndex = index === Number(yaml) ? 0 : -1;
         });
-        if (yaml)
-            editor = new EditorView({
-                parent: source,
-                doc: raw,
-                extensions: [
-                    editorSetup,
-                    editorCodeHighlight("yaml", workspace),
-                    editable.of(EditorState.readOnly.of(busy || readOnly)),
-                    EditorView.contentAttributes.of({ "aria-label": file, spellcheck: "false" }),
-                    autocompletion({
-                        override: [(context) => manifestPathCompletion(context, workspace)],
-                    }),
-                    EditorView.updateListener.of((update) => {
-                        if (!update.docChanged) return;
-                        raw = update.state.doc.toString();
-                        showError();
-                        // Avoid dispatching another editor update from inside its listener.
-                        queueMicrotask(() => {
-                            if (!disposed) state();
-                        });
-                    }),
-                ],
-            });
         state();
     };
-    const request = async (input: Record<string, unknown>) => {
-        const response = await workspaceFetch(
-            "/api/textfile",
-            {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ file, ...input }),
-            },
-            workspace,
-        );
-        const result = (await response.json()) as { content?: string | null; error?: string };
-        if (!response.ok) throw new Error(result.error ?? t("Save failed"));
-        if (typeof result.content !== "string") throw new Error(t("Manifest file is unavailable."));
-        return result.content;
-    };
-    const load = async () => {
-        busy = true;
-        state("Loading");
-        showError();
-        try {
-            const content = await request({ action: "read" });
-            if (disposed) return;
-            base = raw = content;
-            if (!sourceView && !settings()) sourceView = true;
-            switchView(sourceView);
-        } catch (cause) {
-            if (!disposed) showError(cause instanceof Error ? cause.message : String(cause));
-        } finally {
-            busy = false;
-            if (!disposed) state(base === undefined ? "Load failed" : undefined);
-        }
-    };
-    const save = async () => {
-        if (busy || readOnly || base === undefined || base === raw) return;
-        const errors = manifestErrors(raw);
-        if (errors.length) {
-            showError(errors.join("\n"));
-            state("Save failed");
-            return;
-        }
-        busy = true;
-        state("Saving");
-        showError();
-        let saved = false;
-        try {
-            const content = await request({ action: "save", content: raw, base });
-            if (disposed) return;
-            base = raw = content;
-            saved = true;
-            document.dispatchEvent(new Event("docs:files-changed"));
-        } catch (cause) {
-            if (!disposed) showError(cause instanceof Error ? cause.message : String(cause));
-        } finally {
-            busy = false;
-            if (!disposed) state(saved ? "Saved" : "Save failed");
-        }
-    };
+    const save = () => files.save(file);
     tabs.forEach((tab, index) => {
         tab.onclick = () => switchView(!!index);
         tab.onkeydown = (event) => {
@@ -557,16 +568,17 @@ export const mountManifest = (
         event.stopPropagation();
         void save();
     };
-    saveButton.onclick = () => void save();
-    reload.onclick = async () => {
-        if (
-            hasManifestDraft(host) &&
-            !(await confirmDialog(t("Discard changes and reload the manifest?"), t("Reload"), true))
-        )
-            return;
-        if (!disposed) await load();
-    };
-    void load();
+    const disposeSource = sharedFiles ? undefined : files.mount(file, source);
+    const unsubscribe = files.subscribe(file, () => {
+        const content = files.content(file);
+        if (content !== undefined && (busy || content !== raw)) {
+            raw = content;
+            showError();
+            valid = settings();
+            if (!sharedFiles && !valid) switchView(true);
+        }
+        state();
+    });
     return () => {
         disposed = true;
         closeCompletion();
@@ -575,7 +587,8 @@ export const mountManifest = (
         document.removeEventListener("scroll", dismissCompletion, true);
         window.removeEventListener("resize", repositionCompletion);
         hosts.delete(host);
-        editor?.destroy();
+        unsubscribe();
+        disposeSource?.();
         document.dispatchEvent(new Event("docs:manifest-draft"));
     };
 };

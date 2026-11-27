@@ -1,8 +1,7 @@
 import type { RequestListener } from "node:http";
-import { DARK_C, initializeThemes, LIGHT_C } from "../../frontend/src/theme-picker.js";
 import { validateRelayUrl } from "../../workspace/src/mcp-relay.js";
 import { prebuilt, readReaderAsset } from "./assets.js";
-import { bundleClient } from "./serve.js";
+import { bundleClient, clientShell } from "./serve.js";
 
 export const validateServerUrl = (value: string): string => {
     const url = new URL(value);
@@ -20,23 +19,6 @@ export const validateServerUrl = (value: string): string => {
         );
     if (url.pathname === "/") url.pathname = "/server";
     return url.href;
-};
-
-const shell = (readOnly = false): string => {
-    const theme = readOnly ? "theme" : "editor-theme";
-    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>dooc — Workspaces</title>
-<script>var __name = (f) => f; (${initializeThemes.toString()})();</script>
-<style>
-:root { ${DARK_C} }
-@media (prefers-color-scheme: light) { :root:not([data-${theme}="dark"]) { ${LIGHT_C} } }
-:root[data-${theme}="light"] { ${LIGHT_C} }
-body { margin: 0; background: var(--c-bg0); color: var(--c-fg); font: 15px/1.6 system-ui; }
-#client-loading { display: grid; min-height: 100dvh; place-items: center; color: var(--c-fg-muted); font-size: 13px; }
-main { max-width: 600px; margin: 15vh auto; padding: 24px; }
-h1 { font-size: 26px; font-weight: 600; }
-button { font: inherit; padding: 9px 16px; border: 1px solid var(--c-line); border-radius: 4px; background: transparent; color: inherit; cursor: pointer; }
-button:focus-visible { outline: 2px solid var(--c-fg-muted); outline-offset: 3px; }
-</style></head><body><div id="client-loading" role="status">Loading document…</div><main hidden><h1>dooc</h1><p>${readOnly ? "Read" : "Edit"} documents in a local folder, browser storage, or a connected workspace.</p><button id="open-workspace" type="button">Open a workspace</button></main><script src="/assets/client.js"></script></body></html>`;
 };
 
 export interface ClientOptions {
@@ -61,9 +43,9 @@ export const clientAssets = async (
             [
                 "index.html",
                 Buffer.from(
-                    shell(options.readOnly).replace(
-                        "/assets/client.js",
-                        `${options.basePath ?? ""}/assets/client.js`,
+                    clientShell(options.readOnly).replaceAll(
+                        "/assets/",
+                        `${options.basePath ?? ""}/assets/`,
                     ),
                 ),
             ],

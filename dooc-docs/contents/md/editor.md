@@ -9,9 +9,11 @@ The [screen layout](contents/md/ux-layout.md) shows the sidebar, preview panes a
 | Document tree | Open pages and boards; add, rename, move and set icons |
 | Preview pane | Read the rendered draft and follow its links |
 | Source editor | Change the selected page, record or schema |
-| Workspace tools | Browse Files, Library, Subformats, Plugins and Git |
+| Workspace tools | Edit dooc.yaml; browse Files, Library, Format, Subformats, Plugins and Git |
 
 The editor header sits above the source editor. Its language control is on the left, workspace and branch selectors are in the center, and actions are on the right. The folder button opens a workspace for the active pane.
+
+Workspace tools start at the top of their preview pane, without the extra document-reading inset above their tabs or toolbar. Apply this consistently to Files, Library, Format, Subformats, manifest settings, Git and Plugins in single and split panes. Preserve each tool's internal spacing and the normal document preview inset when returning to a page.
 
 ## Edit and save a page
 
@@ -43,6 +45,14 @@ Tree edits rewrite `dooc.yaml`; hand edits to the manifest appear in the tree. R
 | Find blocks, terms and their uses | Library |
 | Edit a record or its schema | Subformats; see [Structured records](contents/md/subformats.md) |
 | Add a translation | Page language menu; see [Themes and languages](contents/md/variants.md) |
+
+### Files tree design
+
+The workspace card's Files view uses compact IDE-style rows: one file-type icon, the basename, and consistent indentation. Folders start closed and sort before files at each level, with names sorted naturally. Remove the separate disclosure chevron and its empty gutter; clicking the folder row opens or closes it, and the folder icon shows the current state. Search reveals matching descendants, and clearing it restores the chosen open folders. Keep a visible keyboard focus and expose the expanded state on the folder button.
+
+Use outline SVGs from the [official Lucide repository](https://github.com/lucide-icons/lucide), pinned to commit `9cb3934c3628dfe3fbb34bc4c12209b2cee3a49f`, for common source, configuration, document and media formats and all Files toolbar actions. Render every icon in the same muted gray, at 16 pixels with a shared 24-unit viewBox, 1.5-unit stroke, rounded caps and joins, and no fill. File categories use distinct outlines rather than colored logos. Search, history, refresh and path copying share this treatment; refresh rotates its own icon while loading. Bundle only the selected paths with their upstream license notices, so the tree works offline. Unrecognized extensions use the generic file icon. Icons are decorative; filenames and button labels remain accessible. This icon treatment is scoped to Files and its controls.
+
+Keep search, file sizes, path copying, file opening, selection, drag moves, history, refresh, and each pane's workspace state. Copy actions appear on hover or keyboard focus and remain visible on touch screens. Reuse the shared Files renderer and existing theme colors; compact and split panes must retain usable names without horizontal overflow. Hide the size column in narrow panes and wrap search onto its own toolbar row in very narrow panes, using the pane's width rather than the browser's width. Verification covers folder toggling and focus, icon selection, directory ordering, search through closed folders, selection, refresh, and light/dark and narrow layouts.
 
 ## Adjust the view
 

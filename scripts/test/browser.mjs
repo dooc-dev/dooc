@@ -21,6 +21,7 @@ import { testEmptyManifestSettings, testManifestSettings } from "./manifest-sett
 import { testPageJump } from "./page-jump.mjs";
 import { testSplitBuild } from "./split-build.mjs";
 import { testSidebarReorder, testUxNavigation } from "./ux-navigation.mjs";
+import { testViewerStartup } from "./viewer-startup.mjs";
 import {
     testBrowserWorkspace,
     testSocketWorkspace,
@@ -125,6 +126,25 @@ async function inject(page, file) {
 browserTest("Split publications preserve navigation, media, fonts and diagram chunks", (page) =>
     testSplitBuild(page, root),
 );
+
+for (const product of ["editor", "reader"])
+    for (const theme of ["light", "dark"])
+        browserTest(`Progressive viewer startup (${product}, ${theme})`, async (page) => {
+            const project = join(root, `startup-${product}-${theme}`);
+            mkdirSync(project);
+            writeFileSync(
+                join(project, "dooc.yaml"),
+                "document:\n  title: Guide\n  url: home.md\n  children:\n    - document: { title: Other, url: other.md }\n",
+            );
+            writeFileSync(join(project, "home.md"), "# Home\n\nHome body.\n");
+            writeFileSync(join(project, "other.md"), "# Other\n\nOther body.\n");
+            await testViewerStartup(
+                page,
+                await start(product, "node", project),
+                theme,
+                theme === "light",
+            );
+        });
 
 browserTest(
     "Navigation preserves the latest click, history entry and external update",
@@ -739,6 +759,43 @@ for (const width of [1440, 820, 390]) {
     });
 }
 
+for (const product of ["editor", "reader"]) {
+    browserTest(`Site logo follows the sidebar theme in ${product}`, async (page) => {
+        await page.emulateMedia({ colorScheme: "dark" });
+        await open(page, urls[product], product === "editor");
+        const picker = page
+            .locator(`[data-theme-picker="${product === "editor" ? "editor" : "document"}"]`)
+            .first();
+        for (const theme of ["light", "dark"]) {
+            await page.emulateMedia({ colorScheme: theme === "light" ? "dark" : "light" });
+            if (product === "editor" && !(await picker.isVisible()))
+                await page.locator("#gear > button").click();
+            await picker.click();
+            await page.locator(`#theme-picker [data-value="${theme}"]`).click();
+            await page.waitForFunction(
+                (theme) => document.getElementById("sidebar").dataset.theme === theme,
+                theme,
+            );
+            const icon = await page.locator("#site-icon-slot").evaluate((slot) => {
+                const visible = [...slot.querySelectorAll("img")].filter((image) =>
+                    image.checkVisibility(),
+                );
+                return {
+                    count: visible.length,
+                    theme: visible[0]?.dataset.themeVariant,
+                    svg: visible[0] && atob(visible[0].src.split(",")[1]),
+                    backgroundTheme: getComputedStyle(document.getElementById("sidebar"))
+                        .colorScheme,
+                };
+            });
+            assert.equal(icon.count, 1);
+            assert.equal(icon.theme, theme);
+            assert.equal(icon.backgroundTheme, theme);
+            assert.match(icon.svg, theme === "light" ? /stroke="#1a1e23"/ : /stroke="#FFFFFF"/);
+        }
+    });
+}
+
 for (const product of ["editor", "reader", "static"]) {
     browserTest(`Heading hierarchy and header controls (${product})`, async (page) => {
         const project = join(root, `headings-${product}`);
@@ -771,9 +828,34 @@ for (const product of ["editor", "reader", "static"]) {
             assert.equal(download.suggestedFilename(), "guide.md");
             assert.equal(readFileSync(await download.path(), "utf8"), markdown);
         }
-        for (const width of [1440, 820, 390]) {
-            await page.setViewportSize({ width, height: 1000 });
+        for (const width of [1440, 820, 390, 320, 740]) {
+            await page.setViewportSize({ width, height: width === 740 ? 390 : 844 });
             await page.evaluate(() => document.body.classList.add("sidebar-closed"));
+            const sidebar = await page.locator("#sidebar").evaluate((element) => ({
+                top: element.getBoundingClientRect().top,
+                bottom: element.getBoundingClientRect().bottom,
+                height: innerHeight,
+                overflow: element.scrollHeight - element.clientHeight,
+                pageOverflow: document.documentElement.scrollHeight - innerHeight,
+            }));
+            assert.equal(sidebar.top, 0);
+            assert.equal(sidebar.bottom, sidebar.height);
+            assert.equal(sidebar.overflow, 0, "The sidebar frame must not scroll");
+            assert.equal(sidebar.pageOverflow, 0, "Only the document and navigation tree scroll");
+            await header.evaluate((element) => {
+                element.parentElement.scrollTop = 300;
+            });
+            await page.evaluate(() => new Promise(requestAnimationFrame));
+            assert.equal(
+                await header.evaluate((element) =>
+                    Math.round(
+                        element.getBoundingClientRect().top -
+                            element.parentElement.getBoundingClientRect().top,
+                    ),
+                ),
+                product === "editor" ? 2 : 0,
+                "The section picker stays at the top of its pane",
+            );
             assert.equal(
                 await header.evaluate((element) => {
                     const rect = element.getBoundingClientRect();
@@ -938,6 +1020,93 @@ for (const check of [testDocumentVersionLayout, testDocumentVersionDrafts]) {
         await check(page);
     });
 }
+
+browserTest("Page menu creates subformat boards from real workspace metadata", async (page) => {
+    const project = join(root, "add-subformat-pages");
+    mkdirSync(project);
+    writeFileSync(
+        join(project, "dooc.yaml"),
+        "document:\n  title: Home\n  url: home.md\n  children:\n    - document: { title: Parent, url: parent.md }\njson_subformats:\n  - { ext: issue, format: json, schema: record.schema.json }\n  - { ext: release, format: json, schema: record.schema.json }\n",
+    );
+    writeFileSync(join(project, "home.md"), "Home content.\n");
+    writeFileSync(join(project, "parent.md"), "Parent content.\n");
+    writeFileSync(
+        join(project, "record.schema.json"),
+        JSON.stringify({ type: "object", properties: { name: { type: "string" } } }),
+    );
+    for (const ext of ["issue", "release"])
+        writeFileSync(join(project, `first.${ext}`), JSON.stringify({ name: `${ext} record` }));
+    await open(page, await start("editor", "node", project));
+    const rootAdd = page.locator("#nav-docs > .nav-placeholder .nav-create");
+    const type = page.locator('#nav-page-menu [data-page-type="subformat"]');
+    const choices = page.locator("#nav-subformat-menu button[data-page]");
+    await page.locator("#sidebar-toggle").click();
+    await rootAdd.click();
+    assert.equal(await page.locator("body.sidebar-closed").count(), 1);
+    assert.equal(await type.isEnabled(), true);
+    await type.click();
+    assert.deepEqual(await choices.allTextContents(), ["issue", "release"]);
+    await choices.filter({ hasText: /^issue$/ }).click();
+    await page.locator('[data-subformat-page="issue"]').waitFor();
+    assert.match(await page.locator("main").innerText(), /issue record/);
+    assert.match(readFileSync(join(project, "dooc.yaml"), "utf8"), /subformat: issue/);
+    assert.equal(await page.locator("#nav-groups a.cur").innerText(), "issue");
+    await rootAdd.click();
+    await type.click();
+    assert.deepEqual(await choices.filter({ hasText: /^issue/ }).allTextContents(), [
+        "issue · Already added",
+    ]);
+    assert.equal(await choices.filter({ hasText: /^issue/ }).isDisabled(), true);
+    assert.equal(await choices.filter({ hasText: /^release$/ }).isEnabled(), true);
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await page.locator("#sidebar-toggle").click();
+    const parent = page
+        .locator("#nav-docs .nav-row")
+        .filter({ has: page.getByRole("link", { name: "Parent", exact: true }) });
+    await parent.hover();
+    await parent.locator(".new").click();
+    await type.click();
+    await choices.filter({ hasText: /^release$/ }).click();
+    await page.locator('[data-subformat-page="release"]').waitFor();
+    assert.match(await page.locator("main").innerText(), /release record/);
+    assert.equal(
+        await parent
+            .locator("..")
+            .locator("a")
+            .filter({ hasText: /^release$/ })
+            .count(),
+        1,
+    );
+    for (const width of [1440, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        if (!(await page.locator("body.sidebar-closed").count()))
+            await page.locator("#sidebar-toggle").click();
+        await rootAdd.click();
+        assert.equal(await page.locator("body.sidebar-closed").count(), 1);
+        await type.click();
+        assert.equal(await page.locator("#nav-subformat-menu:popover-open").count(), 1);
+        const bounds = await page.locator("#nav-subformat-menu").boundingBox();
+        assert(
+            bounds &&
+                bounds.x >= 8 &&
+                bounds.x + bounds.width <= width - 8 &&
+                bounds.y >= 8 &&
+                bounds.y + bounds.height <= 892,
+        );
+        assert.equal(await choices.count(), 2);
+        assert.equal(await page.locator("#nav-subformat-menu button:disabled").count(), 2);
+        await page.keyboard.press("Escape");
+        await page.keyboard.press("Escape");
+        await rootAdd.press("Enter");
+        await page.locator('#nav-page-menu [data-page-type="markdown"]').click();
+        await page.locator('.nav-new input[name="title"]').waitFor({ state: "visible" });
+        assert.equal(await page.locator("body.sidebar-closed").count(), 0);
+        await page.locator(".nav-new-cancel").click();
+    }
+    assert.equal(existsSync(join(project, "issue.md")), false);
+    assert.equal(existsSync(join(project, "release.md")), false);
+});
 
 browserTest(
     "Document versions stay stable during autosave and update after a commit",
@@ -1133,9 +1302,42 @@ for (const mode of ["editor", "reader"]) {
             .getAttribute("href");
         assert(board, "The task board has a navigation URL");
         await page.goto(new URL(board, page.url()).href);
-        await page.getByRole("link", { name: "JSON Schema", exact: true }).waitFor();
+        const title = page.locator(
+            mode === "editor" ? "[data-subformat-trigger]" : ".subformat-schema-link",
+        );
+        await title.waitFor();
+        assert.equal(await title.textContent(), "task");
+        assert.equal(await title.locator("img.doc-icon, svg.nav-icon").count(), 1);
         assert.deepEqual(await page.locator("main h1:visible").allTextContents(), []);
-        await page.getByRole("link", { name: "JSON Schema", exact: true }).click();
+        if (mode === "editor") {
+            assert.equal(await page.locator(".subformat-schema-link").count(), 0);
+            await title.click();
+            await page.getByRole("menuitemradio", { name: "task", exact: true }).waitFor();
+            await page.getByRole("menuitem", { name: "Edit: task", exact: true }).click();
+            await page.waitForSelector("#file-editor .schema-builder");
+            assert.match(
+                await page.locator(".file-editor-title").textContent(),
+                /task\.schema\.json/,
+            );
+            await page.goto(new URL("_files/schema/task", urls[mode]).href);
+        } else {
+            assert.equal(await page.locator("[data-subformat-trigger]:visible").count(), 0);
+            assert(
+                await page.locator(".subformat-schema-link").evaluate((link) => {
+                    const schema = link.getBoundingClientRect();
+                    const toolbar = link.closest(".resource-toolbar").getBoundingClientRect();
+                    const actions = document.querySelector(".page-actions").getBoundingClientRect();
+                    return (
+                        Math.abs(schema.left - toolbar.left) < 1 &&
+                        Math.abs(schema.top - actions.top) < 1 &&
+                        toolbar.right <= actions.left &&
+                        schema.bottom <= actions.bottom
+                    );
+                }),
+                "Board actions start at the left and share a row with theme and font controls",
+            );
+            await title.click();
+        }
         await page.locator(".json-schema").waitFor();
         assert(
             page.url().includes("/_files/schema/task"),
@@ -1216,18 +1418,107 @@ browserTest("Sidebar stays responsive while document content loads", async (page
                 const response = await fetch(...args);
                 const url = new URL(args[0], location.href);
                 if (url.searchParams.get("route") === "/slow" || url.pathname.endsWith("/slow")) {
+                    const bytes = new TextEncoder().encode(await response.text());
+                    if (Number(response.headers.get("content-length")) !== bytes.length)
+                        throw new Error("Page length must match its serialized UTF-8 body");
                     await new Promise((resolve) => {
-                        window.releaseSlowPage = resolve;
+                        window.releaseSlowHeaders = resolve;
                     });
-                    window.slowPageReturned = true;
+                    let canceled = false;
+                    const body = new ReadableStream({
+                        start(controller) {
+                            const split = Math.floor(bytes.length / 2);
+                            window.releaseSlowChunk = () =>
+                                controller.enqueue(bytes.slice(0, split));
+                            window.releaseSlowPage = () => {
+                                window.slowPageReturned = true;
+                                if (canceled) return;
+                                controller.enqueue(bytes.slice(split));
+                                controller.close();
+                            };
+                        },
+                        cancel() {
+                            canceled = true;
+                        },
+                    });
+                    const headers = new Headers(response.headers);
+                    if (window.slowUnknownLength) headers.delete("content-length");
+                    return new Response(body, { headers });
                 }
                 return response;
             };
         });
         const slow = page.locator("#nav-groups a").filter({ hasText: /^Slow$/ });
         await slow.click();
-        await page.waitForFunction(() => !!window.releaseSlowPage);
+        await page.waitForFunction(() => !!window.releaseSlowHeaders);
         assert.equal(await slow.getAttribute("aria-current"), "page");
+        assert.equal(await slow.getAttribute("aria-busy"), "true");
+        assert.equal(await slow.locator(".nav-label").getAttribute("data-nav-loading"), "pending");
+        const pending = await slow.locator(".nav-label").evaluate(async (label) => {
+            const animation = label.getAnimations()[0];
+            if (!animation) throw new Error("The fill must start before response headers arrive");
+            await animation.ready;
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+            const started = parseFloat(getComputedStyle(label).getPropertyValue("--nav-progress"));
+            animation.pause();
+            animation.currentTime = Number(animation.effect.getTiming().duration) / 5;
+            const style = getComputedStyle(label);
+            return {
+                started,
+                progress: parseFloat(style.getPropertyValue("--nav-progress")),
+                iterations: animation.effect.getTiming().iterations,
+                clip: style.backgroundClip,
+                decoration: style.textDecorationLine,
+            };
+        });
+        assert(pending.started > 0);
+        assert(pending.progress > 0);
+        assert.equal(pending.iterations, 1);
+        assert.equal(pending.clip, "text");
+        assert.equal(pending.decoration, "none");
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await page.waitForFunction(
+            () =>
+                document.querySelector('[data-nav-loading="pending"]').getAnimations().length === 0,
+        );
+        await page.emulateMedia({ reducedMotion: "no-preference" });
+        await page.emulateMedia({ forcedColors: "active" });
+        const forced = await slow.locator(".nav-label").evaluate((label) => ({
+            color: getComputedStyle(label).color,
+            animation: getComputedStyle(label).animationName,
+        }));
+        assert.notEqual(forced.color, "rgba(0, 0, 0, 0)");
+        assert.equal(forced.animation, "none");
+        await page.emulateMedia({ forcedColors: "none" });
+        await page.evaluate(() => window.releaseSlowHeaders());
+        await page.waitForFunction(() => !!window.releaseSlowChunk);
+        await page.evaluate(() => window.releaseSlowChunk());
+        await page.waitForFunction(() => {
+            const label = document.querySelector('[data-nav-loading="bytes"]');
+            return parseFloat(label?.style.getPropertyValue("--nav-progress")) > 0;
+        });
+        const fill = await slow.locator(".nav-label").evaluate(async (label) => {
+            const animation = label.getAnimations()[0];
+            if (!animation) throw new Error("Byte progress must interpolate smoothly");
+            await animation.ready;
+            animation.pause();
+            animation.currentTime = 120;
+            const intermediate = parseFloat(
+                getComputedStyle(label).getPropertyValue("--nav-progress"),
+            );
+            animation.finish();
+            const range = document.createRange();
+            range.selectNodeContents(label);
+            return {
+                intermediate,
+                amount: parseFloat(label.style.getPropertyValue("--nav-progress")),
+                width: Math.min(label.clientWidth, range.getBoundingClientRect().width),
+                clip: getComputedStyle(label).backgroundClip,
+            };
+        });
+        assert(Math.abs(fill.amount / fill.width - 0.5) < 0.01);
+        assert(fill.intermediate > 0 && fill.intermediate < fill.amount);
+        assert.equal(fill.clip, "text");
         const toggle = slow.locator("..").locator(".nav-tree-toggle");
         await toggle.click();
         assert.equal(await toggle.getAttribute("aria-expanded"), "true");
@@ -1253,6 +1544,86 @@ browserTest("Sidebar stays responsive while document content loads", async (page
         assert.equal(await page.locator("#nav-groups a.cur").innerText(), "Fast");
         assert.match(await page.locator("main").innerText(), /fast document content/);
         assert.equal(await page.locator("main").getAttribute("aria-busy"), null);
+        const completeFill = async (link) => {
+            await link.locator('[data-nav-loading="complete"]').waitFor();
+            assert.equal(await link.getAttribute("aria-busy"), null);
+            const fill = await link.locator(".nav-label").evaluate((label) => {
+                const style = getComputedStyle(label);
+                const swatch = document.createElement("span");
+                swatch.style.color = "var(--c-accent)";
+                label.parentElement.append(swatch);
+                const accent = getComputedStyle(swatch).color;
+                swatch.remove();
+                return {
+                    color: style.color,
+                    accent,
+                    background: style.backgroundImage,
+                    animation: style.animationName,
+                };
+            });
+            assert.equal(fill.color, fill.accent);
+            assert.equal(fill.background, "none");
+            assert.equal(fill.animation, "none");
+        };
+        const fast = page.locator("#nav-groups a").filter({ hasText: /^Fast$/ });
+        await completeFill(fast);
+        assert.equal(await slow.locator("[data-nav-loading]").count(), 0);
+        assert.equal(await slow.getAttribute("aria-busy"), null);
+        assert.equal(
+            await slow.evaluate(
+                (link) =>
+                    performance.getEntriesByName(`dooc:navigation:${link.getAttribute("href")}`)
+                        .length,
+            ),
+            0,
+            "Canceled loads must not train the duration estimate",
+        );
+        for (const unknown of [false, true]) {
+            await page.evaluate((unknown) => {
+                window.slowUnknownLength = unknown;
+                delete window.releaseSlowHeaders;
+                delete window.releaseSlowChunk;
+            }, unknown);
+            const estimate = await slow.evaluate((link) => {
+                const name = `dooc:navigation:${link.getAttribute("href")}`;
+                const previous = performance.getEntriesByName(name).at(-1)?.duration;
+                const recent = performance.getEntriesByName("dooc:navigation").at(-1)?.duration;
+                link.click();
+                const label = link.querySelector(".nav-label");
+                const animation = label.getAnimations()[0];
+                if (!animation) throw new Error("A new load must start a single estimated fill");
+                const duration = animation.effect.getTiming().duration;
+                animation.finish();
+                return { previous, recent, duration };
+            });
+            assert.equal(estimate.duration, Math.max(240, estimate.previous ?? estimate.recent));
+            if (unknown) assert(estimate.previous > 0, "Revisits use this destination's duration");
+            await page.waitForFunction(() => !!window.releaseSlowHeaders);
+            assert.equal(await fast.locator("[data-nav-loading]").count(), 0);
+            await page.evaluate(() => window.releaseSlowHeaders());
+            await page.waitForFunction(() => !!window.releaseSlowChunk);
+            await page.evaluate(() => window.releaseSlowChunk());
+            await slow.locator(`[data-nav-loading="${unknown ? "pending" : "bytes"}"]`).waitFor();
+            const held = await slow.locator(".nav-label").evaluate((label) => {
+                const range = document.createRange();
+                range.selectNodeContents(label);
+                return (
+                    parseFloat(getComputedStyle(label).getPropertyValue("--nav-progress")) /
+                    Math.min(label.clientWidth, range.getBoundingClientRect().width)
+                );
+            });
+            assert(
+                held >= 0.899 && held < 1,
+                "Late byte metadata must not reverse or complete the fill",
+            );
+            await page.evaluate(() => window.releaseSlowPage());
+            await page.getByText("slow document content.", { exact: true }).last().waitFor();
+            await completeFill(slow);
+            await fast.click();
+            await page.getByText("fast document content.", { exact: true }).last().waitFor();
+            await completeFill(fast);
+            assert.equal(await slow.locator("[data-nav-loading]").count(), 0);
+        }
     }
 });
 
@@ -1478,5 +1849,129 @@ browserTest(
         writeFileSync(file, "document: {title: Empty workspace}\n");
         await testEmptyManifestSettings(page, await start("editor", "node", file), file);
         assert.equal(existsSync(join(project, "dooc.yaml")), false);
+    },
+);
+
+browserTest(
+    "Library and Format keep file sources, inline controls and native previews in Node and web workspaces",
+    async (page) => {
+        for (const runtime of ["node", "web"]) {
+            const project = join(root, `format-${runtime}`);
+            const files = {
+                "dooc.yaml": `system:
+  library: [urls, url-previews]
+  format:
+    ts: {codeblock: false, folders: [src]}
+    svg: {folders: [assets]}
+    issue: {codeblock: true}
+json_subformats:
+  - {ext: issue, format: json, schema: issue.schema.json}
+document: {title: Formats, url: guide.md}
+`,
+                "guide.md":
+                    '[Reference](https://example.com/)\n\n```typescript\nconst inlineOnly = true;\n```\n\n```issue\n{"title":"Inline issue"}\n```\n',
+                "src/example.ts": "export const fileOnly = 42;\n",
+                "assets/logo.svg":
+                    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><title>Fig.logo</title><circle cx="10" cy="10" r="8"/></svg>',
+                "issue.schema.json": '{"type":"object","properties":{"title":{"type":"string"}}}',
+                "record.issue": '{"title":"File issue"}',
+            };
+            for (const [file, content] of Object.entries(files)) {
+                mkdirSync(join(project, file, ".."), { recursive: true });
+                writeFileSync(join(project, file), content);
+            }
+            const url = await start("editor", runtime, project);
+            if (runtime === "node") await open(page, url);
+            else {
+                await page.goto(url);
+                await page.locator("select[name=mode]").selectOption("new");
+                await page.locator("input[name=name]").fill("Format browser fixture");
+                await page.locator("summary").click();
+                await page.locator("input[name=author]").fill("Test");
+                await page.locator("input[name=email]").fill("test@example.com");
+                await page.getByRole("button", { name: "Open workspace", exact: true }).click();
+                await page.locator("#cm .cm-content").waitFor({ timeout: 90_000 });
+                await page.evaluate(async (files) => {
+                    const connection = window.__doocConnections.items.get(
+                        window.__doocConnections.active,
+                    );
+                    for (const file of [
+                        ...Object.keys(files).filter((file) => file !== "dooc.yaml"),
+                        "dooc.yaml",
+                    ]) {
+                        const request = (input) =>
+                            connection.fetch("/api/textfile", {
+                                method: "POST",
+                                headers: { "content-type": "application/json" },
+                                body: JSON.stringify({ file, ...input }),
+                            });
+                        const previous = await (await request({ action: "read" })).json();
+                        const response = await request({
+                            action: "save",
+                            content: files[file],
+                            base: previous.content ?? null,
+                        });
+                        if (!response.ok) throw new Error(await response.text());
+                    }
+                }, files);
+                await page.reload();
+                await page.locator("select[name=mode]").selectOption("saved");
+                await page.getByRole("button", { name: "Open workspace", exact: true }).click();
+                await page.locator("#cm .cm-content").waitFor({ timeout: 90_000 });
+            }
+            await page.locator("#nav-library a").click();
+            await page.locator('.resource-tabs a[aria-current="page"]').waitFor();
+            assert.equal(await page.locator('.resource-tabs a[href$="/codeblocks"]').count(), 0);
+            assert(
+                await page
+                    .locator(".resource-results")
+                    .innerText()
+                    .then((text) => text.includes("https://example.com/")),
+            );
+            await page.locator("#nav-format a").click();
+            const picker = page.locator(".resource-results [data-resource-filter]");
+            await picker.selectOption("ts");
+            const tsItems = page.locator('.resource-items [data-resource-group="ts"]:visible');
+            assert.equal(await tsItems.count(), 1);
+            await tsItems.locator("summary").click();
+            assert((await tsItems.innerText()).includes("fileOnly"));
+            assert(!(await tsItems.innerText()).includes("inlineOnly"));
+            await picker.selectOption("svg");
+            const svg = page.locator('.resource-items [data-resource-group="svg"]:visible');
+            await svg.locator("summary").click();
+            assert(await svg.locator("iframe, img").count());
+            await picker.selectOption("issue");
+            await page.locator("[data-subformat-board]:visible").waitFor();
+            assert(
+                await page
+                    .locator('[data-resource-inline][data-resource-group="issue"]')
+                    .isVisible(),
+            );
+            await page.locator("#nav-manifest a").click();
+            const toggle = page.locator('[name="system.format.ts.codeblock"]');
+            await toggle.selectOption("true");
+            await toggle.press("ControlOrMeta+s");
+            await page.waitForFunction(
+                () => document.querySelector("#manifest-manager")?.dataset.dirty === "false",
+            );
+            await page.locator("#nav-format a").click();
+            await picker.selectOption("ts");
+            assert.equal(await tsItems.count(), 2);
+            await page.locator(".nav-create").first().click();
+            await page.locator('[data-page-type="format"]').click();
+            await page.locator('#nav-subformat-menu [data-page="svg"]').click();
+            await page.waitForFunction(() =>
+                document.querySelector(
+                    'main .resource-results[data-resource-page] [data-resource-group="svg"]',
+                ),
+            );
+            assert(
+                await page
+                    .locator(
+                        'main [data-resource-group="svg"] iframe, main [data-resource-group="svg"] img',
+                    )
+                    .count(),
+            );
+        }
     },
 );

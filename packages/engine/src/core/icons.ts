@@ -11,6 +11,10 @@ export const PLUGINS_ICON =
 const glyph = (paths: string): string =>
     `<svg class="nav-icon" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
 
+export const SUBFORMATS_ICON = glyph(
+    '<rect x="3" y="3" width="14" height="14" rx="1"/><rect x="6" y="8" width="6" height="6" rx="1"/>',
+);
+
 /** One glyph per Library view, so views are told apart without reading their names. */
 export const LIBRARY_ICONS: Readonly<Record<string, string>> = {
     codeblocks: glyph('<path d="m7 6-4 4 4 4M13 6l4 4-4 4"/>'),

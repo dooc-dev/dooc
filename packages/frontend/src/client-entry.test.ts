@@ -22,6 +22,7 @@ it.each([
     const open = vi.fn();
     vi.stubGlobal("document", {
         currentScript: null,
+        documentElement: { dataset: {} },
         getElementById: () => null,
         body: { dataset: {} },
         addEventListener: vi.fn(),
@@ -33,6 +34,7 @@ it.each([
     vi.stubGlobal("history", { replaceState: vi.fn() });
     vi.stubGlobal("__doocConnections", undefined);
     vi.stubGlobal("__doocClientSettings", undefined);
+    vi.stubGlobal("__doocClientBase", "/client");
     vi.stubGlobal("__doocDesktopConnection", undefined);
     vi.stubGlobal(
         "fetch",
@@ -42,10 +44,14 @@ it.each([
     const response = new Promise<Response>((resolve) => {
         ready = resolve;
     });
+    let readyNav!: (response: Response) => void;
+    const navigation = new Promise<Response>((resolve) => {
+        readyNav = resolve;
+    });
     const connection = {
         id: "configured",
         label: "Documents",
-        fetch: vi.fn(() => response),
+        fetch: vi.fn().mockReturnValueOnce(navigation).mockReturnValue(response),
         client: { request: vi.fn(), on: vi.fn(), opened: vi.fn() },
     };
     const { registerWorkspace } = await import("../../workspace/src/connection.js");
@@ -54,6 +60,13 @@ it.each([
 
     await import("./client-entry.js");
     await vi.waitFor(() => expect(connection.fetch).toHaveBeenCalled());
+    expect(open).not.toHaveBeenCalled();
+    expect(connection.fetch).toHaveBeenCalledTimes(1);
+    expect(connection.fetch).toHaveBeenCalledWith("/api/nav?route=%2F", {
+        signal: expect.any(AbortSignal),
+    });
+    readyNav(Response.json({ siteTitle: "Guide", html: "" }));
+    await vi.waitFor(() => expect(connection.fetch).toHaveBeenCalledTimes(2));
     expect(open).not.toHaveBeenCalled();
     ready(new Response("<body><main>Opened document</main></body>"));
     await vi.waitFor(() => expect(write).toHaveBeenCalled());

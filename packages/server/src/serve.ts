@@ -84,6 +84,7 @@ const application = createDocumentApplication(root, {
     validateTextfileCode,
 });
 export const {
+    clientShell,
     siteFrom,
     filePreviewResults,
     renderEntryHtml,

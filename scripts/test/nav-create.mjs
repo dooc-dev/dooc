@@ -43,7 +43,7 @@ window.testNavCreate = async () => {
         );
     try {
         template.content.textContent = JSON.stringify([{ ext: "issue" }, { ext: "release" }]);
-        libraries.content.textContent = JSON.stringify(["csv"]);
+        libraries.content.textContent = JSON.stringify(["urls"]);
         rootTrigger.click();
         assert(
             menu.matches(":popover-open") && !document.querySelector(".nav-new"),
@@ -62,12 +62,12 @@ window.testNavCreate = async () => {
             "All page types begin with their icon in matching menu rows",
         );
         key("End");
-        assert(document.activeElement.dataset.pageType === "library", "End focuses Library");
+        assert(document.activeElement.dataset.pageType === "format", "End focuses Format");
         key("Home");
         assert(document.activeElement.dataset.pageType === "markdown", "Home focuses Markdown");
         key("ArrowUp");
         assert(
-            document.activeElement.dataset.pageType === "library",
+            document.activeElement.dataset.pageType === "format",
             "Menu keyboard navigation wraps",
         );
         key("Escape");
@@ -119,6 +119,12 @@ window.testNavCreate = async () => {
                 formatsMenu.querySelectorAll("button").length === 2,
             "Subformat opens existing choices directly without a form, title or description",
         );
+        const sideRect = formatsMenu.getBoundingClientRect();
+        assert(
+            Math.abs(sideRect.left - menu.getBoundingClientRect().right - 4) < 1 &&
+                Math.abs(sideRect.top - dropdown.getBoundingClientRect().top) < 1,
+            "Subformat choices open to the right, aligned with their menu row",
+        );
         key("End");
         assert(
             document.activeElement.dataset.page === "release",
@@ -132,7 +138,16 @@ window.testNavCreate = async () => {
             "Escape from the dropdown returns to the type menu",
         );
         fail = true;
+        const originalLeft = menu.style.left;
+        menu.style.left = `${innerWidth - menu.offsetWidth - 8}px`;
         dropdown.click();
+        assert(
+            Math.abs(
+                formatsMenu.getBoundingClientRect().right - menu.getBoundingClientRect().left + 4,
+            ) < 1,
+            "Choices open to the left when the add menu reaches the right edge",
+        );
+        menu.style.left = originalLeft;
         formatsMenu.querySelector('[data-page="release"]').click();
         assert(
             dropdown.disabled && menu.getAttribute("aria-busy") === "true",
@@ -171,18 +186,27 @@ window.testNavCreate = async () => {
 
         template.content.textContent = "[]";
         rootTrigger.click();
+        dropdown.click();
         assert(
-            menu.querySelector('[data-page-type="subformat"]').disabled &&
-                menu.querySelector('[data-page-type="subformat"]').title,
-            "Unavailable subformats disable the dropdown with an accessible explanation",
+            !dropdown.disabled &&
+                formatsMenu.matches(":popover-open") &&
+                formatsMenu.querySelector(".language-empty").textContent,
+            "An empty registry opens the dropdown with an explanation",
         );
+        key("Escape");
         key("ArrowDown");
         assert(
             document.activeElement.dataset.pageType === "library",
-            "Keyboard navigation skips the unavailable subformat choice",
+            "Keyboard navigation continues to Library after dismissing the empty menu",
         );
         navigation = undefined;
         document.activeElement.click();
+        assert(
+            Math.abs(
+                formatsMenu.getBoundingClientRect().left - menu.getBoundingClientRect().right - 4,
+            ) < 1,
+            "Library choices use the same position to the right",
+        );
         const library = formatsMenu.querySelector("button[data-page]");
         const libraryName = library.dataset.page;
         library.click();

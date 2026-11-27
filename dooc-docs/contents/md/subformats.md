@@ -38,7 +38,11 @@ The optional SVG path can be entered when registering a type, or changed later w
 
 Open the type selector in **Subformats** to manage an existing type. Its **Edit** button opens the schema; **Delete** removes the registration and its sidebar page after confirmation. The record files and schema file are kept.
 
-Choose **JSON Schema** above a board or embedded collection to read its fields, types, required conditions, descriptions and constraints. Expand nested fields and referenced definitions, or open **JSON text** for the complete source. The page is available in the editor, reader and standalone HTML.
+Each board has one title, showing the type icon and registered extension, such as **project**. In the editor, this title opens the existing type menu, including **Edit** for its schema. In the reader and standalone HTML, the same icon and name link to the type's schema page. Do not display a second schema-name link beside the editor's type selector. Embedded collections retain their schema link with the same icon and name.
+
+The schema page shows fields, types, required conditions, descriptions and constraints. Expand nested fields and referenced definitions, or open **JSON text** for the complete source. The page is available in the editor, reader and standalone HTML. Configured SVGs stay isolated in decorative images so their styles and identifiers cannot affect the surrounding page; types without an icon use the standard Subformats symbol.
+
+Schema pages follow the active document theme and font. Reuse the file browser's disclosure chevrons, document border and hover colors, and visible keyboard focus for fields, schema settings and JSON text. Keep property names in the document monospace font; use muted text for types and requirement labels, with requirements aligned to the row end. Nested fields and long constraints must remain readable on narrow screens.
 
 Schema pages use the registered extension in their URL, such as `/_files/schema/feature` (or `#/_files/schema/feature` in standalone HTML). The URL stays the same when the schema file moves and its registration is updated. The file link on the schema page opens its source for editing in the editor.
 
@@ -78,6 +82,10 @@ Schemas use JSON Schema 2020-12 and are validated strictly: unknown keywords and
 | Search                        | **Ctrl+F**                                                                     |
 
 Cards are the default when `layouts.view` is omitted. List view is a flat, sorted list: every field other than the heading appears as a parameter, including status and nested values. Grouping and dragging between columns apply only to Cards. List view keeps search, record editing, and expandable details.
+
+Board actions start at the left content edge with the single type title, followed by view, title, grouping, sorting and filters. In reader and standalone board pages, theme and font controls share that row on the right. Keep the existing controls and navigation behavior; narrower screens wrap board actions without overlapping the theme and font controls or widening the page. Schema pages retain the normal content inset, without an additional empty header area.
+
+The schema name uses the same 18px heading size as the subformat selector. Hover keeps the link background transparent; retain its underline and visible keyboard focus.
 
 List parameters stay on one horizontal row. Scroll the parameter area to reach more fields; expand the record for complete long values. **Fields** selects the visible parameters and changes their left-to-right order, independently of row sorting. Toggling visibility keeps each field in place; use the arrow buttons to reorder fields. These choices are kept while switching views, but are not saved to the schema or board defaults. **Filters** combines conditions on fields, including text, numbers, dates, and empty values.
 
@@ -153,3 +161,9 @@ The copy icon on a card resolves in this order:
 1. The URL given to `dooc build --source-url <url>`.
 2. The GitHub `origin` remote and current commit, read from local Git metadata.
 3. A local reference such as `repo/folder/file.feature`.
+
+## Planned renderer extensions
+
+The accepted [plugin architecture](contents/md/plugin-architecture.md) defines `sandbox` and `host` execution, with `kit` as the display API. Runtime renderers are not implemented yet; current `layouts` settings select only the documented board behavior.
+
+Record parsing, schema validation and reference checks remain dooc responsibilities. The [migration design](contents/md/plugin-architecture.md#subformats-and-publishing) covers `callouth`, `termth`, `graphth` and `schemath`, retaining their existing extensions, fences and semantics.

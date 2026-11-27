@@ -69,7 +69,7 @@ it("starts each resource library view with tabs without repeating the Git branch
         filePaths: [],
     };
     expect(resourcesMain(site, "")?.main).not.toContain("resource-tabs");
-    for (const view of ["codeblocks", "urls", "url-previews"]) {
+    for (const view of ["urls", "url-previews"]) {
         const html = resourcesMain(site, view)?.main ?? "";
         expect(html).toMatch(/^<article[^>]+><nav class="resource-tabs"/);
         expect(html).not.toContain("<h1");
@@ -508,12 +508,7 @@ describe("navGroupsHtml", () => {
         const site = fixtureSite();
         site.filePaths = [];
         expect(resourcesMain(site, "")?.main).not.toContain("Dictionary");
-        for (const path of [
-            "/_library",
-            "/_library/codeblocks",
-            "/_library/urls",
-            "/_library/url-previews",
-        ]) {
+        for (const path of ["/_library", "/_library/urls", "/_library/url-previews"]) {
             const page = pageDataResponse(site, path);
             expect(page.status).toBe(200);
             expect(page.body).toMatchObject({
@@ -525,18 +520,20 @@ describe("navGroupsHtml", () => {
             expect(JSON.stringify(page.body)).not.toContain("Dictionary");
         }
         for (const path of [
-            "/_library",
+            "/_format",
+            "/_library/codeblocks",
             "/_library/dictionary",
             "/_library/code",
             "/_files/dictionary",
             "/_files/code",
         ]) {
             expect(pageDataResponse(site, path).body).toMatchObject({
-                html: expect.stringContaining('href="/_library/codeblocks" aria-current="page"'),
+                title: expect.stringContaining("Format"),
+                html: expect.stringContaining("resource-results"),
             });
         }
         const nav = navGroupsHtml("edit", site, undefined, "_library/codeblocks");
-        expect(nav).toContain('class="nav-link cur" href="/_library"');
+        expect(nav).toContain('class="nav-link cur" href="/_format"');
         expect(nav).not.toContain('class="nav-link cur" href="/_files"');
         expect(resourcesMain(site, "_library/file/anything")).toBeUndefined();
     });
@@ -651,6 +648,19 @@ describe("editorBoot / pageDataResponse (backing `GET /api/page`)", () => {
         expect(editorBoot(entry, site).workspaceLabel).toBe("feature/docs");
         site.workspace = { protocol: "storage", folder: "Local documents", service: "Browser" };
         expect(editorBoot(entry, site).workspaceLabel).toBe("Local documents");
+    });
+
+    it("keeps unloaded figure and term files in completion candidates", () => {
+        const site = docSite();
+        site.filePaths = ["fig-x.svg", "other.svg", "terms/unloaded.termth", "notes.txt"];
+        const entry = site.entries[0];
+        if (!entry) throw new Error("Expected a document");
+        const boot = editorBoot(entry, site);
+        expect(boot.figures).toEqual(["fig-x.svg", "other.svg"]);
+        expect(boot.terms).toEqual([
+            ...site.ctx.terms,
+            { id: "terms/unloaded.termth", name: "unloaded", definition: "" },
+        ]);
     });
 
     it("editorBoot: carries the save key / doc id and completion candidates (figures, docs, terms)", () => {

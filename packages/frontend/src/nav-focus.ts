@@ -48,7 +48,8 @@ export const focusNavTree = (root: HTMLElement | null, href?: string): void => {
     const changed = items.some(
         (item) => item.classList.contains("nav-ancestor") !== ancestors.has(item),
     );
-    const collapsed = ".nav-list:has(> .nav-ancestor) > .nav-item:not(.nav-ancestor)";
+    const collapsed =
+        ".nav-list:has(> .nav-ancestor) > .nav-item:not(.nav-ancestor, .nav-placeholder, .nav-new-item)";
     const animate =
         changed &&
         root.dataset.focusedDoc !== undefined &&

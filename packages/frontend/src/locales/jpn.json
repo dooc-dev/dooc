@@ -390,6 +390,7 @@
     "Page type": "ページの種類",
     "Markdown page": "Markdown ページ",
     "No subformats available to add.": "追加できる subformat はありません。",
+    "Already added": "追加済み",
     "Add page": "ページを追加",
     "Remove page": "ページを削除",
     "Rename page": "ページ名を変更",
@@ -466,5 +467,14 @@
     "Manifest file is unavailable.": "設定ファイルを読み込めません。",
     "Discard changes and reload the manifest?": "変更を破棄して設定ファイルを再読み込みしますか？",
     "Load failed": "読み込みに失敗しました",
-    "Remove path": "参照を外す"
+    "Remove path": "参照を外す",
+    "Add format": "フォーマットを追加",
+    "Add folder": "フォルダを追加",
+    "Remove format": "フォーマットを削除",
+    "Enter a new file extension": "未登録の拡張子を入力してください",
+    "Could not load formats": "フォーマットを読み込めませんでした",
+    "Downloading…": "ダウンロード中…",
+    "Access denied.": "アクセス権がありません。",
+    "File unavailable.": "ファイルが見つかりません。",
+    "Download failed. Retry.": "失敗しました。再試行できます。"
 }
