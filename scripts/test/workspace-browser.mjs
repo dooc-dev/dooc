@@ -41,29 +41,32 @@ export async function testUnavailableWorkspaceBranch(page, branch) {
     const input = page.locator(`[id=${JSON.stringify(`${id}-input`)}]`);
     await input.click();
     const popup = page.locator(`[id=${JSON.stringify(`${id}-picker`)}]`);
-    const row = popup.locator(`button[data-value=${JSON.stringify(value)}]`);
+    const rowSelector = `[id=${JSON.stringify(`${id}-picker`)}] button[data-value=${JSON.stringify(value)}]`;
+    const row = page.locator(rowSelector);
     assert.equal(await row.getAttribute("aria-disabled"), "true");
     assert.equal(await row.getAttribute("aria-description"), reason);
     assert.equal(await row.getAttribute("title"), reason);
     assert.equal(await row.locator('svg[viewBox="0 0 20 20"]').count(), 1);
     assert.equal(
-        await row.evaluate((element) => {
+        await page.evaluate((selector) => {
+            const element = document.querySelector(selector);
             const probe = document.createElement("span");
             probe.style.color = "light-dark(var(--c-danger), var(--doc-danger-2))";
             element.parentElement.append(probe);
             const matches = getComputedStyle(element).color === getComputedStyle(probe).color;
             probe.remove();
             return matches;
-        }),
+        }, rowSelector),
         true,
     );
     await row.hover();
     await row.click({ force: true });
     assert.equal(await select.inputValue(), before);
     assert.equal(await popup.evaluate((element) => element.matches(":popover-open")), true);
-    const index = await row.evaluate((element) =>
-        [...element.parentElement.children].indexOf(element),
-    );
+    const index = await page.evaluate((selector) => {
+        const element = document.querySelector(selector);
+        return [...element.parentElement.children].indexOf(element);
+    }, rowSelector);
     await input.press("Home");
     for (let i = 0; i < index; i++) await input.press("ArrowDown");
     assert.equal(await input.getAttribute("aria-activedescendant"), await row.getAttribute("id"));
