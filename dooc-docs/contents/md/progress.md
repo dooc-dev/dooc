@@ -4,7 +4,7 @@ Development status as of 2026-11-27. [Version 0.0.24 is published](https://githu
 
 The implementation guides and feature records were reconciled before publication. The existing GitHub Actions workflow released the current dooc changes with a patch increment and applied the version bump. The plugin SDK has no source changes and was not released separately.
 
-The complete repository checks and current-host binary checks passed before publication. The remote **Check** workflow passed for the exact `main` commit before the patch release was dispatched. All four executable archives, published checksums and the Homebrew formula were verified afterward. README files and the existing unresolved feature statuses were preserved.
+The complete repository checks and current-host binary checks passed before publication. The remote **Check** workflow passed for the exact `main` commit before the patch release was dispatched. npm availability, all four executable archives, published checksums and the Homebrew formula were verified afterward. README files and the existing unresolved feature statuses were preserved.
 
 Startup now uses the shared viewer shell. The static-client regression retains the real shell and checks its inline stylesheet and font/script paths at root and nested client paths. New design guides are registered in the documentation; the static icon comparison has figure metadata, and the interactive theme comparison is linked from the source repository because embedded figures do not run scripts.
 
@@ -75,13 +75,13 @@ Local candidate verification completed on 2026-11-27:
 | Root navigation and manifest settings | Both affected regressions passed three consecutive times; the dedicated settings fixture completed all assertions in 5.8–5.9 seconds locally under the original 120-second limit |
 | Test exclusions | No skipped unit or browser tests in the local run; Firefox, Safari and physical touch devices remain untested |
 
-Publication verification as of 2026-11-27:
+Publication verification completed on 2026-11-27:
 
 | Check | Result |
 | --- | --- |
 | Main CI | [Check workflow](https://github.com/dooc-dev/dooc/actions/runs/45976847790) passed for source commit `46509f2` |
 | Release CI | [Release workflow](https://github.com/dooc-dev/dooc/actions/runs/45978085500) passed: 1,704 unit tests, 68 Chromium tests, package and installer checks, and all four Linux/macOS executable targets. The two optional FFmpeg integration tests were skipped on the runner and passed locally. |
-| npm | Publication of `@dooc-dev/dooc@0.0.24` was accepted with signed provenance. npm reported that processing may take a few minutes; the public registry still returned 0.0.23 during the initial availability checks. |
+| npm | The public registry serves `@dooc-dev/dooc@0.0.24` as `latest`, with signed provenance. The package checksum matches the release workflow, and the published tarball is available. |
 | GitHub Release | `dooc-v0.0.24` is the latest published release, with four executable archives, `SHA256SUMS` and `install.sh` |
 | Homebrew and install guide | Version 0.0.24 is committed on `main`; all four formula checksums match the published `SHA256SUMS` |
 
