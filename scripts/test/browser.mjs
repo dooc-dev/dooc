@@ -239,8 +239,8 @@ browserTest("Document roots, included editors and standalone redirects", async (
     writeFileSync(join(project, "child/guide.md"), "# Child guide\n\n![](example.txt)\n");
     writeFileSync(join(project, "child/example.txt"), "Child content\n");
     const url = await start("editor", "node", project);
-    await page.goto(url);
-    await page.locator("#nav-groups").waitFor();
+    await open(page, url);
+    await page.locator("main .idx").waitFor();
     await page.locator('#site-title.cur[aria-current="page"]').waitFor();
     assert.equal(
         await page
@@ -262,14 +262,14 @@ browserTest("Document roots, included editors and standalone redirects", async (
         .locator("#nav-groups a")
         .filter({ hasText: /^Reference$/ })
         .click();
-    await page.locator("#cm .cm-content").waitFor();
+    await page.locator('[data-file="child/example.txt"]').first().waitFor();
     await page.locator("#site-title:not(.cur):not([aria-current])").waitFor();
     assert.match(await page.locator("#cm .cm-content").textContent(), /example\.txt/);
-    await page.locator('[data-file="child/example.txt"]').first().waitFor();
     assert.match(await page.locator("main").textContent(), /Child content/);
     await page.locator("#site-title").click();
     await page.waitForURL((current) => !current.pathname.endsWith("/child"));
     await page.locator('#site-title.cur[aria-current="page"]').waitFor();
+    await page.locator("main .idx").waitFor();
     assert.equal(await page.locator("#nav-groups a.cur").count(), 0);
     assert.match(await page.locator("main").textContent(), /Reference/);
     for (const redirect of [false, true]) {
@@ -1836,7 +1836,19 @@ for (const dirty of [false, true]) {
 browserTest(
     "manifest settings complete paths, preserve drafts, and reject conflicting saves",
     async (page) => {
-        await testManifestSettings(page, urls.editor, join(root, "workspace"));
+        const project = join(root, "manifest-settings");
+        mkdirSync(join(project, "contents/md"), { recursive: true });
+        writeFileSync(
+            join(project, "dooc.yaml"),
+            "system:\n  default_lang: eng\ndocument:\n  title: Manifest settings\n  url: contents/md/guide.md\n  icon: {light: light.svg, dark: dark.svg}\n",
+        );
+        writeFileSync(join(project, "contents/md/guide.md"), "Guide body.\n");
+        for (const theme of ["light", "dark"])
+            writeFileSync(
+                join(project, `${theme}.svg`),
+                '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8"/></svg>',
+            );
+        await testManifestSettings(page, await start("editor", "node", project), project);
     },
 );
 

@@ -59,6 +59,8 @@ Navigation regressions check immediate selection separately from completed rende
 
 Document-link appearance checks use the shared page-opening helper to wait for the mounted reader/editor and fonts before measuring link styles. Startup navigation metadata appears before the final page replaces its sidebar, so the presence of a sidebar link alone does not make its DOM stable for style inspection.
 
+Root and included-document regressions wait for the destination's index or embedded file before checking its body. Manifest settings use a dedicated workspace with a Markdown page, light/dark icons, file collections and the existing 40-directory completion fixture. Keep every completion, draft, undo, validation, conflict and auto-save assertion while avoiding repeated indexing of the unrelated full development playground during form edits; retain the existing timeout.
+
 Workspace picker regressions resolve live option rows and inspect their inherited colors and keyboard positions in one browser evaluation. Opening the picker refreshes its options asynchronously, so a previously resolved element handle may already be detached. Keep all disabled-state, color, keyboard and draft-preservation assertions while removing that test-only race.
 
 Local candidate verification completed on 2026-11-27:
@@ -70,6 +72,7 @@ Local candidate verification completed on 2026-11-27:
 | Documentation | Passed: 44 pages compile; the independent source-export and generated-development-workspace regressions pass |
 | Workspace picker refresh race | Reproduced the detached-element failure, then passed the affected Chromium branch/unavailable-workspace regression three consecutive times after resolving and inspecting live rows in one evaluation |
 | Document-link startup timing | Passed the link appearance, gestures and external-confirmation regression three consecutive times after waiting for the mounted page and fonts |
+| Root navigation and manifest settings | Both affected regressions passed three consecutive times; the dedicated settings fixture completed all assertions in 5.8–5.9 seconds locally under the original 120-second limit |
 | Test exclusions | No skipped unit or browser tests in the local run; Firefox, Safari and physical touch devices remain untested |
 
 Publication follows the [Release procedure](contents/md/release.md); the workflow owns the package version bump. Published versions and their artifacts are recorded in [GitHub Releases](https://github.com/dooc-dev/dooc/releases), with cross-platform validation in the linked release workflow.
