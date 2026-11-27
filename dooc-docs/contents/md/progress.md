@@ -57,6 +57,8 @@ The release candidate must pass the repository's complete `pnpm check`: Biome, T
 
 Navigation regressions check immediate selection separately from completed rendering: the selected destination updates before its asynchronous page response, so content assertions wait for the destination body rather than treating the selection marker as a load-completion signal.
 
+Document-link appearance checks use the shared page-opening helper to wait for the mounted reader/editor and fonts before measuring link styles. Startup navigation metadata appears before the final page replaces its sidebar, so the presence of a sidebar link alone does not make its DOM stable for style inspection.
+
 Workspace picker regressions resolve live option rows and inspect their inherited colors and keyboard positions in one browser evaluation. Opening the picker refreshes its options asynchronously, so a previously resolved element handle may already be detached. Keep all disabled-state, color, keyboard and draft-preservation assertions while removing that test-only race.
 
 Local candidate verification completed on 2026-11-27:
@@ -67,6 +69,7 @@ Local candidate verification completed on 2026-11-27:
 | `pnpm build:binary` and `pnpm test:binary` | Passed on Linux x64: standalone CLI, MCP, HTML and reader builds, editor assets, Japanese lint, installer and self update |
 | Documentation | Passed: 44 pages compile; the independent source-export and generated-development-workspace regressions pass |
 | Workspace picker refresh race | Reproduced the detached-element failure, then passed the affected Chromium branch/unavailable-workspace regression three consecutive times after resolving and inspecting live rows in one evaluation |
+| Document-link startup timing | Passed the link appearance, gestures and external-confirmation regression three consecutive times after waiting for the mounted page and fonts |
 | Test exclusions | No skipped unit or browser tests in the local run; Firefox, Safari and physical touch devices remain untested |
 
 Publication follows the [Release procedure](contents/md/release.md); the workflow owns the package version bump. Published versions and their artifacts are recorded in [GitHub Releases](https://github.com/dooc-dev/dooc/releases), with cross-platform validation in the linked release workflow.

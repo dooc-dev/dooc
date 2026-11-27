@@ -610,7 +610,7 @@ browserTest("Document link titles, gestures and external confirmations", async (
     };
     for (const product of ["editor", "reader"]) {
         const url = await start(product, "node", project);
-        await page.goto(url);
+        await open(page, url, product === "editor");
         await website().waitFor();
         assert.equal(await page.locator(".document-kind").count(), 0);
         for (const selector of ["#nav-groups a", "main .idx a"])
