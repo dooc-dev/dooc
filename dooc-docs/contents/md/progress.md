@@ -1,14 +1,14 @@
-Development status as of 2026-11-27. Version 0.0.23 is published; the next patch release targets 0.0.24. This page separates the release candidate, published baseline and remaining work. A feature marked **Shipped** on the **Development → Feature gaps** board is implemented in the source; publication is tracked separately.
+Development status as of 2026-11-27. [Version 0.0.24 is published](https://github.com/dooc-dev/dooc/releases/tag/dooc-v0.0.24). This page separates the current patch, earlier published work and remaining work. A feature marked **Shipped** on the **Development → Feature gaps** board is implemented in the source; publication is tracked separately.
 
-## Patch release plan
+## Release preparation
 
-Reconcile the implementation guides and feature records before publication. Release the current dooc changes through the existing GitHub Actions workflow with a patch increment; the workflow owns the version bump. The plugin SDK has no source changes and does not need a separate release.
+The implementation guides and feature records were reconciled before publication. The existing GitHub Actions workflow released the current dooc changes with a patch increment and applied the version bump. The plugin SDK has no source changes and was not released separately.
 
-Run the complete repository checks and current-host binary checks, then push the candidate to `main`. Require the remote **Check** workflow to pass for that commit before dispatching the release. Verify npm, all four executable archives, checksums and the Homebrew formula afterward. Preserve README files and the existing unresolved feature statuses.
+The complete repository checks and current-host binary checks passed before publication. The remote **Check** workflow passed for the exact `main` commit before the patch release was dispatched. All four executable archives, published checksums and the Homebrew formula were verified afterward. README files and the existing unresolved feature statuses were preserved.
 
 Startup now uses the shared viewer shell. The static-client regression retains the real shell and checks its inline stylesheet and font/script paths at root and nested client paths. New design guides are registered in the documentation; the static icon comparison has figure metadata, and the interactive theme comparison is linked from the source repository because embedded figures do not run scripts.
 
-## Implemented for 0.0.24
+## Published in 0.0.24
 
 | Area | Result | Reference and regression coverage |
 | --- | --- | --- |
@@ -53,7 +53,7 @@ The following items retain their existing board status; this patch does not clai
 
 ## Release verification
 
-The release candidate must pass the repository's complete `pnpm check`: Biome, TypeScript, production build, unit tests, Chromium browser tests, installer checks, npm contents checks and a packed plugin consumer. Local binary checks exercise the current host. The remote **Check** workflow must pass for the exact commit before dispatching the patch release; the release workflow repeats validation and tests all four Linux/macOS executable targets.
+The release passed the repository's complete `pnpm check`: Biome, TypeScript, production build, unit tests, Chromium browser tests, installer checks, npm contents checks and a packed plugin consumer. Local binary checks exercised the current host. The remote **Check** workflow passed for the exact commit before dispatching the patch release; the release workflow repeated validation and tested all four Linux/macOS executable targets.
 
 Navigation regressions check immediate selection separately from completed rendering: the selected destination updates before its asynchronous page response, so content assertions wait for the destination body rather than treating the selection marker as a load-completion signal.
 
@@ -75,4 +75,14 @@ Local candidate verification completed on 2026-11-27:
 | Root navigation and manifest settings | Both affected regressions passed three consecutive times; the dedicated settings fixture completed all assertions in 5.8–5.9 seconds locally under the original 120-second limit |
 | Test exclusions | No skipped unit or browser tests in the local run; Firefox, Safari and physical touch devices remain untested |
 
-Publication follows the [Release procedure](contents/md/release.md); the workflow owns the package version bump. Published versions and their artifacts are recorded in [GitHub Releases](https://github.com/dooc-dev/dooc/releases), with cross-platform validation in the linked release workflow.
+Publication verification as of 2026-11-27:
+
+| Check | Result |
+| --- | --- |
+| Main CI | [Check workflow](https://github.com/dooc-dev/dooc/actions/runs/45976847790) passed for source commit `46509f2` |
+| Release CI | [Release workflow](https://github.com/dooc-dev/dooc/actions/runs/45978085500) passed: 1,704 unit tests, 68 Chromium tests, package and installer checks, and all four Linux/macOS executable targets. The two optional FFmpeg integration tests were skipped on the runner and passed locally. |
+| npm | Publication of `@dooc-dev/dooc@0.0.24` was accepted with signed provenance. npm reported that processing may take a few minutes; the public registry still returned 0.0.23 during the initial availability checks. |
+| GitHub Release | `dooc-v0.0.24` is the latest published release, with four executable archives, `SHA256SUMS` and `install.sh` |
+| Homebrew and install guide | Version 0.0.24 is committed on `main`; all four formula checksums match the published `SHA256SUMS` |
+
+Publication followed the [Release procedure](contents/md/release.md); the workflow applied the package version bump. [The 0.0.24 release notes](https://github.com/dooc-dev/dooc/releases/tag/dooc-v0.0.24) summarize the changes, migration behavior and validation limits.
