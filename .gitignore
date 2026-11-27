@@ -9,6 +9,35 @@ dist/
 .env
 .env.*
 *.tgz
+# Local reports and verification output.
+/dooc-*-audit*
+/dooc-*-report*
+/dooc-docs/contents/md/license-audit.md
+/dooc-docs/contents/csv/dependency-licenses.csv
+/reports/
+/audit-reports/
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+# Local caches, temporary files and editor backups.
+.cache/
+.pnpm-store/
+/tmp/
+/temp/
+*.log
+!/sample/dooc-sample-saas/contents/log/*.log
+*.tsbuildinfo
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
 # empty placeholders left by the Claude Code sandbox
 /.bash_profile
 /.bashrc

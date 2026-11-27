@@ -153,11 +153,9 @@ export const readManifest = (root: string, file = manifestFile(root)): ParsedMan
                     manifest.includedManifests.push(included, ...(child.includedManifests ?? []));
                     manifest.includedAssets ??= [];
                     manifest.includedAssets.push(...(child.includedAssets ?? []));
-                    manifest.includedLibraryFiles ??= [];
-                    manifest.includedLibraryFiles.push(
-                        ...(child.libraryFiles ?? []),
-                        ...(child.includedLibraryFiles ?? []),
-                    );
+                    manifest.includedFormats ??= {};
+                    manifest.includedFormats[included] = child.formats ?? {};
+                    Object.assign(manifest.includedFormats, child.includedFormats);
                     manifest.files ??= parseFileLayout({});
                     Object.assign(rebasedIcons, child.files?.icons);
                     const includedIcon = child.files?.icons?.[node.resolved.id];
@@ -176,8 +174,10 @@ export const readManifest = (root: string, file = manifestFile(root)): ParsedMan
                 }
             };
             if (imported) {
-                if (manifest.libraryFiles)
-                    manifest.libraryFiles = manifest.libraryFiles.map(qualify);
+                for (const sources of Object.values(manifest.formats ?? {})) {
+                    if (sources.files) sources.files = sources.files.map(qualify);
+                    if (sources.folders) sources.folders = sources.folders.map(qualify);
+                }
                 manifest.includedAssets = [
                     manifest.icon,
                     manifest.licence,

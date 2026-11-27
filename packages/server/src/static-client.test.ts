@@ -6,7 +6,10 @@ vi.mock("./assets.js", () => ({
     prebuilt: true,
     readReaderAsset: (name: string) => Buffer.from(name),
 }));
-vi.mock("./serve.js", () => ({ bundleClient: vi.fn(async (name: string) => name) }));
+vi.mock("./serve.js", async (original) => ({
+    ...(await original<typeof import("./serve.js")>()),
+    bundleClient: vi.fn(async (name: string) => name),
+}));
 vi.mock("./terminal.js", () => ({ terminal: { ready: vi.fn() } }));
 afterEach(() => vi.clearAllMocks());
 
@@ -76,8 +79,11 @@ it.each([
             expect(response.status).toBe(200);
             expect(response.headers.get("location")).toBeNull();
             const html = await response.text();
-            expect(html).toContain("Read documents");
-            expect(html).toContain("<main hidden>");
+            expect(html).toContain('<div id="client-start" hidden>');
+            expect(html).toContain('id="nav-groups"');
+            expect(html).toContain('id="client-loading" role="status"');
+            expect(html).toContain("<style>");
+            expect(html).toContain(`url(${basePath}/assets/fonts/udev-gothic-regular.woff2)`);
             expect(html).toContain(`src="${basePath}/assets/client.js"`);
         }
         expect(
@@ -93,7 +99,7 @@ it.each([
             });
             expect(response.status).toBe(200);
             expect(response.headers.get("content-type")).toContain("text/html");
-            expect(await response.text()).toContain("Read documents");
+            expect(await response.text()).toContain('id="client-loading" role="status"');
         }
         for (const route of ["/api/save", "/assets/missing.js"])
             expect(

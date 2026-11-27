@@ -390,6 +390,7 @@
     "Page type": "页面类型",
     "Markdown page": "Markdown 页面",
     "No subformats available to add.": "没有可添加的子格式。",
+    "Already added": "已添加",
     "Add page": "添加页面",
     "Remove page": "移除页面",
     "Rename page": "重命名页面",
@@ -466,5 +467,14 @@
     "Manifest file is unavailable.": "无法读取清单文件。",
     "Discard changes and reload the manifest?": "放弃更改并重新加载清单？",
     "Load failed": "加载失败",
-    "Remove path": "移除路径"
+    "Remove path": "移除路径",
+    "Add format": "添加格式",
+    "Add folder": "添加文件夹",
+    "Remove format": "移除格式",
+    "Enter a new file extension": "请输入尚未配置的扩展名",
+    "Could not load formats": "无法加载格式",
+    "Downloading…": "正在下载…",
+    "Access denied.": "没有访问权限。",
+    "File unavailable.": "文件不可用。",
+    "Download failed. Retry.": "下载失败，请重试。"
 }

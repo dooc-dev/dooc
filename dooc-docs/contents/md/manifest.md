@@ -102,7 +102,8 @@ Implementation is tracked as **Manifest step-up authorization** in **Development
 | `system.themes`               | Offered themes: `light`, `dark`                            |
 | `system.licence`              | Local licence file, included in source exports             |
 | `system.skills`               | Project-authored `SKILL.md` paths published over [MCP](contents/md/web-mcp.md#project-skills) |
-| `system.library.files`        | Additional local text file paths to load into Library |
+| `system.library`              | Reference views: `urls`, `url-previews` |
+| `system.format`               | Per-extension `codeblock`, `folders`, and `files` sources |
 | `system.files.default_layout` | Layout option of the file card                             |
 | `document`                    | Required root document                                    |
 | `document.sidebar.title`      | Site title per language; must include the default language |
@@ -116,9 +117,10 @@ Implementation is tracked as **Manifest step-up authorization** in **Development
 | ------------ | --------------------------------------------------- |
 | Page         | `url`, `title`, `icon`, `children`                 |
 | Record board | `subformat` (an `ext`), `title`, `icon`, `children` |
-| Library page | `library` (a view), `title`, `icon`, `children`     |
+| Library page | `library` (`urls` or `url-previews`), `title`, `icon`, `children` |
+| Format page | `format` (an extension), `title`, `icon`, `children` |
 
-Every entry above is the value of a `document` key, including boards and Library pages. `url`, `subformat`, and `library` are alternative content sources. `title` is the page name in navigation and editor tabs; a Markdown page without one uses its file name. Reader and published HTML tabs keep the root document title across page navigation. It is not added to the page body: write headings in the content itself. `icon` is a local SVG file shown beside the entry in the tree. It is drawn as an image, so give it fixed colours that read on both themes; `currentColor` does not follow the theme. A board without an `icon` uses the icon of its record type. The root's `sidebar` holds its localized title, which defaults to the root document title.
+Every entry above is the value of a `document` key, including boards and Library pages. `url`, `subformat`, `library`, and `format` are alternative content sources. `title` is the page name in navigation and editor tabs; a Markdown page without one uses its file name. Reader and published HTML tabs keep the root document title across page navigation. It is not added to the page body: write headings in the content itself. `icon` is a local SVG file shown beside the entry in the tree. It is drawn as an image, so give it fixed colours that read on both themes; `currentColor` does not follow the theme. A board without an `icon` uses the icon of its record type. The root's `sidebar` holds its localized title, which defaults to the root document title.
 
 ### Document icon
 
@@ -132,21 +134,21 @@ document:
     dark: themes/dark/contents/svg/logo.svg
 ```
 
-The sidebar follows the document pane's theme; the browser tab follows the browser's light or dark appearance. Child page icons remain local SVG paths and do not replace the root icon. File moves, source exports, icon uploads, and HTML builds use the same root setting.
+The sidebar icon follows the sidebar's background: the document theme in readers and published HTML, and the editor theme in editing workspaces. An independent saved editor theme must not override the reader's icon variant. The dooc logo uses the existing dark-stroke SVG in light mode and white-stroke SVG in dark mode; choose the declared theme path without recoloring other icons. Auto follows the system appearance. The browser tab follows the browser's light or dark appearance. Child page icons remain local SVG paths and do not replace the root icon. File moves, source exports, icon uploads, and HTML builds use the same root setting.
 
 Older `document.sidebar.icon` values remain readable for migration. Settings, YAML saves, icon uploads, and manifest serialization move that value to `document.icon`, preserving both theme paths. Defining both fields is an error; remove the old field instead of relying on an implicit priority. Legacy `left_sidebar` and flat manifests retain their existing formats.
 
-A Library page lists one kind of content from the whole workspace. Its view is a block label (`callouth`, `graphth`, `schemath`, `termth`, `mermaid`, `csv`, `tsv`), `urls`, or `url-previews`.
+Library collects references: `urls` and `url-previews`. Format collects content by extension, including local files and inline code blocks. A page uses `library: urls` or `format: svg`; formats discovered in content and registered subformats appear in the Format picker.
 
-Open **dooc.yaml** at the top of the editor's workspace tools card to edit settings. The Settings tab includes Library file paths with completion; YAML exposes the complete manifest. Both tabs share one draft, and Save validates the manifest before writing. See [Manifest editor](contents/md/manifest-editor.md).
+Open **dooc.yaml** at the top of the workspace tools card to edit settings. Under `system.format`, add an extension without a leading dot. `folders` collects matching files recursively and `files` adds exact paths. Both are relative to the owning manifest, respect workspace boundaries and Git ignore rules, and are retained in source exports. `codeblock` defaults to `true`; set it to `false` to collect files without inline fences of that format. It does not change document rendering or reference extraction. Known fence aliases share their extension: `typescript` and `ts` belong to `ts`.
 
-`system.library.files` adds explicitly listed text files to Library, including code and CSV files that are not embedded in a page. Paths are relative to this manifest, use exact file names, and are included in source exports. Existing Markdown, term, and record discovery continues; files already indexed are not duplicated. Missing, ignored, or binary files appear as Library errors.
+Images, PDF, video, tables, diagrams and code use their existing previews; other files retain a file link. Registered subformats retain their schema and record views. Existing `system.library.files` and content-format `library` pages remain readable and migrate on save without changing page routes. Conflicting old and new definitions are rejected. See [Manifest editor](contents/md/manifest-editor.md).
 
 ## Page URLs
 
 URLs follow the `document.children` hierarchy. Each Markdown page uses its file name without `.md`: `contents/md/start.md` directly under the root is `/start`, and the same page under `contents/md/guide.md` is `/guide/start`. Source folders and the `_docs` prefix are not part of the URL. Changing a Markdown page's display title does not change its URL. Generated pages and links use their title as the URL segment, or `page-N` when untitled. URL segments are percent-encoded.
 
-Library pages use their `library` value, and record boards use their `subformat` value. For example, `library: termth` under `reference.md` is `/reference/termth`.
+Library pages use their `library` value, Format pages their `format` value, and record boards their `subformat` value. For example, `format: termth` under `reference.md` is `/reference/termth`.
 
 Other local files keep their full file name as the URL segment: `contents/pdf/guide.pdf` directly under the root is `/guide.pdf`.
 
@@ -166,6 +168,8 @@ Sibling pages must have distinct URL names. Top-level names starting with `_`, p
 | `layouts.sort_order` | `asc` or `desc`                 |
 
 ## This workspace
+
+Resource indexing accepts explicit references to the active manifest and public files under `.dooc/fonts`, including `.dooc/fonts/LICENSE.txt`, even though these settings are outside the Files browser's managed-file list. Workspace-boundary, symlink-target, Git-ignore and regular-file checks still apply; other hidden files and unavailable references remain errors. The Files browser's editable-file scope stays unchanged.
 
 ![](dooc.yaml)
 

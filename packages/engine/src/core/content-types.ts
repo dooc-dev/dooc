@@ -37,6 +37,7 @@ export type CompiledDoc = Frontmatter &
         subformat?: SubformatCollection;
         /** Library view shown by a display page (`schemath`, `urls`, ...). */
         library?: string;
+        format?: string;
         /** Parent doc id (SoT: dooc.yaml). Omitted = top level. docs[] is in pre-order. */
         parent?: string;
         /** Project-relative Markdown source path, or subformat:<ext> for a display page. */

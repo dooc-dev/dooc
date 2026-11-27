@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import * as compiler from "../../engine/src/compiler/compile.js";
+import { fileDocumentId } from "../../engine/src/core/files.js";
 import { git } from "./git.js";
 import { nodeWorkspaceOperations } from "./workspace-server.js";
 
@@ -26,20 +27,28 @@ const fixture = () => {
 };
 const get = (url: string) => ({ url, method: "GET", headers: {}, body: "" });
 
-it("builds navigation from manifest metadata without compiling changed document bodies", async () => {
+it.each([
+    false,
+    true,
+])("builds navigation before document bodies (readOnly=%s)", async (readOnly) => {
     const root = fixture();
     const create = compiler.createCompiler;
     const compile = vi.fn();
     vi.spyOn(compiler, "createCompiler").mockImplementation((...args) => {
         const actual = create(...args);
         return {
-            compile: () => {
-                compile();
-                return actual.compile();
+            compile: (ids) => {
+                compile(ids);
+                return actual.compile(ids);
             },
         };
     });
-    const manager = await nodeWorkspaceOperations(join(root, "dooc.yaml"));
+    const manager = await nodeWorkspaceOperations(
+        join(root, "dooc.yaml"),
+        undefined,
+        undefined,
+        readOnly,
+    );
     try {
         for (const paragraphs of [1, 1000]) {
             writeFileSync(
@@ -58,8 +67,8 @@ it("builds navigation from manifest metadata without compiling changed document 
             expect(data.html).toContain("Guide");
         }
         expect(compile).not.toHaveBeenCalled();
-        await manager.ops.http?.(get("/api/page?route=/guide"), { local: true });
-        expect(compile).toHaveBeenCalled();
+        await manager.ops.http?.(get("/guide"), { local: true });
+        expect(compile).toHaveBeenCalledWith(new Set([fileDocumentId("content/guide.md")]));
     } finally {
         manager.close();
     }

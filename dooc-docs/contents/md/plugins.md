@@ -1,5 +1,7 @@
 A plugin turns a service URL into a live card. Write the URL as an embed; a plugin that matches it fetches the data and returns structured blocks, and dooc draws them in the current theme. Pages store only the URL.
 
+This guide describes the current trusted service-plugin runtime. The accepted [sandbox, host and kit architecture](contents/md/plugin-architecture.md) is not implemented yet; existing plugin packages do not have its sandbox guarantees.
+
 ```text
 ![Issue DOC-42](https://sample.dooc.invalid/tickets/DOC-42)
 ```

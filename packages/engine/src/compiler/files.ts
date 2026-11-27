@@ -21,6 +21,7 @@ import {
     manifestDirectory,
     parseFileLayout,
 } from "../core/files.js";
+import { fileFormat } from "../core/formats.js";
 import { codeBlockAt, contentLinks, embeddedImages, parseMdast } from "../core/markdown.js";
 import { docPath } from "../core/routing.js";
 import { termFileUrl } from "../core/term-reference.js";
@@ -320,7 +321,23 @@ const rewriteManifestPaths = (
         if (record) for (const [id, file] of Object.entries(record)) record[id] = rewrite(file);
     if (manifest.icon) manifest.icon = rewrite(manifest.icon);
     if (manifest.licence) manifest.licence = rewrite(manifest.licence);
-    if (manifest.libraryFiles) manifest.libraryFiles = manifest.libraryFiles.map(rewrite);
+    const settings = manifest.formats ?? {};
+    for (const [format, sources] of Object.entries(settings)) {
+        if (sources.folders)
+            sources.folders = sources.folders.map((folder) =>
+                folder === "." ? folder : rewrite(folder),
+            );
+        if (sources.files) {
+            sources.files = sources.files.map(rewrite);
+            for (const file of sources.files.filter((file) => fileFormat(file) !== format)) {
+                const extension = fileFormat(file);
+                if (!Object.hasOwn(settings, extension)) settings[extension] = {};
+                const target = settings[extension] ?? { files: [] };
+                target.files = [...new Set([...(target.files ?? []), file])];
+            }
+            sources.files = sources.files.filter((file) => fileFormat(file) === format);
+        }
+    }
     for (const format of manifest.subformats ?? []) {
         format.schema = rewrite(format.schema);
         if (format.icon) format.icon = rewrite(format.icon);
@@ -358,6 +375,7 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
         skillDirectories.some((directory) => file.startsWith(directory));
     const pages = flattenTree(manifest.tree);
     const moves = new Map<string, string>();
+    const directoryMoves = new Map<string, string>();
     if (input.action === "layout") {
         if (typeof input.enabled !== "boolean") throw new Error("Invalid layout setting");
         layout.defaultLayout = input.enabled;
@@ -423,6 +441,16 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
             )
                 manifest.defaultSubformatFolder =
                     target + manifest.defaultSubformatFolder.slice(item.length);
+            if (!paths.includes(item)) {
+                directoryMoves.set(item, target);
+                for (const file of paths.filter((file) => file.startsWith(`${item}/`))) {
+                    let folder = posix.dirname(file);
+                    while (folder.startsWith(`${item}/`)) {
+                        directoryMoves.set(folder, target + folder.slice(item.length));
+                        folder = posix.dirname(folder);
+                    }
+                }
+            }
             for (const file of picked.filter(
                 (path) => path === item || path.startsWith(`${item}/`),
             )) {
@@ -530,14 +558,17 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
     const writes: { file: string; data: Buffer; base: Buffer | null; mode?: number }[] = [];
     const links = new Map(moves);
     const localMoves = (owner?: string): ReadonlyMap<string, string> => {
-        if (!owner) return moves;
+        if (!owner) return new Map([...moves, ...directoryMoves]);
         const before = posix.dirname(owner);
         const after = posix.dirname(moves.get(owner) ?? owner);
         return new Map(
-            paths.flatMap((file) => {
+            [...paths, ...directoryMoves.keys()].flatMap((file) => {
                 const from = posix.relative(before, file);
                 if (!localFile(from)) return [];
-                const to = posix.relative(after, moves.get(file) ?? file);
+                const to = posix.relative(
+                    after,
+                    moves.get(file) ?? directoryMoves.get(file) ?? file,
+                );
                 return from === to ? [] : [[from, to] as const];
             }),
         );
@@ -584,11 +615,33 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
             mode: statSync(textfilePath(root, file)).mode,
         });
     }
+    const preserveFolderSources = (definition: ParsedManifest, owner?: string) => {
+        if (input.action !== "restructure") return;
+        const folder = owner ? posix.dirname(owner) : ".";
+        for (const [extension, sources] of Object.entries(definition.formats ?? {})) {
+            if (!sources.folders?.length) continue;
+            // Preserve membership when restructuring scatters a configured folder across types.
+            const selected = paths
+                .filter(
+                    (file) =>
+                        fileFormat(file) === extension &&
+                        sources.folders?.some((source) => {
+                            const prefix = posix.join(folder, source);
+                            return prefix === "." || file.startsWith(`${prefix}/`);
+                        }),
+                )
+                .map((file) => posix.relative(folder, file));
+            sources.files = [...new Set([...(sources.files ?? []), ...selected])];
+            delete sources.folders;
+        }
+    };
     for (const file of manifest.includedManifests ?? []) {
         const base = readFileSync(textfilePath(root, file));
         const definition = parseManifestText(base.toString("utf8"), file);
         if (definition.errors.length) throw new Error(definition.errors.join(" / "));
-        if (!rewriteManifestPaths(definition, localMoves(file))) continue;
+        preserveFolderSources(definition, file);
+        if (!rewriteManifestPaths(definition, localMoves(file)) && input.action !== "restructure")
+            continue;
         const content = serializeManifest(definition.tree, definition);
         const errors = parseManifestText(content, file).errors;
         if (errors.length) throw new Error(errors.join(" / "));
@@ -601,7 +654,8 @@ export const updateFiles = (root: string, input: Record<string, unknown>) => {
             mode: statSync(textfilePath(root, file)).mode,
         });
     }
-    rewriteManifestPaths(manifest, moves);
+    preserveFolderSources(manifest);
+    rewriteManifestPaths(manifest, localMoves());
     const nextManifest =
         manifest.format !== undefined
             ? serializeManifest(manifest.tree, manifest)

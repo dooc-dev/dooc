@@ -3,7 +3,7 @@ import { workspaceHttp } from "../../workspace/src/application-transport.js";
 import type { BrowserGitOptions } from "../../workspace/src/browser-git.js";
 import { messagePort } from "../../workspace/src/browser-port.js";
 import { createWorkspaceClient, type WorkspaceClient } from "../../workspace/src/client.js";
-import { clientPath } from "../../workspace/src/client-path.js";
+import { clientPath, workspacePath } from "../../workspace/src/client-path.js";
 import {
     openBranchWorkspace,
     registerWorkspace,
@@ -17,6 +17,9 @@ import { connectServer } from "../../workspace/src/socket-connection.js";
 import { mountClientHtml, mountClientLinks } from "./client-mount.js";
 import { updateReaderPage } from "./hmr-client.js";
 import { focusNavTree } from "./nav-focus.js";
+import { readNavigationText, startNavLoading } from "./nav-loading.js";
+import { updateNav } from "./nav-update.js";
+import { initializeThemes } from "./theme-picker.js";
 
 const script = document.currentScript as HTMLScriptElement | null;
 if (script?.src)
@@ -264,7 +267,7 @@ const chooserStyle = `.workspace-dialog{color:var(--c-fg,#272727);background:var
 async function chooseWorkspace(pane?: string): Promise<void> {
     if (document.querySelector(".workspace-dialog")) return;
     document.getElementById("client-loading")?.remove();
-    document.getElementById("open-workspace")?.closest("main")?.removeAttribute("hidden");
+    document.getElementById("client-start")?.removeAttribute("hidden");
     const dialog = document.createElement("dialog");
     dialog.className = "workspace-dialog";
     dialog.innerHTML = `<style>${chooserStyle}</style><h1>Open a workspace</h1><p>Choose where your documents live. Each preview pane keeps its own workspace and branch.</p><form><label>Workspace<select name="mode"><option value="folder">Local folder</option><option value="new">New browser workspace</option><option value="saved">Saved browser workspace</option><option value="clone">Clone Git repository</option><option value="server">Connect to dooc server</option></select></label><label data-modes="new clone">Name<input name="name" value="My documents" maxlength="80"></label><label data-modes="saved">Saved workspace<select name="saved"></select></label><label data-modes="folder clone saved">Manifest path<input name="manifest" value="dooc.yaml" placeholder="docs/dooc.yaml"></label><p data-modes="folder">Choose the repository folder, including .git when using Git. Files are saved directly to this folder.</p><p data-modes="new clone saved">Files are kept in this browser's storage. Clearing site data removes them; push Git changes or download files you need to keep.</p><label data-modes="new clone">Git HTTPS URL (optional for a new workspace)<input name="url" type="url" placeholder="https://github.com/owner/repository.git"></label><label data-modes="server">Server socket<input name="server" placeholder="ws://localhost:3000/server" required></label><details data-modes="folder new clone saved"><summary>Git identity and authentication</summary><div><label>Author name<input name="author" autocomplete="name"></label><label>Author email<input name="email" type="email" autocomplete="email"></label><label>Username<input name="username" autocomplete="off"></label><label>Access token<input name="token" type="password" autocomplete="off"></label><p>The token stays in memory until this page closes.</p><label>Git CORS proxy URL (optional)<input name="proxy" type="url" placeholder="https://your-git-proxy.example"></label><p>Git remotes must allow browser requests. A proxy you choose can receive repository data and Git credentials.</p></div></details><p role="status" aria-live="polite"></p><div class="workspace-actions"><button type="button" name="cancel">Cancel</button><button type="submit">Open workspace</button></div></form>`;
@@ -444,6 +447,45 @@ function attach(): void {
     document
         .getElementById("open-workspace")
         ?.addEventListener("click", () => void chooseWorkspace());
+    if (!rendered) {
+        document.getElementById("retry-document")?.addEventListener("click", () => {
+            const connection = workspaceConnection();
+            void (connection ? render(connection) : start()).catch(showStartupError);
+        });
+        document.addEventListener("click", (event) => {
+            if (
+                event.defaultPrevented ||
+                event.button !== 0 ||
+                event.ctrlKey ||
+                event.metaKey ||
+                event.shiftKey ||
+                event.altKey ||
+                !(event.target instanceof Element)
+            )
+                return;
+            const toggle = event.target.closest("#sidebar-toggle");
+            if (toggle) {
+                const closed = document.body.classList.toggle("sidebar-closed");
+                toggle.setAttribute("aria-expanded", String(!closed));
+                toggle.setAttribute("title", closed ? "Open sidebar" : "Close sidebar");
+                try {
+                    localStorage.setItem("docs:sidebar-open", closed ? "0" : "1");
+                } catch {}
+                return;
+            }
+            const branch = event.target.closest(".nav-tree-toggle");
+            if (branch) {
+                const open = branch.closest(".nav-item")?.classList.toggle("open");
+                branch.setAttribute("aria-expanded", String(!!open));
+                return;
+            }
+            const link = event.target.closest<HTMLAnchorElement>("#sidebar a[href]");
+            const connection = workspaceConnection();
+            if (!link || !connection || link.target || link.origin !== location.origin) return;
+            event.preventDefault();
+            void render(connection, link.href, true).catch(showStartupError);
+        });
+    }
     if (settings.readOnly && rendered) {
         document.addEventListener("dooc:select-workspace", (event) => {
             const { id, from, path } = (
@@ -522,6 +564,7 @@ async function render(
         focusNavTree(document.getElementById("nav-groups"), target.href);
         main.setAttribute("aria-busy", "true");
     }
+    const loading = main ? startNavLoading(controller.signal) : undefined;
     try {
         const version = target.searchParams.get("version");
         if (version && connection.openVersion && connection.revision?.version !== version)
@@ -533,11 +576,41 @@ async function render(
             connection = await connection.openVersion("latest");
         if (request !== navigation) return;
         selectWorkspace(connection.id);
+        if (!rendered) {
+            document.getElementById("client-start")?.setAttribute("hidden", "");
+            const status = document.getElementById("client-loading");
+            const nav = document.getElementById("nav-groups");
+            if (status) status.textContent = "Loading navigation…";
+            nav?.setAttribute("aria-busy", "true");
+            const params = new URLSearchParams({ route: workspacePath(target.pathname) });
+            const language = target.searchParams.get("lang");
+            if (language) params.set("lang", language);
+            const metadata = await connection.fetch(`/api/nav?${params}`, {
+                signal: controller.signal,
+            });
+            if (!metadata.ok) throw new Error("Could not load navigation");
+            const data = await metadata.json();
+            if (request !== navigation) return;
+            initializeThemes(data.themes);
+            const title = document.getElementById("site-title");
+            if (title) title.textContent = title.title = data.siteTitle ?? "dooc";
+            const icon = document.getElementById("site-icon") as HTMLImageElement | null;
+            if (icon && data.siteIcon) {
+                icon.src = data.siteIcon;
+                icon.hidden = false;
+            }
+            if (nav) {
+                updateNav(nav, data.html);
+                focusNavTree(nav, target.href);
+                nav.removeAttribute("aria-busy");
+            }
+            if (status) status.textContent = "Loading page…";
+        }
         let response = await connection.fetch(url, { signal: controller.signal });
         if (request !== navigation) return;
         if (!response.ok) response = await connection.fetch("/", { signal: controller.signal });
         if (!response.ok) throw new Error(await response.text());
-        let html = await response.text();
+        let html = await readNavigationText(response, loading?.update, controller.signal);
         if (request !== navigation) return;
         if (settings.readOnly)
             html = html
@@ -570,6 +643,7 @@ async function render(
             }
             if (heading) heading.scrollIntoView({ block: "start" });
             else main.scrollTo(0, 0);
+            loading?.finish(true);
             return;
         }
         // The registry and Worker instances live on window and survive replacing the initial shell.
@@ -582,13 +656,25 @@ async function render(
         throw error;
     } finally {
         if (request === navigation) main?.removeAttribute("aria-busy");
+        loading?.finish();
     }
 }
 
 attach();
-if (!rendered)
-    void fetch(clientPath("/dooc-client.json"))
-        .then((response) => (response.ok ? response.json() : Promise.resolve({})))
+function showStartupError(): void {
+    const status = document.getElementById("client-loading");
+    if (status) status.textContent = "Could not load the document. Retry.";
+    document.getElementById("nav-groups")?.removeAttribute("aria-busy");
+    document.getElementById("client-start")?.removeAttribute("hidden");
+    document.getElementById("retry-document")?.removeAttribute("hidden");
+}
+
+async function start(): Promise<void> {
+    await fetch(clientPath("/dooc-client.json"))
+        .then((response) => {
+            if (!response.ok) throw new Error("Could not load workspace settings");
+            return response.json();
+        })
         .then(async (config: ClientSettings) => {
             settings = globalThis.__doocClientSettings = config;
             configuredServer = typeof config.server === "string" ? config.server : "";
@@ -615,5 +701,6 @@ if (!rendered)
                 }
             }
             return chooseWorkspace();
-        })
-        .catch(() => chooseWorkspace());
+        });
+}
+if (!rendered) void start().catch(showStartupError);

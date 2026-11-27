@@ -11,6 +11,13 @@ import {
     localFile,
     parseFileLayout,
 } from "./files.js";
+import {
+    type FormatSettings,
+    isFormat,
+    isReferenceLibrary,
+    parseCollections,
+    type ReferenceLibrary,
+} from "./formats.js";
 import { contentLanguageCode, DEFAULT_LANG, isLangTag } from "./language.js";
 import { isRemoteManifest, remoteManifestSource } from "./remote-manifest.js";
 import { parseSubformats, type Subformat } from "./subformats.js";
@@ -29,8 +36,9 @@ export interface DocNode {
     resolved?: DocNode;
     origin?: string;
     subformat?: string;
-    /** Library page: a block format (`schemath`), `urls` or `url-previews`. */
+    /** A reference collection page. */
     library?: string;
+    format?: string;
     title?: string;
     children: DocNode[];
 }
@@ -46,8 +54,9 @@ export interface ParsedManifest {
     defaultLang?: string;
     licence?: string;
     skills?: string[];
-    libraryFiles?: string[];
-    includedLibraryFiles?: string[];
+    libraries?: ReferenceLibrary[];
+    formats?: FormatSettings;
+    includedFormats?: Record<string, FormatSettings>;
     files?: FileLayout;
     /** Content languages offered by the site, including defaultLang; normalized to ISO 639-3. */
     languages?: string[];
@@ -98,9 +107,11 @@ export const isContentPage = (node: {
     url?: string;
     subformat?: unknown;
     library?: string;
+    format?: string;
 }): boolean =>
     !node.subformat &&
     !node.library &&
+    !node.format &&
     (node.url === undefined || pageUrlKind(node.url) === "content");
 
 export const DOC_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
@@ -108,6 +119,9 @@ export const DOC_ID_RE = /^[a-z0-9][a-z0-9-]*$/;
 export const isDocId = (s: string): boolean => DOC_ID_RE.test(s);
 
 export const libraryPageId = (view: string): string => `library-${fileDocumentId(view)}`;
+// Preserve existing content-collection IDs across the Library-to-Format migration.
+export const formatPageId = (format: string): string =>
+    isReferenceLibrary(format) ? `format-${fileDocumentId(format)}` : libraryPageId(format);
 export const isLibraryView = (view: unknown): view is string =>
     typeof view === "string" && /^[a-z0-9][a-z0-9+#-]*$/.test(view);
 
@@ -267,12 +281,24 @@ export const parseManifest = (value: unknown): ParsedManifest => {
             const at = `${path}[${i}]`;
             let id: unknown;
             let children: unknown;
-            if (item && typeof item === "object" && !Array.isArray(item) && "library" in item) {
-                const id = isLibraryView(item.library) ? libraryPageId(item.library) : "";
+            if (
+                item &&
+                typeof item === "object" &&
+                !Array.isArray(item) &&
+                ("library" in item || "format" in item)
+            ) {
+                const view = item.format ?? item.library;
+                const reference = item.format === undefined && isReferenceLibrary(view);
+                const id = isFormat(view)
+                    ? reference
+                        ? libraryPageId(view)
+                        : formatPageId(view)
+                    : "";
                 if (
                     !id ||
+                    (item.library !== undefined && item.format !== undefined) ||
                     Object.keys(item).some(
-                        (key) => !["library", "title", "children"].includes(key),
+                        (key) => !["library", "format", "title", "children"].includes(key),
                     ) ||
                     (item.title !== undefined &&
                         (typeof item.title !== "string" || !item.title.trim()))
@@ -289,8 +315,8 @@ export const parseManifest = (value: unknown): ParsedManifest => {
                 seen.add(id);
                 nodes.push({
                     id,
-                    library: item.library,
-                    title: item.title?.trim() ?? item.library,
+                    ...(reference ? { library: view } : { format: view }),
+                    title: item.title?.trim() ?? view,
                     children: walk(item.children, `${at}.children`),
                 });
                 continue;
@@ -358,7 +384,7 @@ export const parseManifest = (value: unknown): ParsedManifest => {
             if (!seen.has(id))
                 errors.push(`${MANIFEST_FILE}: files references unknown document "${id}"`);
         const paths = flattenTree(tree)
-            .filter((node) => !node.subformat && !node.library)
+            .filter((node) => !node.subformat && !node.library && !node.format)
             .map(({ id }) => docFile(id, files));
         if (new Set(paths).size !== paths.length)
             errors.push(`${MANIFEST_FILE}: documents must use distinct files`);
@@ -409,26 +435,25 @@ const parseNestedManifest = (input: object): ParsedManifest => {
         const document = documentFormat
             ? object(
                   root.document,
-                  ["title", "url", "icon", "sidebar", "children", "subformat", "library"],
+                  ["title", "url", "icon", "sidebar", "children", "subformat", "library", "format"],
                   "document",
               )
             : undefined;
         const system = object(
             root.system ?? {},
-            ["languages", "default_lang", "themes", "licence", "skills", "files", "library"],
+            [
+                "languages",
+                "default_lang",
+                "themes",
+                "licence",
+                "skills",
+                "files",
+                "library",
+                "format",
+            ],
             "system",
         );
-        const library = object(system.library ?? {}, ["files"], "system.library");
-        const libraryFiles = library.files;
-        if (
-            libraryFiles !== undefined &&
-            (!Array.isArray(libraryFiles) ||
-                libraryFiles.some(
-                    (file) => !localFile(file) || !file.trim() || file.includes("*"),
-                ) ||
-                new Set(libraryFiles).size !== libraryFiles.length)
-        )
-            throw new Error("system.library.files must be a list of unique local file paths");
+        const collections = parseCollections(system);
         const licence = system.licence;
         if (licence !== undefined && (!localFile(licence) || !licence.trim()))
             throw new Error("system.licence must be a local file path");
@@ -496,10 +521,11 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                               "children",
                               "subformat",
                               "library",
+                              "format",
                               "title",
                               ...(position === "root" ? ["sidebar"] : []),
                           ]
-                        : ["file", "icon", "children", "subformat", "library", "title"],
+                        : ["file", "icon", "children", "subformat", "library", "format", "title"],
                     documentFormat ? "document" : "center_contents",
                 );
                 if (documentFormat && node.url != null && typeof node.url !== "string")
@@ -514,9 +540,12 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                 const nodeIcon = documentFormat && position === "root" ? icon : node.icon;
                 if (nodeIcon !== undefined && (!localFile(nodeIcon) || !nodeIcon.endsWith(".svg")))
                     throw new Error("Document icons must be local SVG files");
-                if (node.library !== undefined) {
+                if (node.library !== undefined || node.format !== undefined) {
+                    const view = node.format ?? node.library;
+                    const reference = node.format === undefined && isReferenceLibrary(view);
                     if (
-                        !isLibraryView(node.library) ||
+                        !isFormat(view) ||
+                        (node.library !== undefined && node.format !== undefined) ||
                         node.file !== undefined ||
                         url ||
                         node.subformat !== undefined ||
@@ -524,13 +553,16 @@ const parseNestedManifest = (input: object): ParsedManifest => {
                             (typeof node.title !== "string" || !node.title.trim()))
                     )
                         throw new Error("Library pages require a view and a non-empty title");
-                    const id = libraryPageId(node.library);
+                    const id = reference
+                        ? libraryPageId(view as string)
+                        : formatPageId(view as string);
                     if (typeof nodeIcon === "string") icons[id] = nodeIcon;
                     return {
                         id,
                         ...location,
-                        library: node.library,
-                        title: typeof node.title === "string" ? node.title.trim() : node.library,
+                        ...(reference ? { library: view as string } : { format: view as string }),
+                        title:
+                            typeof node.title === "string" ? node.title.trim() : (view as string),
                         children: node.children === undefined ? [] : walk(node.children, at),
                     };
                 }
@@ -618,9 +650,9 @@ const parseNestedManifest = (input: object): ParsedManifest => {
             throw new Error("left_sidebar.title must include system.default_lang");
         const legacyTree = (nodes: DocNode[]): unknown[] =>
             nodes.map((node) =>
-                node.library
+                node.library || node.format
                     ? {
-                          library: node.library,
+                          ...(node.library ? { library: node.library } : { format: node.format }),
                           title: node.title,
                           ...(node.children.length ? { children: legacyTree(node.children) } : {}),
                       }
@@ -660,7 +692,7 @@ const parseNestedManifest = (input: object): ParsedManifest => {
             tree,
             ...(licence === undefined ? {} : { licence }),
             ...(skills === undefined ? {} : { skills: skills as string[] }),
-            ...(libraryFiles === undefined ? {} : { libraryFiles: libraryFiles as string[] }),
+            ...collections,
             ...(sidebar.title === undefined ? {} : { titles }),
             ...(rootIcon !== undefined && scalarIcon === undefined ? { themeIcons } : {}),
         };
@@ -697,7 +729,8 @@ export const serializeManifest = (
         defaultLang,
         licence,
         skills,
-        libraryFiles,
+        libraries,
+        formats,
         files,
         languages,
         themes,
@@ -710,8 +743,13 @@ export const serializeManifest = (
         const contents = (nodes: readonly DocNode[]): unknown[] =>
             nodes.map((node) => {
                 const page = {
-                    ...(node.library
-                        ? { library: node.library, title: node.title }
+                    ...(node.library || node.format
+                        ? {
+                              ...(node.library
+                                  ? { library: node.library }
+                                  : { format: node.format }),
+                              title: node.title,
+                          }
                         : node.subformat
                           ? { subformat: node.subformat, title: node.title }
                           : {
@@ -747,7 +785,8 @@ export const serializeManifest = (
                     default_lang: defaultLang ?? DEFAULT_LANG,
                     ...(licence === undefined ? {} : { licence }),
                     ...(skills === undefined ? {} : { skills }),
-                    ...(libraryFiles === undefined ? {} : { library: { files: libraryFiles } }),
+                    ...(libraries === undefined ? {} : { library: libraries }),
+                    ...(formats === undefined ? {} : { format: formats }),
                     ...(themes ? { themes } : {}),
                     ...(files
                         ? {
@@ -782,12 +821,12 @@ export const serializeManifest = (
             { lineWidth: 0 },
         );
     }
-    if (flattenTree(tree).some((node) => node.subformat || node.library)) {
+    if (flattenTree(tree).some((node) => node.subformat || node.library || node.format)) {
         const contents = (nodes: readonly DocNode[]): unknown[] =>
             nodes.map((node) =>
-                node.library
+                node.library || node.format
                     ? {
-                          library: node.library,
+                          ...(node.library ? { library: node.library } : { format: node.format }),
                           title: node.title,
                           ...(node.children.length ? { children: contents(node.children) } : {}),
                       }
@@ -865,6 +904,7 @@ export const flattenTree = (
                 ...(n.file ? { file: n.file } : {}),
                 ...(n.subformat ? { subformat: n.subformat } : {}),
                 ...(n.library ? { library: n.library } : {}),
+                ...(n.format ? { format: n.format } : {}),
                 ...(n.title ? { title: n.title } : {}),
                 ...(parent == null ? {} : { parent }),
                 depth,
@@ -918,7 +958,7 @@ export const insertDoc = (
     tree: readonly DocNode[],
     id: string,
     parent?: string,
-    page: Pick<DocNode, "subformat" | "library" | "title"> = {},
+    page: Pick<DocNode, "subformat" | "library" | "format" | "title"> = {},
 ): DocNode[] | undefined => {
     const next = clone(tree);
     const list = childList(next, parent);

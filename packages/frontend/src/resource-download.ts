@@ -91,10 +91,16 @@ export const mountResourceDownloads = (
         if (!link || !/^https?:/.test(link.href)) return;
         event.preventDefault();
         if (link.getAttribute("aria-busy") === "true") return;
+        const translate = (key: string): string =>
+            (window as Window & { __docsTranslate?: (key: string) => string }).__docsTranslate?.(
+                key,
+            ) ?? key;
         const status =
-            link.parentElement?.querySelector("[role=status]") ?? document.createElement("span");
+            link.parentElement?.querySelector(".resource-download-status") ??
+            document.createElement("span");
+        status.classList.add("resource-download-status");
         status.setAttribute("role", "status");
-        status.textContent = "Downloading…";
+        status.textContent = translate("Downloading…");
         link.after(status);
         link.setAttribute("aria-busy", "true");
         try {
@@ -107,7 +113,16 @@ export const mountResourceDownloads = (
                 },
                 link.closest<HTMLElement>("[data-workspace]")?.dataset.workspace,
             );
-            if (!response.ok) throw new Error();
+            if (!response.ok) {
+                status.textContent = translate(
+                    response.status === 401 || response.status === 403
+                        ? "Access denied."
+                        : response.status === 404
+                          ? "File unavailable."
+                          : "Download failed. Retry.",
+                );
+                return;
+            }
             const url = URL.createObjectURL(await response.blob());
             const download = document.createElement("a");
             download.href = url;
@@ -118,8 +133,7 @@ export const mountResourceDownloads = (
             setTimeout(() => URL.revokeObjectURL(url), 60000);
             status.textContent = "";
         } catch {
-            status.textContent =
-                "Download failed. Check your connection and the source's download permissions, then try again.";
+            status.textContent = translate("Download failed. Retry.");
         } finally {
             link.removeAttribute("aria-busy");
         }

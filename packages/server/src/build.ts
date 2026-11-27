@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { PluginTransport } from "../../../plugins/src/transport.js";
 import { embedBundleUrls } from "../../engine/src/compiler/bundle-urls.js";
+import { parseContentSource } from "../../engine/src/compiler/code-blocks.js";
 import { compileSite } from "../../engine/src/compiler/compile.js";
 import { exportEntries } from "../../engine/src/compiler/export.js";
 import { filesSnapshot } from "../../engine/src/compiler/files.js";
@@ -15,6 +16,7 @@ import { zip } from "../../engine/src/compiler/zip.js";
 import { walkBlocks } from "../../engine/src/core/blocks.js";
 import { selectCodeGrammars } from "../../engine/src/core/code-grammars.js";
 import { parseVersionConfig } from "../../engine/src/core/document-version.js";
+import { fenceFormat } from "../../engine/src/core/formats.js";
 import { type PreviewSettings, parsePreviewSettings } from "../../engine/src/core/previewers.js";
 import type { PublishOutput } from "../../frontend/src/document-application.js";
 import { loadBuildPlugins, pluginSnapshot } from "./build-plugins.js";
@@ -23,6 +25,7 @@ import { createDocumentVersions } from "./document-versions.js";
 import { loadSiteLanguages } from "./languages.js";
 import { loadReaderPlugins } from "./plugin-config.js";
 import { prepareDocumentSources } from "./remote-manifests.js";
+import { resourceIndex } from "./resource-library.js";
 import { gitHeadFile, sourceFileBase } from "./workspace.js";
 
 export interface BuildOptions extends SplitBuildOptions {
@@ -194,7 +197,24 @@ export const buildBundle = async (root: string, options: BuildOptions): Promise<
                 `data:application/octet-stream;base64,${(downloadSources?.get(name) ?? data).toString("base64")}`,
             ]),
         );
-    const blocks = walkBlocks(site.entries.flatMap((entry) => entry.blocks));
+    const formats = new Set(
+        compiled.docs.flatMap((doc) => (doc.format ? [doc.format, fenceFormat(doc.format)] : [])),
+    );
+    const collected = formats.size
+        ? resourceIndex(root, [...linkable])
+              .codeblocks.filter((item) => formats.has(item.format))
+              .flatMap(
+                  (item) =>
+                      parseContentSource(item.language, item.content, item.source.file)?.blocks ?? [
+                          {
+                              type: "code" as const,
+                              lang: item.language,
+                              lines: item.content.split("\n"),
+                          },
+                      ],
+              )
+        : [];
+    const blocks = walkBlocks([...site.entries.flatMap((entry) => entry.blocks), ...collected]);
     const code = blocks.flatMap((block) =>
         block.type === "code" && block.lang !== "mermaid" && !block.unavailable && !block.subformat
             ? [block]
@@ -215,7 +235,7 @@ export const buildBundle = async (root: string, options: BuildOptions): Promise<
         options.mode === "live" && blocks.some((block) => block.type === "external")
             ? bundleClient("published-plugins.ts")
             : "",
-        compiled.docs.some((doc) => doc.subformat || doc.library) ||
+        compiled.docs.some((doc) => doc.subformat || doc.library || doc.format) ||
         blocks.some((block) => block.type === "code" && block.subformat)
             ? bundleClient("published-subformats.ts")
             : "",

@@ -13,7 +13,7 @@ import { parseFileReference } from "./textfile.js";
 /** The minimal doc reference routing needs (a shape CompiledDoc satisfies). */
 export type DocRef = Pick<
     CompiledDoc,
-    "id" | "parent" | "library" | "url" | "root" | "name" | "origin"
+    "id" | "parent" | "library" | "format" | "url" | "root" | "name" | "origin"
 > & {
     file?: string;
     sourceFile?: string;
@@ -91,6 +91,7 @@ export const docPath = (docs: readonly DocRef[], id: string): string => {
             const name =
                 item.name ??
                 item.library ??
+                item.format ??
                 (typeof item.subformat === "string" ? item.subformat : item.subformat?.ext) ??
                 (file && fileDocumentId(file) === item.id
                     ? file.slice(file.lastIndexOf("/") + 1, -3)

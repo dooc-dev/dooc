@@ -3,7 +3,6 @@ import { flattenTree, isContentPage, pageUrlKind } from "../core/content-metadat
 import { docFile, docIconFile, fileExtension, localFile } from "../core/files.js";
 import { contentLinks, parseMdast } from "../core/markdown.js";
 import { visitSchema } from "../core/schema-refs.js";
-import { CODE_TEMPLATES } from "../core/taxonomy.js";
 import { isRemoteTextfile, parseFileReference } from "../core/textfile.js";
 import { assetReferences } from "./asset-references.js";
 import { CODE_LANGUAGES_DIR } from "./code-languages.js";
@@ -11,6 +10,7 @@ import { CONFIG_FILE } from "./config.js";
 import { collectRefs } from "./dialect.js";
 import { projectFiles, rebaseFileLinks } from "./files.js";
 import { PROJECT_FONTS_DIR } from "./fonts.js";
+import { formatFiles } from "./format-files.js";
 import {
     existsSync,
     fileURLToPath,
@@ -72,8 +72,12 @@ export const exportEntries = (root: string, file = manifestFile(root)): ZipEntry
     for (const file of manifest.includedManifests ?? []) add(file);
     for (const file of manifest.includedAssets ?? []) add(file);
     if (manifest.licence) add(manifest.licence);
-    for (const file of [...(manifest.libraryFiles ?? []), ...(manifest.includedLibraryFiles ?? [])])
-        add(file, sourceOrigin(manifest, file));
+    const collection = formatFiles(root, manifest);
+    if (collection.errors.length)
+        throw new Error(
+            collection.errors.map(({ file, message }) => `${file}: ${message}`).join(" / "),
+        );
+    for (const file of collection.files) add(file, sourceOrigin(manifest, file));
     optional(CONFIG_FILE);
     for (const node of flattenTree(manifest.tree)) {
         const { id, origin } = node;
@@ -89,14 +93,10 @@ export const exportEntries = (root: string, file = manifestFile(root)): ZipEntry
     for (const file of new Set([manifest.icon, ...Object.values(manifest.themeIcons ?? {})]))
         if (file) add(file);
     const files = projectFiles(root);
-    const libraries = new Set(flattenTree(manifest.tree).flatMap((node) => node.library ?? []));
-    if (libraries.size)
+    if (flattenTree(manifest.tree).some((node) => node.library || node.format))
         for (const file of files)
-            if (
-                file.extension === "md" ||
-                (libraries.has(file.extension) && Object.hasOwn(CODE_TEMPLATES, file.extension))
-            )
-                add(file.path);
+            if (file.extension === "md" || file.extension === "termth")
+                add(file.path, sourceOrigin(manifest, file.path));
     for (const format of manifest.subformats ?? []) {
         add(format.schema);
         if (format.icon) add(format.icon);

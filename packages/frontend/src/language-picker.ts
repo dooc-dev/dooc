@@ -74,14 +74,15 @@ export const mountSelectPickers = (
             (versions ? select.selectedOptions[0]?.value : select.selectedOptions[0]?.text) ?? "";
         const position = (): void => {
             const rect = input.getBoundingClientRect();
-            const width = workspace
-                ? Math.min(Math.max(rect.width, 280), innerWidth - 16)
-                : rect.width;
+            const width =
+                workspace || versions
+                    ? Math.min(Math.max(rect.width, workspace ? 280 : 180), innerWidth - 16)
+                    : rect.width;
             const below = innerHeight - rect.bottom;
             const above = below < 240 && rect.top > below;
             Object.assign(popup.style, {
                 width: `${width}px`,
-                left: `${workspace ? Math.max(8, Math.min(rect.left + (rect.width - width) / 2, innerWidth - width - 8)) : rect.left}px`,
+                left: `${workspace || versions ? Math.max(8, Math.min(workspace ? rect.left + (rect.width - width) / 2 : rect.left, innerWidth - width - 8)) : rect.left}px`,
                 maxHeight: `${Math.max(80, Math.min(360, (above ? rect.top : below) - 12))}px`,
                 top: above ? "auto" : `${rect.bottom + 4}px`,
                 bottom: above ? `${innerHeight - rect.top + 4}px` : "auto",

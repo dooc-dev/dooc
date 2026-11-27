@@ -159,6 +159,7 @@ const parseHtml = (
 export const loadFigures = (
     figuresDir: string,
     extraFiles: string[] = [],
+    selectedFiles?: ReadonlySet<string>,
 ): { figures: FigureEntry[]; errors: string[] } => {
     const errors: string[] = [];
     const figures: FigureEntry[] = [];
@@ -176,7 +177,7 @@ export const loadFigures = (
     const ignored = ignoredFiles(dirname(figuresDir), files);
     const keyframeOwner = new Map<string, { file: string; body: string }>();
     for (const file of files) {
-        if (ignored.has(file)) continue;
+        if (ignored.has(file) || (selectedFiles && !selectedFiles.has(file))) continue;
         if (
             file.startsWith("figures/") &&
             !file.slice(8).includes("/") &&

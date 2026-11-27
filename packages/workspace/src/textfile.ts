@@ -13,6 +13,7 @@ import {
 } from "../../engine/src/compiler/textfile.js";
 import { TextfileUnavailable } from "../../engine/src/compiler/textfile-remote.js";
 import { isManifestFile, migrateDocumentIcon } from "../../engine/src/core/content-metadata.js";
+import { migrateCollections } from "../../engine/src/core/formats.js";
 import type { SchemaContext } from "../../engine/src/core/schema-refs.js";
 import { isRemoteTextfile } from "../../engine/src/core/textfile.js";
 
@@ -62,7 +63,9 @@ export const textfileResponse = async (
                 const { errors } = parseManifestText(content, input.file);
                 if (errors.length) throw new Error(errors.join("\n"));
                 const document = parseDocument(content);
-                if (migrateDocumentIcon(document)) content = document.toString({ lineWidth: 0 });
+                const iconChanged = migrateDocumentIcon(document);
+                if (migrateCollections(document) || iconChanged)
+                    content = document.toString({ lineWidth: 0 });
             } else validateSubformatFile(root, input.file, content, domains);
             if (!writeTextfile(root, input.file, content, input.base))
                 return {

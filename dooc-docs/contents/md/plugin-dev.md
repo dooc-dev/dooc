@@ -1,5 +1,7 @@
 A plugin is a JavaScript object that matches service URLs and returns a view. Types and OAuth helpers come from `@dooc-dev/dooc-plugin`. The demo source is `sample/examples/reader-plugins/` in the dooc repository.
 
+This is the current trusted service-plugin API. The accepted [sandbox, host and kit architecture](contents/md/plugin-architecture.md) describes the next execution model; it does not change the API or isolate existing packages yet.
+
 ## Contract
 
 | Member         | Required | Purpose                                                       |

@@ -76,9 +76,13 @@ export const mountThemePickers = (
         }
         for (const pane of document.querySelectorAll<HTMLElement>(
             ".resources-pane, #sidebar, #panel",
-        ))
-            if (pane.dataset.theme !== root.dataset.editorTheme)
-                pane.dataset.theme = root.dataset.editorTheme;
+        )) {
+            const theme =
+                pane.id === "sidebar" && !document.body.classList.contains("edit")
+                    ? root.dataset.theme
+                    : root.dataset.editorTheme;
+            if (pane.dataset.theme !== theme) pane.dataset.theme = theme;
+        }
         for (const pane of document.querySelectorAll<HTMLElement>(
             ".preview-pane:not(.resources-pane)",
         ))

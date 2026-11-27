@@ -44,6 +44,7 @@ window.testUiConsistency = async () => {
         tree.dataset.expandedWidth = "120";
         tree.innerHTML =
             '<div class="nav-item" data-doc-id="a"><div class="nav-row"><button class="nav-tree-toggle" aria-expanded="false"></button></div><div class="nav-list"><div class="nav-item" data-doc-id="b"><div class="nav-row"><button class="nav-tree-toggle" aria-expanded="false"></button></div><div class="nav-list"><div class="nav-item" data-doc-id="c"><div class="nav-row"><a class="cur">Current</a></div></div></div></div></div></div>';
+        tree.innerHTML = `<div class="nav-list">${tree.innerHTML}<div class="nav-item nav-placeholder"><button>New page</button></div><div class="nav-item nav-new-item"><input aria-label="New page title"></div></div>`;
         document.body.append(tree);
         try {
             focusNavTree(tree);
@@ -53,6 +54,11 @@ window.testUiConsistency = async () => {
                 ),
                 "Automatically expanded ancestors announce their state",
             );
+            for (const item of tree.querySelectorAll(".nav-placeholder, .nav-new-item"))
+                assert(
+                    !item.inert && getComputedStyle(item).visibility === "visible",
+                    "Compact ancestors keep the root add button and create form available",
+                );
         } finally {
             tree.remove();
         }

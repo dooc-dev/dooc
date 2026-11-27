@@ -110,7 +110,7 @@ const definitions: Record<string, Omit<Tool, "run">> = {
     },
     list_resources: {
         description:
-            "List Library: codeblocks (including term definitions and local text-file embeds, with normalized format and reference locations), URLs from Markdown links, and URL previews from Markdown images, with source files and line numbers.",
+            "List Library references (URLs and URL previews) and Format collections (files and codeblocks grouped by extension, including terms and records), with source files and line numbers. Codeblock collection follows system.format.<extension>.codeblock.",
         props: {},
     },
     list_fonts: {

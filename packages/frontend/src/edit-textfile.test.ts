@@ -1,12 +1,117 @@
 import { EditorState } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import { afterEach, expect, it, vi } from "vitest";
+import { chooseConflict } from "./edit-conflict.js";
 import { createTextfileEditors, fileValidationState, textfileLines } from "./edit-textfile.js";
 import { fileReferences } from "./file-references.js";
+
+vi.mock("./edit-conflict.js", () => ({ chooseConflict: vi.fn() }));
 
 afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    vi.clearAllMocks();
+});
+
+it("saves the edits shown in a manual conflict and adopts normalized file content", async () => {
+    let reads = 0;
+    let saves = 0;
+    let release!: () => void;
+    const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
+        const input = JSON.parse(String(init?.body));
+        if (input.action === "read") {
+            if (++reads === 1) return Response.json({ content: "original", language: "txt" });
+            await new Promise<void>((resolve) => {
+                release = resolve;
+            });
+            return Response.json({ content: "external" });
+        }
+        if (++saves === 1) return Response.json({ error: "Conflict" }, { status: 409 });
+        expect(input).toMatchObject({ base: "external", content: "latest edit" });
+        return Response.json({ content: "latest edit\n" });
+    });
+    vi.stubGlobal("__doocConnections", {
+        active: "owned",
+        items: new Map([["owned", { fetch }]]),
+    });
+    vi.mocked(chooseConflict).mockResolvedValue("local");
+    const files = createTextfileEditors(
+        [],
+        () => {},
+        () => {},
+        "owned",
+        () => false,
+    );
+    const unsubscribe = files.subscribe("notes.txt", () => {});
+    await vi.waitFor(() => expect(files.content("notes.txt")).toBe("original"));
+    files.update("notes.txt", "first edit");
+    const saving = files.save("notes.txt");
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    files.update("notes.txt", "latest edit");
+    release();
+    await saving;
+    expect(chooseConflict).toHaveBeenCalledWith("notes.txt", "latest edit", "external");
+    expect(files.snapshot("notes.txt")).toEqual({
+        content: "latest edit\n",
+        dirty: false,
+        error: "",
+    });
+    unsubscribe();
+});
+
+it("shares native drafts, respects auto-save changes and preserves edits during a save", async () => {
+    vi.useFakeTimers();
+    let automatic = false;
+    let disk = "original";
+    let finish: (() => void) | undefined;
+    const request = vi.fn(async (_url: string, init?: RequestInit) => {
+        const input = JSON.parse(String(init?.body));
+        if (input.action === "save") {
+            expect(input.base).toBe(disk);
+            if (input.content === "first")
+                await new Promise<void>((resolve) => {
+                    finish = resolve;
+                });
+            disk = input.content;
+        }
+        return Response.json({ content: disk, language: "txt" });
+    });
+    vi.stubGlobal("__doocConnections", {
+        active: "owned",
+        items: new Map([["owned", { fetch: request }]]),
+    });
+    const files = createTextfileEditors(
+        [],
+        () => {},
+        () => {},
+        "owned",
+        () => automatic,
+    );
+    const listener = vi.fn();
+    const unsubscribe = files.subscribe("notes.txt", listener);
+    await vi.waitFor(() => expect(files.content("notes.txt")).toBe("original"));
+    files.update("notes.txt", "first");
+    await vi.advanceTimersByTimeAsync(1000);
+    await files.reloadChanged(["notes.txt"]);
+    expect(request).toHaveBeenCalledOnce();
+    const saving = files.save("notes.txt");
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    files.update("notes.txt", "second");
+    finish?.();
+    await saving;
+    expect(files.snapshot("notes.txt")).toMatchObject({ content: "second", dirty: true });
+    expect(disk).toBe("first");
+    automatic = true;
+    await files.flush();
+    expect(disk).toBe("second");
+    files.update("notes.txt", "third");
+    automatic = false;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(disk).toBe("second");
+    await files.save("notes.txt");
+    expect(disk).toBe("third");
+    expect(files.hasUnsavedChanges()).toBe(false);
+    unsubscribe();
 });
 
 it("resolves embedded files from their owning manifest and ignores external embeds", () => {

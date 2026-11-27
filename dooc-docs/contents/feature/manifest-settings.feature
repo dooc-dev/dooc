@@ -1,6 +1,6 @@
-name: Manifest settings and explicit Library files
+name: Shared manifest editing and collection sources
 area: Runtime
 status: Shipped
 priority: Normal
 summary: |
-  The first workspace tool edits dooc.yaml through Settings and YAML with one validated draft, conflict protection, collapsible YAML hierarchy and bounded keyboard-accessible path completion. system.library.files registers local text files for Library, file moves and source exports.
+  Settings and the native YAML editor share one validated text-file draft, undo, conflict protection and the auto-save preference. Library collects URL references; system.format configures per-extension folders, explicit files and fenced blocks. Legacy Library sources and pages migrate on save, preserving IDs and comments. Included manifests, file moves, source exports and published HTML share the collection settings.

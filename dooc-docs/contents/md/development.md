@@ -89,4 +89,10 @@ Keep each sample self-contained: no links or schema references to sibling worksp
 
 The sidebar groups pages by reader task: getting started, writing, editing, publishing, reference and development. Put a procedure in its task guide and link to the command or configuration reference for exact options. The screen guide names visible UI areas; the editor guide explains how to use them. Keep fictional operational content in the standalone samples.
 
-Register new pages in `dooc-docs/dooc.yaml`, update links when a section moves, and run the document export checks after changing embedded assets. The dated license audit is retained as a historical appendix.
+Register new pages in `dooc-docs/dooc.yaml`, update links when a section moves, and run the document export checks after changing embedded assets.
+
+## Generated files and reports
+
+Store local audit reports, fix reports, dependency inventories, screenshots and other verification output under the ignored `build/` directory or the operating system's temporary directory. Keep implementation status and actionable follow-up in the development guides and feature records. One-off UX reports and the dated license audit and inventory are removed from the source tree and documentation navigation.
+
+Git ignore rules cover reports, test output, coverage, local caches, logs, editor backups and temporary files. Fictional `.log` records in the SaaS sample, authored example scripts and the generated CSS module required by the runtime remain source inputs.

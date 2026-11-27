@@ -1,7 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
+import { projectFiles } from "../../engine/src/compiler/files.js";
 import {
     libraryPageHtml,
     resourceIndex,
@@ -41,6 +42,73 @@ it("counts authored links and embeds while keeping unreferenced records availabl
         ["records/a.issue", [1, 2, 3, 4, 14].map((line) => ({ file: "doc.md", line }))],
         ["records/unused.issue", []],
     ]);
+});
+
+it("indexes explicit references outside the managed file listing", () => {
+    const { root } = fixture({
+        "dooc.yaml": "document: {url: refs.md}\n",
+        ".dooc/fonts/LICENSE.txt": "Font license\n",
+        "refs.md": "![](dooc.yaml)\n[Font license](.dooc/fonts/LICENSE.txt)\n",
+    });
+    const files = projectFiles(root).map(({ path }) => path);
+    expect(files).not.toContain("dooc.yaml");
+    expect(files).not.toContain(".dooc/fonts/LICENSE.txt");
+    const index = resourceIndex(root, files);
+    expect(index.errors).toEqual([]);
+    expect(index.files).toEqual(
+        expect.arrayContaining([
+            { file: "dooc.yaml", format: "yaml", sources: [{ file: "refs.md", line: 1 }] },
+            {
+                file: ".dooc/fonts/LICENSE.txt",
+                format: "txt",
+                sources: [{ file: "refs.md", line: 2 }],
+            },
+        ]),
+    );
+    expect(index.codeblocks).toEqual(
+        expect.arrayContaining([
+            expect.objectContaining({
+                content: "document: {url: refs.md}\n",
+                reference: { file: "dooc.yaml", line: 1 },
+            }),
+            expect.objectContaining({ content: "Font license\n" }),
+        ]),
+    );
+});
+
+it("rejects missing, ignored, non-file and out-of-workspace references", () => {
+    const { root: outside } = fixture({ "secret.txt": "Private text" });
+    const { root } = fixture({
+        ".gitignore": "ignored.txt\n",
+        "ignored.txt": "Ignored text",
+        "refs.md": [
+            "[Missing manifest](dooc.yaml)",
+            "[Ignored](ignored.txt)",
+            "[Directory](.dooc/fonts/folder)",
+            "[Parent](../secret.txt)",
+            "[External symlink](.dooc/fonts/external.txt)",
+            "[Ignored symlink](.dooc/fonts/alias.txt)",
+        ].join("\n"),
+    });
+    mkdirSync(join(root, ".dooc/fonts/folder"), { recursive: true });
+    symlinkSync(join(outside, "secret.txt"), join(root, ".dooc/fonts/external.txt"));
+    symlinkSync(join(root, "ignored.txt"), join(root, ".dooc/fonts/alias.txt"));
+    const index = resourceIndex(
+        root,
+        projectFiles(root).map(({ path }) => path),
+    );
+    expect(index.errors).toHaveLength(6);
+    for (const [line, message] of [
+        [1, "File is not available"],
+        [2, "ignored by Git ignore rules"],
+        [3, "File is not available"],
+        [4, "relative file path inside the docs root"],
+        [5, "outside the docs root"],
+        [6, "ignored by Git ignore rules"],
+    ] as const)
+        expect(index.errors[line - 1]).toMatch(new RegExp(`^refs.md:L${line}:.*${message}`));
+    expect(index.files?.every(({ file }) => file === "refs.md")).toBe(true);
+    expect(index.codeblocks).toEqual([]);
 });
 
 it("unifies standalone terms and Markdown code blocks with exact source lines", () => {
@@ -180,7 +248,9 @@ it("renders searchable resource views with escaped content and links to the sour
         expect(html).not.toMatch(/<details[^>]*\bopen\b/);
         expect(html).not.toContain("resource-intro");
         expect(html).toContain('class="resource-search"');
-        expect(resourceTabs(view)).toContain(`href="/_library/${view}" aria-current="page"`);
+        if (view !== "codeblocks")
+            expect(resourceTabs(view)).toContain(`href="/_library/${view}" aria-current="page"`);
+        else expect(resourceTabs(view)).toBe("");
     }
     expect(resourceTabs("codeblocks")).not.toContain("Dictionary");
     expect(resourceTabs("codeblocks")).not.toContain('href="/_files"');
@@ -211,6 +281,9 @@ it("renders subformat controls without a resource search box", () => {
     expect(html).not.toContain("data-resource-search");
     expect(resourceLibraryHtml(index, "subformats", "Issues")).not.toContain(
         "data-resource-search",
+    );
+    expect(resourceLibraryHtml(index, "subformats", "Issues")).toContain(
+        'data-subformat-trigger aria-haspopup="menu"',
     );
     expect(html).toContain('data-subformat-options popover="auto"');
     expect(html).toContain(
@@ -258,9 +331,9 @@ it("indexes local text embeds with ranges and groups file extensions with fence 
     });
     const index = resourceIndex(root, files);
     expect(index.errors).toEqual([]);
-    expect(index.codeblocks.filter((item) => item.format === "typescript")).toHaveLength(3);
+    expect(index.codeblocks.filter((item) => item.format === "ts")).toHaveLength(3);
     expect(index.codeblocks[1]).toMatchObject({
-        format: "typescript",
+        format: "ts",
         content: "const second = 2;\r\nconst third = 3;",
         source: { file: "refs.md", line: 5 },
         reference: { file: "src/app code.TS", line: 2, range: "#L2-L3" },
@@ -270,7 +343,7 @@ it("indexes local text embeds with ranges and groups file extensions with fence 
     const html = resourceLibraryHtml(index, "codeblocks");
     expect(html).toContain('aria-label="Format"');
     expect(html).toContain('data-resource-source="src/app code.TS" data-resource-line="2"');
-    expect(html).toContain('data-resource-group="typescript"');
+    expect(html).toContain('data-resource-group="ts"');
 });
 
 it("reports missing, private and invalid range references without hiding later blocks", () => {
@@ -285,7 +358,7 @@ it("reports missing, private and invalid range references without hiding later b
         files.filter((file) => file !== ".private.ts"),
     );
     expect(index.errors).toHaveLength(4);
-    expect(index.codeblocks).toMatchObject([{ format: "text", content: "Still visible" }]);
+    expect(index.codeblocks).toMatchObject([{ format: "txt", content: "Still visible" }]);
     expect(JSON.stringify(index)).not.toContain("private content");
 });
 
@@ -393,4 +466,33 @@ it("lists unreferenced files of a format once it has a library page", () => {
     expect(
         captions(`${base}    - document:\n        library: schemath\n        title: Schemas\n`),
     ).toEqual(["Used", "unused.schemath"]);
+});
+
+it("keeps a format named urls separate from the reference Library", async () => {
+    const { formatPageHtml } = await import("./resource-library.js");
+    const { root, files } = fixture({
+        "dooc.yaml": "system: {format: {urls: {files: [links.urls]}}}\ndocument: {format: urls}\n",
+        "links.urls": "local collection",
+        "notes.md": "[Reference](https://example.com/)",
+    });
+    const index = resourceIndex(root, files);
+    expect(formatPageHtml(index, "urls", "Files")).toContain("local collection");
+    expect(formatPageHtml(index, "urls", "Files")).not.toContain("https://example.com/");
+    expect(libraryPageHtml(index, "urls", "References")).toContain("https://example.com/");
+});
+
+it("keeps literal extensions separate from fence aliases when creating Format pages", async () => {
+    const { formatPageHtml } = await import("./resource-library.js");
+    const { root, files } = fixture({
+        "dooc.yaml":
+            "document: {children: [{document: {format: markdown}}, {document: {format: md}}]}\n",
+        "source.markdown": "Literal extension",
+        "guide.md": "```markdown\nInline Markdown\n```",
+    });
+    const index = resourceIndex(root, files);
+    expect(index.errors).toEqual([]);
+    const literal = formatPageHtml(index, "markdown", "Markdown files");
+    expect(literal).toContain("Literal extension");
+    expect(literal).not.toContain("Inline Markdown");
+    expect(formatPageHtml(index, "md", "Markdown")).toContain("Inline Markdown");
 });

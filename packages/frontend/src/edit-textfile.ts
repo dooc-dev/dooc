@@ -1,6 +1,8 @@
+import { autocompletion } from "@codemirror/autocomplete";
 import { indentWithTab, isolateHistory } from "@codemirror/commands";
 import { EditorState, type Extension, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, keymap, WidgetType } from "@codemirror/view";
+import { isManifestFile } from "../../engine/src/core/content-metadata.js";
 import { CHECK_ICON } from "../../engine/src/core/icons.js";
 import type { PreviewSettings } from "../../engine/src/core/previewers.js";
 import { isRemoteTextfile, textfileName } from "../../engine/src/core/textfile.js";
@@ -25,6 +27,7 @@ import { editorSetup } from "./edit-setup.js";
 import { hasSubformatFormDraft, subformatForm } from "./edit-subformat-form.js";
 import { type FilePreview, fileReferences } from "./file-references.js";
 import { t } from "./i18n.js";
+import { manifestPathCompletion } from "./manifest-editor.js";
 
 export const textfileLines = (
     body: string,
@@ -68,9 +71,24 @@ export const createTextfileEditors = (
     onRefresh: (file: string) => void,
     onDirty: () => void,
     workspace = workspaceId(),
+    autosave: () => boolean = () => true,
 ) => {
     const readOnly = !!workspaceConnection(workspace)?.readOnly;
     const drafts = new Map<string, FileDraft>();
+    const draftFor = (file: string): FileDraft => {
+        let draft = drafts.get(file);
+        if (!draft) {
+            draft = {
+                open: false,
+                error: "",
+                validation: "pending",
+                validationMessage: "",
+                listeners: new Set(),
+            };
+            drafts.set(file, draft);
+        }
+        return draft;
+    };
     let previews: Record<string, FilePreview> = {};
     const cleanup = new WeakMap<HTMLElement, () => void>();
     const dirty = (draft: FileDraft): boolean =>
@@ -85,6 +103,7 @@ export const createTextfileEditors = (
         draft.timer = undefined;
         if (
             readOnly ||
+            !autosave() ||
             isRemoteTextfile(file) ||
             !dirty(draft) ||
             draft.error ||
@@ -93,7 +112,7 @@ export const createTextfileEditors = (
             return;
         draft.timer = setTimeout(() => {
             draft.timer = undefined;
-            void save(file, draft);
+            if (autosave()) void save(file, draft);
         }, 600);
     };
     const finish = (file: string, draft: FileDraft): void => {
@@ -140,7 +159,7 @@ export const createTextfileEditors = (
             notify(draft);
             return;
         }
-        const content = draft.state.sliceDoc();
+        let content = draft.state.sliceDoc();
         draft.operation = "save";
         draft.error = "";
         draft.errorAction = "save";
@@ -172,9 +191,16 @@ export const createTextfileEditors = (
                     useExternal = true;
                     return;
                 }
-                draft.base = external;
-                return;
+                content = draft.state.sliceDoc();
+                draft.base = (
+                    await request(file, { action: "save", content, base: external })
+                ).content;
             }
+            if (draft.state.sliceDoc() === content && draft.base !== null && draft.base !== content)
+                draft.state = draft.state.update({
+                    changes: { from: 0, to: draft.state.doc.length, insert: draft.base },
+                    annotations: isolateHistory.of("full"),
+                }).state;
             onRefresh(file);
         } catch (error) {
             draft.error = String(error);
@@ -292,6 +318,11 @@ export const createTextfileEditors = (
                     gitDiffTheme,
                     theme,
                     editorCodeHighlight(codeLanguage, workspace),
+                    isManifestFile(filename)
+                        ? autocompletion({
+                              override: [(context) => manifestPathCompletion(context, workspace)],
+                          })
+                        : [],
                     codeLanguage === "json"
                         ? jsonEditor(schema, schemaDocument, file, schemaContext, workspace)
                         : [],
@@ -348,8 +379,9 @@ export const createTextfileEditors = (
             return;
         }
         if (draft.error) return;
-        if (dirty(draft)) await save(file, draft);
-        else await load(file, draft);
+        if (dirty(draft)) {
+            if (autosave()) await save(file, draft);
+        } else await load(file, draft);
     };
 
     class FileWidget extends WidgetType {
@@ -363,20 +395,9 @@ export const createTextfileEditors = (
         override eq(other: FileWidget): boolean {
             return this.file === other.file && this.controls === other.controls;
         }
-        toDOM(outer: EditorView): HTMLElement {
+        toDOM(outer?: Pick<EditorView, "requestMeasure">): HTMLElement {
             const remote = isRemoteTextfile(this.file);
-            let draft = drafts.get(this.file);
-            if (!draft) {
-                draft = {
-                    open: false,
-                    error: "",
-                    validation: "pending",
-                    validationMessage: "",
-                    listeners: new Set(),
-                };
-                drafts.set(this.file, draft);
-            }
-            const current = draft;
+            const current = draftFor(this.file);
             const box = document.createElement(this.controls ? "span" : "div");
             box.className = this.controls ? "cm-textfile-controls" : "cm-textfile";
             box.dataset.file = this.file;
@@ -514,7 +535,7 @@ export const createTextfileEditors = (
                             inner.focus();
                         }
                     }
-                    outer.requestMeasure();
+                    outer?.requestMeasure();
                 },
                 () => inner?.destroy(),
             );
@@ -552,7 +573,7 @@ export const createTextfileEditors = (
         mount: (
             file: string,
             parent: HTMLElement,
-            outer: EditorView,
+            outer?: Pick<EditorView, "requestMeasure">,
             line?: number,
         ): (() => void) => {
             const controls = new FileWidget(file, true);
@@ -571,6 +592,42 @@ export const createTextfileEditors = (
             };
         },
         content: (file: string): string | undefined => drafts.get(file)?.state?.sliceDoc(),
+        snapshot: (file: string) => {
+            const draft = draftFor(file);
+            return { content: draft.state?.sliceDoc(), dirty: dirty(draft), error: draft.error };
+        },
+        subscribe: (file: string, listener: () => void): (() => void) => {
+            const draft = draftFor(file);
+            draft.listeners.add(listener);
+            listener();
+            if (!draft.state && !draft.operation) void load(file, draft);
+            return () => draft.listeners.delete(listener);
+        },
+        update: (file: string, content: string): void => {
+            const draft = draftFor(file);
+            if (
+                readOnly ||
+                isRemoteTextfile(file) ||
+                !draft.state ||
+                draft.state.sliceDoc() === content
+            )
+                return;
+            draft.state = draft.state.update({
+                changes: { from: 0, to: draft.state.doc.length, insert: content },
+                annotations: isolateHistory.of("full"),
+                userEvent: "input",
+            }).state;
+            if (draft.invalid) {
+                draft.error = "";
+                draft.invalid = false;
+            }
+            draft.validation = "pending";
+            draft.validationMessage = "";
+            notify(draft);
+            onRefresh(file);
+            scheduleSave(file, draft);
+        },
+        save: async (file: string): Promise<void> => save(file, draftFor(file)),
         hasUnsavedChanges: () =>
             [...drafts.values()].some(
                 (draft) =>
