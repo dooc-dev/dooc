@@ -1,6 +1,17 @@
 node_modules/
 dist/
-/build/
+build/
+!/scripts/build/
+dooc-editor-node/
+dooc-editor-web/
+dooc-reader-node/
+dooc-reader-web/
+# Local workspace credentials, snapshots and version state.
+**/.dooc/user/
+**/.dooc/snapshots/
+**/.dooc/versions/
+**/.dooc/versions.json
+**/.dooc/versions.lock
 .aws/
 .codex/
 .agents/
@@ -10,12 +21,23 @@ dist/
 .env.*
 *.tgz
 # Local reports and verification output.
-/dooc-*-audit*
-/dooc-*-report*
+dooc-*-audit*
+dooc-*-report*
+/dooc-docs/design/
+/dooc-docs/contents/md/progress.md
+/dooc-docs/contents/md/icon-variants.md
+/dooc-docs/contents/md/theme-variants.md
+/dooc-docs/contents/html/icon-variants.html
+/dooc-docs/contents/html/theme-variants.html
+/dooc-docs/contents/png/icon-variants.png
+/dooc-docs/contents/png/theme-variants/
+/dooc-docs/contents/svg/icon-variants/
 /dooc-docs/contents/md/license-audit.md
 /dooc-docs/contents/csv/dependency-licenses.csv
-/reports/
-/audit-reports/
+reports/
+audit-reports/
+screenshots/
+/artifacts/
 coverage/
 .nyc_output/
 playwright-report/
@@ -23,8 +45,8 @@ test-results/
 # Local caches, temporary files and editor backups.
 .cache/
 .pnpm-store/
-/tmp/
-/temp/
+tmp/
+temp/
 *.log
 !/sample/dooc-sample-saas/contents/log/*.log
 *.tsbuildinfo

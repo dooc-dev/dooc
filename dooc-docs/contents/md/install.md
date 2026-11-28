@@ -46,7 +46,7 @@ Run it from any directory and keep the command running while you read. If the br
 
 Use `dooc editor run node --client --server --project dooc-docs --repo https://github.com/dooc-dev/dooc.git` to keep an editable clone with Git history. Repeating the command reopens the saved clone, including offline, without fetching, pulling, or resetting it. To update its documents, use **Fetch** and **Pull** in the editor's Git tool, or run Git in the printed workspace directory. Commit pending changes before using **Pull**. `dooc self update` updates dooc itself; it does not update saved workspaces.
 
-Other Git hosts and SSH URLs are supported; see [Git repositories](contents/md/cli.md#git-repositories) for storage and execution limits. The compatibility command `dooc self docs` downloads read-only documentation from GitHub `main` as a ZIP, so it requires a network connection but no system Git. Its temporary files are removed on exit.
+Other Git hosts and SSH URLs are supported; see [Git repositories](contents/md/cli.md#git-repositories) for storage and execution limits. The compatibility command `dooc self docs` downloads the repository's `dooc-docs/` subtree from GitHub `main` as a ZIP, so it requires a network connection but no system Git. It opens a read-only reader on port `5179`. Files are extracted into `<os.tmpdir()>/dooc-docs-<random>/` (normally `/tmp/dooc-docs-<random>/` on Linux), independently of the invocation directory, and removed on exit. The source checkout's `dooc-docs/` directory is not a download destination.
 
 ## Share the result
 

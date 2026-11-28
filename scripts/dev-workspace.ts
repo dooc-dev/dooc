@@ -10,7 +10,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { devNull, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse, stringify } from "yaml";
 import { addProjectFont } from "../packages/engine/src/compiler/fonts.js";
@@ -110,10 +110,24 @@ export const watchDevWorkspace = (
 
 export const createDevWorkspace = (root: string, testPageUrl?: string): void => {
     rmSync(root, { recursive: true, force: true });
+    const inputs = new Set<string>();
+    for (const file of execFileSync(
+        "git",
+        ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        { cwd: repository, encoding: "utf8" },
+    ).split("\0")) {
+        const parts = file.split("/");
+        for (let i = 1; i <= parts.length; i++) inputs.add(parts.slice(0, i).join("/"));
+    }
+    const sourceInput = (file: string) =>
+        inputs.has(relative(repository, file).split(sep).join("/"));
     const documentation = join(repository, "dooc-docs");
     const project = join(repository, "sample/dooc-sample-project");
     for (const directory of ["contents", "themes"])
-        cpSync(join(documentation, directory), join(root, directory), { recursive: true });
+        cpSync(join(documentation, directory), join(root, directory), {
+            recursive: true,
+            filter: sourceInput,
+        });
     const renamed = [
         ["index", "atlas"],
         ["records", "atlas-records"],
@@ -121,6 +135,7 @@ export const createDevWorkspace = (root: string, testPageUrl?: string): void => 
     cpSync(join(project, "contents"), join(root, "contents"), {
         recursive: true,
         filter: (file) =>
+            sourceInput(file) &&
             !renamed.some(([name]) => file === join(project, `contents/md/${name}.md`)),
     });
     const atlas = parse(readFileSync(join(project, "dooc.yaml"), "utf8"));
@@ -137,7 +152,10 @@ export const createDevWorkspace = (root: string, testPageUrl?: string): void => 
         for (const { document } of atlas.document.children)
             if (document.url === file) document.url = destination;
     }
-    cpSync(join(repository, "scripts/fixtures/dev-workspace"), root, { recursive: true });
+    cpSync(join(repository, "scripts/fixtures/dev-workspace"), root, {
+        recursive: true,
+        filter: sourceInput,
+    });
     addProjectFont(root, join(repository, "packages/server/src/fonts/udev-gothic-regular.woff2"));
     cpSync(
         join(repository, "packages/server/src/fonts/LICENSE.txt"),

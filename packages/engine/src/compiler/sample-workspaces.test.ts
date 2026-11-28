@@ -1,4 +1,5 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -21,7 +22,18 @@ it.each([
     const temp = mkdtempSync(join(tmpdir(), "dooc-workspace-"));
     roots.push(temp);
     const root = join(temp, "source");
-    cpSync(resolve(import.meta.dirname, "../../../..", source), root, { recursive: true });
+    const repository = resolve(import.meta.dirname, "../../../..");
+    const files = execFileSync("git", ["ls-files", "-z", "--", source], {
+        cwd: repository,
+        encoding: "utf8",
+    })
+        .split("\0")
+        .filter(Boolean);
+    for (const file of files) {
+        const destination = join(root, file.slice(source.length + 1));
+        mkdirSync(dirname(destination), { recursive: true });
+        copyFileSync(join(repository, file), destination);
+    }
     const manifest = readManifest(root);
     expect(manifest.format).toBe("document");
     expect(manifest.tree).toHaveLength(1);

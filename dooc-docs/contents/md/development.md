@@ -1,6 +1,6 @@
 Work from a source checkout to change dooc itself. Project authoring starts with [First document](contents/md/quickstart.md), and installation is covered in [Install](contents/md/install.md); plugin authors can start with [Write a plugin](contents/md/plugin-dev.md).
 
-[Development progress](contents/md/progress.md) reconciles implemented work, open feature gaps and the current patch release checks.
+Feature records describe implemented work and open gaps. [Release](contents/md/release.md) describes publication and distribution checks.
 
 ## Set up and run
 
@@ -35,7 +35,7 @@ The combined task first generates one shared disposable workspace under `build/d
 
 While the task runs, changes in `dooc-docs`, `sample/dooc-sample-project`, and `scripts/fixtures/dev-workspace` update their generated copies and trigger document hot reload. A file changed locally in the playground is kept; the terminal lists any conflicting source update. Git history, runtime settings and unrelated local files remain in place. Other sample workspaces, including the URL gallery, are opened explicitly with `--project` and watch their own files directly.
 
-The development task loads the local demo plugins into the generated workspace. It copies the documentation into that playground.
+The development task loads the local demo plugins into the generated workspace. It copies tracked and unignored new documentation and sample inputs into that playground; local reports, studies and build output stay outside it.
 
 **Start here → Iframe test page** opens a local page that permits embedding. The development task serves it on an available loopback port and stops it with the task. Use it to check that reader and editor retain the sidebar while displaying a website. **dooc.dev** remains available to check framing refusal.
 
@@ -66,7 +66,7 @@ mise run binary
 
 `pnpm check` runs Biome, TypeScript, the production build, unit tests, Chromium browser tests, installer tests, npm package contents checks, and a packed plugin SDK consumer check. Install Chromium once after installing dependencies. To rerun only browser checks, use `pnpm build && pnpm test:browser`; each check uses an isolated browser context and disposable document workspaces. Check and release CI install Chromium before running the same suite. `pnpm test:package` verifies that the npm package includes runtime files without bundling documentation or sample workspaces. `mise run binary` builds and tests a standalone executable for the current machine. Binary CI builds and tests Linux (glibc) and macOS on x64 and arm64; Windows and musl Linux are not targets.
 
-Production npm packages and standalone executables include runtime assets such as fonts, syntax grammars, and the Japanese proofreading dictionary. They do not bundle `dooc-docs`; `dooc reader run node --client --server --project dooc-docs --repo https://github.com/dooc-dev/dooc.git` clones the repository at runtime using system Git. Edit this documentation in `dooc-docs`, and register new pages in its `dooc.yaml`.
+Production npm packages and standalone executables include runtime assets such as fonts, syntax grammars, and the Japanese proofreading dictionary. They do not bundle `dooc-docs`; `dooc reader run node --client --server --project dooc-docs --repo https://github.com/dooc-dev/dooc.git` clones the repository at runtime using system Git. `dooc self docs` downloads the `dooc-docs/` subtree from GitHub `main` into `<os.tmpdir()>/dooc-docs-<random>/`, without Git. Both readers remove their temporary workspace on exit and leave the invocation directory untouched. Edit the tracked documentation in `dooc-docs`, and register new public pages in its `dooc.yaml`.
 
 ## Release
 
@@ -93,6 +93,19 @@ Register new pages in `dooc-docs/dooc.yaml`, update links when a section moves, 
 
 ## Generated files and reports
 
-Store local audit reports, fix reports, dependency inventories, screenshots and other verification output under the ignored `build/` directory or the operating system's temporary directory. Keep implementation status and actionable follow-up in the development guides and feature records. One-off UX reports and the dated license audit and inventory are removed from the source tree and documentation navigation.
+Write task-specific designs in ignored `dooc-docs/design/` before implementation. Store skill reports, dependency inventories, screenshots, comparison sheets and other verification output under ignored `build/` or the operating system's temporary directory. Keep durable behavior and actionable follow-up in the product guides and feature records. Public pages must not link to ignored artifacts.
 
-Git ignore rules cover reports, test output, coverage, local caches, logs, editor backups and temporary files. Fictional `.log` records in the SaaS sample, authored example scripts and the generated CSS module required by the runtime remain source inputs.
+| Path | Repository policy |
+| --- | --- |
+| `dooc-docs/`, `sample/`, `scripts/fixtures/` | Track authored guides, manifests, records, diagrams and test inputs |
+| `build/`, `dist/` at any depth | Ignore compiled HTML, archives, binaries and generated playgrounds |
+| `dooc-editor-node/`, `dooc-editor-web/`, `dooc-reader-node/`, `dooc-reader-web/` | Ignore default application build directories at any depth |
+| `.dooc/user/`, `.dooc/snapshots/`, `.dooc/versions/`, `.dooc/versions.json`, `.dooc/versions.lock` | Ignore local credentials, history and build state; back up hash-version history separately |
+| `dooc-docs/design/`, reports, screenshots and legacy icon/theme studies | Keep local; exclude from Git and public navigation |
+| `.dooc/fonts/`, `.dooc/code-languages/`, `.dooc/editor-tools/` | Track project inputs required by rendering and editing |
+
+Do not ignore an entire document workspace or all HTML, images, SVGs, JSON, PDFs or logs. The README image, documentation diagrams, fictional `.log` records in the SaaS sample, authored HTML snapshots and the generated CSS module required by the runtime remain source inputs. `dooc-imports/` contains referenced child-document sources used by compilation and source ZIPs; it is not a publication output directory and follows the compiler's source-ignore rules.
+
+The adopted site mark has a 160 × 160 viewBox, a 9-unit rounded stroke and the original colors: `#1a1e23` on light backgrounds and `#FFFFFF` on dark backgrounds. Its production SVGs remain tracked; experimental icon and palette comparisons are local review artifacts.
+
+Git ignore rules also cover test output, coverage, local caches, logs, editor backups and temporary files. Adding an ignore rule does not untrack an existing file: use `git rm --cached` for reviewed local artifacts while retaining their working copies. Source-export tests verify documentation and samples from tracked files so local artifacts cannot hide missing dependencies.

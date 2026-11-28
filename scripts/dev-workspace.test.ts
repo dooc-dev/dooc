@@ -1,7 +1,8 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { checkSite } from "../packages/engine/src/compiler/check.js";
 import { loadCodeLanguages } from "../packages/engine/src/compiler/code-languages.js";
@@ -61,11 +62,42 @@ it("syncs generated changes without overwriting local edits, deletions or redire
 
 it("generates a complete feature playground and resets only the selected workspace", async () => {
     const parent = mkdtempSync(join(tmpdir(), "dooc-dev-workspace-"));
+    const localReport = mkdtempSync(
+        fileURLToPath(new URL("../dooc-docs/contents/dooc-test-report-", import.meta.url)),
+    );
     const root = join(parent, "editor");
     const testPageUrl = "http://127.0.0.1:2002/";
     try {
         writeFileSync(join(parent, "keep.txt"), "Keep this\n");
+        writeFileSync(join(localReport, "local.md"), "Local verification output\n");
         createDevWorkspace(root, testPageUrl);
+        expect(existsSync(join(root, "contents", basename(localReport)))).toBe(false);
+        for (const artifact of [
+            "contents/md/progress.md",
+            "contents/md/icon-variants.md",
+            "contents/md/theme-variants.md",
+            "contents/html/icon-variants.html",
+            "contents/html/theme-variants.html",
+            "contents/png/theme-variants",
+            "contents/svg/icon-variants",
+        ])
+            expect(existsSync(join(root, artifact)), artifact).toBe(false);
+        const generated = ["", "nested/"].flatMap((directory) =>
+            [
+                "build/index.html",
+                "dist/bundle.zip",
+                "dooc-reader-web/index.html",
+                ".dooc/user/login.json",
+            ].map((file) => directory + file),
+        );
+        expect(
+            execFileSync("git", ["-C", root, "check-ignore", "--stdin"], {
+                input: generated.join("\n"),
+                encoding: "utf8",
+            })
+                .trim()
+                .split("\n"),
+        ).toEqual(generated);
         const before = readFileSync(join(root, "contents/md/start.md"), "utf8");
         const report = checkSite(root, { only: ["render"] });
         expect(report.diagnostics.filter((item) => item.severity === "error")).toEqual([]);
@@ -142,6 +174,7 @@ it("generates a complete feature playground and resets only the selected workspa
         expect(readFileSync(join(parent, "keep.txt"), "utf8")).toBe("Keep this\n");
     } finally {
         rmSync(parent, { recursive: true, force: true });
+        rmSync(localReport, { recursive: true, force: true });
     }
 }, 60_000);
 

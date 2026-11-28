@@ -107,6 +107,7 @@ commands:
 
 Homebrew and mise installations must be updated through their package manager.
 Documentation requires a network connection. The local reader uses port 5179.
+GitHub's dooc-docs/ is extracted into the OS temporary directory and removed on exit.
 Keep this command running while using the reader.
 
 options:

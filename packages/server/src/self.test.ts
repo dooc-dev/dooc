@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
-import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { strToU8, zipSync } from "fflate";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { prepareSelfDocs, selfUpdate } from "./self.js";
@@ -117,6 +119,8 @@ it("downloads only documentation into a disposable reader root without requiring
     vi.stubGlobal("fetch", fetch);
     const docs = await prepareSelfDocs();
     try {
+        expect(dirname(docs.root)).toBe(tmpdir());
+        expect(basename(docs.root)).toMatch(/^dooc-docs-/);
         expect(fetch).toHaveBeenCalledWith(
             "https://codeload.github.com/dooc-dev/dooc/zip/refs/heads/main",
             { signal: expect.any(AbortSignal) },
@@ -129,6 +133,48 @@ it("downloads only documentation into a disposable reader root without requiring
         expect(fs.readFileSync(join(docs.root, "themes/light/icon.svg"), "utf8")).toBe("light");
         expect(fs.existsSync(join(docs.root, "package.json"))).toBe(false);
         expect(fs.existsSync(join(docs.root, ".dooc"))).toBe(false);
+        expect(execFileSync).not.toHaveBeenCalled();
+    } finally {
+        docs.dispose();
+    }
+    expect(fs.existsSync(docs.root)).toBe(false);
+});
+
+it("opens the tracked documentation subtree without local study or report artifacts", async () => {
+    const { execFileSync: git } =
+        await vi.importActual<typeof import("node:child_process")>("node:child_process");
+    const repository = fileURLToPath(new URL("../../../", import.meta.url));
+    const files = git("git", ["ls-files", "-z", "--", "dooc-docs"], {
+        cwd: repository,
+        encoding: "utf8",
+    })
+        .split("\0")
+        .filter(Boolean);
+    vi.stubGlobal(
+        "fetch",
+        vi
+            .fn()
+            .mockResolvedValue(
+                new Response(
+                    zipSync(
+                        Object.fromEntries(
+                            files.map((file) => [
+                                `dooc-main/${file}`,
+                                fs.readFileSync(join(repository, file)),
+                            ]),
+                        ),
+                    ),
+                ),
+            ),
+    );
+    const docs = await prepareSelfDocs();
+    try {
+        const { checkSite } = await import("../../engine/src/compiler/check.js");
+        const report = checkSite(docs.root, { only: ["render"] });
+        expect(report.diagnostics.filter((item) => item.severity === "error")).toEqual([]);
+        expect(fs.existsSync(join(docs.root, "contents/md/install.md"))).toBe(true);
+        expect(fs.existsSync(join(docs.root, "contents/html/theme-variants.html"))).toBe(false);
+        expect(fs.existsSync(join(docs.root, "contents/md/progress.md"))).toBe(false);
         expect(execFileSync).not.toHaveBeenCalled();
     } finally {
         docs.dispose();

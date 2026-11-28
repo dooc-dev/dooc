@@ -145,9 +145,6 @@ document:
         url: contents/md/development.md
         children:
           - document:
-              title: Development progress
-              url: contents/md/progress.md
-          - document:
               title: Architecture
               icon: contents/svg/icons/system.svg
               url: contents/md/system.md
@@ -160,12 +157,6 @@ document:
           - document:
               title: Viewer loading
               url: contents/md/viewer-loading.md
-          - document:
-              title: Site icon variants
-              url: contents/md/icon-variants.md
-          - document:
-              title: Theme palette study
-              url: contents/md/theme-variants.md
           - document:
               title: Release
               url: contents/md/release.md
